@@ -1,0 +1,38 @@
+{
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll": "explicit",
+      "source.organizeImports": "explicit"
+    },
+    // "editor.defaultFormatter": "charliermarsh.ruff"
+  },
+  // "python.analysis.extraPaths": [".", "./src"],
+  // "workbench.colorTheme": "Default Dark+",
+  "workbench.colorCustomizations": {
+    "titleBar.activeBackground": "#a05804",
+    "titleBar.activeForeground": "#ffffff",
+    "titleBar.border": "#a05804",
+    "statusBar.background": "#a05804"
+  },
+  "python.envFile": "${workspaceFolder}/.env",
+  // ========================
+  // 🧪 Testing Configuration
+  // ========================
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true,
+  "python.testing.envFile": "${workspaceFolder}/.env.test",
+  // Clear addopts from pyproject.toml so the IDE collects ALL tests.
+  // Without this, addopts="-m not integration" silently deselects all 26 items.
+  // Bare `uv run pytest` still uses addopts (unit-only, with coverage).
+  "python.testing.pytestArgs": [
+    "tests",
+    "--override-ini=addopts=",
+    "--no-cov"
+  ],
+  "evenBetterToml.schema.enabled": false,
+  "evenBetterToml.schema.associations": {
+    "": [".ruff.toml"]
+  },
+  "ruff.organizeImports": true
+}

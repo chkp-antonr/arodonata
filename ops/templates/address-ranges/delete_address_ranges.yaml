@@ -1,0 +1,42 @@
+# Address Range Delete Operations Template
+# Management server: mgmt-server-01, Domain: General
+
+management_servers:
+  - mgmt_name: "mgmt-server-01"
+    domains:
+      - name: "General"
+        operations:
+          # Delete address range by name
+          - operation: "delete"
+            type: "address-range"
+            key:
+              name: "Old-VIP-Range"
+
+          # Delete address range by UID
+          - operation: "delete"
+            type: "address-range"
+            key:
+              uid: "a7b8c9d0-e1f2-3456-0123-789012345678"
+
+          # Delete multiple ranges by name
+          - operation: "delete"
+            type: "address-range"
+            key:
+              name: "Temp-App-Range"
+
+          - operation: "delete"
+            type: "address-range"
+            key:
+              name: "Temp-DB-Range"
+
+          # Delete range by UID
+          - operation: "delete"
+            type: "address-range"
+            key:
+              uid: "b8c9d0e1-f2a3-4567-1234-890123456789"
+
+          # Delete test range
+          - operation: "delete"
+            type: "address-range"
+            key:
+              name: "Test-Range"

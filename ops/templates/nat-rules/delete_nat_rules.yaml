@@ -1,0 +1,12 @@
+management_servers:
+  - mgmt_name: "management_server_name"
+    domains:
+      - name: "Global"
+        operations:
+          - operation: "delete"
+            type: "nat-rule"
+            package: "Standard"
+            key:
+              name: "Static NAT for Web Server"
+              # uid: "12345678-1234-1234-1234-123456789012"  # Can use UID instead
+              # rule-number: 1  # Can use rule number instead

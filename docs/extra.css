@@ -1,0 +1,79 @@
+/* Arodonata - Golden Odonata Theme Variables & MkDocs Overrides */
+:root {
+  --odonata-gold-primary: #f59e0b;
+  --odonata-gold-light: #fbbf24;
+  --odonata-yellow-glow: #facc15;
+  --odonata-orange-flame: #f97316;
+  --odonata-cyan-stream: #06b6d4;
+  --odonata-bg-obsidian: #0f172a;
+  --odonata-surface-slate: #1e293b;
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #d97706; /* Deep Amber Gold */
+  --md-primary-fg-color--light: #fef3c7; /* Light Amber Tint */
+  --md-primary-fg-color--dark: #b45309; /* Dark Amber */
+  --md-accent-fg-color: #ea580c; /* Warm Dragonfly Flame */
+  --md-typeset-a-color: #d97706; /* Golden Link Text */
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #d97706; /* Deep Amber Gold Header (matches light mode for optimal contrast) */
+  --md-primary-fg-color--light: #1e293b; /* Slate Surface */
+  --md-primary-fg-color--dark: #b45309; /* Dark Amber Header Accent */
+  --md-accent-fg-color: #f97316; /* Dragonfly Flame Accents */
+  --md-default-bg-color: #0f172a; /* Obsidian Deep Canvas */
+  --md-default-bg-color--card: #1e293b;
+  --md-code-bg-color: #1e293b;
+  --md-typeset-a-color: #fbbf24; /* Golden Link Text */
+}
+
+/* Navigation tabs styling */
+.md-tabs__link {
+  opacity: 0.9;
+  margin-top: 0;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  transition: background-color 0.2s ease, opacity 0.2s ease;
+}
+
+/* Hover feedback on any tab */
+.md-tabs__item:hover .md-tabs__link {
+  background-color: rgba(255, 255, 255, 0.18);
+  opacity: 1;
+}
+
+/* Persistent highlight on the currently selected tab */
+.md-tabs__item--active .md-tabs__link {
+  background-color: rgba(255, 255, 255, 0.25);
+  font-weight: 700;
+  opacity: 1;
+}
+
+/* Horizontal divider above API docstring headings */
+.doc-class,
+.doc-function {
+  border-top: 1px dotted var(--odonata-gold-primary);
+  padding-top: 4px;
+  margin-top: 12px;
+  margin-bottom: 0px;
+}
+
+/* Header search bar refinement for high contrast */
+.md-search__form {
+  background-color: rgba(15, 23, 42, 0.35); /* Dark Obsidian tint over amber header */
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+}
+
+.md-search__form:hover,
+.md-search__form:focus-within {
+  background-color: rgba(15, 23, 42, 0.55);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.md-search__input::placeholder {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+

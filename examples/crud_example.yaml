@@ -1,0 +1,54 @@
+# CPCRUD example template: hosts, networks, an access-rule, and a NAT rule.
+#
+# mgmt_name here is the management server IP itself (matches the credential-auth
+# convention `06_crud_operations.py` uses -- see its own `MGMT_IP`/`DOMAIN` constants).
+# Adjust mgmt_name/domain/layer/package below to match your own environment.
+
+management_servers:
+  - mgmt_name: "10.192.15.140"
+    domains:
+      - name: "Domain4"
+        operations:
+          - type: "host"
+            data:
+              name: "example-host-1"
+              ip-address: "10.0.0.1"
+              comments: "CPCRUD example host"
+              color: "dark green"
+              groups: ["Examples"]
+            on_name_conflict: "error"
+            on_ip_conflict: "error"
+
+          - type: "network"
+            data:
+              name: "Example-Net"
+              subnet: "10.0.0.0"
+              mask-length: 24
+              comments: "CPCRUD example network"
+              color: "blue"
+              groups: ["Examples"]
+
+          - type: "access-rule"
+            layer: "Network"
+            position: "bottom"
+            data:
+              name: "cpcrud-example-rule"
+              source: ["example-host-1"]
+              destination: ["any"]
+              service: ["any"]
+              action: "drop"
+              comments: "CPCRUD example access rule"
+
+          - type: "nat-rule"
+            package: "FPCR_UAT_Active"
+            position: "top"
+            data:
+              name: "cpcrud-example-nat"
+              source: ["203.0.113.11"]
+              destination: ["203.0.113.12"]
+              service: ["any"]
+              translated-source: "203.0.113.13"
+              method: "hide"
+              # translated-destination/translated-service are intentionally omitted here:
+              # that means "= Original" (no translation on that side), not "Any" -- Check
+              # Point rejects "Any" as a translated-* value outright.

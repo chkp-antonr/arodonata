@@ -1,0 +1,69 @@
+# Address Range Add Operations Template
+# Management server: mgmt-server-01, Domain: General
+
+management_servers:
+  - mgmt_name: "mgmt-server-01"
+    domains:
+      - name: "General"
+        operations:
+          # Add VIP range for load balancer
+          - operation: "add"
+            type: "address-range"
+            data:
+              name: "Web-VIP-Range"
+              ip-address-first: "192.168.10.100"
+              ip-address-last: "192.168.10.110"
+              comments: "Virtual IP addresses for web load balancers"
+              color: "forest green"
+              groups: ["VIP-Range", "Production"]
+            on_name_conflict: "error"
+            on_ip_conflict: "error"
+
+          # Add IP range for application servers
+          - operation: "add"
+            type: "address-range"
+            data:
+              name: "App-Server-Range"
+              ip-address-first: "192.168.20.50"
+              ip-address-last: "192.168.20.100"
+              comments: "Application server IP allocation range"
+              color: "blue"
+              groups: ["App-Ranges", "Production"]
+
+          # Add range allowing duplicates
+          - operation: "add"
+            type: "address-range"
+            data:
+              name: "DB-Server-Range"
+              ip-address-first: "192.168.30.20"
+              ip-address-last: "192.168.30.40"
+              comments: "Database server IP range"
+              color: "red"
+              groups: ["DB-Ranges", "Production"]
+            on_ip_conflict: "create_new"
+
+          # Add DMZ IP range
+          - operation: "add"
+            type: "address-range"
+            data:
+              name: "DMZ-Public-Range"
+              ip-address-first: "192.168.100.10"
+              ip-address-last: "192.168.100.50"
+              comments: "Public IP addresses in DMZ"
+              color: "orange"
+              groups: ["DMZ-Ranges", "External"]
+            on_name_conflict: "error"
+            on_ip_conflict: "error"
+
+          # Add management IP range
+          - operation: "add"
+            type: "address-range"
+            data:
+              name: "Management-IP-Range"
+              ip-address-first: "192.168.200.5"
+              ip-address-last: "192.168.200.20"
+              comments: "Management interface IP range"
+              color: "purple"
+              groups: ["Management-Ranges", "Internal"]
+            on_name_conflict: "error"
+            on_ip_conflict: "error"

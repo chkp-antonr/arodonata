@@ -1,0 +1,42 @@
+# Host Delete Operations Template
+# Management server: mgmt-server-01, Domain: General
+
+management_servers:
+  - mgmt_name: "mgmt-server-01"
+    domains:
+      - name: "General"
+        operations:
+          # Delete host by name
+          - operation: "delete"
+            type: "host"
+            key:
+              name: "old-web-server"
+
+          # Delete host by IP address
+          - operation: "delete"
+            type: "host"
+            key:
+              ip-address: "192.168.1.99"
+
+          # Delete host by UID
+          - operation: "delete"
+            type: "host"
+            key:
+              uid: "b2c3d4e5-f6a7-8901-bcde-f23456789012"
+
+          # Delete multiple hosts by name
+          - operation: "delete"
+            type: "host"
+            key:
+              name: "temp-test-server-01"
+
+          - operation: "delete"
+            type: "host"
+            key:
+              name: "temp-test-server-02"
+
+          # Delete host by IP (unique IP required)
+          - operation: "delete"
+            type: "host"
+            key:
+              ip-address: "10.0.99.100"

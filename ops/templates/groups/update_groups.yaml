@@ -1,0 +1,90 @@
+# Network Group Update Operations Template
+# Management server: mgmt-server-01, Domain: General
+
+management_servers:
+  - mgmt_name: "mgmt-server-01"
+    domains:
+      - name: "General"
+        operations:
+          # Update group by name - add new members
+          - operation: "update"
+            type: "network-group"
+            key:
+              name: "Web-Infrastructure"
+            data:
+              comments: "Updated: Web infrastructure with load balancer"
+              members:
+                [
+                  "web-server-01",
+                  "web-server-02",
+                  "web-server-03",
+                  "Web-Network",
+                  "Web-VIP-Range",
+                ]
+              # color, groups preserved
+
+          # Update group by UID - change comment and color
+          - operation: "update"
+            type: "network-group"
+            key:
+              uid: "c9d0e1f2-a3b4-5678-2345-901234567890"
+            data:
+              comments: "Updated via UID reference - expanded app servers"
+              color: null
+              # All other fields preserved, color reset to default
+
+          # Update group with new member structure
+          - operation: "update"
+            type: "network-group"
+            key:
+              name: "App-Servers"
+            data:
+              comments: "Updated: Application servers with new components"
+              members:
+                [
+                  "app-server-01",
+                  "app-server-02",
+                  "app-server-03",
+                  "App-Network",
+                  "App-Server-Range",
+                  "Web-Infrastructure",
+                ]
+              # color, groups preserved
+
+          # Clear all members from group
+          - operation: "update"
+            type: "network-group"
+            key:
+              name: "Temp-Group"
+            data:
+              comments: "Group cleared for restructuring"
+              members: []
+              # color, groups preserved
+
+          # Update multiple fields
+          - operation: "update"
+            type: "network-group"
+            key:
+              name: "Database-Servers"
+            data:
+              comments: "Database servers with clustering configuration"
+              color: "orange"
+              groups: ["Production", "Database", "HA", "Critical"]
+              members:
+                [
+                  "db-server-01",
+                  "db-server-02",
+                  "db-server-03",
+                  "DB-Network",
+                  "DB-Server-Range",
+                ]
+
+          # Remove specific members from group
+          - operation: "update"
+            type: "network-group"
+            key:
+              name: "Development-Group"
+            data:
+              comments: "Removed test servers from development"
+              members: ["dev-server-01", "dev-server-02"]
+              # color, groups preserved

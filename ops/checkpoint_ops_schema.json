@@ -1,0 +1,2927 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Check Point Operations Schema",
+  "type": "object",
+  "required": [
+    "management_servers"
+  ],
+  "properties": {
+    "management_servers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/management_server"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "management_server": {
+      "type": "object",
+      "required": [
+        "mgmt_name",
+        "domains"
+      ],
+      "properties": {
+        "mgmt_name": {
+          "type": "string"
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/domain"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "domain": {
+      "type": "object",
+      "required": [
+        "name",
+        "operations"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/operation"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "color_enum": {
+      "type": "string",
+      "enum": [
+        "aquamarine",
+        "black",
+        "blue",
+        "crete blue",
+        "burlywood",
+        "cyan",
+        "dark green",
+        "khaki",
+        "orchid",
+        "dark orange",
+        "dark sea green",
+        "pink",
+        "turquoise",
+        "dark blue",
+        "firebrick",
+        "brown",
+        "forest green",
+        "gold",
+        "dark gold",
+        "gray",
+        "dark gray",
+        "light green",
+        "lemon chiffon",
+        "coral",
+        "sea green",
+        "sky blue",
+        "magenta",
+        "purple",
+        "slate blue",
+        "violet red",
+        "navy blue",
+        "olive",
+        "orange",
+        "red",
+        "sienna",
+        "yellow",
+        "none"
+      ]
+    },
+    "common_data": {
+      "properties": {
+        "uid": {
+          "type": "string"
+        },
+        "comments": {
+          "type": "string"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/color_enum"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "nat-settings": {
+          "$ref": "#/definitions/nat_settings"
+        }
+      }
+    },
+    "common_rule_data": {
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "comments": {
+          "type": "string"
+        },
+        "rule-number": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "track_settings": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "packet-capture": {
+              "type": "boolean"
+            },
+            "forensics": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "access_rule_data": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "comments": {
+          "type": "string"
+        },
+        "source": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "destination": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "service": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "action": {
+          "type": "string"
+        },
+        "track": {
+          "$ref": "#/definitions/track_settings"
+        },
+        "install-on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "time": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "vpn": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "nat_rule_data": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "comments": {
+          "type": "string"
+        },
+        "source": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "destination": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "service": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "method": {
+          "type": "string"
+        },
+        "translated-source": {
+          "type": "string"
+        },
+        "translated-destination": {
+          "type": "string"
+        },
+        "translated-service": {
+          "type": "string"
+        },
+        "install-on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "threat_rule_data": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "comments": {
+          "type": "string"
+        },
+        "source": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "destination": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "service": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "protected-scope": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "action": {
+          "type": "string"
+        },
+        "track": {
+          "$ref": "#/definitions/track_settings"
+        },
+        "install-on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "https_rule_data": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "comments": {
+          "type": "string"
+        },
+        "source": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "destination": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "service": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "site-category": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "action": {
+          "type": "string"
+        },
+        "track": {
+          "$ref": "#/definitions/track_settings"
+        },
+        "blade": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "certificate": {
+          "type": "string"
+        },
+        "install-on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "nat_settings": {
+      "description": "NAT (Network Address Translation) settings for hosts, networks, and address ranges",
+      "type": "object",
+      "properties": {
+        "method": {
+          "description": "NAT method: static (1:1 IP translation) or hide (behind gateway)",
+          "type": "string",
+          "enum": [
+            "static",
+            "hide"
+          ]
+        },
+        "ipv4-address": {
+          "description": "Translated IPv4 address for static NAT",
+          "type": "string"
+        },
+        "ipv6-address": {
+          "description": "Translated IPv6 address for static NAT",
+          "type": "string"
+        },
+        "gateway": {
+          "description": "Gateway name for hide NAT",
+          "type": "string"
+        },
+        "hide-behind": {
+          "description": "Method to hide behind (gateway or ip-address). Forbidden if method is static",
+          "type": "string",
+          "enum": [
+            "gateway",
+            "ip-address"
+          ]
+        },
+        "install-on": {
+          "description": "Gateway where NAT rule should be installed",
+          "type": "string"
+        },
+        "auto-rule": {
+          "description": "Enable/disable automatic NAT rule creation",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "oneOf": [
+        {
+          "$ref": "#/definitions/host_add"
+        },
+        {
+          "$ref": "#/definitions/host_update"
+        },
+        {
+          "$ref": "#/definitions/host_delete"
+        },
+        {
+          "$ref": "#/definitions/host_show"
+        },
+        {
+          "$ref": "#/definitions/network_add"
+        },
+        {
+          "$ref": "#/definitions/network_update"
+        },
+        {
+          "$ref": "#/definitions/network_delete"
+        },
+        {
+          "$ref": "#/definitions/network_show"
+        },
+        {
+          "$ref": "#/definitions/range_add"
+        },
+        {
+          "$ref": "#/definitions/range_update"
+        },
+        {
+          "$ref": "#/definitions/range_delete"
+        },
+        {
+          "$ref": "#/definitions/range_show"
+        },
+        {
+          "$ref": "#/definitions/group_add"
+        },
+        {
+          "$ref": "#/definitions/group_update"
+        },
+        {
+          "$ref": "#/definitions/group_delete"
+        },
+        {
+          "$ref": "#/definitions/group_show"
+        },
+        {
+          "$ref": "#/definitions/access_rule_add"
+        },
+        {
+          "$ref": "#/definitions/access_rule_update"
+        },
+        {
+          "$ref": "#/definitions/access_rule_delete"
+        },
+        {
+          "$ref": "#/definitions/access_rule_show"
+        },
+        {
+          "$ref": "#/definitions/nat_rule_add"
+        },
+        {
+          "$ref": "#/definitions/nat_rule_update"
+        },
+        {
+          "$ref": "#/definitions/nat_rule_delete"
+        },
+        {
+          "$ref": "#/definitions/nat_rule_show"
+        },
+        {
+          "$ref": "#/definitions/threat_rule_add"
+        },
+        {
+          "$ref": "#/definitions/https_rule_add"
+        },
+        {
+          "$ref": "#/definitions/threat_rule_update"
+        },
+        {
+          "$ref": "#/definitions/threat_rule_delete"
+        },
+        {
+          "$ref": "#/definitions/threat_rule_show"
+        },
+        {
+          "$ref": "#/definitions/https_rule_update"
+        },
+        {
+          "$ref": "#/definitions/https_rule_delete"
+        },
+        {
+          "$ref": "#/definitions/https_rule_show"
+        },
+        {
+          "$ref": "#/definitions/tcp_service_add"
+        },
+        {
+          "$ref": "#/definitions/tcp_service_update"
+        },
+        {
+          "$ref": "#/definitions/tcp_service_delete"
+        },
+        {
+          "$ref": "#/definitions/tcp_service_show"
+        },
+        {
+          "$ref": "#/definitions/udp_service_add"
+        },
+        {
+          "$ref": "#/definitions/udp_service_update"
+        },
+        {
+          "$ref": "#/definitions/udp_service_delete"
+        },
+        {
+          "$ref": "#/definitions/udp_service_show"
+        },
+        {
+          "$ref": "#/definitions/icmp_service_add"
+        },
+        {
+          "$ref": "#/definitions/icmp_service_update"
+        },
+        {
+          "$ref": "#/definitions/icmp_service_delete"
+        },
+        {
+          "$ref": "#/definitions/icmp_service_show"
+        },
+        {
+          "$ref": "#/definitions/service_group_add"
+        },
+        {
+          "$ref": "#/definitions/service_group_update"
+        },
+        {
+          "$ref": "#/definitions/service_group_delete"
+        },
+        {
+          "$ref": "#/definitions/service_group_show"
+        }
+      ]
+    },
+    "host_add": {
+      "type": "object",
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "add"
+        },
+        "type": {
+          "const": "host"
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/name_conflict_enum"
+        },
+        "on_ip_conflict": {
+          "$ref": "#/definitions/ip_conflict_enum"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "name",
+            "ip-address"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "ip-address": {
+              "type": "string"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "nat-settings": {
+              "$ref": "#/definitions/nat_settings"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "host_update": {
+      "type": "object",
+      "required": [
+        "type",
+        "key",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "update"
+        },
+        "type": {
+          "const": "host"
+        },
+        "key": {
+          "$ref": "#/definitions/host_key"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "new-name": {
+              "type": "string"
+            },
+            "ip-address": {
+              "type": "string"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "nat-settings": {
+              "$ref": "#/definitions/nat_settings"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "host_delete": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "delete"
+        },
+        "type": {
+          "const": "host"
+        },
+        "key": {
+          "$ref": "#/definitions/host_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "host_show": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "show"
+        },
+        "type": {
+          "const": "host"
+        },
+        "key": {
+          "$ref": "#/definitions/host_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "host_key": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "ip-address": {
+          "type": "string"
+        },
+        "uid": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "network_add": {
+      "type": "object",
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "add"
+        },
+        "type": {
+          "const": "network"
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/name_conflict_enum"
+        },
+        "on_ip_conflict": {
+          "$ref": "#/definitions/ip_conflict_enum"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "name",
+            "subnet",
+            "mask-length"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "subnet": {
+              "type": "string"
+            },
+            "mask-length": {
+              "type": "integer"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "nat-settings": {
+              "$ref": "#/definitions/nat_settings"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "network_update": {
+      "type": "object",
+      "required": [
+        "type",
+        "key",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "update"
+        },
+        "type": {
+          "const": "network"
+        },
+        "key": {
+          "$ref": "#/definitions/network_key"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "new-name": {
+              "type": "string"
+            },
+            "subnet": {
+              "type": "string"
+            },
+            "mask-length": {
+              "type": "integer"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "nat-settings": {
+              "$ref": "#/definitions/nat_settings"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "network_delete": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "delete"
+        },
+        "type": {
+          "const": "network"
+        },
+        "key": {
+          "$ref": "#/definitions/network_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "network_show": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "show"
+        },
+        "type": {
+          "const": "network"
+        },
+        "key": {
+          "$ref": "#/definitions/network_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "network_key": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "uid": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "range_add": {
+      "type": "object",
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "add"
+        },
+        "type": {
+          "const": "address-range"
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/name_conflict_enum"
+        },
+        "on_ip_conflict": {
+          "$ref": "#/definitions/ip_conflict_enum"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "name",
+            "ip-address-first",
+            "ip-address-last"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "ip-address-first": {
+              "type": "string"
+            },
+            "ip-address-last": {
+              "type": "string"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "nat-settings": {
+              "$ref": "#/definitions/nat_settings"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "range_update": {
+      "type": "object",
+      "required": [
+        "type",
+        "key",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "update"
+        },
+        "type": {
+          "const": "address-range"
+        },
+        "key": {
+          "$ref": "#/definitions/range_key"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "new-name": {
+              "type": "string"
+            },
+            "ip-address-first": {
+              "type": "string"
+            },
+            "ip-address-last": {
+              "type": "string"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "nat-settings": {
+              "$ref": "#/definitions/nat_settings"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "range_delete": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "delete"
+        },
+        "type": {
+          "const": "address-range"
+        },
+        "key": {
+          "$ref": "#/definitions/range_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "range_show": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "show"
+        },
+        "type": {
+          "const": "address-range"
+        },
+        "key": {
+          "$ref": "#/definitions/range_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "range_key": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "uid": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "group_add": {
+      "type": "object",
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "add"
+        },
+        "type": {
+          "const": "network-group"
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/name_conflict_enum"
+        },
+        "on_ip_conflict": {
+          "$ref": "#/definitions/ip_conflict_enum"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "members": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "group_update": {
+      "type": "object",
+      "required": [
+        "type",
+        "key",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "update"
+        },
+        "type": {
+          "const": "network-group"
+        },
+        "key": {
+          "$ref": "#/definitions/group_key"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "new-name": {
+              "type": "string"
+            },
+            "members": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "group_delete": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "delete"
+        },
+        "type": {
+          "const": "network-group"
+        },
+        "key": {
+          "$ref": "#/definitions/group_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "group_show": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "show"
+        },
+        "type": {
+          "const": "network-group"
+        },
+        "key": {
+          "$ref": "#/definitions/group_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "group_key": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "uid": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "access_rule_add": {
+      "type": "object",
+      "required": [
+        "type",
+        "layer",
+        "position",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "add"
+        },
+        "type": {
+          "const": "access-rule"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/definitions/rule_position"
+        },
+        "match-threshold": {
+          "type": "integer"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "source": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "destination": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "service": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "action": {
+              "type": "string"
+            },
+            "track": {
+              "$ref": "#/definitions/track_settings"
+            },
+            "install-on": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "time": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "vpn": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "access_rule_update": {
+      "type": "object",
+      "required": [
+        "type",
+        "layer",
+        "key",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "update"
+        },
+        "type": {
+          "const": "access-rule"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/definitions/access_rule_key"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "new-name": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "source": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "destination": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "service": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "action": {
+              "type": "string"
+            },
+            "track": {
+              "$ref": "#/definitions/track_settings"
+            },
+            "install-on": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "time": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "vpn": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "access_rule_delete": {
+      "type": "object",
+      "required": [
+        "type",
+        "layer",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "delete"
+        },
+        "type": {
+          "const": "access-rule"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/definitions/access_rule_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "access_rule_show": {
+      "type": "object",
+      "required": [
+        "type",
+        "layer",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "show"
+        },
+        "type": {
+          "const": "access-rule"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/definitions/access_rule_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "access_rule_key": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "uid": {
+          "type": "string"
+        },
+        "rule-number": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "nat_rule_add": {
+      "type": "object",
+      "required": [
+        "type",
+        "package",
+        "position",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "add"
+        },
+        "type": {
+          "const": "nat-rule"
+        },
+        "package": {
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/definitions/rule_position"
+        },
+        "match-threshold": {
+          "type": "integer"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "source": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "destination": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "service": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "method": {
+              "type": "string"
+            },
+            "translated-source": {
+              "type": "string"
+            },
+            "translated-destination": {
+              "type": "string"
+            },
+            "translated-service": {
+              "type": "string"
+            },
+            "install-on": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "nat_rule_update": {
+      "type": "object",
+      "required": [
+        "type",
+        "package",
+        "key",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "update"
+        },
+        "type": {
+          "const": "nat-rule"
+        },
+        "package": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/definitions/nat_rule_key"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "new-name": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "source": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "destination": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "service": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "method": {
+              "type": "string"
+            },
+            "translated-source": {
+              "type": "string"
+            },
+            "translated-destination": {
+              "type": "string"
+            },
+            "translated-service": {
+              "type": "string"
+            },
+            "install-on": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "nat_rule_delete": {
+      "type": "object",
+      "required": [
+        "type",
+        "package",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "delete"
+        },
+        "type": {
+          "const": "nat-rule"
+        },
+        "package": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/definitions/nat_rule_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "nat_rule_show": {
+      "type": "object",
+      "required": [
+        "type",
+        "package",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "show"
+        },
+        "type": {
+          "const": "nat-rule"
+        },
+        "package": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/definitions/nat_rule_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "nat_rule_key": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "uid": {
+          "type": "string"
+        },
+        "rule-number": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "threat_rule_add": {
+      "type": "object",
+      "required": [
+        "type",
+        "layer",
+        "position",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "add"
+        },
+        "type": {
+          "const": "threat-prevention-rule"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/definitions/rule_position"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "source": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "destination": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "service": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "protected-scope": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "action": {
+              "type": "string"
+            },
+            "track": {
+              "$ref": "#/definitions/track_settings"
+            },
+            "install-on": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "https_rule_add": {
+      "type": "object",
+      "required": [
+        "type",
+        "layer",
+        "position",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "add"
+        },
+        "type": {
+          "const": "https-rule"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/definitions/rule_position"
+        },
+        "match-threshold": {
+          "type": "integer"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "source": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "destination": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "service": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "site-category": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "action": {
+              "type": "string"
+            },
+            "track": {
+              "$ref": "#/definitions/track_settings"
+            },
+            "blade": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "certificate": {
+              "type": "string"
+            },
+            "install-on": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "threat_rule_key": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "uid": {
+          "type": "string"
+        },
+        "rule-number": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "https_rule_key": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "uid": {
+          "type": "string"
+        },
+        "rule-number": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "threat_rule_update": {
+      "type": "object",
+      "required": [
+        "type",
+        "layer",
+        "key",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "update"
+        },
+        "type": {
+          "const": "threat-prevention-rule"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/definitions/threat_rule_key"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "new-name": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "source": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "destination": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "service": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "protected-scope": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "action": {
+              "type": "string"
+            },
+            "track": {
+              "$ref": "#/definitions/track_settings"
+            },
+            "install-on": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "threat_rule_delete": {
+      "type": "object",
+      "required": [
+        "type",
+        "layer",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "delete"
+        },
+        "type": {
+          "const": "threat-prevention-rule"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/definitions/threat_rule_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "threat_rule_show": {
+      "type": "object",
+      "required": [
+        "type",
+        "layer",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "show"
+        },
+        "type": {
+          "const": "threat-prevention-rule"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/definitions/threat_rule_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "https_rule_update": {
+      "type": "object",
+      "required": [
+        "type",
+        "layer",
+        "key",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "update"
+        },
+        "type": {
+          "const": "https-rule"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/definitions/https_rule_key"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "new-name": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "source": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "destination": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "service": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "site-category": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "action": {
+              "type": "string"
+            },
+            "track": {
+              "$ref": "#/definitions/track_settings"
+            },
+            "blade": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "certificate": {
+              "type": "string"
+            },
+            "install-on": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "https_rule_delete": {
+      "type": "object",
+      "required": [
+        "type",
+        "layer",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "delete"
+        },
+        "type": {
+          "const": "https-rule"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/definitions/https_rule_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "https_rule_show": {
+      "type": "object",
+      "required": [
+        "type",
+        "layer",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "show"
+        },
+        "type": {
+          "const": "https-rule"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/definitions/https_rule_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "service_key": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "uid": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "tcp_service_add": {
+      "type": "object",
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "add"
+        },
+        "type": {
+          "const": "tcp-service"
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/name_conflict_enum"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "name",
+            "port"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "port": {
+              "type": "string"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "tcp_service_update": {
+      "type": "object",
+      "required": [
+        "type",
+        "key",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "update"
+        },
+        "type": {
+          "const": "tcp-service"
+        },
+        "key": {
+          "$ref": "#/definitions/service_key"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "new-name": {
+              "type": "string"
+            },
+            "port": {
+              "type": "string"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "tcp_service_delete": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "delete"
+        },
+        "type": {
+          "const": "tcp-service"
+        },
+        "key": {
+          "$ref": "#/definitions/service_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tcp_service_show": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "show"
+        },
+        "type": {
+          "const": "tcp-service"
+        },
+        "key": {
+          "$ref": "#/definitions/service_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "udp_service_add": {
+      "type": "object",
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "add"
+        },
+        "type": {
+          "const": "udp-service"
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/name_conflict_enum"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "name",
+            "port"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "port": {
+              "type": "string"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "udp_service_update": {
+      "type": "object",
+      "required": [
+        "type",
+        "key",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "update"
+        },
+        "type": {
+          "const": "udp-service"
+        },
+        "key": {
+          "$ref": "#/definitions/service_key"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "new-name": {
+              "type": "string"
+            },
+            "port": {
+              "type": "string"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "udp_service_delete": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "delete"
+        },
+        "type": {
+          "const": "udp-service"
+        },
+        "key": {
+          "$ref": "#/definitions/service_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "udp_service_show": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "show"
+        },
+        "type": {
+          "const": "udp-service"
+        },
+        "key": {
+          "$ref": "#/definitions/service_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "icmp_service_add": {
+      "type": "object",
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "add"
+        },
+        "type": {
+          "const": "icmp-service"
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/name_conflict_enum"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "name",
+            "icmp-type"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "icmp-type": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "icmp-code": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "icmp_service_update": {
+      "type": "object",
+      "required": [
+        "type",
+        "key",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "update"
+        },
+        "type": {
+          "const": "icmp-service"
+        },
+        "key": {
+          "$ref": "#/definitions/service_key"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "new-name": {
+              "type": "string"
+            },
+            "icmp-type": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "icmp-code": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "icmp_service_delete": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "delete"
+        },
+        "type": {
+          "const": "icmp-service"
+        },
+        "key": {
+          "$ref": "#/definitions/service_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "icmp_service_show": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "show"
+        },
+        "type": {
+          "const": "icmp-service"
+        },
+        "key": {
+          "$ref": "#/definitions/service_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "service_group_add": {
+      "type": "object",
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "add"
+        },
+        "type": {
+          "const": "service-group"
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/name_conflict_enum"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "members": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "service_group_update": {
+      "type": "object",
+      "required": [
+        "type",
+        "key",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "update"
+        },
+        "type": {
+          "const": "service-group"
+        },
+        "key": {
+          "$ref": "#/definitions/service_key"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "new-name": {
+              "type": "string"
+            },
+            "members": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "service_group_delete": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "delete"
+        },
+        "type": {
+          "const": "service-group"
+        },
+        "key": {
+          "$ref": "#/definitions/service_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "service_group_show": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "show"
+        },
+        "type": {
+          "const": "service-group"
+        },
+        "key": {
+          "$ref": "#/definitions/service_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "name_conflict_enum": {
+      "type": "string",
+      "enum": [
+        "update",
+        "error"
+      ]
+    },
+    "ip_conflict_enum": {
+      "type": "string",
+      "enum": [
+        "reuse",
+        "error",
+        "create_new"
+      ]
+    },
+    "rule_position": {
+      "description": "Position in the rulebase. Integer for absolute, 'top'/'bottom' for layer-level, or object {top/bottom/above/below: 'name'} for section/rule-relative.",
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Absolute position (1-based)"
+        },
+        {
+          "type": "string",
+          "enum": [
+            "top",
+            "bottom"
+          ],
+          "description": "Layer-level positioning"
+        },
+        {
+          "type": "object",
+          "description": "Section/rule-relative positioning",
+          "oneOf": [
+            {
+              "required": [
+                "top"
+              ],
+              "properties": {
+                "top": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "required": [
+                "bottom"
+              ],
+              "properties": {
+                "bottom": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "required": [
+                "above"
+              ],
+              "properties": {
+                "above": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "required": [
+                "below"
+              ],
+              "properties": {
+                "below": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

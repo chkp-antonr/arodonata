@@ -1,0 +1,63 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.ruff_cache/
+.pytest_cache
+.mypy_cache/
+.coverage_data/
+.coverage
+coverage.json
+htmlcov/
+
+# Virtual environments
+.venv
+
+# Critical ignores
+.env
+.env.secrets
+.env.*
+!.env.example
+
+# AI
+.agent/
+.agents/
+.claude/
+.gemini/
+.mcp.json
+
+GEMINI.md
+
+# Custom ignores
+graphify-out/ast/
+graphify-out/semantic/
+graphify-out/cache/
+graphify-out/.graphify_*
+graphify-out/obsidian/
+graphify-out/wiki/
+graphify-out/.chunk*
+graphify-out/cost.json
+graphify-out/manifest.json
+
+graphify-out/
+
+.internal/
+
+# Local temp
+fingerprints.txt
+_tmp/
+docs/superpowers
+docs/_AI_
+docs/internal
+docs/CONTEXT.md
+docs/Backlog.md
+.superpowers/
+
+# Symlink to .internal/scripts/docs.sh (private deploy tooling)
+docs.sh
+
+site/
+site-offline/

@@ -1,0 +1,42 @@
+# Network Delete Operations Template
+# Management server: mgmt-server-01, Domain: General
+
+management_servers:
+  - mgmt_name: "mgmt-server-01"
+    domains:
+      - name: "General"
+        operations:
+          # Delete network by name
+          - operation: "delete"
+            type: "network"
+            key:
+              name: "Old-Web-Network"
+
+          # Delete network by UID
+          - operation: "delete"
+            type: "network"
+            key:
+              uid: "d4e5f6a7-b8c9-0123-def0-456789012345"
+
+          # Delete multiple networks by name
+          - operation: "delete"
+            type: "network"
+            key:
+              name: "Temp-App-Network"
+
+          - operation: "delete"
+            type: "network"
+            key:
+              name: "Temp-DB-Network"
+
+          # Delete network by UID
+          - operation: "delete"
+            type: "network"
+            key:
+              uid: "e5f6a7b8-c9d0-1234-ef01-567890123456"
+
+          # Delete test network
+          - operation: "delete"
+            type: "network"
+            key:
+              name: "Test-Network"

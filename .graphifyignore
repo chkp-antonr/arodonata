@@ -1,0 +1,75 @@
+# MkDocs output directory
+
+site/
+
+# Images (no semantic value for a code graph; also breaks text-only LLM backends)
+
+docs/img/
+
+# MkDocs theme overrides (if custom)
+
+overrides/
+
+# Documentation build artifacts
+
+docs/.overrides/
+docs/site/
+
+.internal/
+
+# Graphify output (don't scan own output)
+
+graphify-out/
+
+# Python virtual environments
+
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Build artifacts
+
+dist/
+build/
+*.egg-info/
+.eggs/
+.tox/
+
+# IDE
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node modules (if any frontend tooling)
+
+node_modules/
+
+# Logs
+
+*.log
+
+# Temporary files
+
+tmp/
+temp/
+*.tmp

@@ -1,0 +1,58 @@
+# Host Update Operations Template
+# Management server: mgmt-server-01, Domain: General
+
+management_servers:
+  - mgmt_name: "mgmt-server-01"
+    domains:
+      - name: "General"
+        operations:
+          # Update host by name
+          - operation: "update"
+            type: "host"
+            key:
+              name: "web-server-01"
+            data:
+              comments: "Updated: Web server maintenance completed"
+              color: "blue"
+              # ip-address and groups preserved
+
+          # Update host by IP address
+          - operation: "update"
+            type: "host"
+            key:
+              ip-address: "192.168.1.20"
+            data:
+              comments: "Updated: Application server upgraded"
+              groups: ["AppServers", "Production", "Updated"]
+              # name, ip-address, color preserved
+
+          # Update host by UID
+          - operation: "update"
+            type: "host"
+            key:
+              uid: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+            data:
+              comments: "Updated via UID reference"
+              color: null
+              # All other fields preserved, color reset to default
+
+          # Remove groups from host
+          - operation: "update"
+            type: "host"
+            key:
+              name: "temp-server"
+            data:
+              comments: "Removed from production groups"
+              groups: []
+              # name, ip-address, color preserved
+
+          # Update multiple fields
+          - operation: "update"
+            type: "host"
+            key:
+              name: "db-server-01"
+            data:
+              comments: "Database server - high availability config"
+              color: "orange"
+              groups: ["DatabaseServers", "Production", "HA"]
+              # ip-address preserved

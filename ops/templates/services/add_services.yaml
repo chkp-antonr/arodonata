@@ -1,0 +1,35 @@
+# Service Add Operations Template
+# Management server: mgmt-server-01, Domain: General
+
+management_servers:
+  - mgmt_name: "mgmt-server-01"
+    domains:
+      - name: "General"
+        operations:
+          - operation: "add"
+            type: "tcp-service"
+            data:
+              name: "TCP_8080"
+              port: "8080"
+              comments: "Custom web service port"
+
+          - operation: "add"
+            type: "udp-service"
+            data:
+              name: "UDP_2000-2026"
+              port: "2000-2026"
+              comments: "Custom UDP range"
+
+          - operation: "add"
+            type: "icmp-service"
+            data:
+              name: "ICMP_8"
+              icmp-type: 8
+              comments: "Echo request"
+
+          - operation: "add"
+            type: "service-group"
+            data:
+              name: "Web-Services"
+              members: ["TCP_8080"]
+              comments: "Custom web services"

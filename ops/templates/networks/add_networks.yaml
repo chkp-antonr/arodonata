@@ -1,0 +1,69 @@
+# Network Add Operations Template
+# Management server: mgmt-server-01, Domain: General
+
+management_servers:
+  - mgmt_name: "mgmt-server-01"
+    domains:
+      - name: "General"
+        operations:
+          # Add simple network with error on duplicate
+          - operation: "add"
+            type: "network"
+            data:
+              name: "Web-Network"
+              subnet: "192.168.10.0"
+              mask-length: 24
+              comments: "Web servers network segment"
+              color: "forest green"
+              groups: ["WebNetworks", "Production"]
+            on_name_conflict: "error"
+            on_ip_conflict: "error"
+
+          # Add network with name conflict handling
+          - operation: "add"
+            type: "network"
+            data:
+              name: "App-Network"
+              subnet: "192.168.20.0"
+              mask-length: 24
+              comments: "Application servers network"
+              color: "blue"
+              groups: ["AppNetworks", "Production"]
+
+          # Add network allowing duplicates
+          - operation: "add"
+            type: "network"
+            data:
+              name: "DB-Network"
+              subnet: "192.168.30.0"
+              mask-length: 24
+              comments: "Database servers network"
+              color: "red"
+              groups: ["DatabaseNetworks", "Production"]
+            on_ip_conflict: "create_new"
+
+          # Add DMZ network
+          - operation: "add"
+            type: "network"
+            data:
+              name: "DMZ-Network"
+              subnet: "192.168.100.0"
+              mask-length: 24
+              comments: "Demilitarized zone"
+              color: "orange"
+              groups: ["DMZ", "External"]
+            on_name_conflict: "error"
+            on_ip_conflict: "error"
+
+          # Add management network
+          - operation: "add"
+            type: "network"
+            data:
+              name: "Management-Network"
+              subnet: "192.168.200.0"
+              mask-length: 24
+              comments: "Network management infrastructure"
+              color: "purple"
+              groups: ["Management", "Internal"]
+            on_name_conflict: "error"
+            on_ip_conflict: "error"

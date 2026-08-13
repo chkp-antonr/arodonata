@@ -1,0 +1,973 @@
+"""High-level object cache operations."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import func, select
+
+from ..core import RefreshMode
+from ..logger import lazy_logger
+from ..utils.helpers import to_db_datetime, utc_now_naive
+from .database import DatabaseManager
+from .models import CPObject, LastPublishedSession
+from .repository import CacheRepository
+
+if TYPE_CHECKING:
+    from ..api.client import ArodonataClient
+
+log = lazy_logger("arodonata.cache.object_service")
+
+
+# ---------------------------------------------------------------------------
+# SearchType enum and input classification
+# ---------------------------------------------------------------------------
+
+
+class SearchType(StrEnum):
+    """Classification of search input."""
+
+    HOST = "host"
+    NETWORK = "network"
+    RANGE = "address-range"
+    NAME = "name"
+
+
+# Regex patterns for input classification
+_IP_RANGE_RE = re.compile(r"^(\d{1,3}(?:\.\d{1,3}){3})\s*-\s*(\d{1,3}(?:\.\d{1,3}){3})$")
+_NETWORK_RE = re.compile(r"^(\d{1,3}(?:\.\d{1,3}){3})/(\d{1,3}(?:\.\d{1,3}){0,3}|\d{1,2})$")
+_IPV4_RE = re.compile(
+    r"^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+    r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$"
+)
+
+
+def classify_input(raw: str) -> tuple[SearchType, str]:
+    """Classify search input and return (SearchType, cleaned_input).
+
+    Args:
+        raw: User input string (IP, network, range, or name).
+
+    Returns:
+        Tuple of (SearchType, cleaned_input).
+
+    Examples:
+        >>> classify_input("127.0.0.1")
+        (SearchType.HOST, '127.0.0.1')
+        >>> classify_input("192.168.1.0/24")
+        (SearchType.NETWORK, '192.168.1.0/24')
+        >>> classify_input("10.0.0.1-10.0.0.10")
+        (SearchType.RANGE, '10.0.0.1-10.0.0.10')
+        >>> classify_input("web-server-01")
+        (SearchType.NAME, 'web-server-01')
+    """
+    text = raw.strip()
+
+    if _IP_RANGE_RE.match(text):
+        return SearchType.RANGE, text
+
+    if _NETWORK_RE.match(text):
+        return SearchType.NETWORK, text
+
+    if _IPV4_RE.match(text):
+        return SearchType.HOST, text
+
+    return SearchType.NAME, text
+
+
+# ---------------------------------------------------------------------------
+# Result data classes
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class GroupNode:
+    """A node in the group membership tree."""
+
+    uid: str
+    name: str
+    domain: str
+    depth: int
+    children: list[GroupNode] | None = None
+
+    def __post_init__(self) -> None:
+        if self.children is None:
+            self.children = []
+
+
+@dataclass
+class SearchResult:
+    """Search result for a single term."""
+
+    search_term: str
+    search_type: SearchType
+    objects: list[CPObject]
+    memberships: dict[str, list[GroupNode]] | None = None
+
+
+# ---------------------------------------------------------------------------
+# ObjectService
+# ---------------------------------------------------------------------------
+
+
+class ObjectService:
+    """High-level object cache operations.
+
+    Provides search and refresh functionality with cache-first queries,
+    API fallback, and SSE streaming for progress tracking.
+    """
+
+    # Object types to fetch from API
+    OBJECT_TYPES = ["host", "network", "address-range", "group"]
+
+    def __init__(
+        self,
+        db_manager: DatabaseManager,
+        client: ArodonataClient,
+    ) -> None:
+        """Initialize ObjectService.
+
+        Args:
+            db_manager: DatabaseManager instance.
+            client: ArodonataClient instance for API fallback.
+        """
+        self._db = db_manager
+        self._cache = CacheRepository(db_manager)
+        self._client = client
+
+    async def _fetch_objects_from_db(
+        self,
+        search_type: SearchType,
+        cleaned: str,
+        mgmt_names: list[str] | None,
+        domain_names: list[str] | None,
+    ) -> list[CPObject]:
+        """Fetch objects from cache based on search type."""
+        objects: list[CPObject] = []
+
+        if search_type == SearchType.HOST:
+            objects = await self._cache.get_objects_by_ip(
+                ip_address=cleaned,
+                mgmt_names=mgmt_names,
+                domain_names=domain_names,
+            )
+        elif search_type == SearchType.NETWORK:
+            objects = await self._cache.get_objects_by_subnet(
+                subnet=cleaned,
+                mgmt_names=mgmt_names,
+                domain_names=domain_names,
+            )
+        elif search_type == SearchType.RANGE:
+            if "-" in cleaned:
+                start_ip, end_ip = cleaned.split("-", 1)
+                start_ip = start_ip.strip()
+                end_ip = end_ip.strip()
+
+                objects = await self._cache.get_objects_in_ip_range(
+                    start_ip=start_ip,
+                    end_ip=end_ip,
+                    mgmt_names=mgmt_names,
+                    domain_names=domain_names,
+                )
+        elif search_type == SearchType.NAME:
+            objects = await self._cache.get_objects_by_name(
+                name=cleaned,
+                mgmt_names=mgmt_names,
+                domain_names=domain_names,
+            )
+        return objects
+
+    async def search_objects(
+        self,
+        search_input: str,
+        mgmt_names: list[str] | None = None,
+        domain_names: list[str] | None = None,
+        max_depth: int = 2,
+    ) -> AsyncIterator[SearchResult]:
+        """Search for objects by IP, name, UID, or type.
+
+        Args:
+            search_input: Comma-separated search terms.
+            mgmt_names: Optional management server filter.
+            domain_names: Optional domain filter.
+            max_depth: Maximum depth for group membership traversal.
+
+        Yields:
+            SearchResult for each search term.
+        """
+        # Parse comma-separated input
+        terms = [t.strip() for t in search_input.split(",") if t.strip()]
+
+        if not terms:
+            yield SearchResult(
+                search_term=search_input,
+                search_type=SearchType.NAME,
+                objects=[],
+            )
+            return
+
+        # Get target management servers
+        target_mgmt_names = mgmt_names or self._client.get_mgmt_names()
+
+        if not target_mgmt_names:
+            log().warning("No management servers configured for search")
+            yield SearchResult(
+                search_term=search_input,
+                search_type=SearchType.NAME,
+                objects=[],
+            )
+            return
+
+        # Search for each term
+        for term in terms:
+            # Classify the search input
+            search_type, cleaned = classify_input(term)
+
+            # Query cache based on search type
+            objects = await self._fetch_objects_from_db(search_type, cleaned, target_mgmt_names, domain_names)
+
+            # Resolve group memberships if objects found
+            memberships: dict[str, list[GroupNode]] | None = None
+            if objects and max_depth > 0:
+                memberships = {}
+                for obj in objects:
+                    obj_groups = await self._resolve_group_memberships(
+                        obj_uid=obj.uid,
+                        mgmt_name=obj.mgmt_name,
+                        domain_name=obj.domain_name,
+                        max_depth=max_depth,
+                    )
+                    if obj_groups:
+                        memberships[obj.uid] = obj_groups
+
+            yield SearchResult(
+                search_term=term,
+                search_type=search_type,
+                objects=objects,
+                memberships=memberships if memberships else None,
+            )
+
+    async def refresh_objects(
+        self,
+        mgmt_names: list[str] | None = None,
+        domain_names: list[str] | None = None,
+        mode: str = "force",  # RefreshMode value
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Refresh object cache from API.
+
+        Args:
+            mgmt_names: Optional management server filter.
+            domain_names: Optional domain filter.
+            mode: Refresh mode (skip/check/force).
+
+        Yields:
+            Progress dictionaries with keys:
+                - message: str - Progress message
+                - mgmt_name: str - Management server name
+                - domain_name: str - Domain name
+                - object_type: str - Type being fetched
+                - count: int - Number of objects processed
+                - total: int - Total objects to process
+        """
+        # Parse refresh mode
+        try:
+            refresh_mode = RefreshMode(mode)
+        except ValueError:
+            log().warning(f"Invalid refresh mode '{mode}', defaulting to 'skip'")
+            refresh_mode = RefreshMode.SKIP
+
+        # Handle SKIP mode
+        if refresh_mode == RefreshMode.SKIP:
+            yield {
+                "message": "Refresh skipped (mode=skip)",
+                "status": "skipped",
+            }
+            return
+
+        # Get target management servers
+        target_mgmt_names = mgmt_names or self._client.get_mgmt_names()
+
+        if not target_mgmt_names:
+            yield {
+                "message": "No management servers available",
+                "status": "error",
+            }
+            return
+
+        log().info(f"Refreshing object cache for {len(target_mgmt_names)} server(s), mode={refresh_mode.value}")
+
+        # Process each management server
+        for mgmt_name in target_mgmt_names:
+            async for progress in self._refresh_mgmt_server(
+                mgmt_name=mgmt_name,
+                domain_names=domain_names,
+                mode=refresh_mode,
+            ):
+                yield progress
+
+    async def _refresh_mgmt_server(
+        self,
+        mgmt_name: str,
+        domain_names: list[str] | None,
+        mode: RefreshMode,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Refresh objects for a single management server.
+
+        Args:
+            mgmt_name: Management server name.
+            domain_names: Optional domain filter.
+            mode: Refresh mode.
+
+        Yields:
+            Progress dictionaries.
+        """
+        yield {
+            "message": f"Processing {mgmt_name}",
+            "mgmt_name": mgmt_name,
+            "status": "processing_mgmt",
+        }
+
+        # Get domains to refresh
+        domains_to_refresh = await self._get_domains_to_refresh(
+            mgmt_name=mgmt_name,
+            domain_names=domain_names,
+            mode=mode,
+        )
+
+        if not domains_to_refresh:
+            yield {
+                "message": f"No domains to refresh for {mgmt_name}",
+                "mgmt_name": mgmt_name,
+                "status": "no_domains",
+            }
+            return
+
+        log().debug(f"Refreshing {len(domains_to_refresh)} domain(s) for {mgmt_name}")
+
+        # Process each domain
+        for domain_name in domains_to_refresh:
+            async for progress in self._refresh_domain(
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+            ):
+                yield progress
+
+    async def _get_domains_to_refresh(
+        self,
+        mgmt_name: str,
+        domain_names: list[str] | None,
+        mode: RefreshMode,
+    ) -> list[str]:
+        """Get list of domains that need refreshing.
+
+        Args:
+            mgmt_name: Management server name.
+            domain_names: Optional domain filter.
+            mode: Refresh mode.
+
+        Returns:
+            List of domain names to refresh.
+        """
+        # Get all domains for this mgmt server
+        all_domains = await self._cache.get_domains(mgmt_name=mgmt_name)
+
+        # If cache is empty, populate domains from API first
+        if not all_domains:
+            log().debug(f"No domains in cache for {mgmt_name}, fetching from API")
+            try:
+                # Access the domain service through the client
+                if hasattr(self._client, "_domain_service"):
+                    await self._client._domain_service.populate_domain_cache(mgmt_name)
+                    # Now get from cache again
+                    all_domains = await self._cache.get_domains(mgmt_name=mgmt_name)
+                    if all_domains:
+                        log().debug(f"Fetched {len(all_domains)} domain(s) for {mgmt_name}")
+                    else:
+                        log().warning(f"API returned no domains for {mgmt_name}")
+                        return []
+                else:
+                    log().warning(f"Domain service not available for {mgmt_name}")
+                    return []
+            except Exception as e:
+                log().exception(f"Failed to populate domains for {mgmt_name}: {e}")
+                return []
+
+        if not all_domains:
+            log().warning(f"No domains found for {mgmt_name}")
+            return []
+
+        # Filter by domain_names if specified
+        if domain_names:
+            filtered_domains = [d for d in all_domains if d.domain_name in domain_names]
+        else:
+            filtered_domains = all_domains
+
+        # For FORCE mode, refresh all filtered domains
+        if mode == RefreshMode.FORCE:
+            return [d.domain_name for d in filtered_domains]
+
+        # For CHECK mode, filter by staleness
+        stale_domains = []
+        for domain in filtered_domains:
+            if await self._is_domain_stale(mgmt_name, domain.domain_name):
+                stale_domains.append(domain.domain_name)
+
+        return stale_domains
+
+    async def _resolve_group_memberships(
+        self,
+        obj_uid: str,
+        mgmt_name: str,
+        domain_name: str,
+        max_depth: int = 2,
+        current_depth: int = 0,
+        visited: set[str] | None = None,
+    ) -> list[GroupNode]:
+        """Resolve group memberships for an object.
+
+        Args:
+            obj_uid: Object UID to find memberships for.
+            mgmt_name: Management server name.
+            domain_name: Domain name.
+            max_depth: Maximum depth to traverse.
+            current_depth: Current depth in recursion.
+            visited: Set of visited UIDs to avoid cycles.
+
+        Returns:
+            List of GroupNode objects representing group memberships.
+        """
+        if visited is None:
+            visited = set()
+
+        # Prevent infinite recursion
+        if current_depth >= max_depth:
+            return []
+
+        # Add current UID to visited set
+        visited.add(obj_uid)
+
+        # Find groups containing this object
+        groups = await self._cache.get_objects_by_members(
+            member_uid=obj_uid,
+            mgmt_names=[mgmt_name],
+            domain_names=[domain_name],
+        )
+
+        if not groups:
+            return []
+
+        # Build group nodes
+        result = []
+        for group in groups:
+            # Skip if we've already visited this group (avoid cycles)
+            if group.uid in visited:
+                continue
+
+            node = GroupNode(
+                uid=group.uid,
+                name=group.name,
+                domain=group.domain_name,
+                depth=current_depth,
+                children=[],
+            )
+
+            # Recursively find parent groups
+            parent_groups = await self._resolve_group_memberships(
+                obj_uid=group.uid,
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                max_depth=max_depth,
+                current_depth=current_depth + 1,
+                visited=visited.copy(),
+            )
+
+            if parent_groups:
+                node.children = parent_groups
+
+            result.append(node)
+
+        return result
+
+    async def _is_domain_stale(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+    ) -> bool:
+        """Check if a domain has stale object cache based on Last Published Session.
+
+        Compares the last publish time from the API with the cached value.
+        If no cached value or API value is newer, domain is considered stale.
+
+        Args:
+            mgmt_name: Management server name.
+            domain_name: Domain name.
+
+        Returns:
+            True if domain is stale (needs refresh), False otherwise.
+        """
+        # 1. Check if there are any cached objects for this domain
+        # This is a safety check: if objects are missing entirely, it's definitely stale
+        count_stmt = select(func.count()).where(
+            CPObject.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+            CPObject.domain_name == domain_name,  # type: ignore[arg-type]
+        )
+        async with self._cache._db.session() as session:
+            res = await session.execute(count_stmt)
+            count = res.scalar() or 0
+
+        if count == 0:
+            log().debug(f"Domain {mgmt_name}/{domain_name} is stale (no cached objects)")
+            return True
+
+        # 2. Check LastPublishedSession comparison
+        return await self._compare_published_times(mgmt_name, domain_name)
+
+    async def _compare_published_times(self, mgmt_name: str, domain_name: str) -> bool:
+        """Compare the API's last-published-session time to the cached value.
+
+        Args:
+            mgmt_name: Management server name.
+            domain_name: Domain name.
+
+        Returns:
+            True if the API's published time is newer than the cached value,
+            or if no cached session exists yet, False otherwise (including
+            when the check cannot be completed).
+        """
+        try:
+            # Fetch last published session from API
+            api_domain = "" if domain_name in ("SMC User", "System Data") else domain_name
+
+            response = await self._client.api_call(
+                mgmt_name=mgmt_name,
+                domain=api_domain,
+                command="show-last-published-session",
+                payload={},
+            )
+
+            if response.success and response.data:
+                # Extract published_time from meta-info
+                meta_info = response.data.get("meta-info", {})
+                last_modify_time = meta_info.get("last-modify-time", {})
+
+                # Parse timestamp (returns naive UTC)
+                api_published_time = self._parse_api_timestamp(last_modify_time)
+
+                if api_published_time:
+                    # Get cached record
+                    cached = await self._cache.get_last_published_session(mgmt_name, domain_name)
+
+                    if not cached:
+                        log().debug(f"Domain {mgmt_name}/{domain_name} is stale (no cached session info)")
+                        return True
+
+                    # Session uid comparison is authoritative: CP publish-times
+                    # have MINUTE resolution, so a publish in the same minute
+                    # as the cached baseline is invisible to the timestamp
+                    # check below. Different uid == something was published.
+                    api_uid = response.data.get("uid", "")
+                    if api_uid and cached.uid:
+                        if api_uid != cached.uid:
+                            log().debug(
+                                f"Domain {mgmt_name}/{domain_name} is stale "
+                                f"(session uid {cached.uid[:8]} -> {api_uid[:8]})"
+                            )
+                            return True
+                        log().debug(f"Domain {mgmt_name}/{domain_name} is up to date (uid match)")
+                        return False
+
+                    if api_published_time > cached.published_time:
+                        log().debug(
+                            f"Domain {mgmt_name}/{domain_name} is stale "
+                            f"(API: {api_published_time}, Cache: {cached.published_time})"
+                        )
+                        return True
+
+                    log().debug(f"Domain {mgmt_name}/{domain_name} is up to date")
+                    return False
+
+        except Exception as e:
+            log().warning(f"Error checking staleness for {mgmt_name}/{domain_name}: {e}")
+            # Fallback: if check fails, assume it's NOT stale to avoid excessive refreshes
+            # unless it was already empty (handled by the cached-objects check)
+            return False
+
+        log().debug(f"Could not determine staleness for {mgmt_name}/{domain_name}, assuming fresh")
+        return False
+
+    def _parse_api_timestamp(self, time_data: dict[str, Any] | None) -> datetime | None:
+        """Parse timestamp from API meta-info.
+
+        Args:
+            time_data: Time data from API meta-info (contains 'iso-8601' or 'posix').
+
+        Returns:
+            Naive datetime for database compatibility, or None.
+        """
+        if not time_data:
+            return None
+
+        # Try ISO-8601
+        iso_time = time_data.get("iso-8601")
+        if iso_time:
+            try:
+                if iso_time.endswith("+0000"):
+                    iso_time = iso_time.replace("+0000", "+00:00")
+                return datetime.fromisoformat(iso_time.replace("Z", "+00:00")).astimezone(UTC).replace(tzinfo=None)
+            except (ValueError, TypeError):
+                pass
+
+        # Try POSIX
+        posix_time = time_data.get("posix")
+        if posix_time:
+            try:
+                return datetime.fromtimestamp(int(posix_time) / 1000, tz=UTC).replace(tzinfo=None)
+            except (ValueError, TypeError, OverflowError):
+                pass
+
+        return None
+
+    async def refresh_last_published_session(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+    ) -> LastPublishedSession | None:
+        """Refresh and upsert the last-published-session record for one domain.
+
+        Makes a single, lightweight `show-last-published-session` API call —
+        does not touch CPObject or Asset caches. Safe to call independently
+        of a full object/asset refresh.
+
+        Args:
+            mgmt_name: Management server name.
+            domain_name: Domain name.
+
+        Returns:
+            The upserted LastPublishedSession record, or None if the API
+            call failed or returned no usable timestamp.
+        """
+        try:
+            api_domain = "" if domain_name in ("SMC User", "System Data") else domain_name
+
+            response = await self._client.api_call(
+                mgmt_name=mgmt_name,
+                domain=api_domain,
+                command="show-last-published-session",
+                payload={},
+            )
+
+            if response.success and response.data:
+                data = response.data
+                meta_info = data.get("meta-info", {})
+                last_modify_time = meta_info.get("last-modify-time", {})
+                published_time = self._parse_api_timestamp(last_modify_time)
+
+                if published_time:
+                    record = LastPublishedSession(
+                        id=f"{mgmt_name}:{domain_name}",
+                        mgmt_name=mgmt_name,
+                        domain_name=domain_name,
+                        published_time=published_time,
+                        uid=data.get("uid", ""),
+                        name=data.get("name", ""),
+                        ip_address=data.get("ip-address", ""),
+                        creator=data.get("creator", ""),
+                        description=data.get("description", ""),
+                    )
+                    await self._cache.upsert_last_published_session(record)
+                    return record
+        except Exception as e:
+            log().warning(f"Failed to update LastPublishedSession for {mgmt_name}/{domain_name}: {e}")
+
+        return None
+
+    async def _refresh_domain(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Refresh all objects for a single domain.
+
+        Args:
+            mgmt_name: Management server name.
+            domain_name: Domain name.
+
+        Yields:
+            Progress dictionaries.
+        """
+        log().info(f"Refreshing objects for {mgmt_name}/{domain_name}")
+
+        yield {
+            "message": f"Refreshing {mgmt_name}/{domain_name}",
+            "mgmt_name": mgmt_name,
+            "domain_name": domain_name,
+            "status": "refreshing_domain",
+        }
+
+        # Delete ALL existing objects for this domain before fetching new ones
+        deleted = await self._cache.delete_domain_objects(mgmt_name, domain_name)
+        if deleted:
+            log().debug(f"Cleared {deleted} stale objects for {mgmt_name}/{domain_name}")
+
+        total_objects = 0
+
+        # Fetch objects for each type
+        for object_type in self.OBJECT_TYPES:
+            async for progress in self._fetch_objects_by_type(
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                object_type=object_type,
+            ):
+                if "count" in progress:
+                    total_objects += progress["count"]
+                yield progress
+
+        yield {
+            "message": f"Complete: {mgmt_name}/{domain_name} - {total_objects} object(s)",
+            "mgmt_name": mgmt_name,
+            "domain_name": domain_name,
+            "status": "domain_complete",
+            "total": total_objects,
+        }
+
+        # Update LastPublishedSession after successful refresh
+        await self.refresh_last_published_session(mgmt_name, domain_name)
+
+    async def _fetch_objects_by_type(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        object_type: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Fetch objects of a specific type from API and update cache.
+
+        Args:
+            mgmt_name: Management server name.
+            domain_name: Domain name.
+            object_type: Object type (host, network, etc.).
+
+        Yields:
+            Progress dictionaries.
+        """
+        log().debug(f"Fetching {object_type} objects for {mgmt_name}/{domain_name}")
+
+        # Build API command
+        command = f"show-{object_type}s"
+
+        try:
+            # Query API
+            result = await self._client.api_query(
+                mgmt_name=mgmt_name,
+                command=command,
+                domain=domain_name,
+                details_level="full",
+            )
+
+            if not result.success:
+                yield {
+                    "message": f"API error fetching {object_type}s: {result.message}",
+                    "mgmt_name": mgmt_name,
+                    "domain_name": domain_name,
+                    "object_type": object_type,
+                    "status": "api_error",
+                    "error": result.message,
+                }
+                return
+
+            objects = result.objects
+            count = len(objects)
+
+            log().debug(f"API returned {count} {object_type}(s) for {mgmt_name}/{domain_name}")
+
+            # Convert API objects to CPObject models
+            cp_objects = []
+            for api_obj in objects:
+                cp_obj = self._api_object_to_cpobject(
+                    api_obj=api_obj,
+                    mgmt_name=mgmt_name,
+                    domain_name=domain_name,
+                )
+                if cp_obj:
+                    cp_objects.append(cp_obj)
+
+            # Upsert new objects
+            upserted = await self._cache.upsert_objects(cp_objects)
+
+            yield {
+                "message": f"Fetched {upserted} {object_type}(s) for {mgmt_name}/{domain_name}",
+                "mgmt_name": mgmt_name,
+                "domain_name": domain_name,
+                "object_type": object_type,
+                "count": upserted,
+                "status": "type_complete",
+            }
+
+        except Exception as e:
+            log().exception(f"Error fetching {object_type}s for {mgmt_name}/{domain_name}")
+            yield {
+                "message": f"Exception fetching {object_type}s: {str(e)}",
+                "mgmt_name": mgmt_name,
+                "domain_name": domain_name,
+                "object_type": object_type,
+                "status": "exception",
+                "error": str(e),
+            }
+
+    def _extract_ip_fields(self, obj_type: str, api_obj: dict[str, Any]) -> tuple[str, str, str, str, str]:
+        ipv4_address = ""
+        subnet4 = ""
+        subnet_mask = ""
+        ipv4_address_first = ""
+        ipv4_address_last = ""
+
+        if obj_type == "host":
+            ipv4_address = api_obj.get("ipv4-address", "")
+        elif obj_type == "network":
+            subnet4 = api_obj.get("subnet4", "")
+            subnet_mask = api_obj.get("subnet-mask", "")
+        elif obj_type == "address-range":
+            ipv4_address_first = api_obj.get("ipv4-address-first", "")
+            ipv4_address_last = api_obj.get("ipv4-address-last", "")
+
+        return ipv4_address, subnet4, subnet_mask, ipv4_address_first, ipv4_address_last
+
+    def _extract_group_members(self, obj_type: str, api_obj: dict[str, Any]) -> str:
+        if obj_type != "group":
+            return ""
+
+        members_list = api_obj.get("members", [])
+        if not isinstance(members_list, list):
+            return ""
+
+        member_uids = []
+        for m in members_list:
+            if isinstance(m, str):
+                member_uids.append(m)
+            elif isinstance(m, dict):
+                member_uids.append(m.get("uid", ""))
+
+        return ",".join(f'"{uid}"' for uid in member_uids if uid)
+
+    def _extract_tags(self, api_obj: dict[str, Any]) -> str:
+        tags_list = api_obj.get("tags", [])
+        if not isinstance(tags_list, list):
+            return ""
+
+        tag_names = []
+        for t in tags_list:
+            if isinstance(t, str):
+                tag_names.append(t)
+            elif isinstance(t, dict):
+                tag_names.append(t.get("name", ""))
+        return ",".join(tag_names)
+
+    def _api_object_to_cpobject(
+        self,
+        api_obj: dict[str, Any],
+        mgmt_name: str,
+        domain_name: str,
+    ) -> CPObject | None:
+        """Convert API object response to CPObject model.
+
+        Args:
+            api_obj: Raw API object dictionary.
+            mgmt_name: Management server name.
+            domain_name: Domain name.
+
+        Returns:
+            CPObject instance or None if conversion fails.
+        """
+        try:
+            # Extract common fields
+            uid = api_obj.get("uid", "")
+            name = api_obj.get("name", "")
+            obj_type = api_obj.get("type", "")
+
+            if not uid or not name:
+                log().warning(f"API object missing uid or name: {api_obj}")
+                return None
+
+            # Build compound key
+            obj_id = f"{mgmt_name}:{domain_name}:{uid}"
+
+            # Extract IP fields
+            ipv4_address, subnet4, subnet_mask, ipv4_address_first, ipv4_address_last = self._extract_ip_fields(
+                obj_type, api_obj
+            )
+
+            # Extract group members
+            members = self._extract_group_members(obj_type, api_obj)
+
+            # Extract other common fields
+            comments = api_obj.get("comments", "")
+            tags = self._extract_tags(api_obj)
+
+            color = api_obj.get("color", "")
+
+            # Extract new fields (interfaces, nat_settings, version, cluster_uid, original_domain_uid)
+            interfaces = api_obj.get("interfaces")  # Returns list or None
+            nat_settings = api_obj.get("nat-settings")  # Returns dict or None
+            version = api_obj.get("version", "")
+            cluster_uid = api_obj.get("cluster-uid", "")
+            domain_data = api_obj.get("domain", {})
+            if isinstance(domain_data, dict):
+                original_domain_uid = domain_data.get("uid", "")
+            else:
+                original_domain_uid = ""
+
+            # Extract timestamps
+            creation_time = to_db_datetime(api_obj.get("creation-time"))
+            last_modify_time = to_db_datetime(api_obj.get("last-modify-time"))
+
+            # Get original domain (for global objects)
+            original_domain = api_obj.get("domain", {}).get("name", "")
+
+            # Create CPObject
+            cp_obj = CPObject(
+                id=obj_id,
+                uid=uid,
+                name=name,
+                type=obj_type,
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                original_domain=original_domain,
+                ipv4_address=ipv4_address,
+                subnet4=subnet4,
+                subnet_mask=subnet_mask,
+                ipv4_address_first=ipv4_address_first,
+                ipv4_address_last=ipv4_address_last,
+                members=members,
+                comments=comments,
+                tags=tags,
+                color=color,
+                interfaces=interfaces,
+                nat_settings=nat_settings,
+                version=version,
+                cluster_uid=cluster_uid,
+                original_domain_uid=original_domain_uid,
+                creation_time=creation_time,
+                last_modify_time=last_modify_time,
+                update_time=utc_now_naive(),
+                raw_data=api_obj,
+            )
+
+            return cp_obj
+
+        except Exception as e:
+            log().exception(f"Error converting API object to CPObject: {e}")
+            return None
+
+
+__all__ = [
+    "ObjectService",
+    "SearchType",
+    "classify_input",
+    "SearchResult",
+    "GroupNode",
+    "RefreshMode",
+]

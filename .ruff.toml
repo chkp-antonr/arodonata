@@ -1,0 +1,46 @@
+line-length = 120
+target-version = "py313"
+
+[lint]
+exclude = [
+    "docs/.Notes/**",
+]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "C901", # mccabe
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    # "TCH", # flake8-type-checking
+]
+
+ignore = [
+    "E501", # line length handled by ruff format
+    "D107", # Missing docstring in __init__
+    "D202", # No blank lines after docstring
+    "D203", # 1 blank line before class docstring
+    "D213", # Multi-line docstring summary should start at the second line
+    "D401", # First line should be in imperative mood
+    "D413", # Missing blank line after last section
+]
+
+# Avoid trying to fix flake8-bugbear (`B`) violations.
+unfixable = ["B"]
+
+[lint.per-file-ignores]
+# Examples deliberately call load_dotenv() before importing arodonata, since
+# settings are read from the environment at import/construction time.
+"examples/*.py" = ["E402"]
+
+[lint.mccabe]
+max-complexity = 10
+
+[lint.flake8-type-checking]
+strict = false
+
+[format]
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+line-ending = "auto"

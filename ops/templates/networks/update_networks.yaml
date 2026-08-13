@@ -1,0 +1,58 @@
+# Network Update Operations Template
+# Management server: mgmt-server-01, Domain: General
+
+management_servers:
+  - mgmt_name: "mgmt-server-01"
+    domains:
+      - name: "General"
+        operations:
+          # Update network by name
+          - operation: "update"
+            type: "network"
+            key:
+              name: "Web-Network"
+            data:
+              comments: "Updated: Expanded web network segment"
+              mask-length: 23
+              # subnet, color, groups preserved
+
+          # Update network by UID
+          - operation: "update"
+            type: "network"
+            key:
+              uid: "c3d4e5f6-a7b8-9012-cdef-345678901234"
+            data:
+              comments: "Updated via UID reference"
+              color: null
+              # All other fields preserved, color reset to default
+
+          # Update network comment and groups
+          - operation: "update"
+            type: "network"
+            key:
+              name: "App-Network"
+            data:
+              comments: "Updated: Application network with new subnet allocation"
+              groups: ["AppNetworks", "Production", "Expanded"]
+              # subnet, mask-length, color preserved
+
+          # Remove groups from network
+          - operation: "update"
+            type: "network"
+            key:
+              name: "Temp-Network"
+            data:
+              comments: "Network decommissioned - removed from groups"
+              groups: []
+              # subnet, mask-length, color preserved
+
+          # Update multiple fields
+          - operation: "update"
+            type: "network"
+            key:
+              name: "DB-Network"
+            data:
+              comments: "Database network - high availability expanded"
+              color: "orange"
+              groups: ["DatabaseNetworks", "Production", "HA", "Critical"]
+              # subnet, mask-length preserved

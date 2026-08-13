@@ -1,0 +1,93 @@
+# Network Group Add Operations Template
+# Management server: mgmt-server-01, Domain: General
+
+management_servers:
+  - mgmt_name: "mgmt-server-01"
+    domains:
+      - name: "General"
+        operations:
+          # Add group for web infrastructure
+          - operation: "add"
+            type: "network-group"
+            data:
+              name: "Web-Infrastructure"
+              comments: "All web infrastructure components"
+              color: "forest green"
+              members:
+                [
+                  "web-server-01",
+                  "web-server-02",
+                  "Web-Network",
+                  "Web-VIP-Range",
+                ]
+              groups: ["Production", "Web"]
+            on_name_conflict: "error"
+            on_ip_conflict: "error"
+
+          # Add group for application servers
+          - operation: "add"
+            type: "network-group"
+            data:
+              name: "App-Servers"
+              comments: "Application server group"
+              color: "blue"
+              members:
+                [
+                  "app-server-01",
+                  "app-server-02",
+                  "App-Network",
+                  "App-Server-Range",
+                ]
+              groups: ["Production", "Applications"]
+
+          # Add group allowing duplicates
+          - operation: "add"
+            type: "network-group"
+            data:
+              name: "Database-Servers"
+              comments: "Database server group"
+              color: "red"
+              members:
+                [
+                  "db-server-01",
+                  "db-server-02",
+                  "DB-Network",
+                  "DB-Server-Range",
+                ]
+              groups: ["Production", "Database"]
+            on_ip_conflict: "create_new"
+
+          # Add DMZ group
+          - operation: "add"
+            type: "network-group"
+            data:
+              name: "DMZ-Infrastructure"
+              comments: "DMZ infrastructure components"
+              color: "orange"
+              members: ["DMZ-Network", "DMZ-Public-Range"]
+              groups: ["External", "DMZ"]
+            on_name_conflict: "error"
+            on_ip_conflict: "error"
+
+          # Add management group
+          - operation: "add"
+            type: "network-group"
+            data:
+              name: "Management-Infrastructure"
+              comments: "Network management components"
+              color: "purple"
+              members: ["Management-Network", "Management-IP-Range"]
+              groups: ["Internal", "Management"]
+            on_name_conflict: "error"
+            on_ip_conflict: "error"
+
+          # Add empty group for future use
+          - operation: "add"
+            type: "network-group"
+            data:
+              name: "Future-Servers"
+              comments: "Placeholder for future server infrastructure"
+              color: "gray"
+              members: []
+              groups: ["Planning"]
+            on_ip_conflict: "create_new"

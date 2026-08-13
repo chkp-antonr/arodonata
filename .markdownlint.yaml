@@ -1,0 +1,10 @@
+MD003: false # heading-style
+MD013: false
+MD024: false # /no-duplicate-heading: Multiple headings with the same content
+MD025: false # Multiple top-level headings in the same documentmarkdownlint
+MD029: false
+MD033: false # /no-inline-html: Inline HTML [Element: div]
+MD036: false # /no-emphasis-as-heading: Emphasis used instead of a heading
+MD040: false # /fenced-code-language: Fenced code blocks should have a language specified
+MD041: false # /first-line-heading/first-line-h1: First line in a file should be a top-leve
+MD060: false # /table-column-style: Table column style [Table pipe has extra space to the right for style "compact"]

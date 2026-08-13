@@ -1,0 +1,60 @@
+# Address Range Update Operations Template
+# Management server: mgmt-server-01, Domain: General
+
+management_servers:
+  - mgmt_name: "mgmt-server-01"
+    domains:
+      - name: "General"
+        operations:
+          # Update address range by name
+          - operation: "update"
+            type: "address-range"
+            key:
+              name: "Web-VIP-Range"
+            data:
+              comments: "Updated: Expanded VIP range for high availability"
+              ip-address-last: "192.168.10.120"
+              # ip-address-first, color, groups preserved
+
+          # Update address range by UID
+          - operation: "update"
+            type: "address-range"
+            key:
+              uid: "f6a7b8c9-d0e1-2345-f012-678901234567"
+            data:
+              comments: "Updated via UID reference"
+              color: null
+              # All other fields preserved, color reset to default
+
+          # Update range with different IP allocation
+          - operation: "update"
+            type: "address-range"
+            key:
+              name: "App-Server-Range"
+            data:
+              comments: "Updated: Application range expanded for growth"
+              ip-address-first: "192.168.20.40"
+              ip-address-last: "192.168.20.120"
+              # color, groups preserved
+
+          # Remove groups from range
+          - operation: "update"
+            type: "address-range"
+            key:
+              name: "Temp-Range"
+            data:
+              comments: "Range decommissioned - removed from groups"
+              groups: []
+              # ip-address-first, ip-address-last, color preserved
+
+          # Update multiple fields
+          - operation: "update"
+            type: "address-range"
+            key:
+              name: "DB-Server-Range"
+            data:
+              comments: "Database server range - expanded for clustering"
+              color: "orange"
+              groups: ["DB-Ranges", "Production", "HA", "Critical"]
+              ip-address-last: "192.168.30.60"
+              # ip-address-first preserved

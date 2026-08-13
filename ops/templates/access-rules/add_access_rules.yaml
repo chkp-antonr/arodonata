@@ -1,0 +1,35 @@
+management_servers:
+  - mgmt_name: "management_server_name"
+    domains:
+      - name: "Global"
+        operations:
+          - operation: "add"
+            type: "access-rule"
+            layer: "Network"
+            position: 1 # Insert at position 1 (shifts existing rules down)
+            # OR use one of these position values instead:
+            # position: "top"  # Add to top of layer
+            # position: "bottom"  # Add to bottom of layer
+            # position: {top: "My Section"}  # Add to top of section
+            # position: {bottom: "My Section"}  # Add to bottom of section
+            data:
+              name: "Allow HTTPS from Internet"
+              enabled: true
+              comments: "Allow HTTPS traffic from Internet to DMZ"
+              source:
+                - "Any"
+              destination:
+                - "DMZ_Servers"
+              service:
+                - "https"
+                - "dns"
+              action: "Accept"
+              track:
+                type: "Log"
+                settings:
+                  packet-capture: false
+                  forensics: false
+              install-on:
+                - "Gateway_Cluster"
+              time: []
+              vpn: "None"

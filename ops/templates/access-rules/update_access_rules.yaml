@@ -1,0 +1,32 @@
+management_servers:
+  - mgmt_name: "management_server_name"
+    domains:
+      - name: "Global"
+        operations:
+          - operation: "update"
+            type: "access-rule"
+            layer: "Network"
+            key:
+              name: "Allow HTTPS from Internet"
+              # uid: "12345678-1234-1234-1234-123456789012"  # Can use UID instead
+              # rule-number: 1  # Can use rule number instead
+            data:
+              name: "Allow HTTPS from Internet - Updated"
+              enabled: false
+              comments: "Updated comment: temporarily disabled"
+              source:
+                - "Internet"
+              destination:
+                - "DMZ_Servers"
+              service:
+                - "https"
+              action: "Accept"
+              track:
+                type: "Log"
+                settings:
+                  packet-capture: false
+                  forensics: false
+              install-on:
+                - "Gateway_Cluster"
+              time: []
+              vpn: "None"

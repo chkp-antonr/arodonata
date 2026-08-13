@@ -1,0 +1,52 @@
+# Host Add Operations Template
+# Management server: mgmt-server-01, Domain: General
+
+management_servers:
+  - mgmt_name: "mgmt-server-01"
+    domains:
+      - name: "General"
+        operations:
+          # Add simple host with error on duplicate
+          - operation: "add"
+            type: "host"
+            data:
+              name: "web-server-01"
+              ip-address: "192.168.1.10"
+              comments: "Primary web server"
+              color: "dark green"
+              groups: ["WebServers", "Production"]
+            on_name_conflict: "error"
+            on_ip_conflict: "error"
+
+          # Add host with IP conflict handling
+          - operation: "add"
+            type: "host"
+            data:
+              name: "web-server-02"
+              ip-address: "192.168.1.11"
+              comments: "Secondary web server"
+              color: "dark green"
+              groups: ["WebServers", "Production"]
+            on_name_conflict: "error"
+            on_ip_conflict: "error"
+
+          # Add host allowing duplicates
+          - operation: "add"
+            type: "host"
+            data:
+              name: "app-server-01"
+              ip-address: "192.168.1.20"
+              comments: "Application server 01"
+              color: "blue"
+              groups: ["AppServers", "Production"]
+            on_ip_conflict: "create_new"
+
+          # Add host with name conflict handling
+          - operation: "add"
+            type: "host"
+            data:
+              name: "db-server-01"
+              ip-address: "192.168.1.30"
+              comments: "Primary database server"
+              color: "red"
+              groups: ["DatabaseServers", "Production"]

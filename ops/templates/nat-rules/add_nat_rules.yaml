@@ -1,0 +1,31 @@
+management_servers:
+  - mgmt_name: "management_server_name"
+    domains:
+      - name: "Global"
+        operations:
+          - operation: "add"
+            type: "nat-rule"
+            package: "Standard"
+            position: 1 # Insert at position 1 (shifts existing rules down)
+            # OR use one of these position values instead:
+            # position: "top"  # Add to top of package
+            # position: "bottom"  # Add to bottom of package
+            # position: {top: "My Section"}  # Add to top of section
+            # position: {bottom: "My Section"}  # Add to bottom of section
+            data:
+              name: "Static NAT for Web Server"
+              enabled: true
+              comments: "Static NAT for public web server"
+              source:
+                - "Any"
+              destination:
+                - "Web_Server_Public"
+              service:
+                - "https"
+                - "http"
+              method: "static"
+              translated-source: "Web_Server_Private"
+              translated-destination: "Web_Server_Public"
+              translated-service: "original"
+              install-on:
+                - "Gateway_Cluster"

@@ -1,0 +1,13 @@
+#!/bin/bash
+# mypy is slow, so it only runs once ruff check (lint) passes clean.
+# ruff format runs regardless -- formatting is never a reason to skip mypy.
+# type checking excluded from tests/ due to extensive mock usage
+#
+# Unset VIRTUAL_ENV so uv always resolves .venv relative to this project's
+# own root, regardless of which absolute mount path (local disk, VM shared
+# folder, etc.) the calling shell activated a venv from.
+unset VIRTUAL_ENV
+
+uv run ruff check --fix src/ tests/ examples/ docs/scripts/ || exit $?
+uv run ruff format src/ tests/ examples/ docs/scripts/
+uv run mypy src/ examples/ scripts/

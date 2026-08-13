@@ -1,0 +1,138 @@
+site_name: Arodonata docs
+site_url: https://chkp-antonr.github.io/arodonata/
+repo_url: https://github.com/chkp-antonr/arodonata
+repo_name: chkp-antonr/arodonata
+edit_uri: blob/master/docs/
+
+exclude_docs: |
+  _*_/*
+  internal/*
+  superpowers/
+  CONTEXT.md
+
+theme:
+  name: "material"
+  favicon: img/arodonata_logo.png
+  logo: img/arodonata_logo.png
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            rendering:
+              show_bases: true
+              show_source: true
+            extra:
+              ignore_init_summary: true
+              merge_init_into_class: true
+              show_root_heading: true
+              show_source: true
+              separate_signature: true
+              line_length: 80
+              show_signature_annotations: true
+              show_symbol_type_heading: true
+              show_symbol_type_toc: true
+              show_inheritance_diagram: true
+  - gen-files:
+      scripts:
+        - docs/scripts/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - git-revision-date-localized:
+      enable_creation_date: true
+      fallback_to_build_date: true
+      exclude:
+        - superpowers/*
+  - minify:
+      minify_html: true
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+      css_class: highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+        - name: ascii
+          class: ascii-diagram
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.snippets:
+      base_path:
+        - "."
+  - attr_list
+  - md_in_html
+  - admonition
+  - toc:
+      permalink: true
+
+extra:
+  mermaid:
+    version: "10.9.1"
+    cdn: "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs"
+
+extra_css:
+  - extra.css
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - getting-started/index.md
+      - getting-started/first-script.md
+      - getting-started/cpcrud.md
+  - Guide:
+      - User Guide: user-guide/cpcrud.md
+      - Configuration: configuration/index.md
+      - Multi-Server Setup: configuration/multi-server.md
+  - Architecture:
+      - architecture/index.md
+      - architecture/cpcrud.md
+      - architecture/ports-and-adapters.md
+      - architecture/caching-and-sync.md
+      - architecture/sessions-and-mdm.md
+  - API Reference: api/
+  - Examples:
+      - examples/index.md
+      - examples/01-basic-queries.md
+      - examples/02-search.md
+      - examples/03-gateway-relationships.md
+      - examples/04-smart-refresh.md
+      - examples/05-rulebase-queries.md
+      - examples/06-crud-operations.md
+      - examples/07-crud-inverse.md
+      - examples/07-session-basics.md
+      - examples/08-otel-smart-refresh.md
+  - Project:
+      - Testing: development/testing.md
+      - Changelog: CHANGELOG.md
+      - License: LICENSE

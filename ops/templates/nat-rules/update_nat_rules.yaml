@@ -1,0 +1,28 @@
+management_servers:
+  - mgmt_name: "management_server_name"
+    domains:
+      - name: "Global"
+        operations:
+          - operation: "update"
+            type: "nat-rule"
+            package: "Standard"
+            key:
+              name: "Static NAT for Web Server"
+              # uid: "12345678-1234-1234-1234-123456789012"  # Can use UID instead
+              # rule-number: 1  # Can use rule number instead
+            data:
+              name: "Static NAT for Web Server - Updated"
+              enabled: false
+              comments: "Updated: temporarily disabled"
+              source:
+                - "Any"
+              destination:
+                - "Web_Server_Public"
+              service:
+                - "https"
+              method: "static"
+              translated-source: "Web_Server_Private"
+              translated-destination: "Web_Server_Public"
+              translated-service: "original"
+              install-on:
+                - "Gateway_Cluster"

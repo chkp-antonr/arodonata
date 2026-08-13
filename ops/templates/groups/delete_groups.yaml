@@ -1,0 +1,47 @@
+# Network Group Delete Operations Template
+# Management server: mgmt-server-01, Domain: General
+
+management_servers:
+  - mgmt_name: "mgmt-server-01"
+    domains:
+      - name: "General"
+        operations:
+          # Delete group by name
+          - operation: "delete"
+            type: "network-group"
+            key:
+              name: "Old-Web-Group"
+
+          # Delete group by UID
+          - operation: "delete"
+            type: "network-group"
+            key:
+              uid: "d0e1f2a3-b4c5-6789-3456-012345678901"
+
+          # Delete multiple groups by name
+          - operation: "delete"
+            type: "network-group"
+            key:
+              name: "Temp-App-Group"
+
+          - operation: "delete"
+            type: "network-group"
+            key:
+              name: "Temp-DB-Group"
+
+          - operation: "delete"
+            type: "network-group"
+            key:
+              name: "Temp-Test-Group"
+
+          # Delete group by UID
+          - operation: "delete"
+            type: "network-group"
+            key:
+              uid: "e1f2a3b4-c5d6-7890-4567-123456789012"
+
+          # Delete planning group
+          - operation: "delete"
+            type: "network-group"
+            key:
+              name: "Old-Planning-Group"
