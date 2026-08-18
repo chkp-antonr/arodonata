@@ -34,6 +34,7 @@ _ENV_VARS = [
     "LOGIN_MAX_RETRIES",
     "LOG_LEVEL",
     "ARODONATA_LOG_LEVEL",
+    "ARODONATA_RATE_LIMIT_SLOT_TIMEOUT",
 ]
 
 
@@ -65,6 +66,7 @@ class TestDefaults:
         assert settings.api_timeout == 120
         assert settings.login_retry_backoff == 5
         assert settings.login_max_retries == 8
+        assert settings.rate_limit_slot_timeout == 90
 
 
 class TestCommaSeparatedParsing:
@@ -177,6 +179,19 @@ class TestFieldConstraints:
     def test_concurrent_limit_within_bounds_ok(self):
         settings = ArodonataSettings(concurrent_limit=20)
         assert settings.concurrent_limit == 20
+
+    def test_rate_limit_slot_timeout_configurable_via_kwarg(self):
+        settings = ArodonataSettings(rate_limit_slot_timeout=120)
+        assert settings.rate_limit_slot_timeout == 120
+
+    def test_rate_limit_slot_timeout_configurable_via_env_alias(self, monkeypatch):
+        monkeypatch.setenv("ARODONATA_RATE_LIMIT_SLOT_TIMEOUT", "150")
+        settings = ArodonataSettings()
+        assert settings.rate_limit_slot_timeout == 150
+
+    def test_rate_limit_slot_timeout_below_minimum_raises(self):
+        with pytest.raises(ValidationError):
+            ArodonataSettings(rate_limit_slot_timeout=0)
 
     def test_negative_session_expire_raises(self):
         with pytest.raises(ValidationError):

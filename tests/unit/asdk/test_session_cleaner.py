@@ -198,6 +198,130 @@ async def test_cleanup_skips_recent_read_write_session():
     mock_transport.discard_session.assert_not_called()
 
 
+async def test_cleanup_discards_stale_read_write_session_with_changes_older_than_7_days():
+    """Read-write session with real pending changes older than 7 days (10080 min) is
+    discarded too -- not just the changes==0 case. Before this, a read-write/in-work
+    session with changes > 0 was NEVER discarded regardless of age, which let sessions
+    accumulate real object locks indefinitely (observed at ~80 days old in practice)."""
+    old_posix = int((datetime.now(UTC) - timedelta(days=10)).timestamp() * 1000)
+    sessions = [
+        {
+            "uid": "sess-rw-stale-changes",
+            "application": "Management API",
+            "connection-mode": "read write",
+            "in-work": True,
+            "changes": 12,
+            "last-login-time": {"posix-millis": old_posix},
+        }
+    ]
+    mock_transport = AsyncMock()
+    mock_transport.show_sessions.return_value = {
+        "success": True,
+        "data": {"objects": sessions},
+        "message": "",
+        "code": "",
+    }
+    mock_transport.discard_session.return_value = {"success": True, "data": {}, "message": "", "code": ""}
+
+    cleaner = _make_cleaner(transport=mock_transport)
+    result = await cleaner.cleanup_stale_sessions("mgmt1", "", "tmp-sid", "10.0.0.1")
+
+    assert result.discarded == 1
+    mock_transport.discard_session.assert_called_once_with("10.0.0.1", "tmp-sid", "sess-rw-stale-changes", None)
+
+
+async def test_cleanup_skips_recent_read_write_session_with_changes():
+    """Read-write session with pending changes younger than 7 days is kept -- real
+    in-progress work gets more grace than an idle (changes==0) read-write session."""
+    recent_posix = int((datetime.now(UTC) - timedelta(days=5)).timestamp() * 1000)
+    sessions = [
+        {
+            "uid": "sess-rw-recent-changes",
+            "application": "Management API",
+            "connection-mode": "read write",
+            "in-work": True,
+            "changes": 12,
+            "last-login-time": {"posix-millis": recent_posix},
+        }
+    ]
+    mock_transport = AsyncMock()
+    mock_transport.show_sessions.return_value = {
+        "success": True,
+        "data": {"objects": sessions},
+        "message": "",
+        "code": "",
+    }
+
+    cleaner = _make_cleaner(transport=mock_transport)
+    result = await cleaner.cleanup_stale_sessions("mgmt1", "", "tmp-sid", "10.0.0.1")
+
+    assert result.discarded == 0
+    assert result.skipped == 1
+    mock_transport.discard_session.assert_not_called()
+
+
+async def test_cleanup_discards_marked_test_session_older_than_10_min_with_changes():
+    """A session named/described with the 'pytest' marker discards after just 10 min,
+    even with real pending changes and read-write/in-work mode -- it doesn't have to
+    wait out the 7-day real-work threshold since it's known to be disposable test data."""
+    old_posix = int((datetime.now(UTC) - timedelta(minutes=30)).timestamp() * 1000)
+    sessions = [
+        {
+            "uid": "sess-test-marked",
+            "application": "Management API",
+            "connection-mode": "read write",
+            "in-work": True,
+            "changes": 5,
+            "name": "pytest-integration-tests",
+            "last-login-time": {"posix-millis": old_posix},
+        }
+    ]
+    mock_transport = AsyncMock()
+    mock_transport.show_sessions.return_value = {
+        "success": True,
+        "data": {"objects": sessions},
+        "message": "",
+        "code": "",
+    }
+    mock_transport.discard_session.return_value = {"success": True, "data": {}, "message": "", "code": ""}
+
+    cleaner = _make_cleaner(transport=mock_transport)
+    result = await cleaner.cleanup_stale_sessions("mgmt1", "", "tmp-sid", "10.0.0.1")
+
+    assert result.discarded == 1
+    mock_transport.discard_session.assert_called_once_with("10.0.0.1", "tmp-sid", "sess-test-marked", None)
+
+
+async def test_cleanup_skips_marked_test_session_younger_than_10_min():
+    """A freshly-created test-marked session (still mid-test) is left alone."""
+    recent_posix = int((datetime.now(UTC) - timedelta(minutes=2)).timestamp() * 1000)
+    sessions = [
+        {
+            "uid": "sess-test-fresh",
+            "application": "Management API",
+            "connection-mode": "read write",
+            "in-work": True,
+            "changes": 5,
+            "description": "Automated pytest integration test session",
+            "last-login-time": {"posix-millis": recent_posix},
+        }
+    ]
+    mock_transport = AsyncMock()
+    mock_transport.show_sessions.return_value = {
+        "success": True,
+        "data": {"objects": sessions},
+        "message": "",
+        "code": "",
+    }
+
+    cleaner = _make_cleaner(transport=mock_transport)
+    result = await cleaner.cleanup_stale_sessions("mgmt1", "", "tmp-sid", "10.0.0.1")
+
+    assert result.discarded == 0
+    assert result.skipped == 1
+    mock_transport.discard_session.assert_not_called()
+
+
 async def test_cleanup_discards_web_api_session():
     """WEB_API sessions (HTTPS API) are treated the same as Management API sessions."""
     old_posix = int((datetime.now(UTC) - timedelta(hours=2)).timestamp() * 1000)

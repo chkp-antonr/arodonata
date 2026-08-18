@@ -23,6 +23,7 @@ class FakeLockManager:
     def __init__(self) -> None:
         self._locks: dict[str, asyncio.Lock] = {}
         self.acquired_keys: list[str] = []
+        self.acquired_timeouts: list[int] = []
         self.closed = False
         self.initialized = False
 
@@ -35,6 +36,7 @@ class FakeLockManager:
     @asynccontextmanager
     async def acquire(self, lock_key: str, timeout: int = 30, ttl: int | None = None):
         self.acquired_keys.append(lock_key)
+        self.acquired_timeouts.append(timeout)
         lock = self._locks.setdefault(lock_key, asyncio.Lock())
         async with lock:
             yield MagicMock()
@@ -48,6 +50,29 @@ def _make_limiter(concurrent_limit: int = 1, lock_manager: FakeLockManager | Non
 # --------------------------------------------------------------------------
 # Slot acquire/release
 # --------------------------------------------------------------------------
+
+
+async def test_acquire_uses_constructed_slot_timeout_by_default():
+    """acquire() with no explicit timeout must pass this instance's slot_timeout
+    through to the lock manager -- not a hardcoded 30s -- so a caller waiting for a
+    free concurrency slot gets as long as the RateLimiter was configured for."""
+    lock_manager = FakeLockManager()
+    limiter = RateLimiter(concurrent_limit=1, lock_manager=lock_manager, slot_timeout=90)
+
+    async with limiter.acquire("10.0.0.1"):
+        pass
+
+    assert lock_manager.acquired_timeouts == [90]
+
+
+async def test_acquire_explicit_timeout_overrides_constructed_default():
+    lock_manager = FakeLockManager()
+    limiter = RateLimiter(concurrent_limit=1, lock_manager=lock_manager, slot_timeout=90)
+
+    async with limiter.acquire("10.0.0.1", timeout=5):
+        pass
+
+    assert lock_manager.acquired_timeouts == [5]
 
 
 async def test_acquire_yields_and_releases_cleanly():

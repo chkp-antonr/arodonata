@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from arlogi.otel.decorator import traced
 
 from ..cache.lock_manager import DatabaseLockManager
+from ..config.constants import DEFAULT_RATE_LIMIT_SLOT_TIMEOUT
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
 
@@ -37,20 +38,29 @@ class RateLimiter:
             pass
     """
 
-    def __init__(self, concurrent_limit: int = 3, lock_manager: DatabaseLockManager | None = None) -> None:
+    def __init__(
+        self,
+        concurrent_limit: int = 3,
+        lock_manager: DatabaseLockManager | None = None,
+        slot_timeout: int = DEFAULT_RATE_LIMIT_SLOT_TIMEOUT,
+    ) -> None:
         """Initialize rate limiter.
 
         Args:
             concurrent_limit: Maximum concurrent operations per server.
             lock_manager: Optional DatabaseLockManager instance.
+            slot_timeout: Default seconds acquire() waits for a free slot before
+                giving up (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT for why this must
+                comfortably exceed a single login retry-with-backoff sequence).
         """
         self._concurrent_limit = concurrent_limit
         self._lock_manager = lock_manager
+        self._slot_timeout = slot_timeout
         self._in_process_locks: dict[str, asyncio.Lock] = {}  # For in-process synchronization
         self._reentrancy_count: dict[str, int] = {}  # Track reentrant locks per task
         self._lock_init_lock = asyncio.Lock()  # Protection for lock manager initialization
         self._closed = False
-        log().debug(f"RateLimiter initialized with limit={concurrent_limit}")
+        log().debug(f"RateLimiter initialized with limit={concurrent_limit}, slot_timeout={slot_timeout}")
 
     async def close(self) -> None:
         """Clean up resources."""
@@ -104,12 +114,14 @@ class RateLimiter:
 
     @asynccontextmanager
     @traced
-    async def acquire(self, server_ip: str, timeout: int = 30) -> AsyncGenerator[None]:
+    async def acquire(self, server_ip: str, timeout: int | None = None) -> AsyncGenerator[None]:
         """Acquire lock for server operations (reentrant per task).
 
         Args:
             server_ip: Server IP address.
             timeout: Maximum time to wait for lock acquisition in seconds.
+                Defaults to the slot_timeout this RateLimiter was constructed
+                with (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT).
 
         Yields:
             None when lock is acquired.
@@ -117,6 +129,8 @@ class RateLimiter:
         Raises:
             LockAcquisitionError: If lock cannot be acquired within timeout.
         """
+        if timeout is None:
+            timeout = self._slot_timeout
         slot = self._get_slot_number(server_ip)
         lock_key = f"ratelimit:{server_ip}:slot_{slot}"
         span_attrs(server_ip=server_ip, slot=slot)

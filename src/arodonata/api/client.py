@@ -214,7 +214,7 @@ class ArodonataClient:
         else:
             # Create ASDK components
             transport = ApiTransport()
-            rate_limiter = RateLimiter(settings.concurrent_limit)
+            rate_limiter = RateLimiter(settings.concurrent_limit, slot_timeout=settings.rate_limit_slot_timeout)
             server_registry = ServerRegistry(settings)
 
             from ..asdk.session_cleaner import SessionCleaner
@@ -457,6 +457,8 @@ class ArodonataClient:
         wait_for_task: bool = True,
         timeout: int = -1,
         cache_mode: str = "auto",
+        session_name: str | None = None,
+        session_description: str | None = None,
     ) -> ApiCallResult:
         """Execute API call with automatic session management.
 
@@ -469,6 +471,12 @@ class ArodonataClient:
             wait_for_task: Wait for task completion.
             timeout: Request timeout in seconds (-1 for default).
             cache_mode: Cache behavior ("auto", "refresh", "off").
+            session_name: Optional name applied when this call has to create a
+                fresh session (cache miss/relogin). Ignored on a cache hit that
+                reuses an already-open session. Sessions named/described with a
+                recognized test marker (see session_cleaner.TEST_SESSION_MARKERS)
+                get a much shorter discard grace period.
+            session_description: Optional description, same caveat as session_name.
 
         Returns:
             Validated API call result.
@@ -484,6 +492,8 @@ class ArodonataClient:
             wait_for_task=wait_for_task,
             timeout=timeout if timeout > 0 else self._settings.api_timeout,
             cache_mode=cache_mode,
+            session_name=session_name,
+            session_description=session_description,
         )
 
         # Extract data, handling cases where API returns error messages as strings

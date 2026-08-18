@@ -66,7 +66,30 @@ async def test_api_call_forwards_arguments_and_wraps_result():
         wait_for_task=False,
         timeout=55,
         cache_mode="refresh",
+        session_name=None,
+        session_description=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_api_call_forwards_session_name_and_description():
+    """session_name/session_description pass through to the ASDK layer, which only
+    applies them on a fresh login (cache miss) -- see session_cleaner's test-session
+    fast-discard marker, which relies on this reaching the actual CP session."""
+    mgmt = AsyncMock()
+    mgmt.api_call.return_value = {"success": True, "data": {}, "message": "", "code": ""}
+    client = make_client(mgmt=mgmt)
+
+    await client.api_call(
+        "mgmt1",
+        "add-host",
+        session_name="pytest-integration-tests",
+        session_description="Automated pytest integration test session",
+    )
+
+    _, kwargs = mgmt.api_call.call_args
+    assert kwargs["session_name"] == "pytest-integration-tests"
+    assert kwargs["session_description"] == "Automated pytest integration test session"
 
 
 @pytest.mark.asyncio

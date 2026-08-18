@@ -36,6 +36,13 @@ class CleanupResult:
 # Both are programmatic; only GUI applications (SmartConsole, etc.) must never be touched.
 _API_APPLICATIONS: frozenset[str] = frozenset({"Management API", "WEB_API"})
 
+# Sessions whose name/description contains this marker (case-insensitive) are known
+# to be disposable automated-test sessions -- see ArodonataClient.api_call()'s
+# session_name/session_description params. They get a much shorter discard grace
+# period than real work, instead of waiting on the normal read-write/changes rules.
+_TEST_SESSION_MARKER = "pytest"
+_TEST_SESSION_MAX_AGE_MINUTES = 10
+
 # CP timestamp dicts use 'posix-millis' (ms) or 'posix' (s or ms depending on build).
 # Values > 1e10 are already milliseconds; smaller values are seconds.
 _MS_THRESHOLD = 10_000_000_000
@@ -129,8 +136,19 @@ class SessionCleaner:
         age_min = self._age_minutes(posix_millis)
         in_work = session.get("in-work") or session.get("in-use")
 
-        if conn_mode == "read write" or in_work:
-            should_discard = changes == 0 and age_min > 4320
+        name = (session.get("name") or "") + (session.get("description") or "")
+        if _TEST_SESSION_MARKER in name.lower():
+            # Known-disposable automated-test session (see ArodonataClient.api_call()'s
+            # session_name/session_description) -- don't make it wait out the real-work
+            # thresholds below just because it happens to hold pending changes.
+            should_discard = age_min > _TEST_SESSION_MAX_AGE_MINUTES
+        elif conn_mode == "read write" or in_work:
+            # Real pending changes get more grace than an idle read-write session
+            # (4320min/72h) before being treated as abandoned -- but must still be
+            # reclaimed eventually. Without this fallback, a session with changes > 0
+            # was NEVER discarded regardless of age, letting real-work sessions with
+            # pending changes accumulate indefinitely and hold their locks forever.
+            should_discard = (changes == 0 and age_min > 4320) or (changes > 0 and age_min > 10080)
         else:
             should_discard = (changes == 0 and age_min > 60) or (changes > 0 and age_min > 1440)
 
@@ -190,8 +208,12 @@ class SessionCleaner:
 
         Calls show-sessions, filters to Management API sessions only, then
         discards those that are disconnected and meet the age/changes criteria:
+          - marked as a test session (name/description contains "pytest") and
+            age > 10 min → discard, regardless of changes
           - 0 changes AND age > 60 min → discard
           - >0 changes AND age > 24h  → discard (abandoned with unpublished work)
+          - read-write/in-work session, 0 changes AND age > 72h → discard
+          - read-write/in-work session, >0 changes AND age > 7 days → discard
 
         Args:
             mgmt_name: Management server name (for logging).

@@ -21,6 +21,7 @@ from .constants import (
     DEFAULT_CONCURRENT_LIMIT,
     DEFAULT_LOGIN_BACKOFF,
     DEFAULT_LOGIN_RETRIES,
+    DEFAULT_RATE_LIMIT_SLOT_TIMEOUT,
     DEFAULT_SESSION_EXPIRE,
     DEFAULT_SESSION_TIMEOUT,
     LOG_LEVELS,
@@ -105,6 +106,18 @@ class ArodonataSettings(BaseSettings):
         le=20,
         description="Max concurrent API requests per server",
         validation_alias="ARODONATA_CONCURRENT_LIMIT",
+    )
+    rate_limit_slot_timeout: int = Field(
+        default=DEFAULT_RATE_LIMIT_SLOT_TIMEOUT,
+        ge=1,
+        description=(
+            "Seconds a caller waits for a free concurrency slot (RateLimiter.acquire) "
+            "before giving up. Must comfortably exceed how long another caller can "
+            "legitimately hold a slot during its own login retry-with-backoff sequence, "
+            "or concurrent callers fail fast under real server-side throttling even "
+            "though the server would have accepted a login moments later."
+        ),
+        validation_alias="ARODONATA_RATE_LIMIT_SLOT_TIMEOUT",
     )
 
     # Timeouts
