@@ -46,8 +46,11 @@ async def get_gateways(
         ):
             pass
 
-    # Get gateways from cache
-    gateways = await orchestration.get_gateways(mgmt_names=mgmt_names)
+    # Get gateways from cache. Always pass cache_mode="cache": gateways live in
+    # the assets table (not OBJECT_TYPES), so the object-cache coordinator can
+    # only do useless (and very expensive) host/network reloads here. Asset
+    # freshness is handled by build_refresh_assets_cache above/below.
+    gateways = await orchestration.get_gateways(mgmt_names=mgmt_names, cache_mode="cache")
 
     # In smart mode, if cache is empty, populate it
     if not gateways and cache_mode == "smart":
@@ -56,7 +59,7 @@ async def get_gateways(
             cache_mode="auto",
         ):
             pass
-        gateways = await orchestration.get_gateways(mgmt_names=mgmt_names)
+        gateways = await orchestration.get_gateways(mgmt_names=mgmt_names, cache_mode="cache")
 
     return gateways
 

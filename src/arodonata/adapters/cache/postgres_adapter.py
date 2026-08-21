@@ -57,6 +57,15 @@ class PostgresCacheAdapter:
         """Insert or update objects. Returns count of upserted objects."""
         return await self._repo.upsert_objects(objects)
 
+    async def replace_domain_objects(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        objects: list["CPObject"],
+    ) -> tuple[int, int]:
+        """Atomically replace all objects for a domain in one transaction."""
+        return await self._repo.replace_domain_objects(mgmt_name, domain_name, objects)
+
     async def delete_object(
         self,
         uid: str,

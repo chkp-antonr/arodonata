@@ -422,6 +422,34 @@ async def test_refresh_objects_wraps_service_progress():
 
 
 @pytest.mark.asyncio
+async def test_refresh_objects_domain_failed_emits_error_event():
+    """A domain_failed progress dict must surface as an ERROR SSE event so
+    callers can't silently miss an aborted domain refresh; other statuses
+    stay mapped to LOG."""
+    client = make_client()
+    fake_service = MagicMock()
+    fake_service.refresh_objects = MagicMock(
+        return_value=_agen(
+            [
+                {"count": 1, "message": "fetched", "status": "type_fetched"},
+                {"count": 0, "message": "aborting", "status": "domain_failed", "error": "boom"},
+            ]
+        )
+    )
+    install_object_service(client, fake_service)
+
+    events = [e async for e in client.refresh_objects(mode="force")]
+
+    log_events = [e for e in events if e.data and e.data.get("status") == "type_fetched"]
+    error_events = [e for e in events if e.data and e.data.get("status") == "domain_failed"]
+    assert len(log_events) == 1
+    assert log_events[0].event_type == SSEEventType.LOG
+    assert len(error_events) == 1
+    assert error_events[0].event_type == SSEEventType.ERROR
+    assert error_events[0].message == "aborting"
+
+
+@pytest.mark.asyncio
 async def test_refresh_objects_raises_when_object_service_missing():
     client = make_client()
     install_object_service(client, None)

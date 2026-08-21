@@ -107,7 +107,7 @@ async def test_get_gateways_delegates_to_orchestration():
     client._orchestration.get_gateways = AsyncMock(return_value=["gw"])
     result = await client.get_gateways(mgmt_names=["mgmt1"])
     assert result == ["gw"]
-    client._orchestration.get_gateways.assert_awaited_once_with(mgmt_names=["mgmt1"])
+    client._orchestration.get_gateways.assert_awaited_once_with(mgmt_names=["mgmt1"], cache_mode="cache")
 
 
 @pytest.mark.asyncio

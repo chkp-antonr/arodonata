@@ -1,6 +1,6 @@
 [project]
 name = "arodonata"
-version = "1.5.0"
+version = "1.6.0"
 description = "Comprehensive Python library for Check Point management and monitoring operations with async support, automatic session management, and intelligent caching. v2"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -170,7 +170,7 @@ reportMissingImports = "warning"
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "1.5.0"
+version = "1.6.0"
 version_files = [
     "pyproject.toml:^version",
     "src/arodonata/__init__.py:__version__",

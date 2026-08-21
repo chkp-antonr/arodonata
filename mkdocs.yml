@@ -9,11 +9,12 @@ exclude_docs: |
   internal/*
   superpowers/
   CONTEXT.md
+  Backlog.md
 
 theme:
   name: "material"
-  favicon: img/arodonata_logo.png
-  logo: img/arodonata_logo.png
+  favicon: img/arodonata_logo_tr_sq.png
+  logo: img/logo_arodonata_nt.png
   features:
     - navigation.tabs
     - navigation.tabs.sticky
@@ -64,6 +65,7 @@ plugins:
   - git-revision-date-localized:
       enable_creation_date: true
       fallback_to_build_date: true
+      enable_git_follow: false
       exclude:
         - superpowers/*
   - minify:

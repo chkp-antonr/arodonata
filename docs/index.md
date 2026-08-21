@@ -24,7 +24,7 @@ cache and only pull incremental changes.
   Every `ArodonataSettings` field, environment variable, and multi-server
   setup pattern.
 
-- **[API Reference](api/)**
+- **[API Reference](api/arodonata/index.md)**
   Generated reference for every public class and function in `arodonata`.
 
 - **[CPCRUD Engine](user-guide/cpcrud.md)**

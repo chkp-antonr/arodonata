@@ -670,6 +670,69 @@ async def test_delete_domain_objects(repo):
     assert {o.uid for o in remaining} == {"u3"}
 
 
+async def test_replace_domain_objects_swaps_atomically(repo):
+    """Old rows gone, new rows present, other domains untouched."""
+    old = make_object("old-1", mgmt="m1", domain="d1")
+    other = make_object("keep-1", mgmt="m1", domain="d2")
+    await repo.upsert_objects([old, other])
+
+    new = make_object("new-1", mgmt="m1", domain="d1")
+    deleted, inserted = await repo.replace_domain_objects("m1", "d1", [new])
+
+    assert (deleted, inserted) == (1, 1)
+    remaining = await repo.get_objects(mgmt_names=["m1"], domain_names=["d1"])
+    assert [o.uid for o in remaining] == ["new-1"]
+    other_domain = await repo.get_objects(mgmt_names=["m1"], domain_names=["d2"])
+    assert [o.uid for o in other_domain] == ["keep-1"]
+
+
+async def test_replace_domain_objects_dedupes_by_id(repo):
+    """API sometimes returns duplicate uids; last one wins, no PK violation."""
+    dup_a = make_object("dup", mgmt="m1", domain="d1")
+    dup_b = make_object("dup", mgmt="m1", domain="d1")
+
+    deleted, inserted = await repo.replace_domain_objects("m1", "d1", [dup_a, dup_b])
+
+    assert inserted == 1
+
+
+async def test_replace_domain_objects_empty_list_clears_domain(repo):
+    old = make_object("old-1", mgmt="m1", domain="d1")
+    await repo.upsert_objects([old])
+
+    deleted, inserted = await repo.replace_domain_objects("m1", "d1", [])
+
+    assert (deleted, inserted) == (1, 0)
+
+
+async def test_replace_domain_objects_failure_preserves_old_rows(repo, monkeypatch):
+    """A failure after the delete rolls back the whole transaction.
+
+    Forces `session.commit()` to raise once the delete + add_all have both
+    been issued, mirroring a mid-transaction failure. The DatabaseManager's
+    session context manager must roll back, so the originally seeded row
+    survives untouched.
+    """
+    old = make_object("old-1", mgmt="m1", domain="d1")
+    await repo.upsert_objects([old])
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    async def _boom(self, *args, **kwargs):
+        raise RuntimeError("simulated commit failure")
+
+    monkeypatch.setattr(AsyncSession, "commit", _boom)
+
+    new = make_object("new-1", mgmt="m1", domain="d1")
+    with pytest.raises(RuntimeError, match="simulated commit failure"):
+        await repo.replace_domain_objects("m1", "d1", [new])
+
+    monkeypatch.undo()  # restore real commit so the read-back below works
+
+    remaining = await repo.get_objects(mgmt_names=["m1"], domain_names=["d1"])
+    assert [o.uid for o in remaining] == ["old-1"]
+
+
 async def test_delete_object_present_and_absent(repo):
     await repo.upsert_objects([make_object("u1", mgmt="m1", domain="d1")])
     assert await repo.delete_object("u1", "m1", "d1") == 1

@@ -44,7 +44,7 @@ class TestGetGateways:
         result = await get_gateways(client=mock_client, mgmt_names=["mgmt1"], cache_mode="force")
 
         assert result == expected
-        mock_orchestration.get_gateways.assert_called_once_with(mgmt_names=["mgmt1"])
+        mock_orchestration.get_gateways.assert_called_once_with(mgmt_names=["mgmt1"], cache_mode="cache")
         assert len(called) == 1
         assert called[0]["mgmt_names"] == ["mgmt1"]
 
@@ -80,7 +80,7 @@ class TestGetGateways:
         result = await get_gateways(client=mock_client, mgmt_names=["mgmt1"], cache_mode="smart")
 
         assert result == expected
-        mock_orchestration.get_gateways.assert_called_once_with(mgmt_names=["mgmt1"])
+        mock_orchestration.get_gateways.assert_called_once_with(mgmt_names=["mgmt1"], cache_mode="cache")
         mock_client.build_refresh_assets_cache.assert_not_called()
 
     @pytest.mark.asyncio
@@ -138,7 +138,7 @@ class TestGetGateways:
         result = await get_gateways(client=mock_client, mgmt_names=["mgmt1"], cache_mode="cache")
 
         assert result == []
-        mock_orchestration.get_gateways.assert_called_once_with(mgmt_names=["mgmt1"])
+        mock_orchestration.get_gateways.assert_called_once_with(mgmt_names=["mgmt1"], cache_mode="cache")
         mock_client.build_refresh_assets_cache.assert_not_called()
 
     @pytest.mark.asyncio

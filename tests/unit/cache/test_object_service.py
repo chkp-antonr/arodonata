@@ -369,10 +369,10 @@ async def test_refresh_force_full_flow(db):
     statuses = [r.get("status") for r in results]
     assert "processing_mgmt" in statuses
     assert "refreshing_domain" in statuses
-    assert "type_complete" in statuses
+    assert "type_fetched" in statuses
     assert "domain_complete" in statuses
     # one object type fetched per OBJECT_TYPES entry
-    assert statuses.count("type_complete") == len(ObjectService.OBJECT_TYPES)
+    assert statuses.count("type_fetched") == len(ObjectService.OBJECT_TYPES)
     # objects were written to the cache
     stored = await service._cache.get_objects_by_name("obj-1", mgmt_names=["mgmt1"])
     assert stored
@@ -690,57 +690,129 @@ async def test_refresh_last_published_session_exception_returns_none(db):
 
 
 # ---------------------------------------------------------------------------
-# _fetch_objects_by_type
+# _collect_objects_by_type
 # ---------------------------------------------------------------------------
 
 
-async def test_fetch_objects_by_type_success(db):
+async def test_collect_objects_by_type_success(db):
     client = make_client(mgmt_names=["mgmt1"])
     client.api_query.return_value = ApiQueryResult(
         success=True,
         objects=[{"uid": "o1", "name": "obj-1", "type": "host", "ipv4-address": "10.0.0.9"}],
     )
     service = make_service(db, client)
-    results = await collect(service._fetch_objects_by_type("mgmt1", "dmn1", "host"))
-    assert results[-1]["status"] == "type_complete"
-    assert results[-1]["count"] == 1
+    objects, error = await service._collect_objects_by_type("mgmt1", "dmn1", "host")
+    assert error is None
+    assert [o.uid for o in objects] == ["o1"]
     client.api_query.assert_awaited_once()
     assert client.api_query.await_args.kwargs["command"] == "show-hosts"
 
 
-async def test_fetch_objects_by_type_api_error(db):
+async def test_collect_objects_by_type_api_error(db):
     client = make_client(mgmt_names=["mgmt1"])
     client.api_query.return_value = ApiQueryResult(success=False, message="boom")
     service = make_service(db, client)
-    results = await collect(service._fetch_objects_by_type("mgmt1", "dmn1", "network"))
-    assert results[0]["status"] == "api_error"
-    assert results[0]["error"] == "boom"
+    objects, error = await service._collect_objects_by_type("mgmt1", "dmn1", "network")
+    assert objects == []
+    assert error == "boom"
 
 
-async def test_fetch_objects_by_type_exception(db):
+async def test_collect_objects_by_type_exception(db):
     client = make_client(mgmt_names=["mgmt1"])
     client.api_query.side_effect = RuntimeError("kaboom")
     service = make_service(db, client)
-    results = await collect(service._fetch_objects_by_type("mgmt1", "dmn1", "group"))
-    assert results[0]["status"] == "exception"
-    assert "kaboom" in results[0]["error"]
+    objects, error = await service._collect_objects_by_type("mgmt1", "dmn1", "group")
+    assert objects == []
+    assert "kaboom" in error
 
 
-async def test_refresh_domain_deletes_then_completes(db):
-    client = make_client(mgmt_names=["mgmt1"])
+# ---------------------------------------------------------------------------
+# _refresh_domain — collect-then-swap
+# ---------------------------------------------------------------------------
+
+
+def _stub_api_success_for_all_types(client: MagicMock) -> None:
+    """Configure ``client.api_query`` to succeed (empty results) for every
+    ``show-<type>s`` command issued by ``ObjectService.OBJECT_TYPES``."""
     client.api_query.return_value = ApiQueryResult(success=True, objects=[])
+
+
+def _stub_api_failure_for_type(client: MagicMock, object_type: str) -> None:
+    """Configure ``client.api_query`` so only one type's command fails.
+
+    Earlier OBJECT_TYPES entries (e.g. "host") still succeed; the given
+    type's ``show-<type>s`` command reports ``success=False``.
+    """
+    failing_command = f"show-{object_type}s"
+
+    def _side_effect(*, mgmt_name, command, domain, details_level):
+        if command == failing_command:
+            return ApiQueryResult(success=False, message="boom")
+        return ApiQueryResult(success=True, objects=[])
+
+    client.api_query.side_effect = _side_effect
+
+
+async def test_refresh_domain_replaces_stale_objects_on_success(db):
+    """Collect-then-swap: stale objects are gone only via the final atomic
+    replace, not an upfront delete."""
+    client = make_client(mgmt_names=["mgmt1"])
+    _stub_api_success_for_all_types(client)
     client.api_call.return_value = ApiCallResult(
         success=True,
         data={"meta-info": {"last-modify-time": {"iso-8601": "2026-03-25T00:00:00+0000"}}},
     )
     service = make_service(db, client)
-    # pre-seed a stale object that must be cleared before refresh
+    # pre-seed a stale object that must be cleared by the successful refresh
     await service._cache.upsert_objects([cpobj("old", "stale-obj", "host")])
     results = await collect(service._refresh_domain("mgmt1", "dmn1"))
     assert results[0]["status"] == "refreshing_domain"
     assert results[-1]["status"] == "domain_complete"
     remaining = await service._cache.get_objects_by_name("stale-obj", mgmt_names=["mgmt1"])
     assert remaining == []
+
+
+async def test_refresh_domain_swaps_once_on_success(db):
+    """All types collected first, then exactly one atomic replace + session stamp."""
+    client = make_client(mgmt_names=["mgmt1"])
+    _stub_api_success_for_all_types(client)
+    client.api_call.return_value = ApiCallResult(
+        success=True,
+        data={"meta-info": {"last-modify-time": {"iso-8601": "2026-03-25T00:00:00+0000"}}},
+    )
+    service = make_service(db, client)
+    service._cache.replace_domain_objects = AsyncMock(wraps=service._cache.replace_domain_objects)
+    service._cache.delete_domain_objects = AsyncMock(wraps=service._cache.delete_domain_objects)
+
+    events = await collect(service._refresh_domain("m1", "d1"))
+
+    service._cache.replace_domain_objects.assert_awaited_once()
+    args = service._cache.replace_domain_objects.await_args
+    assert args.args[0:2] == ("m1", "d1")
+    service._cache.delete_domain_objects.assert_not_awaited()
+    assert events[-1]["status"] == "domain_complete"
+
+
+async def test_refresh_domain_failure_keeps_old_cache_and_no_session_stamp(db):
+    """If any show-<type>s call fails: no delete, no replace, no session stamp."""
+    client = make_client(mgmt_names=["mgmt1"])
+    _stub_api_failure_for_type(client, "network")  # hosts ok, networks fail
+    service = make_service(db, client)
+    # pre-seed cache contents that must survive the aborted refresh untouched
+    await service._cache.upsert_objects([cpobj("old", "stale-obj", "host")])
+    service._cache.replace_domain_objects = AsyncMock()
+    service._cache.delete_domain_objects = AsyncMock()
+    service.refresh_last_published_session = AsyncMock()
+
+    events = await collect(service._refresh_domain("m1", "d1"))
+
+    service._cache.replace_domain_objects.assert_not_awaited()
+    service._cache.delete_domain_objects.assert_not_awaited()
+    service.refresh_last_published_session.assert_not_awaited()
+    assert events[-1]["status"] == "domain_failed"
+    # old cache contents untouched
+    remaining = await service._cache.get_objects_by_name("stale-obj", mgmt_names=["mgmt1"])
+    assert remaining
 
 
 # ---------------------------------------------------------------------------

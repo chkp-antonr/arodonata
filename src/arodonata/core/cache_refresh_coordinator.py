@@ -101,8 +101,15 @@ class CacheRefreshCoordinator:
                 await self._full_reload(mgmt, domain, outcome)
 
     async def _full_reload(self, mgmt: str, domain: str, outcome: RefreshOutcome) -> None:
-        async for _ in self._object_service.refresh_objects(mgmt_names=[mgmt], domain_names=[domain], mode="force"):
-            pass
+        failed = False
+        async for event in self._object_service.refresh_objects(mgmt_names=[mgmt], domain_names=[domain], mode="force"):
+            if event.get("status") == "domain_failed":
+                failed = True
+
+        if failed:
+            log().warning(f"Refresh of {mgmt}/{domain} failed; keeping stale cache unmarked")
+            return
+
         outcome.refreshed_domains.append((mgmt, domain))
         self._mark_checked(mgmt, domain)
 

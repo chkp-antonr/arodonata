@@ -10,4 +10,4 @@ unset VIRTUAL_ENV
 
 uv run ruff check --fix src/ tests/ examples/ docs/scripts/ || exit $?
 uv run ruff format src/ tests/ examples/ docs/scripts/
-uv run mypy src/ examples/ scripts/
+uv run mypy src/ examples/

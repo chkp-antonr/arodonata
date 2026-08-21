@@ -977,6 +977,40 @@ class CacheRepository:
             log().debug(f"Deleted {count} objects for {mgmt_name}/{domain_name}")
             return count
 
+    async def replace_domain_objects(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        objects: list[CPObject],
+    ) -> tuple[int, int]:
+        """Atomically replace all objects for a domain.
+
+        Delete + bulk insert run in ONE transaction, so concurrent readers
+        never observe an empty/partial domain and a failure rolls back to
+        the previous cache contents. Input is deduped by primary key (the
+        API occasionally returns duplicate uids within a page set).
+
+        Args:
+            mgmt_name: Management server name.
+            domain_name: Domain name.
+            objects: Full replacement set for the domain.
+
+        Returns:
+            (deleted_count, inserted_count).
+        """
+        deduped = list({obj.id: obj for obj in objects}.values())
+        async with self._db.session() as session:
+            stmt = delete(CPObject).where(
+                CPObject.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+                CPObject.domain_name == domain_name,  # type: ignore[arg-type]
+            )
+            result = await session.execute(stmt)
+            deleted = getattr(result, "rowcount", 0) or 0
+            session.add_all(deduped)
+            await session.commit()
+            log().debug(f"Replaced objects for {mgmt_name}/{domain_name}: -{deleted} +{len(deduped)}")
+            return deleted, len(deduped)
+
     async def delete_object(
         self,
         uid: str,

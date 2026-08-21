@@ -125,6 +125,10 @@ class ObjectService:
     # Object types to fetch from API
     OBJECT_TYPES = ["host", "network", "address-range", "group"]
 
+    # Above this many collected objects held in memory before the atomic
+    # swap, warn so operators can spot unexpectedly large domain refreshes.
+    LARGE_DOMAIN_WARN_THRESHOLD = 50_000
+
     def __init__(
         self,
         db_manager: DatabaseManager,
@@ -691,14 +695,13 @@ class ObjectService:
         mgmt_name: str,
         domain_name: str,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Refresh all objects for a single domain.
+        """Refresh all objects for a single domain (collect-then-swap).
 
-        Args:
-            mgmt_name: Management server name.
-            domain_name: Domain name.
-
-        Yields:
-            Progress dictionaries.
+        All object types are fetched into memory first; the cache is only
+        touched after every type succeeded, via one atomic
+        replace_domain_objects transaction. Any API failure aborts the
+        domain refresh, leaving the previous cache contents and freshness
+        stamp intact.
         """
         log().info(f"Refreshing objects for {mgmt_name}/{domain_name}")
 
@@ -709,114 +712,99 @@ class ObjectService:
             "status": "refreshing_domain",
         }
 
-        # Delete ALL existing objects for this domain before fetching new ones
-        deleted = await self._cache.delete_domain_objects(mgmt_name, domain_name)
-        if deleted:
-            log().debug(f"Cleared {deleted} stale objects for {mgmt_name}/{domain_name}")
-
-        total_objects = 0
-
-        # Fetch objects for each type
+        collected: list[CPObject] = []
         for object_type in self.OBJECT_TYPES:
-            async for progress in self._fetch_objects_by_type(
+            objects, error = await self._collect_objects_by_type(
                 mgmt_name=mgmt_name,
                 domain_name=domain_name,
                 object_type=object_type,
-            ):
-                if "count" in progress:
-                    total_objects += progress["count"]
-                yield progress
+            )
+            if error is not None:
+                yield {
+                    "message": (
+                        f"Aborting refresh of {mgmt_name}/{domain_name}: "
+                        f"fetching {object_type}s failed: {error}. "
+                        f"Previous cache contents kept."
+                    ),
+                    "mgmt_name": mgmt_name,
+                    "domain_name": domain_name,
+                    "object_type": object_type,
+                    "status": "domain_failed",
+                    "error": error,
+                }
+                return
+            collected.extend(objects)
+            yield {
+                "message": f"Fetched {len(objects)} {object_type}(s)",
+                "mgmt_name": mgmt_name,
+                "domain_name": domain_name,
+                "object_type": object_type,
+                "status": "type_fetched",
+                "count": len(objects),
+            }
+
+        if len(collected) > self.LARGE_DOMAIN_WARN_THRESHOLD:
+            log().warning(
+                f"Large domain refresh for {mgmt_name}/{domain_name}: {len(collected)} objects held in memory before swap"
+            )
+
+        deleted, inserted = await self._cache.replace_domain_objects(mgmt_name, domain_name, collected)
+        log().debug(f"Swapped cache for {mgmt_name}/{domain_name}: -{deleted} +{inserted}")
 
         yield {
-            "message": f"Complete: {mgmt_name}/{domain_name} - {total_objects} object(s)",
+            "message": f"Complete: {mgmt_name}/{domain_name} - {inserted} object(s)",
             "mgmt_name": mgmt_name,
             "domain_name": domain_name,
             "status": "domain_complete",
-            "total": total_objects,
+            "total": inserted,
         }
 
-        # Update LastPublishedSession after successful refresh
+        # Only a fully successful refresh may advance the freshness stamp.
         await self.refresh_last_published_session(mgmt_name, domain_name)
 
-    async def _fetch_objects_by_type(
+    async def _collect_objects_by_type(
         self,
         mgmt_name: str,
         domain_name: str,
         object_type: str,
-    ) -> AsyncIterator[dict[str, Any]]:
-        """Fetch objects of a specific type from API and update cache.
+    ) -> tuple[list[CPObject], str | None]:
+        """Fetch one object type from the API without touching the cache.
 
         Args:
             mgmt_name: Management server name.
             domain_name: Domain name.
             object_type: Object type (host, network, etc.).
 
-        Yields:
-            Progress dictionaries.
+        Returns:
+            (objects, None) on success; ([], error_message) on failure.
         """
         log().debug(f"Fetching {object_type} objects for {mgmt_name}/{domain_name}")
-
-        # Build API command
         command = f"show-{object_type}s"
 
         try:
-            # Query API
             result = await self._client.api_query(
                 mgmt_name=mgmt_name,
                 command=command,
                 domain=domain_name,
                 details_level="full",
             )
-
-            if not result.success:
-                yield {
-                    "message": f"API error fetching {object_type}s: {result.message}",
-                    "mgmt_name": mgmt_name,
-                    "domain_name": domain_name,
-                    "object_type": object_type,
-                    "status": "api_error",
-                    "error": result.message,
-                }
-                return
-
-            objects = result.objects
-            count = len(objects)
-
-            log().debug(f"API returned {count} {object_type}(s) for {mgmt_name}/{domain_name}")
-
-            # Convert API objects to CPObject models
-            cp_objects = []
-            for api_obj in objects:
-                cp_obj = self._api_object_to_cpobject(
-                    api_obj=api_obj,
-                    mgmt_name=mgmt_name,
-                    domain_name=domain_name,
-                )
-                if cp_obj:
-                    cp_objects.append(cp_obj)
-
-            # Upsert new objects
-            upserted = await self._cache.upsert_objects(cp_objects)
-
-            yield {
-                "message": f"Fetched {upserted} {object_type}(s) for {mgmt_name}/{domain_name}",
-                "mgmt_name": mgmt_name,
-                "domain_name": domain_name,
-                "object_type": object_type,
-                "count": upserted,
-                "status": "type_complete",
-            }
-
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - any transport error aborts the domain
             log().exception(f"Error fetching {object_type}s for {mgmt_name}/{domain_name}")
-            yield {
-                "message": f"Exception fetching {object_type}s: {str(e)}",
-                "mgmt_name": mgmt_name,
-                "domain_name": domain_name,
-                "object_type": object_type,
-                "status": "exception",
-                "error": str(e),
-            }
+            return [], str(e)
+
+        if not result.success:
+            return [], result.message or f"{command} returned success=False"
+
+        cp_objects: list[CPObject] = []
+        for api_obj in result.objects:
+            cp_obj = self._api_object_to_cpobject(
+                api_obj=api_obj,
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+            )
+            if cp_obj:
+                cp_objects.append(cp_obj)
+        return cp_objects, None
 
     def _extract_ip_fields(self, obj_type: str, api_obj: dict[str, Any]) -> tuple[str, str, str, str, str]:
         ipv4_address = ""

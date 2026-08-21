@@ -1139,8 +1139,10 @@ class ArodonataClient:
             count = progress.get("count", 0)
             total_count += count
 
+            event_type = SSEEventType.ERROR if progress.get("status") == "domain_failed" else SSEEventType.LOG
+
             yield SSEEvent(
-                event_type=SSEEventType.LOG,
+                event_type=event_type,
                 message=progress.get("message", ""),
                 data=progress,
             )
@@ -1265,12 +1267,12 @@ class ArodonataClient:
             async for _ in self.build_refresh_assets_cache(mgmt_names=mgmt_names or ""):
                 pass
 
-        gateways = await self._orchestration.get_gateways(mgmt_names=mgmt_names)
+        gateways = await self._orchestration.get_gateways(mgmt_names=mgmt_names, cache_mode="cache")
 
         if not gateways and effective_mode != "cache" and effective_mode != "force":
             async for _ in self.build_refresh_assets_cache(mgmt_names=mgmt_names or ""):
                 pass
-            gateways = await self._orchestration.get_gateways(mgmt_names=mgmt_names)
+            gateways = await self._orchestration.get_gateways(mgmt_names=mgmt_names, cache_mode="cache")
 
         return gateways
 

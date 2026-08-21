@@ -39,6 +39,14 @@ class FakeCache:
     async def upsert_objects(self, objects: list[CPObject]) -> int:
         return len(objects)
 
+    async def replace_domain_objects(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        objects: list[CPObject],
+    ) -> tuple[int, int]:
+        return 0, len(objects)
+
     async def delete_object(
         self,
         uid: str,

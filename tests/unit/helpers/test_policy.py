@@ -859,7 +859,7 @@ class TestGetAccessRules:
 
         assert result == ["rule"]
         client._orchestration.get_access_rules.assert_awaited_once_with(
-            layer_name=None, mgmt_names=None, domain_names=None
+            layer_name=None, mgmt_names=None, domain_names=None, cache_mode=None, cache_ttl=None
         )
 
     @pytest.mark.asyncio
@@ -870,7 +870,7 @@ class TestGetAccessRules:
         await get_access_rules(client, layer_name="Network", mgmt_name="mgmt1", domain_name="dmn1")
 
         client._orchestration.get_access_rules.assert_awaited_once_with(
-            layer_name="Network", mgmt_names=["mgmt1"], domain_names=["dmn1"]
+            layer_name="Network", mgmt_names=["mgmt1"], domain_names=["dmn1"], cache_mode=None, cache_ttl=None
         )
 
     @pytest.mark.asyncio
@@ -893,7 +893,7 @@ class TestGetNatRules:
 
         assert result == ["nat-rule"]
         client._orchestration.get_nat_rules.assert_awaited_once_with(
-            layer_name="NAT", mgmt_names=["mgmt1"], domain_names=None
+            layer_name="NAT", mgmt_names=["mgmt1"], domain_names=None, cache_mode=None, cache_ttl=None
         )
 
     @pytest.mark.asyncio
@@ -916,7 +916,7 @@ class TestGetHttpsRules:
 
         assert result == ["https-rule"]
         client._orchestration.get_https_rules.assert_awaited_once_with(
-            layer_name=None, mgmt_names=None, domain_names=["dmn1"]
+            layer_name=None, mgmt_names=None, domain_names=["dmn1"], cache_mode=None, cache_ttl=None
         )
 
     @pytest.mark.asyncio
@@ -939,7 +939,7 @@ class TestGetThreatRules:
 
         assert result == ["threat-rule"]
         client._orchestration.get_threat_rules.assert_awaited_once_with(
-            layer_name="Threat", mgmt_names=["mgmt1"], domain_names=["dmn1"]
+            layer_name="Threat", mgmt_names=["mgmt1"], domain_names=["dmn1"], cache_mode=None, cache_ttl=None
         )
 
     @pytest.mark.asyncio

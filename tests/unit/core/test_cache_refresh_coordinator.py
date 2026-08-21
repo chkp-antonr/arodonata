@@ -99,6 +99,16 @@ class FakeObjectService:
         self.baseline_refreshes.append((mgmt, domain))
 
 
+class FailingObjectService(FakeObjectService):
+    """FakeObjectService whose refresh_objects yields a domain_failed event
+    instead of completing, mirroring ObjectService._refresh_domain aborting
+    a refresh on an object-type fetch error."""
+
+    async def refresh_objects(self, mgmt_names=None, domain_names=None, mode="force"):
+        self.full_reloads.append((mgmt_names[0], domain_names[0]))
+        yield {"status": "domain_failed", "message": "boom", "error": "boom"}
+
+
 class RecordingApi(FakeApi):
     """FakeApi whose show_changes returns a scripted response and records calls."""
 
@@ -204,6 +214,35 @@ async def test_smart_not_stale_serves_cache():
     assert obj.full_reloads == []
     assert obj.stale_checks == 1
     assert outcome.refreshed_domains == []
+
+
+async def test_full_reload_domain_failed_does_not_record_refresh_or_mark_checked():
+    """A domain_failed event from refresh_objects must not be recorded as a
+    successful refresh, and must not set the TTL memo -- so the next read
+    retries instead of trusting a failed refresh for the TTL window."""
+    obj = FailingObjectService(stale=True)
+    cache = StatefulCache({("m1", "d1"): ["x"]})
+    coord = make_coord(cache, obj, mode=CacheMode.FORCE)
+
+    outcome = await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.FORCE, 300))
+
+    assert obj.full_reloads == [("m1", "d1")]
+    assert outcome.refreshed_domains == []  # failure must not count as a refresh
+    assert coord._checked_at == {}  # TTL memo left unset
+
+
+async def test_smart_empty_domain_failed_reload_keeps_retrying():
+    """A failed refresh on an initially-empty domain must not memoize the
+    TTL, so a second ensure() call retries instead of quietly trusting the
+    still-empty cache for the rest of the TTL window."""
+    obj = FailingObjectService(stale=True)
+    cache = StatefulCache({})  # empty -> reaches _full_reload via the empty-check path
+    coord = make_coord(cache, obj, mode=CacheMode.SMART)
+
+    await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART, 300))
+    await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART, 300))
+
+    assert obj.full_reloads == [("m1", "d1"), ("m1", "d1")]  # retried, not memoized
 
 
 async def test_empty_domain_populates_even_when_not_stale():

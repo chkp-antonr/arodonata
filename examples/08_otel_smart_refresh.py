@@ -98,7 +98,7 @@ async def main() -> None:
             print("\nRefreshing objects (hosts/networks/groups)...")
             async for event in client.refresh_objects(mode="force"):
                 data = event.data or {}
-                if data.get("status") in {"type_complete", "domain_complete"}:
+                if data.get("status") in {"type_fetched", "domain_complete", "domain_failed"}:
                     print(f"  {event.message}")
     finally:
         await engine.dispose()

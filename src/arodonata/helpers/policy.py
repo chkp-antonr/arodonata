@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..logger import lazy_logger
 
@@ -626,6 +626,8 @@ async def get_access_rules(
     layer_name: str | None = None,
     mgmt_name: str | None = None,
     domain_name: str | None = None,
+    cache_mode: Literal["smart", "smart-fast", "cache", "force"] | None = None,
+    cache_ttl: int | None = None,
     user_context: UserContext | None = None,
 ) -> list[AccessRule]:
     """Get access rules.
@@ -635,6 +637,9 @@ async def get_access_rules(
         layer_name: Optional layer name filter.
         mgmt_name: Optional management server filter.
         domain_name: Optional domain filter.
+        cache_mode: Optional per-call cache refresh mode override
+            ("cache" = never call the API).
+        cache_ttl: Optional per-call cache freshness TTL override.
         user_context: Optional user context for logging.
 
     Returns:
@@ -653,6 +658,8 @@ async def get_access_rules(
         layer_name=layer_name,
         mgmt_names=mgmt_names,
         domain_names=domain_names,
+        cache_mode=cache_mode,
+        cache_ttl=cache_ttl,
     )
 
 
@@ -661,6 +668,8 @@ async def get_nat_rules(
     layer_name: str | None = None,
     mgmt_name: str | None = None,
     domain_name: str | None = None,
+    cache_mode: Literal["smart", "smart-fast", "cache", "force"] | None = None,
+    cache_ttl: int | None = None,
     user_context: UserContext | None = None,
 ) -> list[NATRule]:
     """Get NAT rules.
@@ -670,6 +679,9 @@ async def get_nat_rules(
         layer_name: Optional layer name filter.
         mgmt_name: Optional management server filter.
         domain_name: Optional domain filter.
+        cache_mode: Optional per-call cache refresh mode override
+            ("cache" = never call the API).
+        cache_ttl: Optional per-call cache freshness TTL override.
         user_context: Optional user context for logging.
 
     Returns:
@@ -688,6 +700,8 @@ async def get_nat_rules(
         layer_name=layer_name,
         mgmt_names=mgmt_names,
         domain_names=domain_names,
+        cache_mode=cache_mode,
+        cache_ttl=cache_ttl,
     )
 
 
@@ -696,6 +710,8 @@ async def get_https_rules(
     layer_name: str | None = None,
     mgmt_name: str | None = None,
     domain_name: str | None = None,
+    cache_mode: Literal["smart", "smart-fast", "cache", "force"] | None = None,
+    cache_ttl: int | None = None,
     user_context: UserContext | None = None,
 ) -> list[HTTPSRule]:
     """Get HTTPS rules.
@@ -705,6 +721,9 @@ async def get_https_rules(
         layer_name: Optional layer name filter.
         mgmt_name: Optional management server filter.
         domain_name: Optional domain filter.
+        cache_mode: Optional per-call cache refresh mode override
+            ("cache" = never call the API).
+        cache_ttl: Optional per-call cache freshness TTL override.
         user_context: Optional user context for logging.
 
     Returns:
@@ -723,6 +742,8 @@ async def get_https_rules(
         layer_name=layer_name,
         mgmt_names=mgmt_names,
         domain_names=domain_names,
+        cache_mode=cache_mode,
+        cache_ttl=cache_ttl,
     )
 
 
@@ -731,6 +752,8 @@ async def get_threat_rules(
     layer_name: str | None = None,
     mgmt_name: str | None = None,
     domain_name: str | None = None,
+    cache_mode: Literal["smart", "smart-fast", "cache", "force"] | None = None,
+    cache_ttl: int | None = None,
     user_context: UserContext | None = None,
 ) -> list[ThreatRule]:
     """Get threat rules.
@@ -740,6 +763,9 @@ async def get_threat_rules(
         layer_name: Optional layer name filter.
         mgmt_name: Optional management server filter.
         domain_name: Optional domain filter.
+        cache_mode: Optional per-call cache refresh mode override
+            ("cache" = never call the API).
+        cache_ttl: Optional per-call cache freshness TTL override.
         user_context: Optional user context for logging.
 
     Returns:
@@ -758,4 +784,6 @@ async def get_threat_rules(
         layer_name=layer_name,
         mgmt_names=mgmt_names,
         domain_names=domain_names,
+        cache_mode=cache_mode,
+        cache_ttl=cache_ttl,
     )
