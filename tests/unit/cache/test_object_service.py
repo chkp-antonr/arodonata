@@ -13,6 +13,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
@@ -922,10 +923,11 @@ def test_api_object_to_cpobject_missing_uid_or_name(db):
     assert service._api_object_to_cpobject({"uid": "u", "name": ""}, "mgmt1", "dmn1") is None
 
 
-def test_api_object_to_cpobject_conversion_exception(db):
+def test_api_object_to_cpobject_malformed_timestamp_dict_returns_none(db):
     service = make_service(db)
-    # a dict for creation-time breaks to_db_datetime (no .tzinfo) -> caught,
-    # returns None.
+    # A creation-time dict with neither "iso-8601" nor "posix" keys is
+    # explicitly treated as malformed (see api_object_to_cpobject's guard) and
+    # raises ValueError by design, caught by the outer try/except -> None.
     obj = service._api_object_to_cpobject(
         {"uid": "u1", "name": "host-1", "type": "host", "creation-time": {"unexpected": "dict"}},
         mgmt_name="mgmt1",
@@ -1009,3 +1011,396 @@ async def test_is_domain_stale_falls_back_to_time_when_uid_missing(db):
         )
     )
     assert await service._is_domain_stale("mgmt1", "dmn1") is True
+
+
+# ---------------------------------------------------------------------------
+# fetch_full_object + module-level converter
+# ---------------------------------------------------------------------------
+
+
+def test_api_object_to_cpobject_module_function_full_fidelity():
+    from arodonata.cache.object_service import api_object_to_cpobject
+
+    raw = {
+        "uid": "u1",
+        "name": "rng1",
+        "type": "address-range",
+        "ipv4-address-first": "10.0.0.1",
+        "ipv4-address-last": "10.0.0.9",
+        "comments": "c",
+        "tags": [{"name": "t1"}, {"name": "t2"}],
+        "color": "red",
+        "interfaces": [{"name": "eth0", "ipv4-address": "10.0.0.1"}],
+        "nat-settings": {"auto-rule": False},
+        "domain": {"name": "dmn1", "uid": "du1"},
+        "creation-time": {"posix": 1755000000000},
+        "last-modify-time": {"posix": 1755000060000},
+    }
+    obj = api_object_to_cpobject(raw, "mgmt1", "dmn1")
+    assert obj is not None
+    assert obj.id == "mgmt1:dmn1:u1"
+    assert obj.ipv4_address_first == "10.0.0.1"
+    assert obj.ipv4_address_last == "10.0.0.9"
+    assert obj.tags == "t1,t2"
+    assert obj.comments == "c"
+    assert obj.interfaces == [{"name": "eth0", "ipv4-address": "10.0.0.1"}]
+    assert obj.nat_settings == {"auto-rule": False}
+    assert obj.original_domain_uid == "du1"
+    assert obj.creation_time is not None
+    assert obj.last_modify_time is not None
+
+
+def test_service_converter_delegates_to_module_function(db):
+    service = make_service(db)
+    raw = {"uid": "u1", "name": "h1", "type": "host", "ipv4-address": "10.1.1.1"}
+    obj = service._api_object_to_cpobject(api_obj=raw, mgmt_name="m1", domain_name="d1")
+    assert obj is not None and obj.ipv4_address == "10.1.1.1"
+
+
+async def test_fetch_full_object_unwraps_object_payload(db):
+    client = make_client(["mgmt1"])
+    client.api_call.return_value = ApiCallResult(
+        success=True, data={"object": {"uid": "u1", "name": "h1", "type": "host"}}
+    )
+    service = make_service(db, client)
+
+    raw = await service.fetch_full_object("mgmt1", "dmn1", "u1")
+
+    assert raw == {"uid": "u1", "name": "h1", "type": "host"}
+    call = client.api_call.await_args.kwargs
+    assert call["command"] == "show-object"
+    assert call["payload"] == {"uid": "u1"}
+    assert call["details_level"] == "full"
+    assert call["domain"] == "dmn1"
+
+
+async def test_fetch_full_object_special_domains_use_empty_api_domain(db):
+    client = make_client(["mgmt1"])
+    client.api_call.return_value = ApiCallResult(
+        success=True, data={"object": {"uid": "u1", "name": "h1", "type": "host"}}
+    )
+    service = make_service(db, client)
+
+    await service.fetch_full_object("mgmt1", "SMC User", "u1")
+
+    assert client.api_call.await_args.kwargs["domain"] == ""
+
+
+async def test_fetch_full_object_clean_not_found_returns_none(db):
+    client = make_client(["mgmt1"])
+    client.api_call.return_value = ApiCallResult(
+        success=False, data=None, message="Requested object [u1] not found", code="generic_err_object_not_found"
+    )
+    service = make_service(db, client)
+
+    assert await service.fetch_full_object("mgmt1", "dmn1", "u1") is None
+
+
+async def test_fetch_full_object_other_failure_raises(db):
+    client = make_client(["mgmt1"])
+    client.api_call.return_value = ApiCallResult(success=False, data=None, message="boom", code="err_boom")
+    service = make_service(db, client)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await service.fetch_full_object("mgmt1", "dmn1", "u1")
+
+
+async def test_fetch_full_object_missing_object_key_raises(db):
+    client = make_client(["mgmt1"])
+    client.api_call.return_value = ApiCallResult(success=True, data={"unexpected": 1})
+    service = make_service(db, client)
+
+    with pytest.raises(RuntimeError, match="no object payload"):
+        await service.fetch_full_object("mgmt1", "dmn1", "u1")
+
+
+# ---------------------------------------------------------------------------
+# refresh_objects(mode="incremental")
+# ---------------------------------------------------------------------------
+
+
+def _lps(uid="sess-old", *, mgmt="m1", domain="d1"):
+    return LastPublishedSession(
+        id=f"{mgmt}:{domain}",
+        mgmt_name=mgmt,
+        domain_name=domain,
+        published_time=datetime(2026, 7, 1),
+        uid=uid,
+    )
+
+
+async def _seed_incremental_domain(db, *, baseline=True, domain="d1"):
+    """One domain with one cached host and (optionally) a baseline stamp."""
+    async with db.session() as session:
+        session.add(Domain.build(mgmt_name="m1", domain_name=domain, active_ip="1.1.1.1"))
+        session.add(cpobj("old-1", "old-host", "host", mgmt="m1", domain=domain))
+        if baseline:
+            session.add(_lps(domain=domain))
+        await session.commit()
+
+
+async def _seed_incremental_domain_empty(db, *, mgmt="m1", domain="d1"):
+    """A domain with a Domain row + baseline stamp but NO cached CPObject rows."""
+    async with db.session() as session:
+        session.add(Domain.build(mgmt_name=mgmt, domain_name=domain, active_ip="1.1.1.1"))
+        session.add(_lps(mgmt=mgmt, domain=domain))
+        await session.commit()
+
+
+def _stale_probe_response():
+    """show-last-published-session response with a NEW session uid -> stale."""
+    return ApiCallResult(
+        success=True,
+        data={"uid": "sess-new", "meta-info": {"last-modify-time": {"posix": 1755100000000}}},
+    )
+
+
+async def test_incremental_mode_applies_diff_and_advances_baseline(db):
+    await _seed_incremental_domain(db)
+    client = make_client(["m1"])
+
+    # api_call serves: staleness probe (stale), show-object re-fetch, final baseline stamp.
+    def api_call_side_effect(**kwargs):
+        if kwargs["command"] == "show-last-published-session":
+            return _stale_probe_response()
+        if kwargs["command"] == "show-object":
+            return ApiCallResult(
+                success=True,
+                data={"object": {"uid": "u1", "name": "h1", "type": "host", "ipv4-address": "10.5.5.5"}},
+            )
+        raise AssertionError(f"unexpected api_call: {kwargs['command']}")
+
+    client.api_call.side_effect = lambda **kw: api_call_side_effect(**kw)
+    client._api_adapter.show_changes = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {"changes": [{"uid": "u1", "type": "host", "change-type": "add", "name": "h1"}]},
+        }
+    )
+    service = make_service(db, client)
+
+    events = await collect(service.refresh_objects(mgmt_names=["m1"], mode="incremental"))
+
+    statuses = [e.get("status") for e in events]
+    assert "domain_incremental" in statuses
+    assert "refreshing_domain" not in statuses  # no full reload happened
+    inc = next(e for e in events if e.get("status") == "domain_incremental")
+    assert inc["count"] == 1 and inc["mgmt_name"] == "m1" and inc["domain_name"] == "d1"
+
+    # The re-fetched object is in cache alongside the untouched old row.
+    async with db.session() as session:
+        rows = (await session.execute(select(CPObject))).scalars().all()
+    by_uid = {r.uid: r for r in rows}
+    assert by_uid["u1"].ipv4_address == "10.5.5.5"
+    assert "old-1" in by_uid
+
+    # Baseline advanced to the new session uid.
+    async with db.session() as session:
+        lps = (await session.execute(select(LastPublishedSession))).scalars().one()
+    assert lps.uid == "sess-new"
+
+
+async def test_incremental_mode_skips_fresh_domain(db):
+    await _seed_incremental_domain(db)
+    client = make_client(["m1"])
+    # Probe returns the SAME session uid as the stored baseline -> fresh.
+    client.api_call.return_value = ApiCallResult(
+        success=True,
+        data={"uid": "sess-old", "meta-info": {"last-modify-time": {"posix": 1750000000000}}},
+    )
+    service = make_service(db, client)
+
+    events = await collect(service.refresh_objects(mgmt_names=["m1"], mode="incremental"))
+
+    statuses = [e.get("status") for e in events]
+    assert "domain_incremental" not in statuses and "refreshing_domain" not in statuses
+    assert "no_domains" in statuses
+    client._api_adapter.show_changes.assert_not_called()
+
+
+async def test_incremental_mode_guard_falls_back_to_full_reload(db):
+    await _seed_incremental_domain(db, baseline=False)  # no baseline -> FallbackToFull
+    client = make_client(["m1"])
+
+    def api_call_side_effect(**kwargs):
+        if kwargs["command"] == "show-last-published-session":
+            return _stale_probe_response()
+        raise AssertionError(f"unexpected api_call: {kwargs['command']}")
+
+    client.api_call.side_effect = lambda **kw: api_call_side_effect(**kw)
+
+    # Per-command responses: only show-hosts returns an object, the other
+    # three types return empty (a single return_value would insert the same
+    # uid four times and violate the swap's primary key).
+    def api_query_side_effect(**kwargs):
+        if kwargs["command"] == "show-hosts":
+            return ApiQueryResult(
+                success=True, objects=[{"uid": "n1", "name": "new-host", "type": "host", "ipv4-address": "10.7.7.7"}]
+            )
+        return ApiQueryResult(success=True, objects=[])
+
+    client.api_query.side_effect = lambda **kw: api_query_side_effect(**kw)
+    service = make_service(db, client)
+
+    events = await collect(service.refresh_objects(mgmt_names=["m1"], mode="incremental"))
+
+    statuses = [e.get("status") for e in events]
+    fb = next(e for e in events if e.get("status") == "domain_fallback")
+    assert "no baseline" in fb["reason"]
+    # Fallback ran the normal full-reload event stream and swapped the domain.
+    assert "refreshing_domain" in statuses and "domain_complete" in statuses
+    async with db.session() as session:
+        rows = (await session.execute(select(CPObject))).scalars().all()
+    assert {r.uid for r in rows} == {"n1"}  # old-1 swapped away atomically
+
+
+async def test_incremental_mode_fallback_full_reload_failure_keeps_stamp(db):
+    await _seed_incremental_domain(db, baseline=False)
+    client = make_client(["m1"])
+
+    def api_call_side_effect(**kwargs):
+        if kwargs["command"] == "show-last-published-session":
+            return _stale_probe_response()
+        raise AssertionError(f"unexpected api_call: {kwargs['command']}")
+
+    client.api_call.side_effect = lambda **kw: api_call_side_effect(**kw)
+    client.api_query.return_value = ApiQueryResult(success=False, objects=[], message="api down")
+    service = make_service(db, client)
+
+    events = await collect(service.refresh_objects(mgmt_names=["m1"], mode="incremental"))
+
+    statuses = [e.get("status") for e in events]
+    assert "domain_fallback" in statuses and "domain_failed" in statuses
+    # Old cache row survives; no baseline was ever stamped.
+    async with db.session() as session:
+        rows = (await session.execute(select(CPObject))).scalars().all()
+        stamps = (await session.execute(select(LastPublishedSession))).scalars().all()
+    assert {r.uid for r in rows} == {"old-1"}
+    assert stamps == []
+
+
+async def test_incremental_mode_zero_in_scope_changes_advances_baseline_only(db):
+    await _seed_incremental_domain(db)
+    client = make_client(["m1"])
+
+    def api_call_side_effect(**kwargs):
+        if kwargs["command"] == "show-last-published-session":
+            return _stale_probe_response()
+        raise AssertionError(f"unexpected api_call: {kwargs['command']}")
+
+    client.api_call.side_effect = lambda **kw: api_call_side_effect(**kw)
+    client._api_adapter.show_changes = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {"changes": [{"uid": "r1", "type": "access-rule", "change-type": "set", "name": "r1"}]},
+        }
+    )
+    service = make_service(db, client)
+
+    events = await collect(service.refresh_objects(mgmt_names=["m1"], mode="incremental"))
+
+    inc = next(e for e in events if e.get("status") == "domain_incremental")
+    assert inc["count"] == 0
+    async with db.session() as session:
+        lps = (await session.execute(select(LastPublishedSession))).scalars().one()
+    assert lps.uid == "sess-new"  # rules-only publish: baseline advanced, objects untouched
+
+
+async def test_incremental_mode_empty_cache_falls_back_to_full_reload(db):
+    """A domain with a baseline stamp but zero cached CPObject rows must not
+    get only the diff applied on top of an incomplete cache: that would stamp
+    the domain fresh while leaving it permanently missing objects. Mirrors
+    the coordinator's empty-cache guard (cache_refresh_coordinator.py
+    _ensure_one's `_is_empty` check, lines 87-89)."""
+    await _seed_incremental_domain_empty(db)
+    client = make_client(["m1"])
+
+    def api_call_side_effect(**kwargs):
+        if kwargs["command"] == "show-last-published-session":
+            return _stale_probe_response()
+        raise AssertionError(f"unexpected api_call: {kwargs['command']}")
+
+    client.api_call.side_effect = lambda **kw: api_call_side_effect(**kw)
+    client._api_adapter.show_changes = AsyncMock()  # must never be reached
+    _stub_api_success_for_all_types(client)
+    service = make_service(db, client)
+
+    events = await collect(service.refresh_objects(mgmt_names=["m1"], mode="incremental"))
+
+    statuses = [e.get("status") for e in events]
+    fb = next(e for e in events if e.get("status") == "domain_fallback")
+    assert fb["reason"] == "empty domain cache"
+    assert "refreshing_domain" in statuses and "domain_complete" in statuses
+    assert "domain_incremental" not in statuses
+    client._api_adapter.show_changes.assert_not_called()
+
+
+async def test_incremental_fallback_matches_check_mode_end_state(db):
+    """Spec's headline safety claim: when a diff exceeds the cap, the
+    incremental path's fallback full reload leaves the cache in exactly the
+    same end state that mode="check" (a direct full reload) would produce.
+
+    Uses two identically-seeded domains in the same db: d1 goes through
+    mode="incremental" with max_incremental_changes=0 (so the 1-add diff
+    always exceeds the cap and falls back); d2 goes through mode="check"
+    directly. Both must land on the same CPObject rows and the same
+    LastPublishedSession uid.
+    """
+    await _seed_incremental_domain(db, domain="d1")
+    await _seed_incremental_domain(db, domain="d2")
+
+    client = make_client(["m1"])
+
+    def api_call_side_effect(**kwargs):
+        if kwargs["command"] == "show-last-published-session":
+            return _stale_probe_response()
+        raise AssertionError(f"unexpected api_call: {kwargs['command']}")
+
+    client.api_call.side_effect = lambda **kw: api_call_side_effect(**kw)
+
+    def api_query_side_effect(**kwargs):
+        if kwargs["command"] == "show-hosts":
+            return ApiQueryResult(
+                success=True,
+                objects=[{"uid": "n1", "name": "new-host", "type": "host", "ipv4-address": "10.7.7.7"}],
+            )
+        return ApiQueryResult(success=True, objects=[])
+
+    client.api_query.side_effect = lambda **kw: api_query_side_effect(**kw)
+    client._api_adapter.show_changes = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {"changes": [{"uid": "u1", "type": "host", "change-type": "add", "name": "h1"}]},
+        }
+    )
+
+    service = make_service(db, client)
+    service.max_incremental_changes = 0  # any non-empty diff exceeds the cap
+
+    inc_events = await collect(service.refresh_objects(mgmt_names=["m1"], domain_names=["d1"], mode="incremental"))
+    inc_statuses = [e.get("status") for e in inc_events]
+    assert "domain_fallback" in inc_statuses
+    assert "refreshing_domain" in inc_statuses and "domain_complete" in inc_statuses
+    assert "domain_incremental" not in inc_statuses
+
+    check_events = await collect(service.refresh_objects(mgmt_names=["m1"], domain_names=["d2"], mode="check"))
+    check_statuses = [e.get("status") for e in check_events]
+    assert "domain_complete" in check_statuses
+
+    async with db.session() as session:
+        rows = (await session.execute(select(CPObject))).scalars().all()
+    by_domain: dict[str, list[tuple]] = {}
+    for r in rows:
+        by_domain.setdefault(r.domain_name, []).append((r.uid, r.name, r.type, r.ipv4_address, r.members))
+    assert sorted(by_domain["d1"]) == sorted(by_domain["d2"])
+
+    async with db.session() as session:
+        lps_rows = (await session.execute(select(LastPublishedSession))).scalars().all()
+    lps_by_domain = {r.domain_name: r.uid for r in lps_rows}
+    assert lps_by_domain["d1"] == lps_by_domain["d2"]
+
+
+def test_object_service_max_incremental_changes_param(db):
+    service = ObjectService(db_manager=db, client=make_client(["m1"]), max_incremental_changes=42)
+    assert service.max_incremental_changes == 42
+    assert service._make_refresher()._max_changes == 42

@@ -37,7 +37,15 @@ def test_refresh_mode_is_str_enum():
 
 
 def test_refresh_mode_membership():
-    assert {m.value for m in RefreshMode} == {"skip", "check", "force"}
+    assert {m.value for m in RefreshMode} == {"skip", "check", "force", "incremental"}
+
+
+def test_refresh_mode_incremental_member():
+    from arodonata.core.protocols import RefreshMode
+
+    assert RefreshMode.INCREMENTAL == "incremental"
+    assert RefreshMode("incremental") is RefreshMode.INCREMENTAL
+    assert {m.value for m in RefreshMode} == {"skip", "check", "force", "incremental"}
 
 
 # ---------------------------------------------------------------------------

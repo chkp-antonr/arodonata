@@ -7,16 +7,13 @@ from typing import TYPE_CHECKING, Any
 
 from arodonata.core.cache_mode import CacheMode
 from arodonata.core.cache_policy import CachePolicy, RefreshOutcome, RefreshScope, SystemClock
+from arodonata.core.incremental_refresh import FallbackToFull, IncrementalRefresher
 from arodonata.logger import lazy_logger
 
 if TYPE_CHECKING:
     from arodonata.core.cache_policy import Clock
 
 log = lazy_logger("arodonata.core.cache_refresh_coordinator")
-
-
-class _FallbackToFull(Exception):
-    """Signal that smart-fast must fall back to a full reload."""
 
 
 class CacheRefreshCoordinator:
@@ -31,6 +28,7 @@ class CacheRefreshCoordinator:
         default_mode: CacheMode = CacheMode.SMART,
         default_ttl: int = 300,
         clock: Clock | None = None,
+        max_incremental_changes: int = 500,
     ) -> None:
         self._cache = cache
         self._api = api
@@ -42,7 +40,7 @@ class CacheRefreshCoordinator:
         self._checked_at: dict[tuple[str, str], Any] = {}
         # per-(mgmt, domain) locks to collapse concurrent refreshes in-process
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
-        self.max_incremental_changes = 500
+        self.max_incremental_changes = max_incremental_changes
 
     # ---- public API ------------------------------------------------------
 
@@ -113,10 +111,23 @@ class CacheRefreshCoordinator:
         outcome.refreshed_domains.append((mgmt, domain))
         self._mark_checked(mgmt, domain)
 
+    def _make_refresher(self) -> IncrementalRefresher:
+        # Built per-apply so runtime mutation of max_incremental_changes
+        # (tests, operators) always takes effect.
+        from arodonata.cache.object_service import api_object_to_cpobject  # lazy: avoid core->cache import cycle
+
+        return IncrementalRefresher(
+            api=self._api,
+            cache=self._cache,
+            fetch_full_object=self._object_service.fetch_full_object,
+            to_cpobject=api_object_to_cpobject,
+            max_changes=self.max_incremental_changes,
+        )
+
     async def _incremental_reload(self, mgmt: str, domain: str, policy: CachePolicy, outcome: RefreshOutcome) -> None:
         try:
-            applied = await self._apply_changes(mgmt, domain)
-        except _FallbackToFull as exc:
+            applied = await self._make_refresher().apply(mgmt, domain)
+        except FallbackToFull as exc:
             log().debug(f"smart-fast fallback for {mgmt}/{domain}: {exc}")
             outcome.fell_back = True
             await self._full_reload(mgmt, domain, outcome)
@@ -126,95 +137,6 @@ class CacheRefreshCoordinator:
         if applied > 0:
             outcome.refreshed_domains.append((mgmt, domain))
         self._mark_checked(mgmt, domain)
-
-    async def _apply_changes(self, mgmt: str, domain: str) -> int:
-        from datetime import UTC, datetime
-
-        from arodonata.cache.models import CPObject
-        from arodonata.core.change_processor import ChangeProcessor, ChangeType
-
-        baseline = await self._cache.get_last_published_session(mgmt, domain)
-        if baseline is None or not getattr(baseline, "published_time", None):
-            raise _FallbackToFull("no baseline session")
-
-        changes = await self._fetch_parsed_changes(mgmt, domain, baseline)
-        processor = ChangeProcessor()
-
-        if not changes:
-            return 0  # nothing changed since baseline
-
-        if len(changes) > self.max_incremental_changes:
-            raise _FallbackToFull(f"too many changes ({len(changes)})")
-
-        adds_updates = processor.get_adds_and_updates(changes)
-        deletes = processor.filter_by_change_type(changes, ChangeType.DELETE)
-
-        objects_to_upsert = []
-        for change in adds_updates:
-            raw = change.raw_data or {}
-            objects_to_upsert.append(
-                CPObject(
-                    id=f"{mgmt}:{domain}:{change.uid}",
-                    uid=change.uid,
-                    name=change.name,
-                    type=change.object_type,
-                    mgmt_name=mgmt,
-                    domain_name=domain,
-                    ipv4_address=raw.get("ipv4-address", ""),
-                    subnet4=raw.get("subnet4", ""),
-                    subnet_mask=raw.get("subnet-mask", ""),
-                    members=_extract_members_from_raw(raw),
-                    update_time=datetime.now(UTC).replace(tzinfo=None),
-                    raw_data=raw,
-                )
-            )
-
-        applied = 0
-        if objects_to_upsert:
-            await self._cache.upsert_objects(objects_to_upsert)
-            applied += len(objects_to_upsert)
-
-        for change in deletes:
-            await self._cache.delete_object(change.uid, mgmt, domain)
-            applied += 1
-
-        return applied
-
-    async def _fetch_parsed_changes(self, mgmt: str, domain: str, baseline: Any) -> list:
-        """Fetch and parse the show-changes diff since baseline.
-
-        Raises _FallbackToFull on any condition that would make an
-        incremental apply unsafe: API failure, truncated (paged) diff,
-        unparseable payload, or entries the parser had to drop.
-        """
-        from arodonata.core.change_processor import ChangeProcessor
-
-        try:
-            api_domain = "" if domain in ("SMC User", "System Data") else domain
-            response = await self._api.show_changes(
-                mgmt_name=mgmt,
-                domain=api_domain,
-                from_date=baseline.published_time.isoformat(),
-            )
-        except Exception as exc:  # noqa: BLE001 - fall back on any API failure
-            raise _FallbackToFull(f"show-changes failed: {exc}") from exc
-
-        response = _normalize_changes_response(response)
-        if _changes_truncated(response):
-            raise _FallbackToFull("show-changes truncated (more sessions than one page)")
-
-        try:
-            changes = ChangeProcessor().parse_changes(response)
-        except Exception as exc:  # noqa: BLE001
-            raise _FallbackToFull(f"unparseable changes: {exc}") from exc
-
-        # Detect changes the processor silently dropped (unknown change-type,
-        # uid-less objects) -> fall back rather than advance the baseline
-        # past a lost change.
-        raw_count = _raw_change_count(response)
-        if raw_count > len(changes):
-            raise _FallbackToFull(f"unhandled change type(s): parsed {len(changes)} of {raw_count}")
-        return changes
 
     # ---- helpers ---------------------------------------------------------
 
@@ -261,111 +183,3 @@ class CacheRefreshCoordinator:
 
     def _mark_checked(self, mgmt: str, domain: str) -> None:
         self._checked_at[(mgmt, domain)] = self._clock.now()
-
-
-def _normalize_changes_response(response: Any) -> dict:
-    """Coerce a show-changes result (ApiCallResult or dict) into a plain dict.
-
-    Raises _FallbackToFull when the API reported failure — an unsuccessful
-    diff must never advance the baseline.
-    """
-    if isinstance(response, dict):
-        return response
-    if response is None:
-        raise _FallbackToFull("show-changes returned no response")
-    if getattr(response, "success", None) is False:
-        message = getattr(response, "message", "") or "unknown error"
-        raise _FallbackToFull(f"show-changes unsuccessful: {message}")
-    data = getattr(response, "data", None)
-    if not isinstance(data, dict):
-        raise _FallbackToFull("show-changes response has no data payload")
-    return {"data": data}
-
-
-def _iter_task_details(data: Any) -> list[dict]:
-    """All task-detail dicts from a task-wrapped show-changes payload."""
-    details: list[dict] = []
-    if not isinstance(data, dict):
-        return details
-    for task in data.get("tasks") or []:
-        if not isinstance(task, dict):
-            continue
-        details.extend(d for d in task.get("task-details") or [] if isinstance(d, dict))
-    return details
-
-
-def _changes_truncated(response: dict) -> bool:
-    """True when CP returned fewer change sessions than exist (paged diff).
-
-    A truncated diff cannot be applied safely — advancing the baseline would
-    skip the sessions beyond the first page.
-    """
-    for detail in _iter_task_details(response.get("data")):
-        total = detail.get("total")
-        to = detail.get("to")
-        if isinstance(total, int) and isinstance(to, int) and to < total:
-            return True
-    return False
-
-
-def _operations_count(operations: dict) -> int:
-    """Count object entries across a session's operations arrays."""
-    count = 0
-    for key in ("added-objects", "modified-objects", "deleted-objects"):
-        value = operations.get(key)
-        if isinstance(value, list):
-            count += sum(1 for obj in value if isinstance(obj, dict))
-    return count
-
-
-def _raw_change_count(response: Any) -> int:
-    """Count raw change entries in a show-changes response, defensively.
-
-    Handles both the real task-wrapped shape (counting every object in each
-    session's operations arrays) and the legacy flat shape. Used to detect
-    when ChangeProcessor.parse_changes silently dropped entries (unknown
-    change-type, uid-less objects), so the caller falls back instead of
-    advancing the baseline past a lost change.
-    """
-    if not isinstance(response, dict):
-        return 0
-    data = response.get("data")
-    if not isinstance(data, dict):
-        return 0
-
-    count = 0
-    for detail in _iter_task_details(data):
-        for entry in detail.get("changes") or []:
-            if isinstance(entry, dict) and isinstance(entry.get("operations"), dict):
-                count += _operations_count(entry["operations"])
-            elif not isinstance(entry, dict):
-                count += 1  # unparseable entry: must trip the guard
-
-    flat = data.get("changes")
-    if isinstance(flat, list):
-        for entry in flat:
-            if isinstance(entry, dict) and isinstance(entry.get("operations"), dict):
-                count += _operations_count(entry["operations"])
-            else:
-                count += 1  # legacy entry, or unparseable: one unit each
-    return count
-
-
-def _extract_members_from_raw(raw_data: dict) -> str:
-    """Extract member UIDs from raw API data.
-
-    Args:
-        raw_data: Raw API response data.
-
-    Returns:
-        Comma-separated member UIDs.
-    """
-    members = raw_data.get("members", {})
-    if isinstance(members, dict):
-        member_objs = members.get("objects", [])
-        member_uids = [m.get("uid", "") for m in member_objs if isinstance(m, dict)]
-        return ",".join(filter(None, member_uids))
-    elif isinstance(members, list):
-        member_uids = [m.get("uid", "") for m in members if isinstance(m, dict)]
-        return ",".join(filter(None, member_uids))
-    return ""

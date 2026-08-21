@@ -301,3 +301,22 @@ async def test_v2_helper_on_closed_client_raises():
     await client.close()
     with pytest.raises(RuntimeError, match=CLOSED_CLIENT_MATCH):
         await client.get_hosts()
+
+
+# --------------------------------------------------------------------------- #
+# max_incremental_changes plumbing
+# --------------------------------------------------------------------------- #
+
+
+def test_max_incremental_changes_threads_to_coordinator_and_object_service():
+    client = make_client(max_incremental_changes=42)
+
+    assert client._refresh_coordinator.max_incremental_changes == 42
+    assert client._object_service.max_incremental_changes == 42
+
+
+def test_max_incremental_changes_default_is_500():
+    client = make_client()
+
+    assert client._refresh_coordinator.max_incremental_changes == 500
+    assert client._object_service.max_incremental_changes == 500

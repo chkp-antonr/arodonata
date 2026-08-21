@@ -221,3 +221,71 @@ async def test_smart_fast_falls_back_on_too_many_changes(admin_client, test_doma
             wait_for_task=True,
         )
         assert r.success, f"revert failed: {r.message}"
+
+
+@pytest.mark.cp_mutates
+async def test_bulk_incremental_mode_applies_publish_without_full_reload(admin_client, test_domain_a):
+    """After a small publish, mode="incremental" applies the change and
+    writes the new host to the cache without triggering a full domain
+    reload. Lab-only: requires the FPCR environment."""
+    client, mgmt_name = admin_client
+
+    pre = await last_published_session(client, mgmt_name, test_domain_a)
+    assert pre["uid"], "need a revision to revert to"
+
+    # 1. Baseline: force-refresh the domain so a last_published_sessions
+    # stamp exists for the incremental staleness probe.
+    await _force_build(client, mgmt_name, test_domain_a)
+
+    # 2. Make a small change in the lab (create+publish one host).
+    suffix = uuid.uuid4().hex[:8]
+    host_name = f"arodonata-test-{suffix}"
+    sid, server_ip = await client.create_dedicated_session(
+        mgmt_name, test_domain_a, session_name="arodonata-incremental-matrix"
+    )
+    try:
+        r = await client.api_call_with_sid(
+            mgmt_name=mgmt_name,
+            sid=sid,
+            server_ip=server_ip,
+            command="add-host",
+            payload={"name": host_name, "ip-address": "10.255.252.10"},
+        )
+        assert r.success, f"add-host failed: {r.message}"
+        r = await client.api_call_with_sid(
+            mgmt_name=mgmt_name,
+            sid=sid,
+            server_ip=server_ip,
+            command="publish",
+            wait_for_task=True,
+        )
+        assert r.success, f"publish failed: {r.message}"
+    finally:
+        await client.logout_sid(sid, server_ip, mgmt_name)
+
+    try:
+        # 3. Incremental refresh must apply it without a full reload event.
+        events = []
+        async for e in client.refresh_objects(mgmt_names=[mgmt_name], domain_names=[test_domain_a], mode="incremental"):
+            events.append(e)
+        statuses = [e.data.get("status") for e in events if e.data]
+        assert "domain_incremental" in statuses, f"expected an incremental apply, got statuses={statuses}"
+        assert "refreshing_domain" not in statuses, f"must not fall back to a full reload, got statuses={statuses}"
+
+        hosts = await client.get_hosts(
+            name_filter=host_name,
+            mgmt_names=[mgmt_name],
+            domain_names=[test_domain_a],
+            cache_mode="cache",
+        )
+        assert hosts, "incremental refresh must apply the newly published host to the cache"
+    finally:
+        await discard_open_sessions(client, mgmt_name, test_domain_a)
+        r = await client.api_call(
+            mgmt_name,
+            "revert-to-revision",
+            test_domain_a,
+            payload={"to-session": pre["uid"]},
+            wait_for_task=True,
+        )
+        assert r.success, f"revert failed: {r.message}"

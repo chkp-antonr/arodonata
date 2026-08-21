@@ -8,7 +8,11 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 via [commitizen](https://commitizen-tools.github.io/commitizen/) — do not
 hand-edit released sections, only the `[Unreleased]` section above them.
 
-## [Unreleased]
+## v1.7.0 (2026-08-21)
+
+### Feat
+
+- incremental refresh mode with show-changes diff and full object re-fetch
 
 ## v1.6.0 (2026-08-19)
 

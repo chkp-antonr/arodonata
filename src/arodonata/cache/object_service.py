@@ -12,8 +12,9 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select
 
 from ..core import RefreshMode
+from ..core.incremental_refresh import FallbackToFull, IncrementalRefresher
 from ..logger import lazy_logger
-from ..utils.helpers import to_db_datetime, utc_now_naive
+from ..utils.helpers import utc_now_naive
 from .database import DatabaseManager
 from .models import CPObject, LastPublishedSession
 from .repository import CacheRepository
@@ -81,6 +82,198 @@ def classify_input(raw: str) -> tuple[SearchType, str]:
 
 
 # ---------------------------------------------------------------------------
+# Module-level object converter functions
+# ---------------------------------------------------------------------------
+
+
+def _extract_ip_fields(obj_type: str, api_obj: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    ipv4_address = ""
+    subnet4 = ""
+    subnet_mask = ""
+    ipv4_address_first = ""
+    ipv4_address_last = ""
+
+    if obj_type == "host":
+        ipv4_address = api_obj.get("ipv4-address", "")
+    elif obj_type == "network":
+        subnet4 = api_obj.get("subnet4", "")
+        subnet_mask = api_obj.get("subnet-mask", "")
+    elif obj_type == "address-range":
+        ipv4_address_first = api_obj.get("ipv4-address-first", "")
+        ipv4_address_last = api_obj.get("ipv4-address-last", "")
+
+    return ipv4_address, subnet4, subnet_mask, ipv4_address_first, ipv4_address_last
+
+
+def _extract_group_members(obj_type: str, api_obj: dict[str, Any]) -> str:
+    if obj_type != "group":
+        return ""
+
+    members_list = api_obj.get("members", [])
+    if not isinstance(members_list, list):
+        return ""
+
+    member_uids = []
+    for m in members_list:
+        if isinstance(m, str):
+            member_uids.append(m)
+        elif isinstance(m, dict):
+            member_uids.append(m.get("uid", ""))
+
+    return ",".join(f'"{uid}"' for uid in member_uids if uid)
+
+
+def _extract_tags(api_obj: dict[str, Any]) -> str:
+    tags_list = api_obj.get("tags", [])
+    if not isinstance(tags_list, list):
+        return ""
+
+    tag_names = []
+    for t in tags_list:
+        if isinstance(t, str):
+            tag_names.append(t)
+        elif isinstance(t, dict):
+            tag_names.append(t.get("name", ""))
+    return ",".join(tag_names)
+
+
+def _parse_api_timestamp(time_data: dict[str, Any] | None) -> datetime | None:
+    """Parse timestamp from API meta-info.
+
+    Args:
+        time_data: Time data from API meta-info (contains 'iso-8601' or 'posix').
+
+    Returns:
+        Naive datetime for database compatibility, or None.
+        Returns None if input is None, empty, or unparseable (never raises).
+    """
+    if not time_data:
+        return None
+
+    # Try ISO-8601
+    iso_time = time_data.get("iso-8601")
+    if iso_time:
+        try:
+            if iso_time.endswith("+0000"):
+                iso_time = iso_time.replace("+0000", "+00:00")
+            return datetime.fromisoformat(iso_time.replace("Z", "+00:00")).astimezone(UTC).replace(tzinfo=None)
+        except (ValueError, TypeError):
+            pass
+
+    # Try POSIX
+    posix_time = time_data.get("posix")
+    if posix_time:
+        try:
+            return datetime.fromtimestamp(int(posix_time) / 1000, tz=UTC).replace(tzinfo=None)
+        except (ValueError, TypeError, OverflowError):
+            pass
+
+    return None
+
+
+def api_object_to_cpobject(
+    api_obj: dict[str, Any],
+    mgmt_name: str,
+    domain_name: str,
+) -> CPObject | None:
+    """Convert a full-detail API object dict to a CPObject row.
+
+    The single canonical converter: both the full-reload path and the
+    incremental re-fetch path produce rows through this function.
+    """
+    try:
+        # Extract common fields
+        uid = api_obj.get("uid", "")
+        name = api_obj.get("name", "")
+        obj_type = api_obj.get("type", "")
+
+        if not uid or not name:
+            log().warning(f"API object missing uid or name: {api_obj}")
+            return None
+
+        # Build compound key
+        obj_id = f"{mgmt_name}:{domain_name}:{uid}"
+
+        # Extract IP fields
+        ipv4_address, subnet4, subnet_mask, ipv4_address_first, ipv4_address_last = _extract_ip_fields(
+            obj_type, api_obj
+        )
+
+        # Extract group members
+        members = _extract_group_members(obj_type, api_obj)
+
+        # Extract other common fields
+        comments = api_obj.get("comments", "")
+        tags = _extract_tags(api_obj)
+
+        color = api_obj.get("color", "")
+
+        # Extract new fields (interfaces, nat_settings, version, cluster_uid, original_domain_uid)
+        interfaces = api_obj.get("interfaces")  # Returns list or None
+        nat_settings = api_obj.get("nat-settings")  # Returns dict or None
+        version = api_obj.get("version", "")
+        cluster_uid = api_obj.get("cluster-uid", "")
+        domain_data = api_obj.get("domain", {})
+        if isinstance(domain_data, dict):
+            original_domain_uid = domain_data.get("uid", "")
+        else:
+            original_domain_uid = ""
+
+        # Extract timestamps
+        # Check for malformed timestamp dicts (not iso-8601 or posix keys)
+        # to match the old to_db_datetime behavior for backwards compatibility
+        creation_time_data = api_obj.get("creation-time")
+        if isinstance(creation_time_data, dict) and creation_time_data:
+            if "iso-8601" not in creation_time_data and "posix" not in creation_time_data:
+                raise ValueError(f"Malformed timestamp dict: {creation_time_data}")
+        creation_time = _parse_api_timestamp(creation_time_data)
+
+        last_modify_time_data = api_obj.get("last-modify-time")
+        if isinstance(last_modify_time_data, dict) and last_modify_time_data:
+            if "iso-8601" not in last_modify_time_data and "posix" not in last_modify_time_data:
+                raise ValueError(f"Malformed timestamp dict: {last_modify_time_data}")
+        last_modify_time = _parse_api_timestamp(last_modify_time_data)
+
+        # Get original domain (for global objects)
+        original_domain = api_obj.get("domain", {}).get("name", "")
+
+        # Create CPObject
+        cp_obj = CPObject(
+            id=obj_id,
+            uid=uid,
+            name=name,
+            type=obj_type,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            original_domain=original_domain,
+            ipv4_address=ipv4_address,
+            subnet4=subnet4,
+            subnet_mask=subnet_mask,
+            ipv4_address_first=ipv4_address_first,
+            ipv4_address_last=ipv4_address_last,
+            members=members,
+            comments=comments,
+            tags=tags,
+            color=color,
+            interfaces=interfaces,
+            nat_settings=nat_settings,
+            version=version,
+            cluster_uid=cluster_uid,
+            original_domain_uid=original_domain_uid,
+            creation_time=creation_time,
+            last_modify_time=last_modify_time,
+            update_time=utc_now_naive(),
+            raw_data=api_obj,
+        )
+
+        return cp_obj
+
+    except Exception as e:
+        log().exception(f"Error converting API object to CPObject: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Result data classes
 # ---------------------------------------------------------------------------
 
@@ -133,16 +326,20 @@ class ObjectService:
         self,
         db_manager: DatabaseManager,
         client: ArodonataClient,
+        max_incremental_changes: int = 500,
     ) -> None:
         """Initialize ObjectService.
 
         Args:
             db_manager: DatabaseManager instance.
             client: ArodonataClient instance for API fallback.
+            max_incremental_changes: Max in-scope changes an incremental
+                apply will accept before falling back to a full reload.
         """
         self._db = db_manager
         self._cache = CacheRepository(db_manager)
         self._client = client
+        self.max_incremental_changes = max_incremental_changes
 
     async def _fetch_objects_from_db(
         self,
@@ -267,7 +464,7 @@ class ObjectService:
         Args:
             mgmt_names: Optional management server filter.
             domain_names: Optional domain filter.
-            mode: Refresh mode (skip/check/force).
+            mode: Refresh mode (skip/check/force/incremental).
 
         Yields:
             Progress dictionaries with keys:
@@ -354,11 +551,9 @@ class ObjectService:
         log().debug(f"Refreshing {len(domains_to_refresh)} domain(s) for {mgmt_name}")
 
         # Process each domain
+        refresh = self._refresh_domain_incremental if mode == RefreshMode.INCREMENTAL else self._refresh_domain
         for domain_name in domains_to_refresh:
-            async for progress in self._refresh_domain(
-                mgmt_name=mgmt_name,
-                domain_name=domain_name,
-            ):
+            async for progress in refresh(mgmt_name=mgmt_name, domain_name=domain_name):
                 yield progress
 
     async def _get_domains_to_refresh(
@@ -415,7 +610,7 @@ class ObjectService:
         if mode == RefreshMode.FORCE:
             return [d.domain_name for d in filtered_domains]
 
-        # For CHECK mode, filter by staleness
+        # For CHECK and INCREMENTAL modes, filter by staleness
         stale_domains = []
         for domain in filtered_domains:
             if await self._is_domain_stale(mgmt_name, domain.domain_name):
@@ -516,20 +711,22 @@ class ObjectService:
         """
         # 1. Check if there are any cached objects for this domain
         # This is a safety check: if objects are missing entirely, it's definitely stale
+        if await self._count_cached_objects(mgmt_name, domain_name) == 0:
+            log().debug(f"Domain {mgmt_name}/{domain_name} is stale (no cached objects)")
+            return True
+
+        # 2. Check LastPublishedSession comparison
+        return await self._compare_published_times(mgmt_name, domain_name)
+
+    async def _count_cached_objects(self, mgmt_name: str, domain_name: str) -> int:
+        """Cheapest available check for whether a domain's object cache is empty."""
         count_stmt = select(func.count()).where(
             CPObject.mgmt_name == mgmt_name,  # type: ignore[arg-type]
             CPObject.domain_name == domain_name,  # type: ignore[arg-type]
         )
         async with self._cache._db.session() as session:
             res = await session.execute(count_stmt)
-            count = res.scalar() or 0
-
-        if count == 0:
-            log().debug(f"Domain {mgmt_name}/{domain_name} is stale (no cached objects)")
-            return True
-
-        # 2. Check LastPublishedSession comparison
-        return await self._compare_published_times(mgmt_name, domain_name)
+            return res.scalar() or 0
 
     async def _compare_published_times(self, mgmt_name: str, domain_name: str) -> bool:
         """Compare the API's last-published-session time to the cached value.
@@ -605,36 +802,8 @@ class ObjectService:
         return False
 
     def _parse_api_timestamp(self, time_data: dict[str, Any] | None) -> datetime | None:
-        """Parse timestamp from API meta-info.
-
-        Args:
-            time_data: Time data from API meta-info (contains 'iso-8601' or 'posix').
-
-        Returns:
-            Naive datetime for database compatibility, or None.
-        """
-        if not time_data:
-            return None
-
-        # Try ISO-8601
-        iso_time = time_data.get("iso-8601")
-        if iso_time:
-            try:
-                if iso_time.endswith("+0000"):
-                    iso_time = iso_time.replace("+0000", "+00:00")
-                return datetime.fromisoformat(iso_time.replace("Z", "+00:00")).astimezone(UTC).replace(tzinfo=None)
-            except (ValueError, TypeError):
-                pass
-
-        # Try POSIX
-        posix_time = time_data.get("posix")
-        if posix_time:
-            try:
-                return datetime.fromtimestamp(int(posix_time) / 1000, tz=UTC).replace(tzinfo=None)
-            except (ValueError, TypeError, OverflowError):
-                pass
-
-        return None
+        """Delegate to module-level timestamp parser."""
+        return _parse_api_timestamp(time_data)
 
     async def refresh_last_published_session(
         self,
@@ -689,6 +858,107 @@ class ObjectService:
             log().warning(f"Failed to update LastPublishedSession for {mgmt_name}/{domain_name}: {e}")
 
         return None
+
+    async def fetch_full_object(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        uid: str,
+    ) -> dict[str, Any] | None:
+        """Fetch one object in full detail via show-object.
+
+        Returns the raw object dict, or None ONLY when the management server
+        cleanly reports the object does not exist (deleted since the diff was
+        taken). Any other failure raises RuntimeError — callers treat that as
+        "incremental apply unsafe".
+        """
+        api_domain = "" if domain_name in ("SMC User", "System Data") else domain_name
+        response = await self._client.api_call(
+            mgmt_name=mgmt_name,
+            command="show-object",
+            domain=api_domain,
+            details_level="full",
+            payload={"uid": uid},
+        )
+        if response.success and response.data:
+            obj = response.data.get("object")
+            if isinstance(obj, dict):
+                return obj
+            raise RuntimeError(f"show-object {uid} returned no object payload")
+        if "object_not_found" in (response.code or "") or "not found" in (response.message or "").lower():
+            return None
+        raise RuntimeError(f"show-object {uid} failed: {response.message or response.code or 'unknown error'}")
+
+    def _make_refresher(self) -> IncrementalRefresher:
+        # Built per-apply so runtime mutation of max_incremental_changes
+        # always takes effect. The client's API adapter provides show_changes.
+        return IncrementalRefresher(
+            api=self._client._api_adapter,
+            cache=self._cache,
+            fetch_full_object=self.fetch_full_object,
+            to_cpobject=api_object_to_cpobject,
+            max_changes=self.max_incremental_changes,
+        )
+
+    async def _refresh_domain_incremental(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Incrementally refresh one stale domain from its show-changes diff.
+
+        Changed objects are re-fetched in full (show-object) — the diff is
+        only a change list. Any unsafe condition falls back to the atomic
+        full-domain reload. The baseline stamp advances only on success
+        (of either path).
+        """
+        if await self._count_cached_objects(mgmt_name, domain_name) == 0:
+            # A domain with a baseline stamp but zero (or partial) cached rows
+            # must not have a diff applied on top of it: the diff only covers
+            # changes since the baseline, so an incremental apply here would
+            # stamp the domain fresh while leaving it permanently incomplete.
+            # Mirrors the coordinator's empty-cache guard
+            # (cache_refresh_coordinator.py _ensure_one's `_is_empty` check).
+            yield {
+                "message": (
+                    f"Incremental refresh of {mgmt_name}/{domain_name} not safe "
+                    f"(empty domain cache); falling back to full reload"
+                ),
+                "mgmt_name": mgmt_name,
+                "domain_name": domain_name,
+                "status": "domain_fallback",
+                "reason": "empty domain cache",
+            }
+            async for progress in self._refresh_domain(mgmt_name, domain_name):
+                yield progress
+            return
+
+        try:
+            applied = await self._make_refresher().apply(mgmt_name, domain_name)
+        except FallbackToFull as exc:
+            yield {
+                "message": (
+                    f"Incremental refresh of {mgmt_name}/{domain_name} not safe ({exc}); falling back to full reload"
+                ),
+                "mgmt_name": mgmt_name,
+                "domain_name": domain_name,
+                "status": "domain_fallback",
+                "reason": str(exc),
+            }
+            async for progress in self._refresh_domain(mgmt_name, domain_name):
+                yield progress
+            return
+
+        yield {
+            "message": f"Incremental: {mgmt_name}/{domain_name} - {applied} change(s) applied",
+            "mgmt_name": mgmt_name,
+            "domain_name": domain_name,
+            "status": "domain_incremental",
+            "count": applied,
+        }
+        # Success (including a rules-only publish with 0 in-scope changes):
+        # advance the freshness stamp so the next probe sees this domain fresh.
+        await self.refresh_last_published_session(mgmt_name, domain_name)
 
     async def _refresh_domain(
         self,
@@ -807,52 +1077,16 @@ class ObjectService:
         return cp_objects, None
 
     def _extract_ip_fields(self, obj_type: str, api_obj: dict[str, Any]) -> tuple[str, str, str, str, str]:
-        ipv4_address = ""
-        subnet4 = ""
-        subnet_mask = ""
-        ipv4_address_first = ""
-        ipv4_address_last = ""
-
-        if obj_type == "host":
-            ipv4_address = api_obj.get("ipv4-address", "")
-        elif obj_type == "network":
-            subnet4 = api_obj.get("subnet4", "")
-            subnet_mask = api_obj.get("subnet-mask", "")
-        elif obj_type == "address-range":
-            ipv4_address_first = api_obj.get("ipv4-address-first", "")
-            ipv4_address_last = api_obj.get("ipv4-address-last", "")
-
-        return ipv4_address, subnet4, subnet_mask, ipv4_address_first, ipv4_address_last
+        """Delegate to module-level function."""
+        return _extract_ip_fields(obj_type, api_obj)
 
     def _extract_group_members(self, obj_type: str, api_obj: dict[str, Any]) -> str:
-        if obj_type != "group":
-            return ""
-
-        members_list = api_obj.get("members", [])
-        if not isinstance(members_list, list):
-            return ""
-
-        member_uids = []
-        for m in members_list:
-            if isinstance(m, str):
-                member_uids.append(m)
-            elif isinstance(m, dict):
-                member_uids.append(m.get("uid", ""))
-
-        return ",".join(f'"{uid}"' for uid in member_uids if uid)
+        """Delegate to module-level function."""
+        return _extract_group_members(obj_type, api_obj)
 
     def _extract_tags(self, api_obj: dict[str, Any]) -> str:
-        tags_list = api_obj.get("tags", [])
-        if not isinstance(tags_list, list):
-            return ""
-
-        tag_names = []
-        for t in tags_list:
-            if isinstance(t, str):
-                tag_names.append(t)
-            elif isinstance(t, dict):
-                tag_names.append(t.get("name", ""))
-        return ",".join(tag_names)
+        """Delegate to module-level function."""
+        return _extract_tags(api_obj)
 
     def _api_object_to_cpobject(
         self,
@@ -860,95 +1094,8 @@ class ObjectService:
         mgmt_name: str,
         domain_name: str,
     ) -> CPObject | None:
-        """Convert API object response to CPObject model.
-
-        Args:
-            api_obj: Raw API object dictionary.
-            mgmt_name: Management server name.
-            domain_name: Domain name.
-
-        Returns:
-            CPObject instance or None if conversion fails.
-        """
-        try:
-            # Extract common fields
-            uid = api_obj.get("uid", "")
-            name = api_obj.get("name", "")
-            obj_type = api_obj.get("type", "")
-
-            if not uid or not name:
-                log().warning(f"API object missing uid or name: {api_obj}")
-                return None
-
-            # Build compound key
-            obj_id = f"{mgmt_name}:{domain_name}:{uid}"
-
-            # Extract IP fields
-            ipv4_address, subnet4, subnet_mask, ipv4_address_first, ipv4_address_last = self._extract_ip_fields(
-                obj_type, api_obj
-            )
-
-            # Extract group members
-            members = self._extract_group_members(obj_type, api_obj)
-
-            # Extract other common fields
-            comments = api_obj.get("comments", "")
-            tags = self._extract_tags(api_obj)
-
-            color = api_obj.get("color", "")
-
-            # Extract new fields (interfaces, nat_settings, version, cluster_uid, original_domain_uid)
-            interfaces = api_obj.get("interfaces")  # Returns list or None
-            nat_settings = api_obj.get("nat-settings")  # Returns dict or None
-            version = api_obj.get("version", "")
-            cluster_uid = api_obj.get("cluster-uid", "")
-            domain_data = api_obj.get("domain", {})
-            if isinstance(domain_data, dict):
-                original_domain_uid = domain_data.get("uid", "")
-            else:
-                original_domain_uid = ""
-
-            # Extract timestamps
-            creation_time = to_db_datetime(api_obj.get("creation-time"))
-            last_modify_time = to_db_datetime(api_obj.get("last-modify-time"))
-
-            # Get original domain (for global objects)
-            original_domain = api_obj.get("domain", {}).get("name", "")
-
-            # Create CPObject
-            cp_obj = CPObject(
-                id=obj_id,
-                uid=uid,
-                name=name,
-                type=obj_type,
-                mgmt_name=mgmt_name,
-                domain_name=domain_name,
-                original_domain=original_domain,
-                ipv4_address=ipv4_address,
-                subnet4=subnet4,
-                subnet_mask=subnet_mask,
-                ipv4_address_first=ipv4_address_first,
-                ipv4_address_last=ipv4_address_last,
-                members=members,
-                comments=comments,
-                tags=tags,
-                color=color,
-                interfaces=interfaces,
-                nat_settings=nat_settings,
-                version=version,
-                cluster_uid=cluster_uid,
-                original_domain_uid=original_domain_uid,
-                creation_time=creation_time,
-                last_modify_time=last_modify_time,
-                update_time=utc_now_naive(),
-                raw_data=api_obj,
-            )
-
-            return cp_obj
-
-        except Exception as e:
-            log().exception(f"Error converting API object to CPObject: {e}")
-            return None
+        """Delegate to the module-level canonical converter."""
+        return api_object_to_cpobject(api_obj, mgmt_name, domain_name)
 
 
 __all__ = [
@@ -958,4 +1105,5 @@ __all__ = [
     "SearchResult",
     "GroupNode",
     "RefreshMode",
+    "api_object_to_cpobject",
 ]

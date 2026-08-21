@@ -20,16 +20,33 @@ Each of these is an async generator yielding `SSEEvent` progress updates
 (`src/arodonata/api/schemas.py`), so a caller can stream progress to a UI or
 log line-by-line instead of blocking until completion.
 
-## Smart refresh (`show-changes`)
+## Refresh modes
 
-Rather than re-pulling every object on every refresh, Arodonata tracks the last
-processed session per management server/domain
-([`session_tracker.py`](../api/arodonata/core/session_tracker.md)) and uses
-Check Point's `show-changes` API to pull only what changed since then
-([`change_processor.py`](../api/arodonata/core/change_processor.md)). This is
-what the [`RefreshMode`](../api/arodonata/core/protocols.md) enum's incremental
-modes select between a full rebuild and an incremental catch-up (`SKIP` uses
-the cache as-is with no API calls at all).
+`refresh_objects()` takes a `mode` selecting how much work a refresh does
+([`RefreshMode`](../api/arodonata/core/protocols.md)):
+
+- **`skip`** — use the cache as-is, no API calls.
+- **`check`** — probe each domain's `show-last-published-session` (session
+  *uid* comparison; stored per domain in the `last_published_sessions`
+  table) and fully reload only stale domains, via one atomic
+  collect-then-swap transaction per domain.
+- **`force`** — full atomic reload of every domain, unconditionally.
+- **`incremental`** — same staleness probe as `check`, but a stale domain is
+  caught up from Check Point's `show-changes` diff
+  ([`change_processor.py`](../api/arodonata/core/change_processor.md),
+  [`incremental_refresh.py`](../api/arodonata/core/incremental_refresh.md)):
+  the diff is used only as a *change list* — every added or modified object
+  is re-fetched in full (`show-object`, `details-level: full`) and converted
+  by the same converter as a full reload, so its cache row is
+  field-identical to what `force` would produce. Deletes are applied
+  directly. Any unsafe condition (no baseline, truncated diff, more changes
+  than the configurable cap — `ArodonataClient(max_incremental_changes=…)`,
+  default 500 — parse anomalies, re-fetch failures) falls back to the atomic
+  full reload. Only changes to cached object kinds (hosts, networks, address
+  ranges, groups) are applied; a rules-only publish just advances the
+  freshness baseline.
+
+The same engine backs the `smart-fast` cache mode used by read helpers.
 
 ## Reading from the cache
 

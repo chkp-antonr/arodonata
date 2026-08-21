@@ -9,11 +9,7 @@ from datetime import datetime, timedelta
 
 from arodonata.core.cache_mode import CacheMode
 from arodonata.core.cache_policy import CachePolicy, RefreshScope, SystemClock
-from arodonata.core.cache_refresh_coordinator import (
-    CacheRefreshCoordinator,
-    _extract_members_from_raw,
-    _raw_change_count,
-)
+from arodonata.core.cache_refresh_coordinator import CacheRefreshCoordinator
 from tests.unit.doubles import FakeApi, FakeCache
 
 # --------------------------------------------------------------------------- #
@@ -79,13 +75,15 @@ class StatefulCache(FakeCache):
 
 
 class FakeObjectService:
-    """Collaborator the coordinator drives for staleness + reloads."""
+    """Collaborator the coordinator drives for staleness + reloads + re-fetches."""
 
-    def __init__(self, stale=False) -> None:
+    def __init__(self, stale=False, objects_by_uid=None) -> None:
         self.stale = stale
         self.full_reloads: list[tuple[str, str]] = []
         self.baseline_refreshes: list[tuple[str, str]] = []
         self.stale_checks = 0
+        self.fetched: list[str] = []
+        self.objects_by_uid = objects_by_uid or {}
 
     async def _is_domain_stale(self, mgmt, domain):
         self.stale_checks += 1
@@ -97,6 +95,12 @@ class FakeObjectService:
 
     async def refresh_last_published_session(self, mgmt, domain):
         self.baseline_refreshes.append((mgmt, domain))
+
+    async def fetch_full_object(self, mgmt, domain, uid):
+        self.fetched.append(uid)
+        if uid in self.objects_by_uid:
+            return self.objects_by_uid[uid]
+        return {"uid": uid, "name": uid, "type": "host", "ipv4-address": "10.0.0.1"}
 
 
 class FailingObjectService(FakeObjectService):
@@ -361,6 +365,7 @@ async def test_smart_fast_applies_diff_without_full_reload():
     outcome = await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART_FAST, 300))
 
     assert obj.full_reloads == []  # no full reload
+    assert obj.fetched == ["a1"]  # changed object was re-fetched in full
     assert cache.upserted == ["a1"]
     assert cache.deleted == ["d9"]  # delete propagated
     assert obj.baseline_refreshes == [("m1", "d1")]  # baseline advanced
@@ -411,23 +416,29 @@ async def test_smart_fast_no_changes_advances_baseline_without_recording_refresh
     assert outcome.fell_back is False
 
 
-async def test_smart_fast_extracts_group_members_on_upsert():
-    obj = FakeObjectService(stale=True)
-    cache = StatefulCache({("m1", "d1"): ["x"]}, baseline=_Baseline())
-    grp = {
-        "uid": "g1",
-        "type": "group",
-        "change-type": "add",
-        "name": "g1",
-        "members": {"objects": [{"uid": "m-a"}, {"uid": "m-b"}]},
-    }
-    api = RecordingApi(_changes_response(extra=[grp]))
+async def test_smart_fast_group_members_come_from_refetched_object():
+    """Members are extracted by the canonical converter from the re-fetched
+    full object — quoted-uid format, identical to a full reload (this was the
+    lossy-upsert defect: the old path wrote unquoted members from the diff)."""
+
+    class MemberRecordingCache(StatefulCache):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.upserted_objects = []
+
+        async def upsert_objects(self, objects):
+            self.upserted_objects.extend(objects)
+            return await super().upsert_objects(objects)
+
+    group_full = {"uid": "g1", "name": "grp", "type": "group", "members": [{"uid": "m-uid1"}, {"uid": "m-uid2"}]}
+    obj = FakeObjectService(stale=True, objects_by_uid={"g1": group_full})
+    cache = MemberRecordingCache(objects_by_domain={("m1", "d1"): ["x"]}, baseline=_Baseline())
+    api = RecordingApi(_changes_response(extra=[{"uid": "g1", "type": "group", "change-type": "set", "name": "grp"}]))
     coord = make_coord(cache, obj, api=api, mode=CacheMode.SMART_FAST)
 
-    outcome = await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART_FAST, 300))
+    await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART_FAST, 300))
 
-    assert cache.upserted == ["g1"]
-    assert outcome.fell_back is False
+    assert cache.upserted_objects[0].members == '"m-uid1","m-uid2"'
 
 
 async def test_smart_fast_uses_empty_api_domain_for_special_domains():
@@ -531,9 +542,12 @@ async def test_smart_fast_fallback_unhandled_change_type_dropped():
 async def test_smart_fast_fallback_too_many_changes():
     obj = FakeObjectService(stale=True)
     cache = StatefulCache({("m1", "d1"): ["x"]}, baseline=_Baseline())
-    api = RecordingApi(_changes_response(adds=[f"a{i}" for i in range(600)]))
+    api = RecordingApi(_changes_response(adds=[f"a{i}" for i in range(5)]))
     coord = make_coord(cache, obj, api=api, mode=CacheMode.SMART_FAST)
-    coord.max_incremental_changes = 500
+    # Mutate the cap to a value the 5-change diff genuinely exceeds. Using
+    # the default (500) here would pass even if _make_refresher() silently
+    # stopped threading max_incremental_changes through to the refresher.
+    coord.max_incremental_changes = 2
 
     outcome = await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART_FAST, 300))
 
@@ -552,6 +566,32 @@ async def test_smart_fast_empty_domain_falls_back_to_full_reload():
 
     assert obj.full_reloads == [("m1", "d1")]
     assert api.calls == []  # empty short-circuit before incremental path
+
+
+async def test_smart_fast_out_of_scope_only_diff_advances_baseline_quietly():
+    """A publish touching only rules/services is a no-op for the object
+    cache: no re-fetch, no upsert, baseline advanced, no refresh recorded."""
+    obj = FakeObjectService(stale=True)
+    cache = StatefulCache({("m1", "d1"): ["x"]}, baseline=_Baseline())
+    api = RecordingApi(
+        _changes_response(extra=[{"uid": "r1", "type": "access-rule", "change-type": "set", "name": "r1"}])
+    )
+    coord = make_coord(cache, obj, api=api, mode=CacheMode.SMART_FAST)
+
+    outcome = await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART_FAST, 300))
+
+    assert obj.full_reloads == []
+    assert obj.fetched == []
+    assert cache.upserted == []
+    assert obj.baseline_refreshes == [("m1", "d1")]
+    assert outcome.refreshed_domains == []
+
+
+async def test_max_incremental_changes_ctor_param():
+    coord = CacheRefreshCoordinator(
+        cache=StatefulCache(), api=None, object_service=FakeObjectService(), max_incremental_changes=42
+    )
+    assert coord.max_incremental_changes == 42
 
 
 # --------------------------------------------------------------------------- #
@@ -605,32 +645,8 @@ async def test_ensure_iterates_all_resolved_pairs():
 
 
 # --------------------------------------------------------------------------- #
-# Module-level helpers                                                         #
+# Constructor defaults                                                        #
 # --------------------------------------------------------------------------- #
-
-
-def test_raw_change_count_variants():
-    assert _raw_change_count("not-a-dict") == 0
-    assert _raw_change_count({"data": "not-a-dict"}) == 0
-    assert _raw_change_count({"data": {"changes": "not-a-list"}}) == 0
-    assert _raw_change_count({"data": {"changes": [1, 2, 3]}}) == 3
-
-
-def test_extract_members_from_raw_objects_dict_form():
-    raw = {"members": {"objects": [{"uid": "a"}, {"uid": "b"}, {"no-uid": 1}]}}
-
-    assert _extract_members_from_raw(raw) == "a,b"
-
-
-def test_extract_members_from_raw_list_form():
-    raw = {"members": [{"uid": "a"}, {"uid": "b"}, "junk"]}
-
-    assert _extract_members_from_raw(raw) == "a,b"
-
-
-def test_extract_members_from_raw_none_or_scalar():
-    assert _extract_members_from_raw({}) == ""
-    assert _extract_members_from_raw({"members": "scalar"}) == ""
 
 
 def test_default_clock_is_system_clock_when_unset():

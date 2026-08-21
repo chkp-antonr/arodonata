@@ -25,13 +25,18 @@ class RefreshMode(StrEnum):
 
     Attributes:
         SKIP: Use cache as-is without refresh.
-        CHECK: Refresh stale domains only (based on LastPublishedSession).
-        FORCE: Refresh all domains unconditionally.
+        CHECK: Refresh stale domains only (based on LastPublishedSession);
+            stale domains get a full atomic reload.
+        FORCE: Refresh all domains unconditionally (full atomic reload).
+        INCREMENTAL: Refresh stale domains only (same staleness probe as
+            CHECK); stale domains get a show-changes incremental apply with
+            fallback to a full atomic reload on any unsafe condition.
     """
 
     SKIP = "skip"
     CHECK = "check"
     FORCE = "force"
+    INCREMENTAL = "incremental"
 
 
 @runtime_checkable

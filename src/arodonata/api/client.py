@@ -72,6 +72,7 @@ class ArodonataClient:
         mgmt_ip: str | None = None,
         cache_mode: str = "smart",
         cache_ttl: int = 300,
+        max_incremental_changes: int = 500,
         _db: DatabaseManager | None = None,
         _cache: CacheRepository | None = None,
         _mgmt: AMgmtClient | None = None,
@@ -101,6 +102,10 @@ class ArodonataClient:
                        ("cache", "smart", "smart-fast", "force"). Defaults to "smart".
             cache_ttl: Default cache freshness TTL (seconds) for v2 read helpers.
                       Defaults to 300.
+            max_incremental_changes: Cap on show-changes entries an
+                       incremental refresh (mode="incremental" or smart-fast
+                       reads) will apply before falling back to a full domain
+                       reload. Defaults to 500.
             _db: Optional internal DatabaseManager override (for testing).
             _cache: Optional internal CacheRepository override (for testing).
             _mgmt: Optional internal AMgmtClient override (for testing).
@@ -116,6 +121,7 @@ class ArodonataClient:
             set_trace_modules(settings.trace_modules_rules)
         self._default_cache_mode = cache_mode
         self._default_cache_ttl = cache_ttl
+        self._max_incremental_changes = max_incremental_changes
 
         self._build_asdk_components(engine, settings, _db, _cache, _mgmt)
         self._build_services(settings)
@@ -324,6 +330,7 @@ class ArodonataClient:
             session_tracker=self._session_tracker,
             default_mode=CacheMode(self._default_cache_mode),
             default_ttl=self._default_cache_ttl,
+            max_incremental_changes=self._max_incremental_changes,
         )
         self._orchestration = CacheOrchestrationService(
             cache=self._cache_adapter,
@@ -413,7 +420,8 @@ class ArodonataClient:
         if not hasattr(self, "_object_service_instance"):
             from ..cache.object_service import ObjectService
 
-            self._object_service_instance = ObjectService(self._db, self)
+            max_inc = getattr(self, "_max_incremental_changes", 500)
+            self._object_service_instance = ObjectService(self._db, self, max_incremental_changes=max_inc)
         return self._object_service_instance
 
     @property
@@ -1023,7 +1031,7 @@ class ArodonataClient:
         self,
         mgmt_names: list[str] | None,
         domain_names: list[str] | None,
-        refresh: Literal["skip", "check", "force"],
+        refresh: Literal["skip", "check", "force", "incremental"],
     ) -> AsyncGenerator[SSEEvent]:
         if refresh != "skip":
             async for event in self.refresh_objects(
@@ -1060,7 +1068,7 @@ class ArodonataClient:
         search_input: str,
         mgmt_names: list[str] | None = None,
         domain_names: list[str] | None = None,
-        refresh: Literal["skip", "check", "force"] = "skip",
+        refresh: Literal["skip", "check", "force", "incremental"] = "skip",
         max_depth: int = 2,
     ) -> AsyncGenerator[SSEEvent]:
         """Search for Check Point objects with cache-first queries.
@@ -1069,7 +1077,7 @@ class ArodonataClient:
             search_input: Comma-separated search terms.
             mgmt_names: Optional management server filter.
             domain_names: Optional domain filter.
-            refresh: Refresh mode - "skip", "check", or "force".
+            refresh: Refresh mode - "skip", "check", "force", or "incremental".
             max_depth: Maximum depth for group membership traversal.
 
         Yields:
@@ -1107,14 +1115,14 @@ class ArodonataClient:
         self,
         mgmt_names: list[str] | None = None,
         domain_names: list[str] | None = None,
-        mode: Literal["skip", "check", "force"] = "force",
+        mode: Literal["skip", "check", "force", "incremental"] = "force",
     ) -> AsyncGenerator[SSEEvent]:
         """Refresh object cache from API.
 
         Args:
             mgmt_names: Optional management server filter.
             domain_names: Optional domain filter.
-            mode: Refresh mode - "skip", "check", or "force".
+            mode: Refresh mode - "skip", "check", "force", or "incremental".
 
         Yields:
             SSEEvent with progress updates.
