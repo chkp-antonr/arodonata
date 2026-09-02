@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from arodonata import GLOBAL_DOMAIN_NAME
 from arodonata.api.schemas import ApiCallResult, ApiQueryResult
 from arodonata.api.services.domain_service import DomainService
 
@@ -303,6 +304,75 @@ async def test_mdm_domains_multiple_domains_all_upserted():
 
     assert result == ["", "domainA", "domainB"]
     assert cache.upsert_domain.await_count == 2
+
+
+# --------------------------------------------------------------------------- #
+# _populate_mdm_domains — Global domain row
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_populate_mdm_domains_appends_global_row():
+    objects = [
+        {"name": "domainA", "uid": "uid-a", "servers": []},
+        {"name": "domainB", "uid": "uid-b", "servers": []},
+    ]
+    api_client = AsyncMock()
+    api_client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=objects))
+    cache = AsyncMock()
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+    server = make_server(is_mdm=True, server_ip="10.9.9.9")
+
+    result = await service._populate_mdm_domains("mgmt1", server, is_mdm=True)
+
+    assert result == ["", "domainA", "domainB", GLOBAL_DOMAIN_NAME]
+    global_calls = [
+        call.args[0] for call in cache.upsert_domain.await_args_list if call.args[0].domain_name == GLOBAL_DOMAIN_NAME
+    ]
+    assert len(global_calls) == 1
+    global_domain = global_calls[0]
+    assert global_domain.active_ip == "10.9.9.9"
+    assert global_domain.mdm_dmn == f"mgmt1:{GLOBAL_DOMAIN_NAME}"
+
+
+@pytest.mark.asyncio
+async def test_populate_mdm_domains_global_not_duplicated():
+    objects = [
+        {"name": "domainA", "uid": "uid-a", "servers": []},
+        {"name": GLOBAL_DOMAIN_NAME, "uid": "uid-global", "servers": []},
+    ]
+    api_client = AsyncMock()
+    api_client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=objects))
+    cache = AsyncMock()
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+    server = make_server(is_mdm=True, server_ip="10.9.9.9")
+
+    result = await service._populate_mdm_domains("mgmt1", server, is_mdm=True)
+
+    assert result.count(GLOBAL_DOMAIN_NAME) == 1
+    global_calls = [
+        call.args[0] for call in cache.upsert_domain.await_args_list if call.args[0].domain_name == GLOBAL_DOMAIN_NAME
+    ]
+    assert len(global_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_populate_smart_center_domain_has_no_global():
+    api_client = AsyncMock()
+    api_client.api_call = AsyncMock(
+        return_value=ApiCallResult(
+            success=True,
+            data={"domain": {"name": "SMC User", "uid": "dom-uid-1"}, "uid": "srv-uid-1"},
+        )
+    )
+    cache = AsyncMock()
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+    server = make_server(is_mdm=False, server_ip="10.0.0.5")
+
+    result = await service._populate_smart_center_domain("mgmt1", server, is_mdm=False)
+
+    assert GLOBAL_DOMAIN_NAME not in result
+    assert all(call.args[0].domain_name != GLOBAL_DOMAIN_NAME for call in cache.upsert_domain.await_args_list)
 
 
 # --------------------------------------------------------------------------- #

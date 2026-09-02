@@ -42,7 +42,7 @@ from .api import (
 from .cache import Asset, CacheRepository, CPObject, DatabaseManager, Domain, SIDCache
 
 # Configuration
-from .config import ArodonataSettings
+from .config import GLOBAL_DOMAIN_NAME, ArodonataSettings
 
 # Exceptions
 from .core import (
@@ -72,6 +72,7 @@ __all__ = [
     # Main API
     "ArodonataClient",
     "ArodonataSettings",
+    "GLOBAL_DOMAIN_NAME",
     # Response types
     "ApiCallResult",
     "ApiQueryResult",
