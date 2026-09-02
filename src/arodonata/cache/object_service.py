@@ -17,7 +17,7 @@ from ..core.incremental_refresh import FallbackToFull, IncrementalRefresher
 from ..logger import lazy_logger
 from ..utils.helpers import utc_now_naive
 from .database import DatabaseManager
-from .models import CPObject, LastPublishedSession
+from .models import CPObject, Domain, LastPublishedSession
 from .repository import CacheRepository
 
 if TYPE_CHECKING:
@@ -626,6 +626,10 @@ class ObjectService:
             log().warning(f"No domains found for {mgmt_name}")
             return []
 
+        all_domains = await self._backfill_missing_global(
+            mgmt_name=mgmt_name, all_domains=all_domains, fetch_include_global=fetch_include_global
+        )
+
         # Filter by domain_names if specified
         if domain_names:
             filtered_domains = [d for d in all_domains if d.domain_name in domain_names]
@@ -643,6 +647,47 @@ class ObjectService:
                 stale_domains.append(domain.domain_name)
 
         return stale_domains
+
+    async def _backfill_missing_global(
+        self,
+        mgmt_name: str,
+        all_domains: list[Domain],
+        fetch_include_global: bool,
+    ) -> list[Domain]:
+        """Backfill a missing Global row for an already-provisioned MDM.
+
+        An already-provisioned MDM can have a non-empty domains table that
+        predates Global-domain support (or whose show-domains call failed
+        before the Global row was ever written) - the empty-cache branch in
+        `_get_domains_to_refresh` never runs in that case, so nothing would
+        otherwise write or surface the Global row. When the caller wants
+        Global and the cached rows for this mgmt are known to be an MDM's,
+        backfill the row via the domain service (which persists it) and
+        re-read the table so every other reader benefits too.
+
+        Args:
+            mgmt_name: Management server name.
+            all_domains: Domains already read from the cache table.
+            fetch_include_global: Whether the caller wants Global included.
+
+        Returns:
+            The (possibly refreshed) list of domains for this mgmt.
+        """
+        if not fetch_include_global or any(d.domain_name == GLOBAL_DOMAIN_NAME for d in all_domains):
+            return all_domains
+
+        if not any(d.is_mdm for d in all_domains):
+            return all_domains
+
+        log().debug(f"Global domain missing from cache for {mgmt_name}; backfilling")
+        try:
+            if hasattr(self._client, "_domain_service"):
+                await self._client._domain_service.populate_domain_cache(mgmt_name)
+                return await self._cache.get_domains(mgmt_name=mgmt_name, include_global=fetch_include_global)
+        except Exception as e:
+            log().exception(f"Failed to backfill Global domain for {mgmt_name}: {e}")
+
+        return all_domains
 
     async def _resolve_group_memberships(
         self,

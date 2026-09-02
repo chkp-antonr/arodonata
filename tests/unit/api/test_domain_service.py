@@ -323,7 +323,7 @@ async def test_populate_mdm_domains_appends_global_row():
     service, _, _, _ = make_service(cache=cache, api_client=api_client)
     server = make_server(is_mdm=True, server_ip="10.9.9.9")
 
-    result = await service._populate_mdm_domains("mgmt1", server, is_mdm=True)
+    result = await service._populate_mdm_domains("mgmt1", server, is_mdm=True, include_global=True)
 
     assert result == ["", "domainA", "domainB", GLOBAL_DOMAIN_NAME]
     global_calls = [
@@ -347,13 +347,130 @@ async def test_populate_mdm_domains_global_not_duplicated():
     service, _, _, _ = make_service(cache=cache, api_client=api_client)
     server = make_server(is_mdm=True, server_ip="10.9.9.9")
 
-    result = await service._populate_mdm_domains("mgmt1", server, is_mdm=True)
+    result = await service._populate_mdm_domains("mgmt1", server, is_mdm=True, include_global=True)
 
     assert result.count(GLOBAL_DOMAIN_NAME) == 1
     global_calls = [
         call.args[0] for call in cache.upsert_domain.await_args_list if call.args[0].domain_name == GLOBAL_DOMAIN_NAME
     ]
     assert len(global_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_mdm_domains_appends_global_even_when_show_domains_fails():
+    """Regression test for C1: an MDM whose show-domains call fails must
+    still get the Global row - the early return used to happen before the
+    Global append ever ran, so a flaky/broken API call on an MDM meant
+    Global was never written at all, not even on retry."""
+    api_client = AsyncMock()
+    api_client.api_query = AsyncMock(return_value=ApiQueryResult(success=False))
+    cache = AsyncMock()
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+    server = make_server(is_mdm=True, server_ip="10.9.9.9")
+
+    result = await service._populate_mdm_domains("mgmt1", server, is_mdm=True, include_global=True)
+
+    assert result == ["", GLOBAL_DOMAIN_NAME]
+    global_calls = [
+        call.args[0] for call in cache.upsert_domain.await_args_list if call.args[0].domain_name == GLOBAL_DOMAIN_NAME
+    ]
+    assert len(global_calls) == 1
+    assert global_calls[0].active_ip == "10.9.9.9"
+
+
+@pytest.mark.asyncio
+async def test_mdm_domains_appends_global_even_when_no_objects():
+    """Same as above, but for a successful call that returns zero domains."""
+    api_client = AsyncMock()
+    api_client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=[]))
+    cache = AsyncMock()
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+    server = make_server(is_mdm=True, server_ip="10.9.9.9")
+
+    result = await service._populate_mdm_domains("mgmt1", server, is_mdm=True, include_global=True)
+
+    assert result == ["", GLOBAL_DOMAIN_NAME]
+    global_calls = [
+        call.args[0] for call in cache.upsert_domain.await_args_list if call.args[0].domain_name == GLOBAL_DOMAIN_NAME
+    ]
+    assert len(global_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_mdm_domains_does_not_write_global_when_mdm_status_unknown():
+    """Minor fix: a positively-unknown MDM status (is_mdm=None, e.g. an
+    undetected server) must never get a Global row, even if the show-domains
+    call happens to succeed - Global must never appear for what could turn
+    out to be a plain SmartCenter."""
+    objects = [{"name": "domainA", "uid": "uid-a", "servers": []}]
+    api_client = AsyncMock()
+    api_client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=objects))
+    cache = AsyncMock()
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+    server = make_server(is_mdm=None, server_ip="10.9.9.9")
+
+    result = await service._populate_mdm_domains("mgmt1", server, is_mdm=None)
+
+    assert GLOBAL_DOMAIN_NAME not in result
+    assert all(call.args[0].domain_name != GLOBAL_DOMAIN_NAME for call in cache.upsert_domain.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_populate_domain_cache_undetected_server_does_not_write_global():
+    """End-to-end through the public dispatch method: an undetected server
+    (is_mdm=None) must not get a Global row even though it's routed to the
+    MDM branch (since it might still turn out to be an MDM)."""
+    server = make_server(is_mdm=None, server_ip="10.9.9.9")
+    mgmt = AsyncMock()
+    mgmt.get_server = AsyncMock(return_value=server)
+    api_client = AsyncMock()
+    api_client.api_query = AsyncMock(
+        return_value=ApiQueryResult(success=True, objects=[{"name": "domainA", "uid": "uid-a", "servers": []}])
+    )
+    cache = AsyncMock()
+    service, _, _, _ = make_service(mgmt=mgmt, cache=cache, api_client=api_client)
+
+    result = await service.populate_domain_cache("mgmt1")
+
+    assert GLOBAL_DOMAIN_NAME not in result
+    assert all(call.args[0].domain_name != GLOBAL_DOMAIN_NAME for call in cache.upsert_domain.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_populate_domain_cache_include_global_false_excludes_global_from_return():
+    """I5: writing the Global row must be unconditional, but the *returned*
+    list must respect include_global=False (the default) so unflagged
+    readers like asset collection are unaffected."""
+    objects = [{"name": "domainA", "uid": "uid-a", "servers": []}]
+    api_client = AsyncMock()
+    api_client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=objects))
+    cache = AsyncMock()
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+    server = make_server(is_mdm=True, server_ip="10.9.9.9")
+
+    result = await service._populate_mdm_domains("mgmt1", server, is_mdm=True)
+
+    assert GLOBAL_DOMAIN_NAME not in result
+    # The row must still have been written despite being excluded from the
+    # returned list.
+    global_calls = [
+        call.args[0] for call in cache.upsert_domain.await_args_list if call.args[0].domain_name == GLOBAL_DOMAIN_NAME
+    ]
+    assert len(global_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_populate_domain_cache_include_global_true_keeps_global_in_return():
+    objects = [{"name": "domainA", "uid": "uid-a", "servers": []}]
+    api_client = AsyncMock()
+    api_client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=objects))
+    cache = AsyncMock()
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+    server = make_server(is_mdm=True, server_ip="10.9.9.9")
+
+    result = await service._populate_mdm_domains("mgmt1", server, is_mdm=True, include_global=True)
+
+    assert result == ["", "domainA", GLOBAL_DOMAIN_NAME]
 
 
 @pytest.mark.asyncio

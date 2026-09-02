@@ -508,6 +508,60 @@ async def test_get_domains_to_refresh_includes_global_when_requested(db):
     assert set(domains) == {"dmnA", GLOBAL_DOMAIN_NAME}
 
 
+async def test_get_domains_to_refresh_backfills_global_on_already_populated_table(db):
+    """Regression test for C1: on an already-provisioned MDM, the domains
+    table is non-empty (3 real domains, no Global row) because Global
+    support shipped after the table was first populated. The empty-cache
+    branch never runs in that case, so nothing used to write the Global row
+    or add it to the refresh list - a `cpcache` refresh silently skipped
+    Global forever.
+
+    With the fix, when include_global=True and the cached rows for this
+    mgmt are known to be an MDM's, a missing Global row must be backfilled
+    (via the domain service) so it reaches the refresh list.
+    """
+    client = make_client(mgmt_names=["mgmtNP2"])
+    service = make_service(db, client)
+    # Simulate the real, already-provisioned table: three MDM domains,
+    # is_mdm=True, no Global row at all.
+    for name in ("CPCodeOps", "General", "Legacy"):
+        await service._cache.upsert_domain(
+            Domain.build(mgmt_name="mgmtNP2", domain_name=name, active_ip="1.1.1.1", is_mdm=True)
+        )
+
+    async def _backfill_global(mgmt_name):
+        await service._cache.upsert_domain(
+            Domain.build(mgmt_name=mgmt_name, domain_name=GLOBAL_DOMAIN_NAME, active_ip="9.9.9.9", is_mdm=True)
+        )
+
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock(side_effect=_backfill_global)
+
+    domains = await service._get_domains_to_refresh("mgmtNP2", None, RefreshMode.FORCE, include_global=True)
+
+    assert set(domains) == {"CPCodeOps", "General", "Legacy", GLOBAL_DOMAIN_NAME}
+    client._domain_service.populate_domain_cache.assert_awaited_once_with("mgmtNP2")
+
+
+async def test_get_domains_to_refresh_does_not_backfill_when_global_not_requested(db):
+    """Sanity check: the backfill only kicks in when Global was actually
+    asked for - a plain refresh of an already-populated MDM must not pay
+    for an extra populate_domain_cache round trip it doesn't need."""
+    client = make_client(mgmt_names=["mgmtNP2"])
+    service = make_service(db, client)
+    for name in ("CPCodeOps", "General"):
+        await service._cache.upsert_domain(
+            Domain.build(mgmt_name="mgmtNP2", domain_name=name, active_ip="1.1.1.1", is_mdm=True)
+        )
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+
+    domains = await service._get_domains_to_refresh("mgmtNP2", None, RefreshMode.FORCE)
+
+    assert set(domains) == {"CPCodeOps", "General"}
+    client._domain_service.populate_domain_cache.assert_not_awaited()
+
+
 async def test_get_domains_to_refresh_explicit_global_name(db):
     """Asking to refresh ["Global"] must find it even with include_global left False.
 

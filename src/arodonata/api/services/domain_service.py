@@ -42,11 +42,18 @@ class DomainService:
         self._api_client = api_client
         log().trace("DomainService initialized")
 
-    async def populate_domain_cache(self, mgmt_name: str, cache_mode: str = "auto") -> list[str]:
+    async def populate_domain_cache(
+        self, mgmt_name: str, cache_mode: str = "auto", include_global: bool = False
+    ) -> list[str]:
         """Query domains from management server and populate cache.
 
         Args:
             mgmt_name: Management server name.
+            cache_mode: Cache mode for the underlying API query.
+            include_global: When False (default), the synthetic "Global" domain
+                is written to the cache table (for MDMs) but excluded from the
+                *returned* list, so unflagged callers (e.g. asset collection)
+                are unaffected by its existence.
 
         Returns:
             List of domain names (including system domain as empty string).
@@ -57,7 +64,13 @@ class DomainService:
         if is_mdm is False:
             return await self._populate_smart_center_domain(mgmt_name, server, is_mdm=False, cache_mode=cache_mode)
         else:
-            return await self._populate_mdm_domains(mgmt_name, server, is_mdm=True, cache_mode=cache_mode)
+            # `is_mdm` may be None (not yet detected). Pass the raw value
+            # through rather than assuming MDM - `_populate_mdm_domains`
+            # only writes the Global row when it is positively known to be
+            # an MDM, so an undetected SmartCenter never gets one.
+            return await self._populate_mdm_domains(
+                mgmt_name, server, is_mdm=is_mdm, cache_mode=cache_mode, include_global=include_global
+            )
 
     async def _populate_smart_center_domain(
         self, mgmt_name: str, server: ServerConfig | None, is_mdm: bool = False, cache_mode: str = "auto"
@@ -129,16 +142,22 @@ class DomainService:
         self,
         mgmt_name: str,
         server: ServerConfig | None = None,
-        is_mdm: bool = True,
+        is_mdm: bool | None = True,
         cache_mode: str = "auto",
+        include_global: bool = False,
     ) -> list[str]:
         """Populate domain cache for MDM server.
 
         Args:
             mgmt_name: Management server name.
             server: Server configuration, used to seed the Global domain's active_ip.
-            is_mdm: Multi-Domain Management status.
+            is_mdm: Multi-Domain Management status. ``None`` means "not yet
+                positively detected" - the Global row is only ever written
+                when this is ``True``, never on an unknown or non-MDM status.
             cache_mode: Cache mode for the underlying API query.
+            include_global: When False (default), the Global row is still
+                written to the cache (if applicable) but excluded from the
+                returned list.
 
         Returns:
             List of domain names.
@@ -152,43 +171,50 @@ class DomainService:
             cache_mode=cache_mode,
         )
 
-        if not (response.success and response.objects):
-            return domain_names
-
         from ...cache.models import Domain
 
         global_seen = False
-        for obj in response.objects:
-            if not isinstance(obj, dict):
-                continue
+        if response.success and response.objects:
+            for obj in response.objects:
+                if not isinstance(obj, dict):
+                    continue
 
-            domain_name = obj.get("name", "")
-            if not domain_name:
-                continue
+                domain_name = obj.get("name", "")
+                if not domain_name:
+                    continue
 
-            if domain_name == GLOBAL_DOMAIN_NAME:
-                global_seen = True
+                if domain_name == GLOBAL_DOMAIN_NAME:
+                    global_seen = True
 
-            domain_uid = obj.get("uid", "")
-            active_ip = self._extract_active_server_ip(obj)
+                domain_uid = obj.get("uid", "")
+                active_ip = self._extract_active_server_ip(obj)
 
-            domain = Domain.build(
-                mgmt_name=mgmt_name,
-                domain_name=domain_name,
-                domain_uid=domain_uid,
-                active_ip=active_ip,
-                is_mdm=is_mdm,
+                domain = Domain.build(
+                    mgmt_name=mgmt_name,
+                    domain_name=domain_name,
+                    domain_uid=domain_uid,
+                    active_ip=active_ip,
+                    is_mdm=bool(is_mdm),
+                )
+                await self._cache.upsert_domain(domain)
+                domain_names.append(domain_name)
+
+                log().debug(
+                    f"Populated domain cache: {mgmt_name}:{domain_name} "
+                    f"(uid={domain_uid[:8]}..., active_ip={active_ip})"
+                )
+        else:
+            log().warning(
+                f"show-domains failed or returned no domains for {mgmt_name}: {response.message}; "
+                "will still attempt to add the Global domain"
             )
-            await self._cache.upsert_domain(domain)
-            domain_names.append(domain_name)
 
-            log().debug(
-                f"Populated domain cache: {mgmt_name}:{domain_name} (uid={domain_uid[:8]}..., active_ip={active_ip})"
-            )
-
-        # `show-domains` never lists the implicit Global domain - add it explicitly
-        # so the cache (and everything that reads it) knows Global exists.
-        if not global_seen:
+        # `show-domains` never lists the implicit Global domain - add it
+        # explicitly, regardless of whether the call above succeeded, so the
+        # cache (and everything that reads it) knows Global exists. This is
+        # gated on `is_mdm is True` (positively known), never on a merely
+        # unknown or non-MDM status, so a SmartCenter can never get one.
+        if not global_seen and is_mdm is True:
             global_ip = server.server_ip if server else ""
             if global_ip:
                 global_domain = Domain.build(
@@ -196,7 +222,7 @@ class DomainService:
                     domain_name=GLOBAL_DOMAIN_NAME,
                     domain_uid="",
                     active_ip=global_ip,
-                    is_mdm=is_mdm,
+                    is_mdm=True,
                 )
                 await self._cache.upsert_domain(global_domain)
                 domain_names.append(GLOBAL_DOMAIN_NAME)
@@ -205,7 +231,9 @@ class DomainService:
                 log().warning(f"Cannot determine active_ip for Global domain on MDM {mgmt_name}; skipping cache row")
 
         log().debug(f"Populated {len(domain_names)} domains for MDM {mgmt_name}")
-        return domain_names
+        if include_global:
+            return domain_names
+        return [d for d in domain_names if d != GLOBAL_DOMAIN_NAME]
 
     def _extract_active_server_ip(self, domain_obj: dict[str, Any]) -> str:
         """Extract active server IP from domain object.

@@ -616,6 +616,35 @@ async def test_get_objects_by_uids(repo):
     assert {o.uid for o in hits} == {"u1", "u3"}
 
 
+async def test_get_objects_by_uids_surfaces_global_domain_object(repo):
+    """Core-bug regression: a CPObject cached under the "Global" domain must
+    actually be findable. Object search/lookup filters on domain_name like
+    any other domain - nothing about "Global" is special in the CPObject
+    table itself, but no prior test proved a Global-domain row ever came
+    back out of a search."""
+    await repo.upsert_objects(
+        [
+            make_object("g1", name="global-host", domain=GLOBAL_DOMAIN_NAME, original_domain=GLOBAL_DOMAIN_NAME),
+            make_object("d1", name="local-host", domain="dmnA"),
+        ]
+    )
+
+    by_uid = await repo.get_objects_by_uids(["g1"], mgmt_names=["m1"], domain_names=[GLOBAL_DOMAIN_NAME])
+    assert {o.uid for o in by_uid} == {"g1"}
+    assert by_uid[0].domain_name == GLOBAL_DOMAIN_NAME
+    assert by_uid[0].original_domain == GLOBAL_DOMAIN_NAME
+
+
+async def test_get_objects_by_name_surfaces_global_domain_object(repo):
+    await repo.upsert_objects(
+        [make_object("g1", name="global-host", domain=GLOBAL_DOMAIN_NAME, original_domain=GLOBAL_DOMAIN_NAME)]
+    )
+
+    by_name = await repo.get_objects_by_name("global-host")
+    assert {o.uid for o in by_name} == {"g1"}
+    assert by_name[0].domain_name == GLOBAL_DOMAIN_NAME
+
+
 async def test_get_objects_no_filters(repo):
     await repo.upsert_objects([make_object("u1"), make_object("u2")])
     assert len(await repo.get_objects()) == 2
