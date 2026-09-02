@@ -60,6 +60,10 @@ from .core import (
     SessionExpiredError,
 )
 
+# CPCRUD (NAT write-payload constants other in-org consumers may need to reuse, e.g. MMP's
+# decom removal engine building its own set-nat-rule payloads)
+from .cpcrud import NAT_ANY_OBJECT_UID
+
 # Utilities
 from .db_utils import safe_init_table
 from .utils import extract_data_from_response, extract_objects_from_response
@@ -73,6 +77,7 @@ __all__ = [
     "ArodonataClient",
     "ArodonataSettings",
     "GLOBAL_DOMAIN_NAME",
+    "NAT_ANY_OBJECT_UID",
     # Response types
     "ApiCallResult",
     "ApiQueryResult",

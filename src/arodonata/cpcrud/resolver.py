@@ -722,7 +722,11 @@ async def resolve_rule(
 # API doc examples, both showing uid "97aeb369-9aea-11d5-bd16-0090272ccb30" / name "Any" / type
 # "CpmiAnyObject". This only applies to `original-*` fields and only in the OUTGOING PAYLOAD --
 # `translated-*` fields never use "Any" at all, see `_NAT_NO_TRANSLATION` below.
-_ANY_OBJECT_UID = "97aeb369-9aea-11d5-bd16-0090272ccb30"
+#
+# Exported as a public name (see `arodonata/__init__.py`) so other in-org consumers that build
+# their own `set-nat-rule`/`add-nat-rule` payloads (e.g. MMP's decom removal engine) can reuse
+# the verified UID instead of copy-pasting the magic string.
+NAT_ANY_OBJECT_UID = "97aeb369-9aea-11d5-bd16-0090272ccb30"
 _NAT_ORIGINAL_ANY_FIELDS = ("original-source", "original-destination", "original-service")
 _NAT_TRANSLATED_FIELDS = ("translated-source", "translated-destination", "translated-service")
 
@@ -752,7 +756,7 @@ def _nat_payload_any_fix(payload: dict[str, Any]) -> dict[str, Any]:
         if k in _NAT_TRANSLATED_FIELDS and v in (_NAT_NO_TRANSLATION, "Any"):
             continue
         if k in _NAT_ORIGINAL_ANY_FIELDS and v == "Any":
-            v = _ANY_OBJECT_UID
+            v = NAT_ANY_OBJECT_UID
         fixed[k] = v
     return fixed
 

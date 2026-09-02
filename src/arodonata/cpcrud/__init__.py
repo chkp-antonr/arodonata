@@ -16,6 +16,7 @@ from .models import (
     Plan,
     PlannedAction,
 )
+from .resolver import NAT_ANY_OBJECT_UID
 from .service import CPCRUDService
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "DomainStamp",
     "FieldDiff",
     "IpConflictPolicy",
+    "NAT_ANY_OBJECT_UID",
     "NameConflictPolicy",
     "ObjectMatch",
     "ObjectState",
