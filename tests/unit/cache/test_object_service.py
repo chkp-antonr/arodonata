@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
+from arodonata import GLOBAL_DOMAIN_NAME
 from arodonata.api.schemas import ApiCallResult, ApiQueryResult
 from arodonata.cache import models  # noqa: F401  (registers tables on metadata)
 from arodonata.cache.database import DatabaseManager
@@ -485,6 +486,43 @@ async def test_get_domains_populate_raises(db):
     client._domain_service.populate_domain_cache = AsyncMock(side_effect=RuntimeError("boom"))
     domains = await service._get_domains_to_refresh("mgmt1", None, RefreshMode.FORCE)
     assert domains == []
+
+
+async def test_get_domains_to_refresh_excludes_global_by_default(db):
+    service = make_service(db)
+    await service._cache.upsert_domain(Domain.build(mgmt_name="mgmt1", domain_name="dmnA", active_ip="1.1.1.1"))
+    await service._cache.upsert_domain(
+        Domain.build(mgmt_name="mgmt1", domain_name=GLOBAL_DOMAIN_NAME, domain_uid="", active_ip="9.9.9.9")
+    )
+    domains = await service._get_domains_to_refresh("mgmt1", None, RefreshMode.FORCE)
+    assert set(domains) == {"dmnA"}
+
+
+async def test_get_domains_to_refresh_includes_global_when_requested(db):
+    service = make_service(db)
+    await service._cache.upsert_domain(Domain.build(mgmt_name="mgmt1", domain_name="dmnA", active_ip="1.1.1.1"))
+    await service._cache.upsert_domain(
+        Domain.build(mgmt_name="mgmt1", domain_name=GLOBAL_DOMAIN_NAME, domain_uid="", active_ip="9.9.9.9")
+    )
+    domains = await service._get_domains_to_refresh("mgmt1", None, RefreshMode.FORCE, include_global=True)
+    assert set(domains) == {"dmnA", GLOBAL_DOMAIN_NAME}
+
+
+async def test_get_domains_to_refresh_explicit_global_name(db):
+    """Asking to refresh ["Global"] must find it even with include_global left False.
+
+    Before Task 1, this returned [] (no Global row existed at all). With
+    Task 1's row present, the table read must still reach it despite the
+    default include_global=False, or the intersection filters it out before
+    it can match.
+    """
+    service = make_service(db)
+    await service._cache.upsert_domain(Domain.build(mgmt_name="mgmt1", domain_name="dmnA", active_ip="1.1.1.1"))
+    await service._cache.upsert_domain(
+        Domain.build(mgmt_name="mgmt1", domain_name=GLOBAL_DOMAIN_NAME, domain_uid="", active_ip="9.9.9.9")
+    )
+    domains = await service._get_domains_to_refresh("mgmt1", [GLOBAL_DOMAIN_NAME], RefreshMode.FORCE)
+    assert domains == [GLOBAL_DOMAIN_NAME]
 
 
 async def test_get_domains_check_mode_filters_stale(db):

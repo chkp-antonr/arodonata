@@ -55,7 +55,7 @@ class FakeCache:
     ) -> int:
         return 0
 
-    async def get_domains(self, mgmt_names: list[str] | None = None) -> list[Domain]:
+    async def get_domains(self, mgmt_names: list[str] | None = None, include_global: bool = False) -> list[Domain]:
         return []
 
     async def get_gateways(self, mgmt_names: list[str] | None = None) -> list[Any]:

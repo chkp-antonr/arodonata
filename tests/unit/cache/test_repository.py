@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
+from arodonata import GLOBAL_DOMAIN_NAME
 from arodonata.cache import models  # noqa: F401  (registers tables on metadata)
 from arodonata.cache.database import DatabaseManager
 from arodonata.cache.models import (
@@ -469,6 +470,25 @@ async def test_get_domains_plural_filter(repo):
     await repo.upsert_domain(Domain.build(mgmt_name="m3", domain_name="d3", active_ip="3"))
     result = await repo.get_domains(mgmt_names=["m1", "m3"])
     assert {d.domain_name for d in result} == {"d1", "d3"}
+
+
+async def test_get_domains_excludes_global_by_default(repo):
+    await repo.upsert_domain(Domain.build(mgmt_name="m1", domain_name="d1", active_ip="1"))
+    await repo.upsert_domain(Domain.build(mgmt_name="m1", domain_name="d2", active_ip="2"))
+    await repo.upsert_domain(
+        Domain.build(mgmt_name="m1", domain_name=GLOBAL_DOMAIN_NAME, domain_uid="", active_ip="9.9.9.9")
+    )
+    result = await repo.get_domains(mgmt_name="m1")
+    assert {d.domain_name for d in result} == {"d1", "d2"}
+
+
+async def test_get_domains_includes_global_when_requested(repo):
+    await repo.upsert_domain(Domain.build(mgmt_name="m1", domain_name="d1", active_ip="1"))
+    await repo.upsert_domain(
+        Domain.build(mgmt_name="m1", domain_name=GLOBAL_DOMAIN_NAME, domain_uid="", active_ip="9.9.9.9")
+    )
+    result = await repo.get_domains(mgmt_name="m1", include_global=True)
+    assert {d.domain_name for d in result} == {"d1", GLOBAL_DOMAIN_NAME}
 
 
 # ==========================================================================

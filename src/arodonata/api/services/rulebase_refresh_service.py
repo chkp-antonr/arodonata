@@ -243,6 +243,7 @@ class RulebaseRefreshService:
         mgmt_names: list[str] | None = None,
         domain_names: list[str] | None = None,
         mode: Literal["skip", "check", "force"] = "force",
+        include_global: bool = False,
     ) -> AsyncGenerator[dict[str, Any]]:
         """Refresh all rulebases for specified managements and domains.
 
@@ -250,6 +251,8 @@ class RulebaseRefreshService:
             mgmt_names: Optional management server filter.
             domain_names: Optional domain filter.
             mode: Refresh mode (only "force" currently implemented for rules).
+            include_global: When False (default), the synthetic "Global" domain
+                is excluded so existing callers see today's behavior.
 
         Yields:
             Progress dictionaries.
@@ -262,7 +265,7 @@ class RulebaseRefreshService:
 
         for m_name in target_mgmt:
             # Get domains for this mgmt
-            domains = await self._client.get_domains(mgmt_names=[m_name])
+            domains = await self._client.get_domains(mgmt_names=[m_name], include_global=include_global)
             target_domains = [d.name for d in domains]
             if domain_names:
                 target_domains = [d for d in target_domains if d in domain_names]

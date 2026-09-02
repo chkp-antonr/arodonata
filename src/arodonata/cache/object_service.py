@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 
+from ..config import GLOBAL_DOMAIN_NAME
 from ..core import RefreshMode
 from ..core.incremental_refresh import FallbackToFull, IncrementalRefresher
 from ..logger import lazy_logger
@@ -458,6 +459,7 @@ class ObjectService:
         mgmt_names: list[str] | None = None,
         domain_names: list[str] | None = None,
         mode: str = "force",  # RefreshMode value
+        include_global: bool = False,
     ) -> AsyncIterator[dict[str, Any]]:
         """Refresh object cache from API.
 
@@ -465,6 +467,10 @@ class ObjectService:
             mgmt_names: Optional management server filter.
             domain_names: Optional domain filter.
             mode: Refresh mode (skip/check/force/incremental).
+            include_global: When False (default), the synthetic "Global" domain
+                is excluded from the all-domains refresh path so existing
+                callers see today's behavior. An explicit ``domain_names``
+                request for "Global" is honored regardless of this flag.
 
         Yields:
             Progress dictionaries with keys:
@@ -508,6 +514,7 @@ class ObjectService:
                 mgmt_name=mgmt_name,
                 domain_names=domain_names,
                 mode=refresh_mode,
+                include_global=include_global,
             ):
                 yield progress
 
@@ -516,6 +523,7 @@ class ObjectService:
         mgmt_name: str,
         domain_names: list[str] | None,
         mode: RefreshMode,
+        include_global: bool = False,
     ) -> AsyncIterator[dict[str, Any]]:
         """Refresh objects for a single management server.
 
@@ -523,6 +531,8 @@ class ObjectService:
             mgmt_name: Management server name.
             domain_names: Optional domain filter.
             mode: Refresh mode.
+            include_global: When False (default), the synthetic "Global" domain
+                is excluded from the all-domains refresh path.
 
         Yields:
             Progress dictionaries.
@@ -538,6 +548,7 @@ class ObjectService:
             mgmt_name=mgmt_name,
             domain_names=domain_names,
             mode=mode,
+            include_global=include_global,
         )
 
         if not domains_to_refresh:
@@ -561,6 +572,7 @@ class ObjectService:
         mgmt_name: str,
         domain_names: list[str] | None,
         mode: RefreshMode,
+        include_global: bool = False,
     ) -> list[str]:
         """Get list of domains that need refreshing.
 
@@ -568,12 +580,24 @@ class ObjectService:
             mgmt_name: Management server name.
             domain_names: Optional domain filter.
             mode: Refresh mode.
+            include_global: When False (default), the synthetic "Global" domain
+                is excluded from the table read. An explicit request for
+                "Global" via ``domain_names`` is honored regardless, since
+                this method treats ``domain_names`` as an intersection filter
+                against the table rather than a pass-through - if the table
+                read excluded Global, an explicit request for it would be
+                filtered out before the intersection ever runs.
 
         Returns:
             List of domain names to refresh.
         """
+        # An explicit request for "Global" must reach the table even if the
+        # caller didn't set include_global - otherwise it gets filtered out
+        # before the intersection below can match it.
+        fetch_include_global = include_global or (GLOBAL_DOMAIN_NAME in (domain_names or []))
+
         # Get all domains for this mgmt server
-        all_domains = await self._cache.get_domains(mgmt_name=mgmt_name)
+        all_domains = await self._cache.get_domains(mgmt_name=mgmt_name, include_global=fetch_include_global)
 
         # If cache is empty, populate domains from API first
         if not all_domains:
@@ -583,7 +607,9 @@ class ObjectService:
                 if hasattr(self._client, "_domain_service"):
                     await self._client._domain_service.populate_domain_cache(mgmt_name)
                     # Now get from cache again
-                    all_domains = await self._cache.get_domains(mgmt_name=mgmt_name)
+                    all_domains = await self._cache.get_domains(
+                        mgmt_name=mgmt_name, include_global=fetch_include_global
+                    )
                     if all_domains:
                         log().debug(f"Fetched {len(all_domains)} domain(s) for {mgmt_name}")
                     else:

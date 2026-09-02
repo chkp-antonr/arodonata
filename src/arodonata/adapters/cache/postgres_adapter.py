@@ -78,9 +78,10 @@ class PostgresCacheAdapter:
     async def get_domains(
         self,
         mgmt_names: list[str] | None = None,
+        include_global: bool = False,
     ) -> list["Domain"]:
         """Get cached domains."""
-        return await self._repo.get_domains(mgmt_names=mgmt_names)
+        return await self._repo.get_domains(mgmt_names=mgmt_names, include_global=include_global)
 
     async def get_gateways(
         self,

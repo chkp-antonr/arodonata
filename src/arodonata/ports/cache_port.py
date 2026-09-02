@@ -60,6 +60,7 @@ class CachePort(Protocol):
     async def get_domains(
         self,
         mgmt_names: list[str] | None = None,
+        include_global: bool = False,
     ) -> list["Domain"]:
         """Get cached domains."""
         ...

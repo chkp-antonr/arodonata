@@ -643,12 +643,45 @@ async def test_refresh_all_uses_client_mgmt_names_and_domains_by_default():
     events = await collect(service.refresh_all())
 
     client.get_mgmt_names.assert_called_once_with()
-    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"])
+    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], include_global=False)
     assert events == [
         {
             "message": "Refreshing rulebases for mgmt1:domainA",
             "mgmt_name": "mgmt1",
             "domain_name": "domainA",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_includes_global_when_requested():
+    service, client, _ = make_service()
+    client.get_mgmt_names = MagicMock(return_value=["mgmt1"])
+    domain_obj = MagicMock()
+    domain_obj.name = "Global"
+    client.get_domains = AsyncMock(return_value=[domain_obj])
+
+    for attr in (
+        "refresh_access_rulebases",
+        "refresh_nat_rulebases",
+        "refresh_https_rulebases",
+        "refresh_threat_rulebases",
+    ):
+
+        async def _empty_gen(*_args, **_kwargs):
+            return
+            yield  # pragma: no cover
+
+        setattr(service, attr, _empty_gen)
+
+    events = await collect(service.refresh_all(include_global=True))
+
+    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], include_global=True)
+    assert events == [
+        {
+            "message": "Refreshing rulebases for mgmt1:Global",
+            "mgmt_name": "mgmt1",
+            "domain_name": "Global",
         }
     ]
 
@@ -678,7 +711,7 @@ async def test_refresh_all_respects_explicit_mgmt_and_domain_filters():
     events = await collect(service.refresh_all(mgmt_names=["mgmt1"], domain_names=["domainB"]))
 
     client.get_mgmt_names.assert_not_called()
-    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"])
+    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], include_global=False)
     assert events == [
         {
             "message": "Refreshing rulebases for mgmt1:domainB",

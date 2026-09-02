@@ -98,7 +98,9 @@ async def test_get_domains_delegates_to_orchestration():
     client._orchestration.get_domains = AsyncMock(return_value=["d"])
     result = await client.get_domains(mgmt_names=["mgmt1"])
     assert result == ["d"]
-    client._orchestration.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], cache_mode=None, cache_ttl=None)
+    client._orchestration.get_domains.assert_awaited_once_with(
+        mgmt_names=["mgmt1"], cache_mode=None, cache_ttl=None, include_global=False
+    )
 
 
 @pytest.mark.asyncio
