@@ -723,6 +723,15 @@ async def resolve_rule(
 # "CpmiAnyObject". This only applies to `original-*` fields and only in the OUTGOING PAYLOAD --
 # `translated-*` fields never use "Any" at all, see `_NAT_NO_TRANSLATION` below.
 #
+# Further corroborated on 2026-09-03 across two independent, unrelated Check Point
+# installations -- `mdsNP2.np.cparch.in` (a multi-domain manager) and `smsNP82` (a separate,
+# standalone SmartCenter) -- via a read-only `show-objects` call (`filter="Any",
+# type="CpmiAnyObject"`) against each: both returned the exact same single match, uid
+# "97aeb369-9aea-11d5-bd16-0090272ccb30" / name "Any" / type "CpmiAnyObject". This is strong
+# evidence the UID is a platform constant rather than something generated per-install, but see
+# `nat_sentinels.py` for the runtime resolver that verifies this against a live management server
+# before trusting it, rather than assuming it holds for every customer server unconditionally.
+#
 # Exported as a public name (see `arodonata/__init__.py`) so other in-org consumers that build
 # their own `set-nat-rule`/`add-nat-rule` payloads (e.g. MMP's decom removal engine) can reuse
 # the verified UID instead of copy-pasting the magic string.
@@ -741,6 +750,14 @@ NAT_ANY_OBJECT_UID = "97aeb369-9aea-11d5-bd16-0090272ccb30"
 # So the two families are NOT interchangeable: `original-*` cells empty to the "Any" object,
 # `translated-*` cells empty to this "Original" object -- confirmed by the same live query, no
 # longer a judgment call.
+#
+# Further corroborated on 2026-09-03 by repeating the same read-only `show-nat-rulebase` query
+# against a second, independent, unrelated installation -- `smsNP82`, a standalone SmartCenter
+# (mdsNP2.np.cparch.in above is a multi-domain manager): its own automatic NAT rules' empty
+# `translated-*` cells dereferenced to the exact same uid, "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c" /
+# name "Original" / type "Global". This is strong evidence the UID is a platform constant rather
+# than something generated per-install, but see `nat_sentinels.py` for the runtime resolver that
+# verifies this against a live management server before trusting it unconditionally.
 #
 # Exported as a public name (see `arodonata/__init__.py`) alongside `NAT_ANY_OBJECT_UID` for the
 # same reason: other in-org consumers building their own `set-nat-rule`/`add-nat-rule` payloads

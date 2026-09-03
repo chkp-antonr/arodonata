@@ -61,8 +61,9 @@ from .core import (
 )
 
 # CPCRUD (NAT write-payload constants other in-org consumers may need to reuse, e.g. MMP's
-# decom removal engine building its own set-nat-rule payloads)
-from .cpcrud import NAT_ANY_OBJECT_UID, NAT_ORIGINAL_OBJECT_UID
+# decom removal engine building its own set-nat-rule payloads, plus the runtime resolver that
+# verifies those constants against a live management server before trusting them)
+from .cpcrud import NAT_ANY_OBJECT_UID, NAT_ORIGINAL_OBJECT_UID, NatSentinelUids, resolve_nat_sentinel_uids
 
 # Utilities
 from .db_utils import safe_init_table
@@ -79,6 +80,8 @@ __all__ = [
     "GLOBAL_DOMAIN_NAME",
     "NAT_ANY_OBJECT_UID",
     "NAT_ORIGINAL_OBJECT_UID",
+    "NatSentinelUids",
+    "resolve_nat_sentinel_uids",
     # Response types
     "ApiCallResult",
     "ApiQueryResult",

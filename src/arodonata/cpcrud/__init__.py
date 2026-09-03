@@ -16,6 +16,7 @@ from .models import (
     Plan,
     PlannedAction,
 )
+from .nat_sentinels import NatSentinelUids, resolve_nat_sentinel_uids
 from .resolver import NAT_ANY_OBJECT_UID, NAT_ORIGINAL_OBJECT_UID
 from .service import CPCRUDService
 
@@ -31,10 +32,12 @@ __all__ = [
     "NAT_ANY_OBJECT_UID",
     "NAT_ORIGINAL_OBJECT_UID",
     "NameConflictPolicy",
+    "NatSentinelUids",
     "ObjectMatch",
     "ObjectState",
     "Outcome",
     "Plan",
     "PlannedAction",
     "build_inverse_template",
+    "resolve_nat_sentinel_uids",
 ]
