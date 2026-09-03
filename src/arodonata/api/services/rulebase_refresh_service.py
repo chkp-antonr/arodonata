@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from sqlmodel import SQLModel
 
 from ...cache.models import RulebaseAccess, RulebaseHTTPS, RulebaseNAT, RulebaseThreat
+from ...core.domain_list_refresh import DOMAIN_LIST_REFRESH_TTL_SECONDS, DomainListRefreshTracker
 from ...extractors.base import ExtractionContext
 from ...extractors.rulebases import (
     AccessRuleExtractor,
@@ -19,6 +20,7 @@ from ...logger import lazy_logger
 
 if TYPE_CHECKING:
     from ...cache import CacheRepository
+    from ...core.cache_policy import Clock
     from ..client import ArodonataClient
 
 log = lazy_logger("arodonata.api.services.rulebase_refresh_service")
@@ -27,15 +29,28 @@ log = lazy_logger("arodonata.api.services.rulebase_refresh_service")
 class RulebaseRefreshService:
     """Service for refreshing rulebase cache from Check Point API."""
 
-    def __init__(self, client: ArodonataClient, cache: CacheRepository) -> None:
+    def __init__(
+        self,
+        client: ArodonataClient,
+        cache: CacheRepository,
+        domain_list_refresh_ttl: int = DOMAIN_LIST_REFRESH_TTL_SECONDS,
+        clock: Clock | None = None,
+    ) -> None:
         """Initialize rulebase refresh service.
 
         Args:
             client: ArodonataClient instance for API calls.
             cache: Cache repository instance.
+            domain_list_refresh_ttl: Seconds between opportunistic ("check"-mode)
+                re-fetches of a management server's domain list ahead of
+                `refresh_all`. "force" mode ignores this and always re-fetches.
+                See `arodonata.core.domain_list_refresh`.
+            clock: Injectable time source for the TTL memo (tests only;
+                defaults to the real wall clock).
         """
         self._client = client
         self._cache = cache
+        self._domain_list_refresh = DomainListRefreshTracker(ttl_seconds=domain_list_refresh_ttl, clock=clock)
 
         # Initialize extractors
         self._access_extractor = AccessRuleExtractor()
@@ -250,7 +265,10 @@ class RulebaseRefreshService:
         Args:
             mgmt_names: Optional management server filter.
             domain_names: Optional domain filter.
-            mode: Refresh mode (only "force" currently implemented for rules).
+            mode: Refresh mode (only "force" currently implemented for rules;
+                affects only whether the domain *list* is re-fetched before
+                resolving `target_domains` below - see
+                `_ensure_domain_list_fresh`).
             include_global: When False (default), the synthetic "Global" domain
                 is excluded so existing callers see today's behavior.
 
@@ -264,6 +282,12 @@ class RulebaseRefreshService:
         target_mgmt = mgmt_names or self._client.get_mgmt_names()
 
         for m_name in target_mgmt:
+            # A domain created in SmartConsole after this mgmt's domains table was
+            # last populated would otherwise stay invisible to `get_domains` below
+            # forever - re-fetch it first (unconditionally for "force", at most
+            # once per TTL for "check").
+            await self._ensure_domain_list_fresh(m_name, mode)
+
             # Get domains for this mgmt
             domains = await self._client.get_domains(mgmt_names=[m_name], include_global=include_global)
             target_domains = [d.name for d in domains]
@@ -292,6 +316,41 @@ class RulebaseRefreshService:
                 # 4. Threat Rulebases
                 async for event in self.refresh_threat_rulebases(m_name, d_name):
                     yield event
+
+    async def _ensure_domain_list_fresh(self, mgmt_name: str, mode: Literal["skip", "check", "force"]) -> None:
+        """Re-fetch `mgmt_name`'s domain list from the API before `refresh_all`
+        resolves which domains to refresh rulebases for.
+
+        Mirrors `ObjectService._get_domains_to_refresh`'s fix for the identical
+        underlying bug: a domain created in SmartConsole after the domains table
+        was first seeded stayed invisible to every rulebase refresh forever,
+        because this method previously never called `populate_domain_cache` at
+        all - it only ever read whatever was already cached via
+        `client.get_domains()`. "force" mode now always re-fetches
+        unconditionally; "check" mode re-fetches at most once per
+        `DOMAIN_LIST_REFRESH_TTL_SECONDS`, via the same `DomainListRefreshTracker`
+        mechanism `ObjectService` uses, so repeated smart refreshes don't hammer
+        `show-domains`.
+
+        A failed or unavailable re-fetch is not fatal here - unlike
+        `ObjectService`, this is purely an opportunistic freshening step ahead of
+        the `client.get_domains()` cache read that follows, which already
+        tolerates a merely-stale (or even still-empty) table the same as before
+        this fix.
+        """
+        if mode != "force" and not self._domain_list_refresh.is_stale(mgmt_name):
+            return
+
+        if not hasattr(self._client, "_domain_service"):
+            return
+
+        try:
+            await self._client._domain_service.populate_domain_cache(mgmt_name)
+        except Exception as e:
+            log().exception(f"Failed to refresh domain list for {mgmt_name}: {e}")
+            return
+
+        self._domain_list_refresh.mark_checked(mgmt_name)
 
     async def refresh_access_rulebases(self, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]:
         """Refresh all access control rulebases for a domain."""

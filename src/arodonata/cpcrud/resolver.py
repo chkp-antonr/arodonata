@@ -727,6 +727,25 @@ async def resolve_rule(
 # their own `set-nat-rule`/`add-nat-rule` payloads (e.g. MMP's decom removal engine) can reuse
 # the verified UID instead of copy-pasting the magic string.
 NAT_ANY_OBJECT_UID = "97aeb369-9aea-11d5-bd16-0090272ccb30"
+
+# Check Point's special "Original" object -- the platform-fixed system object an empty
+# `translated-*` NAT cell dereferences to on read -- is likewise referenced by its actual UID,
+# not the literal name "Original", on the OUTGOING PAYLOAD side of a `translated-*` field.
+# Live-verified (not inferred) on 2026-09-03 via a read-only `show-nat-rulebase` call against
+# mdsNP2.np.cparch.in / domain General / package Standard: the real rule "Automatic Rule:
+# hTest-local" (hide NAT) came back with
+#   translated-destination => 'Original' type: Global uid: 85c0f50f-6d8a-4528-88ab-5fb11d8fe16c
+#   translated-service     => 'Original' type: Global uid: 85c0f50f-6d8a-4528-88ab-5fb11d8fe16c
+# while the same rule's `original-destination` (empty) dereferenced instead to the "Any" object
+# (`CpmiAnyObject`, uid `97aeb369-9aea-11d5-bd16-0090272ccb30` -- see `NAT_ANY_OBJECT_UID` above).
+# So the two families are NOT interchangeable: `original-*` cells empty to the "Any" object,
+# `translated-*` cells empty to this "Original" object -- confirmed by the same live query, no
+# longer a judgment call.
+#
+# Exported as a public name (see `arodonata/__init__.py`) alongside `NAT_ANY_OBJECT_UID` for the
+# same reason: other in-org consumers building their own `set-nat-rule`/`add-nat-rule` payloads
+# (e.g. MMP's decom removal engine) need the verified UID, not the magic string.
+NAT_ORIGINAL_OBJECT_UID = "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c"
 _NAT_ORIGINAL_ANY_FIELDS = ("original-source", "original-destination", "original-service")
 _NAT_TRANSLATED_FIELDS = ("translated-source", "translated-destination", "translated-service")
 

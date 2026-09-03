@@ -9,7 +9,7 @@ only the API-refresh seam on the client (``api_call`` / ``api_query`` /
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -62,8 +62,27 @@ def make_client(mgmt_names: list[str] | None = None) -> MagicMock:
     return client
 
 
-def make_service(db: DatabaseManager, client: MagicMock | None = None) -> ObjectService:
-    return ObjectService(db_manager=db, client=client or make_client(["mgmt1"]))
+def make_service(
+    db: DatabaseManager, client: MagicMock | None = None, **kwargs: object
+) -> ObjectService:
+    return ObjectService(db_manager=db, client=client or make_client(["mgmt1"]), **kwargs)
+
+
+class FakeClock:
+    """Deterministic, advanceable time source implementing the Clock protocol.
+
+    Mirrors `tests/unit/core/test_cache_refresh_coordinator.py`'s double of the same
+    name - kept local rather than shared since each test module owns its doubles.
+    """
+
+    def __init__(self, start: datetime) -> None:
+        self._t = start
+
+    def now(self) -> datetime:
+        return self._t
+
+    def advance(self, seconds: int) -> None:
+        self._t = self._t + timedelta(seconds=seconds)
 
 
 def cpobj(uid, name, obj_type, *, mgmt="mgmt1", domain="dmn1", **kw) -> CPObject:
@@ -508,17 +527,19 @@ async def test_get_domains_to_refresh_includes_global_when_requested(db):
     assert set(domains) == {"dmnA", GLOBAL_DOMAIN_NAME}
 
 
-async def test_get_domains_to_refresh_backfills_global_on_already_populated_table(db):
-    """Regression test for C1: on an already-provisioned MDM, the domains
-    table is non-empty (3 real domains, no Global row) because Global
-    support shipped after the table was first populated. The empty-cache
-    branch never runs in that case, so nothing used to write the Global row
-    or add it to the refresh list - a `cpcache` refresh silently skipped
-    Global forever.
+async def test_get_domains_to_refresh_force_mode_refetches_and_picks_up_global(db):
+    """Regression test for the customer-reported bug: a domain created in
+    SmartConsole after the domains table was first seeded (here, the Global
+    domain, but the mechanism is general) must not stay invisible forever.
 
-    With the fix, when include_global=True and the cached rows for this
-    mgmt are known to be an MDM's, a missing Global row must be backfilled
-    (via the domain service) so it reaches the refresh list.
+    On an already-provisioned MDM, the domains table is non-empty (3 real
+    domains, no Global row) because Global support shipped after the table
+    was first populated. Before this fix, FORCE mode only ever called
+    `populate_domain_cache` when the table came back completely empty - a
+    non-empty table with a stale/incomplete domain list was never
+    re-fetched. Now FORCE mode always re-fetches the domain list
+    unconditionally, so the fresh list (including Global, once
+    include_global=True is requested) is picked up on every force refresh.
     """
     client = make_client(mgmt_names=["mgmtNP2"])
     service = make_service(db, client)
@@ -529,13 +550,13 @@ async def test_get_domains_to_refresh_backfills_global_on_already_populated_tabl
             Domain.build(mgmt_name="mgmtNP2", domain_name=name, active_ip="1.1.1.1", is_mdm=True)
         )
 
-    async def _backfill_global(mgmt_name):
+    async def _refetch_adds_global(mgmt_name):
         await service._cache.upsert_domain(
             Domain.build(mgmt_name=mgmt_name, domain_name=GLOBAL_DOMAIN_NAME, active_ip="9.9.9.9", is_mdm=True)
         )
 
     client._domain_service = MagicMock()
-    client._domain_service.populate_domain_cache = AsyncMock(side_effect=_backfill_global)
+    client._domain_service.populate_domain_cache = AsyncMock(side_effect=_refetch_adds_global)
 
     domains = await service._get_domains_to_refresh("mgmtNP2", None, RefreshMode.FORCE, include_global=True)
 
@@ -543,10 +564,10 @@ async def test_get_domains_to_refresh_backfills_global_on_already_populated_tabl
     client._domain_service.populate_domain_cache.assert_awaited_once_with("mgmtNP2")
 
 
-async def test_get_domains_to_refresh_does_not_backfill_when_global_not_requested(db):
-    """Sanity check: the backfill only kicks in when Global was actually
-    asked for - a plain refresh of an already-populated MDM must not pay
-    for an extra populate_domain_cache round trip it doesn't need."""
+async def test_get_domains_to_refresh_force_mode_always_refetches_even_without_global(db):
+    """FORCE mode's re-fetch is unconditional - "no TTL, no conditions" per spec -
+    so it must run even when the caller isn't asking for the Global domain at all,
+    not just when a Global backfill would otherwise be needed."""
     client = make_client(mgmt_names=["mgmtNP2"])
     service = make_service(db, client)
     for name in ("CPCodeOps", "General"):
@@ -559,7 +580,106 @@ async def test_get_domains_to_refresh_does_not_backfill_when_global_not_requeste
     domains = await service._get_domains_to_refresh("mgmtNP2", None, RefreshMode.FORCE)
 
     assert set(domains) == {"CPCodeOps", "General"}
-    client._domain_service.populate_domain_cache.assert_not_awaited()
+    client._domain_service.populate_domain_cache.assert_awaited_once_with("mgmtNP2")
+
+
+async def test_get_domains_to_refresh_force_mode_refetches_on_every_call_no_ttl(db):
+    """FORCE mode never consults the domain-list TTL - two back-to-back FORCE
+    calls must each trigger their own populate_domain_cache, unlike CHECK mode."""
+    client = make_client(mgmt_names=["mgmt1"])
+    service = make_service(db, client)
+    await service._cache.upsert_domain(Domain.build(mgmt_name="mgmt1", domain_name="dmnA", active_ip="1.1.1.1"))
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+
+    await service._get_domains_to_refresh("mgmt1", None, RefreshMode.FORCE)
+    await service._get_domains_to_refresh("mgmt1", None, RefreshMode.FORCE)
+
+    assert client._domain_service.populate_domain_cache.await_count == 2
+
+
+async def test_get_domains_check_mode_refetches_domain_list_on_first_call(db):
+    """CHECK mode must still discover a domain list it has never fetched before -
+    the TTL memo starts empty, so the very first CHECK call for an mgmt server
+    is not silently skipped just because the table happens to already have rows
+    from some earlier, unrelated population."""
+    client = make_client(mgmt_names=["mgmt1"])
+    service = make_service(db, client)
+    await service._cache.upsert_domain(Domain.build(mgmt_name="mgmt1", domain_name="dmnA", active_ip="1.1.1.1"))
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+
+    await service._get_domains_to_refresh("mgmt1", None, RefreshMode.CHECK)
+
+    client._domain_service.populate_domain_cache.assert_awaited_once_with("mgmt1")
+
+
+async def test_get_domains_check_mode_does_not_refetch_within_ttl_window(db):
+    """The customer's own spec: smart/check refresh must not hammer show-domains -
+    a second CHECK call shortly after the first (well within the 1h TTL) must not
+    re-trigger populate_domain_cache."""
+    client = make_client(mgmt_names=["mgmt1"])
+    clock = FakeClock(datetime(2026, 9, 3, 12, 0, 0))
+    service = make_service(db, client, clock=clock)
+    await service._cache.upsert_domain(Domain.build(mgmt_name="mgmt1", domain_name="dmnA", active_ip="1.1.1.1"))
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+
+    await service._get_domains_to_refresh("mgmt1", None, RefreshMode.CHECK)
+    clock.advance(60)  # 1 minute later, well inside the 1h TTL
+    await service._get_domains_to_refresh("mgmt1", None, RefreshMode.CHECK)
+
+    client._domain_service.populate_domain_cache.assert_awaited_once_with("mgmt1")
+
+
+async def test_get_domains_check_mode_refetches_domain_list_after_ttl_expires(db):
+    """The customer's own spec, other half: a domain created in SmartConsole must
+    show up on smart refresh "with 1h delay" - once the TTL window has elapsed,
+    the next CHECK call must re-fetch the domain list again."""
+    client = make_client(mgmt_names=["mgmt1"])
+    clock = FakeClock(datetime(2026, 9, 3, 12, 0, 0))
+    service = make_service(db, client, clock=clock)
+    await service._cache.upsert_domain(Domain.build(mgmt_name="mgmt1", domain_name="dmnA", active_ip="1.1.1.1"))
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+
+    await service._get_domains_to_refresh("mgmt1", None, RefreshMode.CHECK)
+    clock.advance(3601)  # just past the 1h TTL
+    await service._get_domains_to_refresh("mgmt1", None, RefreshMode.CHECK)
+
+    assert client._domain_service.populate_domain_cache.await_count == 2
+
+
+async def test_get_domains_check_mode_ttl_is_configurable(db):
+    """The TTL is a constructor parameter, not a hardcoded magic number - a
+    shorter TTL must be honored."""
+    client = make_client(mgmt_names=["mgmt1"])
+    clock = FakeClock(datetime(2026, 9, 3, 12, 0, 0))
+    service = make_service(db, client, clock=clock, domain_list_refresh_ttl=30)
+    await service._cache.upsert_domain(Domain.build(mgmt_name="mgmt1", domain_name="dmnA", active_ip="1.1.1.1"))
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+
+    await service._get_domains_to_refresh("mgmt1", None, RefreshMode.CHECK)
+    clock.advance(31)
+    await service._get_domains_to_refresh("mgmt1", None, RefreshMode.CHECK)
+
+    assert client._domain_service.populate_domain_cache.await_count == 2
+
+
+async def test_get_domains_check_mode_refetch_failure_falls_back_to_cached_list(db):
+    """An already-populated table's CHECK-mode opportunistic re-fetch failing must
+    not blank out the refresh list - the existing (possibly slightly stale) cached
+    domains are safer to serve than nothing, unlike the empty-table floor case."""
+    client = make_client(mgmt_names=["mgmt1"])
+    service = make_service(db, client)
+    await service._cache.upsert_domain(Domain.build(mgmt_name="mgmt1", domain_name="dmnA", active_ip="1.1.1.1"))
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock(side_effect=RuntimeError("boom"))
+
+    domains = await service._get_domains_to_refresh("mgmt1", None, RefreshMode.CHECK)
+
+    assert domains == ["dmnA"]
 
 
 async def test_get_domains_to_refresh_explicit_global_name(db):

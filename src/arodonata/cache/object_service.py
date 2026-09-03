@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 
 from ..config import GLOBAL_DOMAIN_NAME
 from ..core import RefreshMode
+from ..core.domain_list_refresh import DOMAIN_LIST_REFRESH_TTL_SECONDS, DomainListRefreshTracker
 from ..core.incremental_refresh import FallbackToFull, IncrementalRefresher
 from ..logger import lazy_logger
 from ..utils.helpers import utc_now_naive
@@ -22,6 +23,7 @@ from .repository import CacheRepository
 
 if TYPE_CHECKING:
     from ..api.client import ArodonataClient
+    from ..core.cache_policy import Clock
 
 log = lazy_logger("arodonata.cache.object_service")
 
@@ -328,6 +330,8 @@ class ObjectService:
         db_manager: DatabaseManager,
         client: ArodonataClient,
         max_incremental_changes: int = 500,
+        domain_list_refresh_ttl: int = DOMAIN_LIST_REFRESH_TTL_SECONDS,
+        clock: Clock | None = None,
     ) -> None:
         """Initialize ObjectService.
 
@@ -336,11 +340,18 @@ class ObjectService:
             client: ArodonataClient instance for API fallback.
             max_incremental_changes: Max in-scope changes an incremental
                 apply will accept before falling back to a full reload.
+            domain_list_refresh_ttl: Seconds between opportunistic (CHECK/
+                INCREMENTAL-mode) re-fetches of a management server's domain
+                list. FORCE mode ignores this and always re-fetches. See
+                `DOMAIN_LIST_REFRESH_TTL_SECONDS`.
+            clock: Injectable time source for the TTL memo (tests only;
+                defaults to the real wall clock).
         """
         self._db = db_manager
         self._cache = CacheRepository(db_manager)
         self._client = client
         self.max_incremental_changes = max_incremental_changes
+        self._domain_list_refresh = DomainListRefreshTracker(ttl_seconds=domain_list_refresh_ttl, clock=clock)
 
     async def _fetch_objects_from_db(
         self,
@@ -576,6 +587,26 @@ class ObjectService:
     ) -> list[str]:
         """Get list of domains that need refreshing.
 
+        A domain created in SmartConsole after this mgmt's domains table was
+        first seeded used to be invisible to every refresh forever: the old
+        code only ever called `populate_domain_cache` when the table came
+        back completely empty. That floor behavior is preserved below, but
+        it is no longer the *only* trigger for a domain-list re-fetch:
+
+        * FORCE mode always re-fetches unconditionally (no TTL, no
+          conditions) - see `_refetch_domain_list`.
+        * CHECK/INCREMENTAL ("smart") modes re-fetch opportunistically, at
+          most once every `DOMAIN_LIST_REFRESH_TTL_SECONDS` (default) - see
+          `self._domain_list_refresh` (a `DomainListRefreshTracker`) - so a
+          new domain surfaces within that window without hammering
+          `show-domains` on every smart-refresh tick.
+
+        This single mechanism also covers what a separate "backfill a
+        missing Global row" special case used to handle on its own: any
+        re-fetch (forced or TTL-triggered) re-populates the whole domain
+        list, Global row included, so that special case no longer needs to
+        exist as its own bypass-the-TTL code path.
+
         Args:
             mgmt_name: Management server name.
             domain_names: Optional domain filter.
@@ -599,36 +630,23 @@ class ObjectService:
         # Get all domains for this mgmt server
         all_domains = await self._cache.get_domains(mgmt_name=mgmt_name, include_global=fetch_include_global)
 
-        # If cache is empty, populate domains from API first
-        if not all_domains:
-            log().debug(f"No domains in cache for {mgmt_name}, fetching from API")
-            try:
-                # Access the domain service through the client
-                if hasattr(self._client, "_domain_service"):
-                    await self._client._domain_service.populate_domain_cache(mgmt_name)
-                    # Now get from cache again
-                    all_domains = await self._cache.get_domains(
-                        mgmt_name=mgmt_name, include_global=fetch_include_global
-                    )
-                    if all_domains:
-                        log().debug(f"Fetched {len(all_domains)} domain(s) for {mgmt_name}")
-                    else:
-                        log().warning(f"API returned no domains for {mgmt_name}")
-                        return []
-                else:
-                    log().warning(f"Domain service not available for {mgmt_name}")
-                    return []
-            except Exception as e:
-                log().exception(f"Failed to populate domains for {mgmt_name}: {e}")
-                return []
+        # Floor: an empty table must always be populated, regardless of mode/TTL.
+        table_was_empty = not all_domains
+        should_refetch = (
+            table_was_empty or mode == RefreshMode.FORCE or self._domain_list_refresh.is_stale(mgmt_name)
+        )
+
+        if should_refetch:
+            all_domains = await self._refetch_domain_list(
+                mgmt_name=mgmt_name,
+                fetch_include_global=fetch_include_global,
+                fallback=all_domains,
+                required=table_was_empty,
+            )
 
         if not all_domains:
             log().warning(f"No domains found for {mgmt_name}")
             return []
-
-        all_domains = await self._backfill_missing_global(
-            mgmt_name=mgmt_name, all_domains=all_domains, fetch_include_global=fetch_include_global
-        )
 
         # Filter by domain_names if specified
         if domain_names:
@@ -648,46 +666,52 @@ class ObjectService:
 
         return stale_domains
 
-    async def _backfill_missing_global(
+    async def _refetch_domain_list(
         self,
         mgmt_name: str,
-        all_domains: list[Domain],
         fetch_include_global: bool,
+        fallback: list[Domain],
+        required: bool,
     ) -> list[Domain]:
-        """Backfill a missing Global row for an already-provisioned MDM.
-
-        An already-provisioned MDM can have a non-empty domains table that
-        predates Global-domain support (or whose show-domains call failed
-        before the Global row was ever written) - the empty-cache branch in
-        `_get_domains_to_refresh` never runs in that case, so nothing would
-        otherwise write or surface the Global row. When the caller wants
-        Global and the cached rows for this mgmt are known to be an MDM's,
-        backfill the row via the domain service (which persists it) and
-        re-read the table so every other reader benefits too.
+        """Re-fetch one mgmt server's domain list from the API and re-read the cache.
 
         Args:
             mgmt_name: Management server name.
-            all_domains: Domains already read from the cache table.
-            fetch_include_global: Whether the caller wants Global included.
+            fetch_include_global: Whether the re-read should include the Global row.
+            fallback: The already-cached domains to fall back to if the
+                re-fetch can't be attempted or fails. An opportunistic
+                re-fetch (TTL/force on an already-populated table) failing
+                is not fatal - the existing, possibly slightly stale, cached
+                list is safer to serve than nothing.
+            required: True when the table was empty before this call - unlike
+                the opportunistic case, a failed or unavailable re-fetch here
+                must not be silently papered over with a fallback that is
+                itself empty, so the caller gets ``[]`` instead.
 
         Returns:
-            The (possibly refreshed) list of domains for this mgmt.
+            The freshly re-read domains, or ``fallback`` if the re-fetch
+            could not run or failed.
         """
-        if not fetch_include_global or any(d.domain_name == GLOBAL_DOMAIN_NAME for d in all_domains):
-            return all_domains
+        if not hasattr(self._client, "_domain_service"):
+            log().warning(f"Domain service not available for {mgmt_name}")
+            return [] if required else fallback
 
-        if not any(d.is_mdm for d in all_domains):
-            return all_domains
-
-        log().debug(f"Global domain missing from cache for {mgmt_name}; backfilling")
         try:
-            if hasattr(self._client, "_domain_service"):
-                await self._client._domain_service.populate_domain_cache(mgmt_name)
-                return await self._cache.get_domains(mgmt_name=mgmt_name, include_global=fetch_include_global)
+            await self._client._domain_service.populate_domain_cache(mgmt_name)
         except Exception as e:
-            log().exception(f"Failed to backfill Global domain for {mgmt_name}: {e}")
+            log().exception(f"Failed to {'populate' if required else 'refresh'} domains for {mgmt_name}: {e}")
+            return [] if required else fallback
 
-        return all_domains
+        self._domain_list_refresh.mark_checked(mgmt_name)
+        refreshed = await self._cache.get_domains(mgmt_name=mgmt_name, include_global=fetch_include_global)
+        if refreshed:
+            log().debug(f"Fetched {len(refreshed)} domain(s) for {mgmt_name}")
+            return refreshed
+
+        if required:
+            log().warning(f"API returned no domains for {mgmt_name}")
+            return []
+        return fallback
 
     async def _resolve_group_memberships(
         self,
