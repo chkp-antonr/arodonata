@@ -39,6 +39,11 @@ FAILOVER_ERROR_CODES: Final[frozenset[str]] = frozenset(
 # Throttling error code
 THROTTLE_ERROR_CODE: Final[str] = "err_too_many_requests"
 
+# Multi-domain manager (MDM) always has an implicit Global domain. Check Point's
+# `show-domains` API never returns it (it only lists manually created domains),
+# so callers that populate/refresh the domain cache must add this row explicitly.
+GLOBAL_DOMAIN_NAME: Final[str] = "Global"
+
 # Valid log levels
 LOG_LEVELS: Final[frozenset[str]] = frozenset(
     {
@@ -63,4 +68,5 @@ __all__ = [
     "FAILOVER_ERROR_CODES",
     "THROTTLE_ERROR_CODE",
     "LOG_LEVELS",
+    "GLOBAL_DOMAIN_NAME",
 ]

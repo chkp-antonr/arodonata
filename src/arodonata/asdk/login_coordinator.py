@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Never
 from arlogi.otel.decorator import traced
 
 from ..cache.lock_manager import DatabaseLockManager
-from ..config import SESSION_ERROR_CODES, THROTTLE_ERROR_CODE
+from ..config import GLOBAL_DOMAIN_NAME, SESSION_ERROR_CODES, THROTTLE_ERROR_CODE
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
 
@@ -850,6 +850,23 @@ class LoginCoordinator:
                 await self._cache.upsert_domain(domain_record)
                 log().info(f"Updated domain cache for '{mgmt_name}:{domain}' with active_ip={active_ip}")
                 return active_ip
+
+        if domain == GLOBAL_DOMAIN_NAME and is_mdm is not False:
+            # The implicit Global domain is never listed by `show-domains`, so it will
+            # never be "found" in domains_data above. Cache it with the MDS's own
+            # primary IP rather than falling through to the "unknown domain" warning -
+            # a falsy active_ip would make every subsequent Global login treat this as
+            # a cache miss and re-fetch show-domains (see _prefetch_domain_server_ip).
+            domain_record = Domain.build(
+                mgmt_name=mgmt_name,
+                domain_name=GLOBAL_DOMAIN_NAME,
+                domain_uid="",
+                active_ip=default_ip,
+                is_mdm=is_mdm if is_mdm is not None else True,
+            )
+            await self._cache.upsert_domain(domain_record)
+            log().info(f"Cached Global domain for '{mgmt_name}' with active_ip={default_ip}")
+            return default_ip
 
         log().warning(
             f"Domain '{domain}' not found in API response for '{mgmt_name}', using primary IP (NOT caching unknown domain)"

@@ -53,6 +53,7 @@ class ConfiguredCache(FakeCache):
         self._object_by_uid = object_by_uid
         self.get_objects_calls = []
         self.get_rulebase_calls = []
+        self.get_domains_calls = []
 
     async def get_objects(self, object_type=None, mgmt_names=None, domain_names=None, filters=None):
         self.get_objects_calls.append(
@@ -65,7 +66,8 @@ class ConfiguredCache(FakeCache):
         )
         return self._objects
 
-    async def get_domains(self, mgmt_names=None):
+    async def get_domains(self, mgmt_names=None, include_global=False):
+        self.get_domains_calls.append({"mgmt_names": mgmt_names, "include_global": include_global})
         return self._domains
 
     async def get_gateways(self, mgmt_names=None):
@@ -175,6 +177,18 @@ async def test_get_domains_empty_standby_lists_default_to_empty():
     [domain] = await _svc(cache=cache).get_domains()
     assert domain.standby_ips == []
     assert domain.standby_servers == []
+
+
+async def test_get_domains_include_global_reaches_cache_layer():
+    cache = ConfiguredCache(domains=[])
+    await _svc(cache=cache).get_domains(mgmt_names=["mgmt1"], include_global=True)
+    assert cache.get_domains_calls == [{"mgmt_names": ["mgmt1"], "include_global": True}]
+
+
+async def test_get_domains_include_global_defaults_to_false():
+    cache = ConfiguredCache(domains=[])
+    await _svc(cache=cache).get_domains(mgmt_names=["mgmt1"])
+    assert cache.get_domains_calls == [{"mgmt_names": ["mgmt1"], "include_global": False}]
 
 
 async def test_get_gateways_converts_assets():

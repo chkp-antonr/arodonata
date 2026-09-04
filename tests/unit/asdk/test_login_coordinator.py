@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import SecretStr
 
+from arodonata import GLOBAL_DOMAIN_NAME
 from arodonata.asdk.login_coordinator import LoginCoordinator
 from arodonata.asdk.server_registry import ServerConfig
 from arodonata.core.exceptions import AuthenticationError, ThrottlingError
@@ -641,11 +642,27 @@ async def test_cache_domain_active_ip_found_caches_and_returns():
 
 
 async def test_cache_domain_active_ip_not_found_returns_default_no_cache():
+    # Genuinely unknown domain (not Global) - must not be cached, to avoid
+    # polluting the domains table with management server names or typos.
     cache = AsyncMock()
     coord = _make_coordinator(cache=cache)
-    ip = await coord._cache_domain_active_ip("mgmt1", "Missing", [{"name": "Other"}], "10.0.0.1")
+    ip = await coord._cache_domain_active_ip("mgmt1", "NoSuchDomain", [{"name": "Other"}], "10.0.0.1")
     assert ip == "10.0.0.1"
     cache.upsert_domain.assert_not_called()
+
+
+async def test_cache_domain_active_ip_caches_global_with_default_ip():
+    cache = AsyncMock()
+    coord = _make_coordinator(cache=cache)
+    domains = [{"name": "General", "uid": "uid-d", "servers": []}]
+
+    ip = await coord._cache_domain_active_ip("mgmt1", GLOBAL_DOMAIN_NAME, domains, "10.0.0.1", is_mdm=True)
+
+    assert ip == "10.0.0.1"
+    cache.upsert_domain.assert_awaited_once()
+    saved_domain = cache.upsert_domain.await_args.args[0]
+    assert saved_domain.domain_name == GLOBAL_DOMAIN_NAME
+    assert saved_domain.active_ip == "10.0.0.1"
 
 
 # ---------------------------------------------------------------------------

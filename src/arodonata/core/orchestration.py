@@ -129,6 +129,7 @@ class CacheOrchestrationService:
         mgmt_names: list[str] | None = None,
         cache_mode: "CacheMode | str | None" = None,
         cache_ttl: int | None = None,
+        include_global: bool = False,
     ) -> list["Domain"]:
         """Get domains from cache.
 
@@ -136,6 +137,8 @@ class CacheOrchestrationService:
             mgmt_names: Optional list of management server names to filter.
             cache_mode: Optional per-call cache refresh mode override.
             cache_ttl: Optional per-call cache freshness TTL override.
+            include_global: When False (default), the synthetic "Global" domain
+                is excluded so existing callers see today's behavior.
 
         Returns:
             List of Domain Pydantic models.
@@ -144,7 +147,7 @@ class CacheOrchestrationService:
 
         from arodonata.models import Domain
 
-        cache_domains = await self._cache.get_domains(mgmt_names=mgmt_names)
+        cache_domains = await self._cache.get_domains(mgmt_names=mgmt_names, include_global=include_global)
 
         return [
             Domain(

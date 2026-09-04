@@ -1116,6 +1116,7 @@ class ArodonataClient:
         mgmt_names: list[str] | None = None,
         domain_names: list[str] | None = None,
         mode: Literal["skip", "check", "force", "incremental"] = "force",
+        include_global: bool = False,
     ) -> AsyncGenerator[SSEEvent]:
         """Refresh object cache from API.
 
@@ -1123,6 +1124,9 @@ class ArodonataClient:
             mgmt_names: Optional management server filter.
             domain_names: Optional domain filter.
             mode: Refresh mode - "skip", "check", "force", or "incremental".
+            include_global: When False (default), the synthetic "Global" domain
+                is excluded from the all-domains refresh path so existing
+                callers see today's behavior.
 
         Yields:
             SSEEvent with progress updates.
@@ -1143,6 +1147,7 @@ class ArodonataClient:
             mgmt_names=mgmt_names,
             domain_names=domain_names,
             mode=mode,
+            include_global=include_global,
         ):
             count = progress.get("count", 0)
             total_count += count
@@ -1211,6 +1216,7 @@ class ArodonataClient:
         mgmt_names: list[str] | None = None,
         cache_mode: str | None = None,
         cache_ttl: int | None = None,
+        include_global: bool = False,
     ) -> list[Domain]:
         """Get domains from cache as Pydantic models.
 
@@ -1218,6 +1224,8 @@ class ArodonataClient:
             mgmt_names: Optional list of management server names to filter.
             cache_mode: Optional per-call cache refresh mode override.
             cache_ttl: Optional per-call cache freshness TTL override.
+            include_global: When False (default), the synthetic "Global" domain
+                is excluded so existing callers see today's behavior.
 
         Returns:
             List of Domain models.
@@ -1232,6 +1240,7 @@ class ArodonataClient:
             mgmt_names=mgmt_names,
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
+            include_global=include_global,
         )
 
     @traced

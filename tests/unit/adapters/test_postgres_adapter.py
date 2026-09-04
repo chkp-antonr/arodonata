@@ -167,7 +167,7 @@ async def test_get_domains_delegates_to_repository():
 
     result = await adapter.get_domains(mgmt_names=["mgmt1"])
 
-    mock_repo.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"])
+    mock_repo.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], include_global=False)
     assert result == domains
 
 

@@ -25,7 +25,7 @@ Example:
     await engine.dispose()
 """
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 __author__ = "Anton Razumov"
 __license__ = "MIT"
 
@@ -42,7 +42,7 @@ from .api import (
 from .cache import Asset, CacheRepository, CPObject, DatabaseManager, Domain, SIDCache
 
 # Configuration
-from .config import ArodonataSettings
+from .config import GLOBAL_DOMAIN_NAME, ArodonataSettings
 
 # Exceptions
 from .core import (
@@ -60,6 +60,11 @@ from .core import (
     SessionExpiredError,
 )
 
+# CPCRUD (NAT write-payload constants other in-org consumers may need to reuse, e.g. MMP's
+# decom removal engine building its own set-nat-rule payloads, plus the runtime resolver that
+# verifies those constants against a live management server before trusting them)
+from .cpcrud import NAT_ANY_OBJECT_UID, NAT_ORIGINAL_OBJECT_UID, NatSentinelUids, resolve_nat_sentinel_uids
+
 # Utilities
 from .db_utils import safe_init_table
 from .utils import extract_data_from_response, extract_objects_from_response
@@ -72,6 +77,11 @@ __all__ = [
     # Main API
     "ArodonataClient",
     "ArodonataSettings",
+    "GLOBAL_DOMAIN_NAME",
+    "NAT_ANY_OBJECT_UID",
+    "NAT_ORIGINAL_OBJECT_UID",
+    "NatSentinelUids",
+    "resolve_nat_sentinel_uids",
     # Response types
     "ApiCallResult",
     "ApiQueryResult",

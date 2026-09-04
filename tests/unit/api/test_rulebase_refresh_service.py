@@ -8,6 +8,7 @@ CacheRepository seams are mocked; no network or database is touched.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -19,7 +20,20 @@ from arodonata.extractors.base import ExtractionContext
 from arodonata.extractors.rulebases import AccessRuleExtractor, NATRuleExtractor
 
 
-def make_service():
+class FakeClock:
+    """Deterministic, advanceable time source implementing the Clock protocol."""
+
+    def __init__(self, start: datetime) -> None:
+        self._t = start
+
+    def now(self) -> datetime:
+        return self._t
+
+    def advance(self, seconds: int) -> None:
+        self._t = self._t + timedelta(seconds=seconds)
+
+
+def make_service(**kwargs):
     client = MagicMock()
     client._object_service = MagicMock()
     client._object_service._api_object_to_cpobject = MagicMock(return_value=None)
@@ -27,8 +41,25 @@ def make_service():
     cache.delete_rulebase = AsyncMock(return_value=0)
     cache.upsert_rulebases = AsyncMock(side_effect=lambda rules, **_: len(rules))
     cache.upsert_objects = AsyncMock(return_value=0)
-    service = RulebaseRefreshService(client=client, cache=cache)
+    service = RulebaseRefreshService(client=client, cache=cache, **kwargs)
     return service, client, cache
+
+
+def _no_op_domain_generators(service):
+    """Stub out the four per-domain rulebase generators for refresh_all tests that
+    only care about domain-list resolution, not rulebase content."""
+    for attr in (
+        "refresh_access_rulebases",
+        "refresh_nat_rulebases",
+        "refresh_https_rulebases",
+        "refresh_threat_rulebases",
+    ):
+
+        async def _empty_gen(*_args, **_kwargs):
+            return
+            yield  # pragma: no cover - unreachable, makes this an async generator
+
+        setattr(service, attr, _empty_gen)
 
 
 def access_rule(uid="uid-1", rule_number=1, name="Rule 1", extra=None):
@@ -643,12 +674,45 @@ async def test_refresh_all_uses_client_mgmt_names_and_domains_by_default():
     events = await collect(service.refresh_all())
 
     client.get_mgmt_names.assert_called_once_with()
-    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"])
+    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], include_global=False)
     assert events == [
         {
             "message": "Refreshing rulebases for mgmt1:domainA",
             "mgmt_name": "mgmt1",
             "domain_name": "domainA",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_includes_global_when_requested():
+    service, client, _ = make_service()
+    client.get_mgmt_names = MagicMock(return_value=["mgmt1"])
+    domain_obj = MagicMock()
+    domain_obj.name = "Global"
+    client.get_domains = AsyncMock(return_value=[domain_obj])
+
+    for attr in (
+        "refresh_access_rulebases",
+        "refresh_nat_rulebases",
+        "refresh_https_rulebases",
+        "refresh_threat_rulebases",
+    ):
+
+        async def _empty_gen(*_args, **_kwargs):
+            return
+            yield  # pragma: no cover
+
+        setattr(service, attr, _empty_gen)
+
+    events = await collect(service.refresh_all(include_global=True))
+
+    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], include_global=True)
+    assert events == [
+        {
+            "message": "Refreshing rulebases for mgmt1:Global",
+            "mgmt_name": "mgmt1",
+            "domain_name": "Global",
         }
     ]
 
@@ -678,7 +742,7 @@ async def test_refresh_all_respects_explicit_mgmt_and_domain_filters():
     events = await collect(service.refresh_all(mgmt_names=["mgmt1"], domain_names=["domainB"]))
 
     client.get_mgmt_names.assert_not_called()
-    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"])
+    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], include_global=False)
     assert events == [
         {
             "message": "Refreshing rulebases for mgmt1:domainB",
@@ -717,3 +781,151 @@ async def test_refresh_all_forwards_events_from_each_sub_refresh():
         "https-event",
         "threat-event",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# refresh_all - domain-list re-fetch (a domain created in SmartConsole after
+# the domains table was first seeded must not stay invisible forever)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_force_mode_always_refetches_domain_list():
+    service, client, _ = make_service()
+    client.get_mgmt_names = MagicMock(return_value=["mgmt1"])
+    domain_obj = MagicMock()
+    domain_obj.name = "domainA"
+    client.get_domains = AsyncMock(return_value=[domain_obj])
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+    _no_op_domain_generators(service)
+
+    await collect(service.refresh_all(mode="force"))
+
+    client._domain_service.populate_domain_cache.assert_awaited_once_with("mgmt1")
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_force_mode_refetches_on_every_call_no_ttl():
+    service, client, _ = make_service()
+    client.get_mgmt_names = MagicMock(return_value=["mgmt1"])
+    domain_obj = MagicMock()
+    domain_obj.name = "domainA"
+    client.get_domains = AsyncMock(return_value=[domain_obj])
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+    _no_op_domain_generators(service)
+
+    await collect(service.refresh_all(mode="force"))
+    await collect(service.refresh_all(mode="force"))
+
+    assert client._domain_service.populate_domain_cache.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_check_mode_refetches_domain_list_on_first_call():
+    service, client, _ = make_service()
+    client.get_mgmt_names = MagicMock(return_value=["mgmt1"])
+    domain_obj = MagicMock()
+    domain_obj.name = "domainA"
+    client.get_domains = AsyncMock(return_value=[domain_obj])
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+    _no_op_domain_generators(service)
+
+    await collect(service.refresh_all(mode="check"))
+
+    client._domain_service.populate_domain_cache.assert_awaited_once_with("mgmt1")
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_check_mode_does_not_refetch_within_ttl_window():
+    clock = FakeClock(datetime(2026, 9, 3, 12, 0, 0))
+    service, client, _ = make_service(clock=clock)
+    client.get_mgmt_names = MagicMock(return_value=["mgmt1"])
+    domain_obj = MagicMock()
+    domain_obj.name = "domainA"
+    client.get_domains = AsyncMock(return_value=[domain_obj])
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+    _no_op_domain_generators(service)
+
+    await collect(service.refresh_all(mode="check"))
+    clock.advance(60)  # 1 minute later, well inside the 1h TTL
+    await collect(service.refresh_all(mode="check"))
+
+    client._domain_service.populate_domain_cache.assert_awaited_once_with("mgmt1")
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_check_mode_refetches_domain_list_after_ttl_expires():
+    clock = FakeClock(datetime(2026, 9, 3, 12, 0, 0))
+    service, client, _ = make_service(clock=clock)
+    client.get_mgmt_names = MagicMock(return_value=["mgmt1"])
+    domain_obj = MagicMock()
+    domain_obj.name = "domainA"
+    client.get_domains = AsyncMock(return_value=[domain_obj])
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+    _no_op_domain_generators(service)
+
+    await collect(service.refresh_all(mode="check"))
+    clock.advance(3601)  # just past the 1h TTL
+    await collect(service.refresh_all(mode="check"))
+
+    assert client._domain_service.populate_domain_cache.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_domain_list_ttl_is_configurable():
+    clock = FakeClock(datetime(2026, 9, 3, 12, 0, 0))
+    service, client, _ = make_service(clock=clock, domain_list_refresh_ttl=30)
+    client.get_mgmt_names = MagicMock(return_value=["mgmt1"])
+    domain_obj = MagicMock()
+    domain_obj.name = "domainA"
+    client.get_domains = AsyncMock(return_value=[domain_obj])
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+    _no_op_domain_generators(service)
+
+    await collect(service.refresh_all(mode="check"))
+    clock.advance(31)
+    await collect(service.refresh_all(mode="check"))
+
+    assert client._domain_service.populate_domain_cache.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_domain_list_refetch_failure_does_not_abort_refresh():
+    """A failed opportunistic re-fetch must not prevent refresh_all from proceeding
+    with whatever `client.get_domains()` already has cached - this is purely a
+    freshening step, not a precondition."""
+    service, client, _ = make_service()
+    client.get_mgmt_names = MagicMock(return_value=["mgmt1"])
+    domain_obj = MagicMock()
+    domain_obj.name = "domainA"
+    client.get_domains = AsyncMock(return_value=[domain_obj])
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock(side_effect=RuntimeError("boom"))
+    _no_op_domain_generators(service)
+
+    events = await collect(service.refresh_all(mode="force"))
+
+    assert events == [
+        {
+            "message": "Refreshing rulebases for mgmt1:domainA",
+            "mgmt_name": "mgmt1",
+            "domain_name": "domainA",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_skip_mode_does_not_touch_domain_list_refresh():
+    service, client, _ = make_service()
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+
+    await collect(service.refresh_all(mode="skip"))
+
+    client._domain_service.populate_domain_cache.assert_not_awaited()

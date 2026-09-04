@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy import delete, or_, select, update
 
+from ..config import GLOBAL_DOMAIN_NAME
 from ..logger import lazy_logger
 from .database import DatabaseManager
 from .models import Asset, CPObject, Domain, LastPublishedSession, SIDCache
@@ -577,12 +578,19 @@ class CacheRepository:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def get_domains(self, mgmt_name: str | None = None, mgmt_names: list[str] | None = None) -> list[Domain]:
+    async def get_domains(
+        self,
+        mgmt_name: str | None = None,
+        mgmt_names: list[str] | None = None,
+        include_global: bool = False,
+    ) -> list[Domain]:
         """Get all domains, optionally filtered by management server.
 
         Args:
             mgmt_name: Optional single management server filter (deprecated, use mgmt_names).
             mgmt_names: Optional list of management server names to filter.
+            include_global: When False (default), the synthetic "Global" domain
+                row is excluded so existing callers see today's behavior.
 
         Returns:
             List of Domain records.
@@ -594,6 +602,8 @@ class CacheRepository:
                 stmt = stmt.where(Domain.mgmt_name.in_(mgmt_names))  # type: ignore
             elif mgmt_name:
                 stmt = stmt.where(Domain.mgmt_name == mgmt_name)  # type: ignore
+            if not include_global:
+                stmt = stmt.where(Domain.domain_name != GLOBAL_DOMAIN_NAME)  # type: ignore
             result = await session.execute(stmt)
             return list(result.scalars().all())
 

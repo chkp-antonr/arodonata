@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
+from arodonata import GLOBAL_DOMAIN_NAME
 from arodonata.cache import models  # noqa: F401  (registers tables on metadata)
 from arodonata.cache.database import DatabaseManager
 from arodonata.cache.models import (
@@ -471,6 +472,25 @@ async def test_get_domains_plural_filter(repo):
     assert {d.domain_name for d in result} == {"d1", "d3"}
 
 
+async def test_get_domains_excludes_global_by_default(repo):
+    await repo.upsert_domain(Domain.build(mgmt_name="m1", domain_name="d1", active_ip="1"))
+    await repo.upsert_domain(Domain.build(mgmt_name="m1", domain_name="d2", active_ip="2"))
+    await repo.upsert_domain(
+        Domain.build(mgmt_name="m1", domain_name=GLOBAL_DOMAIN_NAME, domain_uid="", active_ip="9.9.9.9")
+    )
+    result = await repo.get_domains(mgmt_name="m1")
+    assert {d.domain_name for d in result} == {"d1", "d2"}
+
+
+async def test_get_domains_includes_global_when_requested(repo):
+    await repo.upsert_domain(Domain.build(mgmt_name="m1", domain_name="d1", active_ip="1"))
+    await repo.upsert_domain(
+        Domain.build(mgmt_name="m1", domain_name=GLOBAL_DOMAIN_NAME, domain_uid="", active_ip="9.9.9.9")
+    )
+    result = await repo.get_domains(mgmt_name="m1", include_global=True)
+    assert {d.domain_name for d in result} == {"d1", GLOBAL_DOMAIN_NAME}
+
+
 # ==========================================================================
 # CPObject operations
 # ==========================================================================
@@ -594,6 +614,35 @@ async def test_get_objects_by_uids(repo):
     await repo.upsert_objects([make_object("u1"), make_object("u2"), make_object("u3")])
     hits = await repo.get_objects_by_uids(["u1", "u3"], mgmt_names=["m1"], domain_names=[""])
     assert {o.uid for o in hits} == {"u1", "u3"}
+
+
+async def test_get_objects_by_uids_surfaces_global_domain_object(repo):
+    """Core-bug regression: a CPObject cached under the "Global" domain must
+    actually be findable. Object search/lookup filters on domain_name like
+    any other domain - nothing about "Global" is special in the CPObject
+    table itself, but no prior test proved a Global-domain row ever came
+    back out of a search."""
+    await repo.upsert_objects(
+        [
+            make_object("g1", name="global-host", domain=GLOBAL_DOMAIN_NAME, original_domain=GLOBAL_DOMAIN_NAME),
+            make_object("d1", name="local-host", domain="dmnA"),
+        ]
+    )
+
+    by_uid = await repo.get_objects_by_uids(["g1"], mgmt_names=["m1"], domain_names=[GLOBAL_DOMAIN_NAME])
+    assert {o.uid for o in by_uid} == {"g1"}
+    assert by_uid[0].domain_name == GLOBAL_DOMAIN_NAME
+    assert by_uid[0].original_domain == GLOBAL_DOMAIN_NAME
+
+
+async def test_get_objects_by_name_surfaces_global_domain_object(repo):
+    await repo.upsert_objects(
+        [make_object("g1", name="global-host", domain=GLOBAL_DOMAIN_NAME, original_domain=GLOBAL_DOMAIN_NAME)]
+    )
+
+    by_name = await repo.get_objects_by_name("global-host")
+    assert {o.uid for o in by_name} == {"g1"}
+    assert by_name[0].domain_name == GLOBAL_DOMAIN_NAME
 
 
 async def test_get_objects_no_filters(repo):

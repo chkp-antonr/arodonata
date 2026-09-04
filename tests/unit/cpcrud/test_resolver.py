@@ -4,6 +4,8 @@ import pytest
 from arodonata.cpcrud.models import IpConflictPolicy, LayerInfo, NameConflictPolicy, ObjectState, Outcome, RuleMatch
 from arodonata.cpcrud.naming import NamingPrefixes
 from arodonata.cpcrud.resolver import (
+    NAT_ANY_OBJECT_UID,
+    NAT_ORIGINAL_OBJECT_UID,
     resolve_add,
     resolve_delete,
     resolve_ip_reference,
@@ -2029,3 +2031,33 @@ async def test_resolve_nat_rule_by_key_forwards_prefixes_to_update_reference_fie
     assert len(deps) == 1
     assert deps[0].resolved_name == "H-10.0.0.50"
     assert action.payload["translated-source"] == "H-10.0.0.50"
+
+
+class TestNatObjectUidConstants:
+    """`NAT_ANY_OBJECT_UID` and `NAT_ORIGINAL_OBJECT_UID` are platform-fixed system UIDs,
+    confirmed live against mdsNP2.np.cparch.in / domain General / package Standard via
+    `show-nat-rulebase` on 2026-09-03 (see module docstring above `NAT_ANY_OBJECT_UID`):
+    an empty `original-*` cell dereferences to the "Any" object (`CpmiAnyObject`), an empty
+    `translated-*` cell dereferences to the "Original" object (`Global`). Both are exported
+    at package level so other in-org consumers (e.g. MMP's decom removal engine) can build
+    correct `set-nat-rule`/`add-nat-rule` payloads without copy-pasting magic strings.
+    """
+
+    def test_nat_any_object_uid_value(self):
+        assert NAT_ANY_OBJECT_UID == "97aeb369-9aea-11d5-bd16-0090272ccb30"
+
+    def test_nat_original_object_uid_value(self):
+        assert NAT_ORIGINAL_OBJECT_UID == "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c"
+
+    def test_nat_object_uids_are_distinct(self):
+        assert NAT_ANY_OBJECT_UID != NAT_ORIGINAL_OBJECT_UID
+
+    def test_nat_original_object_uid_exported_from_cpcrud_package(self):
+        from arodonata.cpcrud import NAT_ORIGINAL_OBJECT_UID as pkg_uid
+
+        assert pkg_uid == NAT_ORIGINAL_OBJECT_UID
+
+    def test_nat_original_object_uid_exported_from_top_level_package(self):
+        import arodonata
+
+        assert arodonata.NAT_ORIGINAL_OBJECT_UID == NAT_ORIGINAL_OBJECT_UID
