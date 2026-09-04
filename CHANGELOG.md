@@ -22,6 +22,11 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 - NAT translated-* writes use the Original UID; domain list re-fetch gap
 - backfill Global domain row on already-provisioned MDMs, gate on positive MDM detection
 
+### Docs
+
+- Added `docs/scripts/build_notebooklm_docs.py`, generating a three-file `docs-notebooklm/` bundle (concepts/guide, full API reference auto-extracted from source via `ast`, and examples with resolved snippets) sized for upload to NotebookLM or similar AI document-chat tools.
+- Documented CPCRUD's section/layer-relative rule positioning (`docs/user-guide/cpcrud.md`), including cleanup-rule-aware `bottom` placement for access/HTTPS/threat-prevention layers.
+
 ## v1.7.0 (2026-08-21)
 
 ### Feat
