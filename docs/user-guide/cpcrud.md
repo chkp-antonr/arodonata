@@ -166,16 +166,18 @@ Controls behavior when another object shares the requested IP address or subnet.
 
 ## Rule Positioning & Layer Targeting
 
-For `access-rule` and `nat-rule` operations, CPCRUD supports explicit position placement relative to existing rules or section boundaries.
+For `access-rule` and `nat-rule` operations, CPCRUD supports explicit position placement relative to the whole layer, a specific section, or an existing rule.
 
 ```yaml
 - type: "access-rule"
   layer: "Network"             # Target layer name
-  position:                    # Position placement
-    top: true                  # Insert at top of layer
-    # or bottom: true
-    # or above: "rule-name-or-uid"
-    # or below: "rule-name-or-uid"
+  position: "top"               # Top of the whole layer
+  # or "bottom"                 # Bottom of the whole layer
+  # or {top: "Section Name"}    # Top of a specific section (name or UID)
+  # or {bottom: "Section Name"} # Bottom of a specific section
+  # or {above: "rule-name-or-uid"}
+  # or {below: "rule-name-or-uid"}
+  # or a plain integer for an absolute 1-based rule number
   data:
     name: "sec-rule-01"
     source: ["any"]
@@ -183,6 +185,12 @@ For `access-rule` and `nat-rule` operations, CPCRUD supports explicit position p
     service: ["any"]
     action: "drop"
 ```
+
+### Cleanup-rule-aware `bottom`
+
+When you target `"bottom"` (whole layer) or `{bottom: "Section Name"}` (a section), CPCRUD checks the actual last rule in that scope first. If it has `source: Any`, `destination: Any`, **and** `service: Any` — regardless of its `action` or `name`, so this also catches an "accept any/any/any" rule, not just a "drop" cleanup rule — the new rule is inserted one position *above* it instead of literally at the bottom, so it never lands after an existing catch-all rule. If the last rule isn't a full any/any/any rule, `"bottom"` is used literally.
+
+This cleanup-aware behavior applies to access/HTTPS/threat-prevention layers only. `nat-rule` positioning does not have it — NAT rulebases have no equivalent implicit cleanup rule — and section-relative positioning (`{top: ...}`/`{bottom: ...}`) is not supported for NAT rules at all; use `"top"`, `"bottom"`, an integer, or `{above: ...}`/`{below: ...}` instead.
 
 ---
 
