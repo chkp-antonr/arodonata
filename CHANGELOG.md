@@ -8,20 +8,19 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 via [commitizen](https://commitizen-tools.github.io/commitizen/) — do not
 hand-edit released sections, only the `[Unreleased]` section above them.
 
-## [Unreleased]
+## v1.8.0 (2026-09-04)
 
 ### Feat
 
-- **domains**: multi-domain managers now get an explicit `Global` domain row (never listed by Check Point's own `show-domains`), returned opt-in via a new `include_global` parameter on domain readers and refresh paths so existing callers see unchanged behavior by default.
-- **cpcrud**: exported `NAT_ANY_OBJECT_UID`/`NAT_ORIGINAL_OBJECT_UID` NAT sentinel constants for reuse by external consumers, and added `resolve_nat_sentinel_uids()` to verify them against a live management server at runtime, cached per management server.
+- **cpcrud**: resolve NAT sentinel UIDs at runtime, cached per management server
+- **cpcrud**: export NAT_ANY_OBJECT_UID for reuse by external consumers
+- **domains**: opt-in include_global on domain readers and refresh paths
+- **domains**: write an explicit Global domain row on multi-domain managers
 
 ### Fix
 
-- A domain created in SmartConsole after a management server's domain list was first cached is now always picked up again (unconditional re-fetch on force/full refresh, hourly opportunistic re-fetch on check/smart refresh), instead of staying invisible to every later refresh.
-
-### Docs
-
-- Added `docs/scripts/build_notebooklm_docs.py`, generating a three-file `docs-notebooklm/` bundle (concepts/guide, full API reference auto-extracted from source via `ast`, and examples with resolved snippets) sized for upload to NotebookLM or similar AI document-chat tools.
+- NAT translated-* writes use the Original UID; domain list re-fetch gap
+- backfill Global domain row on already-provisioned MDMs, gate on positive MDM detection
 
 ## v1.7.0 (2026-08-21)
 
