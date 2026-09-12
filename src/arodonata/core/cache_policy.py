@@ -62,5 +62,10 @@ class RefreshOutcome:
 
     mode_used: CacheMode
     refreshed_domains: list[tuple[str, str]] = field(default_factory=list)
+    #: (mgmt, domain) pairs whose reload failed. The cache keeps its previous
+    #: contents for these, so a caller that only reads `refreshed_domains`
+    #: cannot tell a domain that was already fresh from one it failed to
+    #: repair — check this before treating the outcome as a clean pass.
+    failed_domains: list[tuple[str, str]] = field(default_factory=list)
     fell_back: bool = False
     skipped_reason: str | None = None

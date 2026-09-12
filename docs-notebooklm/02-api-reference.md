@@ -10,8 +10,8 @@ Complete, auto-generated reference of every public class, function, and method i
 - **asdk — Low-Level Check Point Management API SDK** — 7 module(s)
 - **cache — Database-Backed Caching Layer** — 8 module(s)
 - **config — Settings & Constants** — 3 module(s)
-- **core — Core Domain Logic, Protocols & Exceptions** — 10 module(s)
-- **cpcrud — Declarative CRUD / Rule Engine** — 15 module(s)
+- **core — Core Domain Logic, Protocols & Exceptions** — 11 module(s)
+- **cpcrud — Declarative CRUD / Rule Engine** — 16 module(s)
 - **extractors — Bulk Data Extraction** — 4 module(s)
 - **helpers — Convenience Helper Functions** — 5 module(s)
 - **models — Data Models** — 4 module(s)
@@ -547,7 +547,7 @@ Args:
 Yields:
     SSEEvent with refresh progress and domain-grouped search results.
 
-###### `async def refresh_objects(self, mgmt_names: list[str] | None = None, domain_names: list[str] | None = None, mode: Literal['skip', 'check', 'force', 'incremental'] = 'force') -> AsyncGenerator[SSEEvent]`
+###### `async def refresh_objects(self, mgmt_names: list[str] | None = None, domain_names: list[str] | None = None, mode: Literal['skip', 'check', 'force', 'incremental'] = 'force', include_global: bool = False) -> AsyncGenerator[SSEEvent]`
 
 ```python
 @traced
@@ -558,6 +558,9 @@ Args:
     mgmt_names: Optional management server filter.
     domain_names: Optional domain filter.
     mode: Refresh mode - "skip", "check", "force", or "incremental".
+    include_global: When False (default), the synthetic "Global" domain
+        is excluded from the all-domains refresh path so existing
+        callers see today's behavior.
 
 Yields:
     SSEEvent with progress updates.
@@ -577,7 +580,7 @@ Args:
 Yields:
     SSEEvent with progress updates.
 
-###### `async def get_domains(self, mgmt_names: list[str] | None = None, cache_mode: str | None = None, cache_ttl: int | None = None) -> list[Domain]`
+###### `async def get_domains(self, mgmt_names: list[str] | None = None, cache_mode: str | None = None, cache_ttl: int | None = None, include_global: bool = False) -> list[Domain]`
 
 ```python
 @traced
@@ -588,6 +591,8 @@ Args:
     mgmt_names: Optional list of management server names to filter.
     cache_mode: Optional per-call cache refresh mode override.
     cache_ttl: Optional per-call cache freshness TTL override.
+    include_global: When False (default), the synthetic "Global" domain
+        is excluded so existing callers see today's behavior.
 
 Returns:
     List of Domain models.
@@ -908,7 +913,7 @@ event_type: SSEEventType = Field(description='Type of event')
 data: dict[str, Any] = Field(default_factory=dict, description='Event payload')
 message: str | None = Field(default=None, description='Optional status or log message')
 asset_id: str | None = Field(default=None, description='Optional asset identifier')
-timestamp: datetime = Field(default_factory=lambda : datetime.now(UTC), description='Event timestamp')
+timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description='Event timestamp')
 mgmt_name: str | None = Field(default=None, description='Management server name')
 domain: str | None = Field(default=None, description='Domain name')
 ```
@@ -1056,12 +1061,17 @@ Args:
     cache: Cache repository instance.
     api_client: ArodonataClient instance for API calls.
 
-###### `async def populate_domain_cache(self, mgmt_name: str, cache_mode: str = 'auto') -> list[str]`
+###### `async def populate_domain_cache(self, mgmt_name: str, cache_mode: str = 'auto', include_global: bool = False) -> list[str]`
 
 Query domains from management server and populate cache.
 
 Args:
     mgmt_name: Management server name.
+    cache_mode: Cache mode for the underlying API query.
+    include_global: When False (default), the synthetic "Global" domain
+        is written to the cache table (for MDMs) but excluded from the
+        *returned* list, so unflagged callers (e.g. asset collection)
+        are unaffected by its existence.
 
 Returns:
     List of domain names (including system domain as empty string).
@@ -1087,22 +1097,33 @@ Service for refreshing rulebase cache from Check Point API.
 
 ##### Methods
 
-###### `def __init__(self, client: ArodonataClient, cache: CacheRepository) -> None`
+###### `def __init__(self, client: ArodonataClient, cache: CacheRepository, domain_list_refresh_ttl: int = DOMAIN_LIST_REFRESH_TTL_SECONDS, clock: Clock | None = None) -> None`
 
 Initialize rulebase refresh service.
 
 Args:
     client: ArodonataClient instance for API calls.
     cache: Cache repository instance.
+    domain_list_refresh_ttl: Seconds between opportunistic ("check"-mode)
+        re-fetches of a management server's domain list ahead of
+        `refresh_all`. "force" mode ignores this and always re-fetches.
+        See `arodonata.core.domain_list_refresh`.
+    clock: Injectable time source for the TTL memo (tests only;
+        defaults to the real wall clock).
 
-###### `async def refresh_all(self, mgmt_names: list[str] | None = None, domain_names: list[str] | None = None, mode: Literal['skip', 'check', 'force'] = 'force') -> AsyncGenerator[dict[str, Any]]`
+###### `async def refresh_all(self, mgmt_names: list[str] | None = None, domain_names: list[str] | None = None, mode: Literal['skip', 'check', 'force'] = 'force', include_global: bool = False) -> AsyncGenerator[dict[str, Any]]`
 
 Refresh all rulebases for specified managements and domains.
 
 Args:
     mgmt_names: Optional management server filter.
     domain_names: Optional domain filter.
-    mode: Refresh mode (only "force" currently implemented for rules).
+    mode: Refresh mode (only "force" currently implemented for rules;
+        affects only whether the domain *list* is re-fetched before
+        resolving `target_domains` below - see
+        `_ensure_domain_list_fresh`).
+    include_global: When False (default), the synthetic "Global" domain
+        is excluded so existing callers see today's behavior.
 
 Yields:
     Progress dictionaries.
@@ -1284,7 +1305,7 @@ Atomically replace all objects for a domain in one transaction.
 
 Delete a single object by UID. Returns count deleted (0 if absent).
 
-###### `async def get_domains(self, mgmt_names: list[str] | None = None) -> list['Domain']`
+###### `async def get_domains(self, mgmt_names: list[str] | None = None, include_global: bool = False) -> list['Domain']`
 
 Get cached domains.
 
@@ -2514,7 +2535,7 @@ mgmt_dmn_key: str = Field(primary_key=True, max_length=255, description="Composi
 sid: str = Field(max_length=255, description='Session identifier')
 uid: str | None = Field(default=None, max_length=255, index=True, description='User identifier')
 server_ip: str = Field(max_length=45, description='Management server IP')
-created_at: datetime = Field(default_factory=lambda : datetime.now(UTC).replace(tzinfo=None), description='Cache entry timestamp')
+created_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), description='Cache entry timestamp')
 last_keepalive: datetime | None = Field(default=None, description='Last keepalive sent for this session (naive UTC)')
 metadata_: dict[str, Any] | None = Field(default=None, sa_column=Column('metadata', JSON, nullable=True))
 ```
@@ -2609,7 +2630,7 @@ Distributed lock record for cross-process coordination.
 ```python
 lock_key: str = Field(primary_key=True, max_length=255, description='Unique lock identifier')
 owner_id: str = Field(max_length=255, description='Process/worker holding the lock (format: hostname:pid:worker_id)')
-acquired_at: datetime = Field(default_factory=lambda : datetime.now(UTC).replace(tzinfo=None), description='Lock acquisition timestamp')
+acquired_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), description='Lock acquisition timestamp')
 expires_at: datetime = Field(description='Lock expiration timestamp for safety')
 metadata_: dict[str, Any] | None = Field(default=None, sa_column=Column('metadata', JSON, nullable=True))
 ```
@@ -2630,7 +2651,7 @@ other's hash.
 
 ```python
 schema_hash: str = Field(primary_key=True, max_length=64, description='SHA-256 of the applied model metadata')
-updated_at: datetime = Field(default_factory=lambda : datetime.now(UTC).replace(tzinfo=None), description='When this schema hash was last confirmed applied (naive UTC)')
+updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), description='When this schema hash was last confirmed applied (naive UTC)')
 ```
 #### class `CPObject(SQLModel)`
 
@@ -2665,7 +2686,7 @@ cluster_uid: str = Field(default='', max_length=64, description='Cluster UID if 
 original_domain_uid: str = Field(default='', max_length=64, description='Original domain UID')
 creation_time: datetime | None = Field(default=None)
 last_modify_time: datetime | None = Field(default=None)
-update_time: datetime = Field(default_factory=lambda : datetime.now(UTC).replace(tzinfo=None), index=True, description='Last cache update')
+update_time: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True, description='Last cache update')
 raw_data: dict[str, Any] | None = Field(default=None, sa_column=Column('raw_data', JSON, nullable=True), description='Complete API response as JSON')
 ```
 #### class `LastPublishedSession(SQLModel)`
@@ -2681,14 +2702,14 @@ refresh is needed during "check" mode.
 id: str = Field(primary_key=True, max_length=319)
 mgmt_name: str = Field(index=True, max_length=64)
 domain_name: str = Field(index=True, max_length=255)
-published_time: datetime = Field(default_factory=lambda : datetime(1970, 1, 1).replace(tzinfo=None), description='Session publish timestamp (naive UTC)')
+published_time: datetime = Field(default_factory=lambda: datetime(1970, 1, 1).replace(tzinfo=None), description='Session publish timestamp (naive UTC)')
 uid: str = Field(default='', max_length=64)
 name: str = Field(default='', max_length=255)
 ip_address: str = Field(default='', max_length=45)
 comments: str = Field(default='')
 creator: str = Field(default='', max_length=255)
 description: str = Field(default='')
-update_time: datetime = Field(default_factory=lambda : datetime.now(UTC).replace(tzinfo=None), index=True)
+update_time: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
 ```
 #### class `RulebaseAccess(SQLModel)`
 
@@ -2710,7 +2731,7 @@ destinations: str = Field(default='', description='Comma-separated destination U
 services: str = Field(default='', description='Comma-separated service UIDs')
 action: str = Field(default='accept', max_length=32)
 track: str = Field(default='', max_length=32)
-update_time: datetime = Field(default_factory=lambda : datetime.now(UTC).replace(tzinfo=None), index=True)
+update_time: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
 raw_data: dict[str, Any] | None = Field(default=None, sa_column=Column('raw_data', JSON, nullable=True))
 ```
 #### class `RulebaseNAT(SQLModel)`
@@ -2734,7 +2755,7 @@ original_service: str = Field(default='', max_length=255)
 translated_source: str = Field(default='', max_length=255)
 translated_destination: str = Field(default='', max_length=255)
 translated_service: str = Field(default='', max_length=255)
-update_time: datetime = Field(default_factory=lambda : datetime.now(UTC).replace(tzinfo=None), index=True)
+update_time: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
 raw_data: dict[str, Any] | None = Field(default=None, sa_column=Column('raw_data', JSON, nullable=True))
 ```
 #### class `RulebaseHTTPS(SQLModel)`
@@ -2755,7 +2776,7 @@ domain_name: str = Field(index=True, max_length=255, default='')
 sources: str = Field(default='', description='Comma-separated source UIDs')
 destinations: str = Field(default='', description='Comma-separated destination UIDs')
 track: str = Field(default='', max_length=32)
-update_time: datetime = Field(default_factory=lambda : datetime.now(UTC).replace(tzinfo=None), index=True)
+update_time: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
 raw_data: dict[str, Any] | None = Field(default=None, sa_column=Column('raw_data', JSON, nullable=True))
 ```
 #### class `RulebaseThreat(SQLModel)`
@@ -2775,7 +2796,7 @@ mgmt_name: str = Field(index=True, max_length=64)
 domain_name: str = Field(index=True, max_length=255, default='')
 track: str = Field(default='', max_length=32)
 protections: str = Field(default='', description='Comma-separated protection names')
-update_time: datetime = Field(default_factory=lambda : datetime.now(UTC).replace(tzinfo=None), index=True)
+update_time: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
 raw_data: dict[str, Any] | None = Field(default=None, sa_column=Column('raw_data', JSON, nullable=True))
 ```
 ### `arodonata/cache/object_service.py`
@@ -2855,7 +2876,7 @@ API fallback, and SSE streaming for progress tracking.
 
 ##### Methods
 
-###### `def __init__(self, db_manager: DatabaseManager, client: ArodonataClient, max_incremental_changes: int = 500) -> None`
+###### `def __init__(self, db_manager: DatabaseManager, client: ArodonataClient, max_incremental_changes: int = 500, domain_list_refresh_ttl: int = DOMAIN_LIST_REFRESH_TTL_SECONDS, clock: Clock | None = None) -> None`
 
 Initialize ObjectService.
 
@@ -2864,6 +2885,12 @@ Args:
     client: ArodonataClient instance for API fallback.
     max_incremental_changes: Max in-scope changes an incremental
         apply will accept before falling back to a full reload.
+    domain_list_refresh_ttl: Seconds between opportunistic (CHECK/
+        INCREMENTAL-mode) re-fetches of a management server's domain
+        list. FORCE mode ignores this and always re-fetches. See
+        `DOMAIN_LIST_REFRESH_TTL_SECONDS`.
+    clock: Injectable time source for the TTL memo (tests only;
+        defaults to the real wall clock).
 
 ###### `async def search_objects(self, search_input: str, mgmt_names: list[str] | None = None, domain_names: list[str] | None = None, max_depth: int = 2) -> AsyncIterator[SearchResult]`
 
@@ -2878,7 +2905,7 @@ Args:
 Yields:
     SearchResult for each search term.
 
-###### `async def refresh_objects(self, mgmt_names: list[str] | None = None, domain_names: list[str] | None = None, mode: str = 'force') -> AsyncIterator[dict[str, Any]]`
+###### `async def refresh_objects(self, mgmt_names: list[str] | None = None, domain_names: list[str] | None = None, mode: str = 'force', include_global: bool = False) -> AsyncIterator[dict[str, Any]]`
 
 Refresh object cache from API.
 
@@ -2886,6 +2913,10 @@ Args:
     mgmt_names: Optional management server filter.
     domain_names: Optional domain filter.
     mode: Refresh mode (skip/check/force/incremental).
+    include_global: When False (default), the synthetic "Global" domain
+        is excluded from the all-domains refresh path so existing
+        callers see today's behavior. An explicit ``domain_names``
+        request for "Global" is honored regardless of this flag.
 
 Yields:
     Progress dictionaries with keys:
@@ -3146,13 +3177,15 @@ Args:
 Returns:
     Domain record or None.
 
-###### `async def get_domains(self, mgmt_name: str | None = None, mgmt_names: list[str] | None = None) -> list[Domain]`
+###### `async def get_domains(self, mgmt_name: str | None = None, mgmt_names: list[str] | None = None, include_global: bool = False) -> list[Domain]`
 
 Get all domains, optionally filtered by management server.
 
 Args:
     mgmt_name: Optional single management server filter (deprecated, use mgmt_names).
     mgmt_names: Optional list of management server names to filter.
+    include_global: When False (default), the synthetic "Global" domain
+        row is excluded so existing callers see today's behavior.
 
 Returns:
     List of Domain records.
@@ -3712,6 +3745,7 @@ Result of a coordinator.ensure() call, for logging/telemetry and tests.
 ```python
 mode_used: CacheMode
 refreshed_domains: list[tuple[str, str]] = field(default_factory=list)
+failed_domains: list[tuple[str, str]] = field(default_factory=list)
 fell_back: bool = False
 skipped_reason: str | None = None
 ```
@@ -3821,6 +3855,46 @@ Args:
 
 Returns:
     List of changes with type ADD or UPDATE.
+
+### `arodonata/core/domain_list_refresh.py`
+
+Shared TTL bookkeeping for opportunistic domain-list re-fetches.
+
+A management server's *domain list itself* (as opposed to any one domain's
+objects/rulebases) used to only ever get re-fetched from the API when the
+local domains table came back completely empty. That meant a domain created
+in SmartConsole after the table was first seeded stayed invisible to every
+refresh forever - both `arodonata.cache.object_service.ObjectService` and
+`arodonata.api.services.rulebase_refresh_service.RulebaseRefreshService` had
+this exact gap independently.
+
+The fix is the same shape in both places: a force/full refresh always
+re-fetches the domain list unconditionally, while a check/smart refresh
+re-fetches it at most once per `DOMAIN_LIST_REFRESH_TTL_SECONDS` so repeated
+smart-refresh ticks don't hammer `show-domains`. `DomainListRefreshTracker`
+holds the per-mgmt "last re-fetched at" memo each service needs to make that
+decision, mirroring `CacheRefreshCoordinator`'s `_ttl_fresh`/`_mark_checked`
+pattern (inverted to "is stale" instead of "is fresh") but scoped to
+mgmt-server domain discovery rather than per-(mgmt, domain) object staleness.
+
+#### class `DomainListRefreshTracker`
+
+Per-mgmt-name "when was the domain list last re-fetched" memo with a TTL.
+
+##### Methods
+
+###### `def __init__(self, ttl_seconds: int = DOMAIN_LIST_REFRESH_TTL_SECONDS, clock: Clock | None = None) -> None`
+
+_No docstring._
+
+###### `def is_stale(self, mgmt_name: str) -> bool`
+
+True when `mgmt_name`'s domain list has never been re-fetched, or the TTL has
+elapsed since it last was - i.e. an opportunistic re-fetch is due.
+
+###### `def mark_checked(self, mgmt_name: str) -> None`
+
+Record that `mgmt_name`'s domain list was just re-fetched.
 
 ### `arodonata/core/exceptions.py`
 
@@ -3984,7 +4058,7 @@ Args:
     coordinator: Cache refresh coordinator (optional; when absent,
         read helpers skip cache-mode-driven refresh entirely).
 
-###### `async def get_domains(self, mgmt_names: list[str] | None = None, cache_mode: 'CacheMode | str | None' = None, cache_ttl: int | None = None) -> list['Domain']`
+###### `async def get_domains(self, mgmt_names: list[str] | None = None, cache_mode: 'CacheMode | str | None' = None, cache_ttl: int | None = None, include_global: bool = False) -> list['Domain']`
 
 Get domains from cache.
 
@@ -3992,6 +4066,8 @@ Args:
     mgmt_names: Optional list of management server names to filter.
     cache_mode: Optional per-call cache refresh mode override.
     cache_ttl: Optional per-call cache freshness TTL override.
+    include_global: When False (default), the synthetic "Global" domain
+        is excluded so existing callers see today's behavior.
 
 Returns:
     List of Domain Pydantic models.
@@ -4317,7 +4393,7 @@ object_type: str
 uid: str
 name: str
 data: dict[str, Any] | None = None
-timestamp: datetime = field(default_factory=lambda : datetime.now(UTC).replace(tzinfo=None))
+timestamp: datetime = field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None))
 ```
 #### class `SessionChangeTracker`
 
@@ -4709,6 +4785,79 @@ NAT settings transformation (ported from MMP cpcrud object_manager).
 
 Normalize template NAT settings to the CP API shape. Returns None when empty.
 
+### `arodonata/cpcrud/nat_sentinels.py`
+
+Runtime resolver for Check Point's two platform-fixed NAT "empty cell" objects.
+
+``NAT_ANY_OBJECT_UID``/``NAT_ORIGINAL_OBJECT_UID`` (see ``resolver.py``) were live-verified
+identical on two independent Check Point installations (``mdsNP2.np.cparch.in`` and ``smsNP82``,
+2026-09-03) and are safe to use as a hardcoded default. But they are still, in principle, values a
+management server generates once at install time -- a customer's server could theoretically have
+different UIDs for these objects. Writing a foreign UID into a live NAT rule's cell would either
+fail loudly or, worse, silently write the wrong object into a customer's production rule.
+
+This module resolves both UIDs at runtime, by name/type, once per management server, and caches
+the result for the process. Resolution never blocks a NAT removal: any failure (API error, object
+not found, unexpected response shape, missing package) degrades to the verified constant and logs
+a warning. If a resolved UID ever *differs* from the constant, that is logged prominently at
+warning level -- naming the management server, the object, and both UIDs -- since that is the
+exact early-warning signal for the scenario this module exists to guard against.
+
+The two objects need different resolution strategies, both empirically verified against
+``mdsNP2.np.cparch.in`` (MDS, domain ``General``) and ``smsNP82`` (plain SmartCenter) on
+2026-09-03:
+
+* The "Any" object (type ``CpmiAnyObject``) IS a normal, catalog-listed object: a read-only
+  ``show-objects`` call filtered by ``filter="Any", type="CpmiAnyObject"`` returns exactly one
+  match on both servers, with a UID matching ``NAT_ANY_OBJECT_UID``.
+* The "Original" object (type ``Global``) is NOT catalog-listed: ``show-objects`` rejects
+  ``type="Global"`` outright ("Requested API type: [Global] not found"), and a name filter for
+  "Original" with no type filter returns 15 unrelated objects, none of them the sentinel. It is
+  only reachable indirectly, e.g. by reading it off a real NAT rule -- exactly how the constant
+  itself was originally discovered (see ``resolver.py``'s module docstring above
+  ``NAT_ORIGINAL_OBJECT_UID``). This module resolves it by reading a page of an existing NAT
+  rulebase (the same package the caller is already operating against) and taking the first
+  ``translated-*`` cell whose embedded object has type ``Global``.
+
+#### Module-Level Functions
+
+##### `def reset_nat_sentinel_cache() -> None`
+
+Clear the per-process cache. Test-only; production code never needs to call this.
+
+##### `async def resolve_nat_sentinel_uids(call: ApiCall, mgmt_name: str, package: str = '') -> NatSentinelUids`
+
+Resolve (or fall back to) the "Any"/"Original" NAT sentinel UIDs for `mgmt_name`.
+
+Resolved once per management server and cached for the process -- a second call for the same
+`mgmt_name` returns the cached result without making any API call, regardless of `package`.
+
+Args:
+    call: Async `(command, payload) -> ApiCallResult`-shaped callable, e.g. MMP's
+        `ApiSession.call` bound to the right management server/domain/session.
+    mgmt_name: Management server name -- used only for cache keying and log messages, never
+        sent on the wire (the caller's `call` already knows which server it targets).
+    package: NAT policy package name/uid the caller is already operating against, used to
+        resolve the "Original" object (see module docstring). If empty, "Original" resolution
+        is skipped and the verified constant is used, with a warning.
+
+Returns:
+    NatSentinelUids with both UIDs -- resolved where possible, the verified constant
+    otherwise. Never raises: any failure degrades to the constant.
+
+#### class `NatSentinelUids`
+
+```python
+@dataclass(frozen=True)
+```
+The two resolved (or fallback) NAT sentinel UIDs for one management server.
+
+##### Fields / Class Variables
+
+```python
+any_uid: str
+original_uid: str
+```
 ### `arodonata/cpcrud/planner.py`
 
 Decide phase: normalized template + StateReader + policy -> single Plan.
@@ -5895,7 +6044,7 @@ Atomically replace all objects for a domain in one transaction.
 
 Delete a single object by UID. Returns count deleted (0 if absent).
 
-###### `async def get_domains(self, mgmt_names: list[str] | None = None) -> list['Domain']`
+###### `async def get_domains(self, mgmt_names: list[str] | None = None, include_global: bool = False) -> list['Domain']`
 
 Get cached domains.
 

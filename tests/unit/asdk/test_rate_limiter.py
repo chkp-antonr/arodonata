@@ -6,7 +6,10 @@ import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import MagicMock
 
+import pytest
+
 from arodonata.asdk.rate_limiter import RateLimiter
+from arodonata.cache.lock_manager import LockAcquisitionError
 
 
 class FakeLockManager:
@@ -41,6 +44,24 @@ class FakeLockManager:
         async with lock:
             yield MagicMock()
 
+    # Non-blocking surface mirroring DatabaseLockManager.try_acquire_lock /
+    # release_lock: a key is either held or free, no waiting.
+    async def try_acquire_lock(self, lock_key: str, ttl: int):
+        lock = self._locks.setdefault(lock_key, asyncio.Lock())
+        if lock.locked():
+            return None
+        await lock.acquire()
+        self.acquired_keys.append(lock_key)
+        ctx = MagicMock()
+        ctx.lock_key = lock_key
+        ctx.owner_id = "fake-owner"
+        return ctx
+
+    async def release_lock(self, lock_key: str, owner_id: str) -> None:
+        lock = self._locks.get(lock_key)
+        if lock is not None and lock.locked():
+            lock.release()
+
 
 def _make_limiter(concurrent_limit: int = 1, lock_manager: FakeLockManager | None = None):
     lm = lock_manager if lock_manager is not None else FakeLockManager()
@@ -52,27 +73,57 @@ def _make_limiter(concurrent_limit: int = 1, lock_manager: FakeLockManager | Non
 # --------------------------------------------------------------------------
 
 
+async def _hold_only_slot(limiter: RateLimiter) -> tuple[asyncio.Task[None], asyncio.Event]:
+    """Occupy the single slot of a limit-1 limiter from another task; return (task, release)."""
+    ready = asyncio.Event()
+    release = asyncio.Event()
+
+    async def holder():
+        async with limiter.acquire("10.0.0.1"):
+            ready.set()
+            await release.wait()
+
+    task = asyncio.create_task(holder())
+    await ready.wait()
+    return task, release
+
+
 async def test_acquire_uses_constructed_slot_timeout_by_default():
-    """acquire() with no explicit timeout must pass this instance's slot_timeout
-    through to the lock manager -- not a hardcoded 30s -- so a caller waiting for a
-    free concurrency slot gets as long as the RateLimiter was configured for."""
-    lock_manager = FakeLockManager()
-    limiter = RateLimiter(concurrent_limit=1, lock_manager=lock_manager, slot_timeout=90)
+    """acquire() with no explicit timeout waits up to this instance's slot_timeout
+    for any slot to free -- not a hardcoded 30s -- and reports that timeout when
+    every slot stays busy. The limiter owns the deadline; the lock manager only
+    answers "is this slot free right now"."""
+    limiter = RateLimiter(concurrent_limit=1, lock_manager=FakeLockManager(), slot_timeout=1)
+    holder, release = await _hold_only_slot(limiter)
 
-    async with limiter.acquire("10.0.0.1"):
-        pass
+    async def waiter():
+        async with limiter.acquire("10.0.0.1"):
+            pass
 
-    assert lock_manager.acquired_timeouts == [90]
+    with pytest.raises(LockAcquisitionError) as exc_info:
+        async with asyncio.timeout(3):
+            await asyncio.create_task(waiter())
+    assert exc_info.value.timeout == 1
+
+    release.set()
+    await holder
 
 
 async def test_acquire_explicit_timeout_overrides_constructed_default():
-    lock_manager = FakeLockManager()
-    limiter = RateLimiter(concurrent_limit=1, lock_manager=lock_manager, slot_timeout=90)
+    limiter = RateLimiter(concurrent_limit=1, lock_manager=FakeLockManager(), slot_timeout=90)
+    holder, release = await _hold_only_slot(limiter)
 
-    async with limiter.acquire("10.0.0.1", timeout=5):
-        pass
+    async def waiter():
+        async with limiter.acquire("10.0.0.1", timeout=1):
+            pass
 
-    assert lock_manager.acquired_timeouts == [5]
+    with pytest.raises(LockAcquisitionError) as exc_info:
+        async with asyncio.timeout(3):
+            await asyncio.create_task(waiter())
+    assert exc_info.value.timeout == 1
+
+    release.set()
+    await holder
 
 
 async def test_acquire_yields_and_releases_cleanly():
@@ -323,3 +374,98 @@ async def test_get_lock_manager_caches_result_across_calls():
     second = await limiter._get_lock_manager()
 
     assert first is second is fake_manager
+
+
+# --------------------------------------------------------------------------
+# Slot fallback: the limiter is a semaphore over N slots, not N pinned locks
+# --------------------------------------------------------------------------
+
+
+async def test_acquire_falls_back_to_a_free_slot_when_hashed_slot_is_busy(monkeypatch):
+    """A task whose hashed slot is held must take another free slot, not wait.
+
+    Reproduces the integration failure where a foreground login starved 90s on
+    `slot_2` while slots 0 and 1 sat idle, because slot choice was a pure hash
+    with no fallback.
+    """
+    limiter, lm = _make_limiter(concurrent_limit=3)
+    monkeypatch.setattr(limiter, "_get_slot_number", lambda server_ip: 2)  # force a collision
+
+    holder_ready = asyncio.Event()
+    release_holder = asyncio.Event()
+
+    async def holder():
+        async with limiter.acquire("10.0.0.1"):
+            holder_ready.set()
+            await release_holder.wait()
+
+    holder_task = asyncio.create_task(holder())
+    await holder_ready.wait()
+
+    # Must succeed promptly on a different slot while the holder still owns slot_2.
+    async with asyncio.timeout(2):
+        async with limiter.acquire("10.0.0.1", timeout=1):
+            held_now = {k for k in lm.acquired_keys}
+            assert any(k.endswith(":slot_0") or k.endswith(":slot_1") for k in held_now), held_now
+
+    release_holder.set()
+    await holder_task
+
+
+async def test_acquire_raises_lock_acquisition_error_only_when_all_slots_busy(monkeypatch):
+    """With every slot held, acquire() honours its timeout and raises instead of hanging."""
+    from arodonata.cache.lock_manager import LockAcquisitionError
+
+    limiter, _ = _make_limiter(concurrent_limit=2)
+    monkeypatch.setattr(limiter, "_get_slot_number", lambda server_ip: 0)
+
+    release = asyncio.Event()
+    ready: list[asyncio.Event] = [asyncio.Event(), asyncio.Event()]
+
+    async def holder(i: int):
+        async with limiter.acquire("10.0.0.1"):
+            ready[i].set()
+            await release.wait()
+
+    holders = [asyncio.create_task(holder(0)), asyncio.create_task(holder(1))]
+    # Both holders must be able to hold simultaneously (two slots): guard so a
+    # regression to pinned slots fails instead of hanging here.
+    async with asyncio.timeout(2):
+        await asyncio.gather(ready[0].wait(), ready[1].wait())
+
+    async with asyncio.timeout(3):
+        try:
+            async with limiter.acquire("10.0.0.1", timeout=1):
+                raise AssertionError("acquired although every slot was held")
+        except LockAcquisitionError:
+            pass
+
+    release.set()
+    await asyncio.gather(*holders)
+
+
+async def test_acquire_is_reentrant_after_falling_back_to_another_slot(monkeypatch):
+    """Reentrancy follows the slot actually held, not the hashed one."""
+    limiter, lm = _make_limiter(concurrent_limit=3)
+    monkeypatch.setattr(limiter, "_get_slot_number", lambda server_ip: 2)
+
+    holder_ready = asyncio.Event()
+    release_holder = asyncio.Event()
+
+    async def holder():
+        async with limiter.acquire("10.0.0.1"):
+            holder_ready.set()
+            await release_holder.wait()
+
+    holder_task = asyncio.create_task(holder())
+    await holder_ready.wait()
+
+    async with asyncio.timeout(2):
+        async with limiter.acquire("10.0.0.1", timeout=1):
+            before = len(lm.acquired_keys)
+            async with limiter.acquire("10.0.0.1", timeout=1):  # nested, same task
+                pass
+            assert len(lm.acquired_keys) == before, "nested acquire must be reentrant, not a new slot"
+
+    release_holder.set()
+    await holder_task

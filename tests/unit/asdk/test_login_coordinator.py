@@ -7,6 +7,7 @@ Retry/backoff and max-sessions cleanup paths live in
 Offline only: transport/APIClient seam is mocked, no network, no real sleeps.
 """
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,7 +17,7 @@ from pydantic import SecretStr
 from arodonata import GLOBAL_DOMAIN_NAME
 from arodonata.asdk.login_coordinator import LoginCoordinator
 from arodonata.asdk.server_registry import ServerConfig
-from arodonata.core.exceptions import AuthenticationError, ThrottlingError
+from arodonata.core.exceptions import AuthenticationError, InvalidCredentialsError, ThrottlingError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -369,6 +370,35 @@ def test_parse_login_response_failure_default_message():
         coord._parse_login_response({"success": False}, "m", "d", "ip", "")
 
 
+def test_parse_login_response_credential_rejection_raises_invalid_credentials():
+    """A rejected password/key is the one login failure that never clears on retry.
+
+    It must surface as the InvalidCredentialsError subclass so callers can tell
+    it apart from a transient refusal without matching on message text.
+    """
+    coord = _make_coordinator()
+    resp = {"success": False, "code": "err_login_failed", "message": "Authentication to server failed."}
+    with pytest.raises(InvalidCredentialsError, match="Authentication to server failed"):
+        coord._parse_login_response(resp, "m", "d", "ip", "key")
+
+
+def test_parse_login_response_transient_refusal_is_not_invalid_credentials():
+    """A server that is mid-revert refuses logins but the credentials are fine.
+
+    Must stay a plain AuthenticationError: classifying it as invalid credentials
+    would make callers treat a seconds-long condition as permanent.
+    """
+    coord = _make_coordinator()
+    resp = {
+        "success": False,
+        "code": "generic_err",
+        "message": "Unable to connect to the Server. Database revision is in progress.",
+    }
+    with pytest.raises(AuthenticationError) as exc_info:
+        coord._parse_login_response(resp, "m", "d", "ip", "key")
+    assert not isinstance(exc_info.value, InvalidCredentialsError)
+
+
 def test_extract_uid_present():
     coord = _make_coordinator()
     assert coord._extract_uid_from_response({"data": {"uid": 42}}) == "42"
@@ -400,6 +430,47 @@ def test_raise_as_auth_error_credential_mode():
 # ---------------------------------------------------------------------------
 # _fire_keepalive
 # ---------------------------------------------------------------------------
+
+
+async def test_maintain_keepalives_coalesces_concurrent_sweeps():
+    """Overlapping sweeps must collapse to one; a sweep already in flight is enough.
+
+    Every api_call fires a sweep; ten rapid calls must not become ten swarms of
+    slot-holding keepalive tasks against an already-throttled server.
+    """
+    cache = AsyncMock()
+    gate = asyncio.Event()
+    calls = 0
+
+    async def slow_list(threshold_seconds):
+        nonlocal calls
+        calls += 1
+        await gate.wait()
+        return []
+
+    cache.list_stale_keepalives.side_effect = slow_list
+    coord = _make_coordinator(cache=cache)
+
+    first = asyncio.create_task(coord.maintain_keepalives())
+    await asyncio.sleep(0)  # let the first sweep block inside list_stale_keepalives
+    second = asyncio.create_task(coord.maintain_keepalives())
+    await asyncio.sleep(0)
+    gate.set()
+    await asyncio.gather(first, second)
+
+    assert calls == 1, f"expected one coalesced sweep, got {calls}"
+
+
+async def test_maintain_keepalives_runs_again_after_previous_sweep_finished():
+    """Coalescing is only for overlap — a later sweep must still run."""
+    cache = AsyncMock()
+    cache.list_stale_keepalives.return_value = []
+    coord = _make_coordinator(cache=cache)
+
+    await coord.maintain_keepalives()
+    await coord.maintain_keepalives()
+
+    assert cache.list_stale_keepalives.await_count == 2
 
 
 async def test_fire_keepalive_success_updates_cache():

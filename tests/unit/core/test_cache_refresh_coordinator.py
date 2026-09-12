@@ -233,6 +233,9 @@ async def test_full_reload_domain_failed_does_not_record_refresh_or_mark_checked
     assert obj.full_reloads == [("m1", "d1")]
     assert outcome.refreshed_domains == []  # failure must not count as a refresh
     assert coord._checked_at == {}  # TTL memo left unset
+    # An empty refreshed_domains alone is ambiguous -- it equally describes a
+    # domain that was already fresh. The failure must be reported explicitly.
+    assert outcome.failed_domains == [("m1", "d1")]
 
 
 async def test_smart_empty_domain_failed_reload_keeps_retrying():

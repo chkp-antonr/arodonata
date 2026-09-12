@@ -17,6 +17,13 @@ log = logging.getLogger(__name__)
 
 BASELINE_DIR = Path("_tmp/cp_baseline")
 
+# `revert-to-revision` on a real MDS routinely runs for minutes, longer still
+# over 100 ms+ regional latency. The client's default API timeout (120 s) is
+# far too short: a client-side timeout does not stop the server-side revert,
+# it just leaves the suite reporting "restore failed" while the server refuses
+# every login with "Database revision is in progress".
+REVERT_TIMEOUT_SECONDS = 900
+
 
 async def last_published_session(client: Any, mgmt_name: str, domain: str = "") -> dict:
     """Return {uid, name, publish_time} of the domain's last published session.
@@ -111,6 +118,7 @@ async def restore_to_baseline(client: Any, mgmt_name: str, baseline: dict[str, d
             domain,
             payload={"to-session": target_uid},
             wait_for_task=True,
+            timeout=REVERT_TIMEOUT_SECONDS,
         )
         if not result.success:
             # CP aborts when already at the target revision — state is correct.

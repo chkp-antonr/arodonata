@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Never
 from arlogi.otel.decorator import traced
 
 from ..cache.lock_manager import DatabaseLockManager
-from ..config import GLOBAL_DOMAIN_NAME, SESSION_ERROR_CODES, THROTTLE_ERROR_CODE
+from ..config import CREDENTIAL_REJECTION_MESSAGE, GLOBAL_DOMAIN_NAME, SESSION_ERROR_CODES, THROTTLE_ERROR_CODE
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
 
@@ -77,6 +77,7 @@ class LoginCoordinator:
         self._session_cleaner = session_cleaner
         self._in_process_locks: dict[str, asyncio.Lock] = {}  # For in-process synchronization
         self._lock_init_lock = asyncio.Lock()  # Protection for lock manager initialization
+        self._keepalive_sweep_lock = asyncio.Lock()  # At most one keepalive sweep in flight
         self._closed = False
 
         # Credential-based auth support
@@ -329,31 +330,45 @@ class LoginCoordinator:
         Called as a background task after every API call. Skips the SID
         that was just used (it is implicitly fresh).
 
+        Overlapping calls coalesce: if a sweep is already in flight this call
+        returns immediately. A burst of API calls (e.g. rapid logout/login
+        cycles) must not turn into a burst of sweeps, each holding rate-limiter
+        slots for every stale session against a possibly throttled server —
+        one in-flight sweep already covers the same stale set.
+
         Args:
             exclude_key: mgmt_dmn_key of the SID that just made an API call.
         """
-        try:
-            stale = await self._cache.list_stale_keepalives(threshold_seconds=600)
-        except Exception as exc:
-            log().warning(f"maintain_keepalives: failed to list stale SIDs: {exc}")
+        if self._keepalive_sweep_lock.locked():
+            span_attrs(**{"keepalive.coalesced": True})
+            log().trace("maintain_keepalives: sweep already in flight — skipping")
             return
 
-        tasks = []
-        for record in stale:
-            if exclude_key and record.mgmt_dmn_key == exclude_key:
-                continue
+        async with self._keepalive_sweep_lock:
+            try:
+                stale = await self._cache.list_stale_keepalives(threshold_seconds=600)
+            except Exception as exc:
+                log().warning(f"maintain_keepalives: failed to list stale SIDs: {exc}")
+                return
 
-            # Key format: 'mgmt:domain' (api-key) or 'mgmt:domain:username' (credential)
-            mgmt_name, domain, username = self._split_key(record.mgmt_dmn_key)
-            server_config = self._registry.get_server(mgmt_name)
-            port = server_config.port if server_config else None
+            tasks = []
+            for record in stale:
+                if exclude_key and record.mgmt_dmn_key == exclude_key:
+                    continue
 
-            tasks.append(self._fire_keepalive(mgmt_name, domain, record.sid, record.server_ip, port, username=username))
+                # Key format: 'mgmt:domain' (api-key) or 'mgmt:domain:username' (credential)
+                mgmt_name, domain, username = self._split_key(record.mgmt_dmn_key)
+                server_config = self._registry.get_server(mgmt_name)
+                port = server_config.port if server_config else None
 
-        if tasks:
-            span_attrs(**{"keepalive.count": len(tasks)})
-            log().trace(f"Firing {len(tasks)} keepalive(s) (excluding '{exclude_key}')")
-            await asyncio.gather(*tasks, return_exceptions=True)
+                tasks.append(
+                    self._fire_keepalive(mgmt_name, domain, record.sid, record.server_ip, port, username=username)
+                )
+
+            if tasks:
+                span_attrs(**{"keepalive.count": len(tasks)})
+                log().trace(f"Firing {len(tasks)} keepalive(s) (excluding '{exclude_key}')")
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     @staticmethod
     def _split_key(mgmt_dmn_key: str) -> tuple[str, str, str | None]:
@@ -401,7 +416,7 @@ class LoginCoordinator:
 
                 # Don't retry on developer errors (TypeError) or pure authentication
                 # failures (wrong password/domain) to avoid long hangs and server lockouts.
-                if isinstance(e, TypeError) or "Authentication to server failed" in error_str:
+                if isinstance(e, TypeError) or CREDENTIAL_REJECTION_MESSAGE in error_str:
                     log().error(f"{operation_name} failed: {e} (Fatal error - not retrying)")
                     raise e
 
@@ -550,8 +565,14 @@ class LoginCoordinator:
             f"api_key_prefix={api_key[:8] if api_key else 'None'}..., "
             f"response_data_keys={list(response.get('data', {}).keys()) if response.get('data') else 'None'}"
         )
-        from ..core.exceptions import AuthenticationError
+        from ..core.exceptions import AuthenticationError, InvalidCredentialsError
 
+        # A rejected password/key is the one login failure that never clears on
+        # retry, so it gets its own subclass: callers can tell it apart from a
+        # transient refusal ("Database revision is in progress", server
+        # restarting, ...) by type instead of by matching on message text.
+        if CREDENTIAL_REJECTION_MESSAGE in error_msg:
+            raise InvalidCredentialsError(f"Login failed: {error_msg}")
         raise AuthenticationError(f"Login failed: {error_msg}")
 
     def _extract_uid_from_response(self, response: dict[str, Any]) -> str | None:

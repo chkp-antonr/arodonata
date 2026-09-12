@@ -387,6 +387,24 @@ class DatabaseLockManager:
                 log().trace(f"Retry {attempt} for lock '{lock_key}' after {backoff}s backoff")
                 await asyncio.sleep(backoff)
 
+    @traced
+    async def try_acquire_lock(self, lock_key: str, ttl: int) -> LockContext | None:
+        """Acquire the lock if it is free right now; never wait.
+
+        Returns the LockContext on success, or None when a live owner holds the
+        key. This is the primitive a caller needs to sweep several candidate
+        locks (e.g. RateLimiter slots) rather than block on one of them.
+        Release with `release_lock(lock_key, ctx.owner_id)`.
+
+        Args:
+            lock_key: Unique lock identifier.
+            ttl: Lock time-to-live in seconds.
+        """
+        span_attrs(**{"lock.key": lock_key, "lock.ttl": ttl, "lock.owner_id": self._owner_id})
+        lock = await self._try_acquire(lock_key, ttl)
+        span_attrs(**{"lock.acquired": lock is not None})
+        return lock
+
     async def _try_acquire(self, lock_key: str, ttl: int) -> LockContext | None:
         """Attempt to acquire the lock with one atomic upsert.
 

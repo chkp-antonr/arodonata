@@ -4,7 +4,7 @@ CP management servers throttle rapid successive login attempts with
 THROTTLE_ERROR_CODE ("err_too_many_requests").  The library must detect
 this, back off, and eventually succeed — or surface a clear error.
 
-Run with: ./pytest.sh int-fast tests/integration/fast/test_throttling.py -v
+Run with: ./pytest.sh int-3 tests/integration/b3/test_throttling.py -v
 """
 
 from __future__ import annotations

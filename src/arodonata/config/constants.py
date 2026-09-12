@@ -39,6 +39,14 @@ FAILOVER_ERROR_CODES: Final[frozenset[str]] = frozenset(
 # Throttling error code
 THROTTLE_ERROR_CODE: Final[str] = "err_too_many_requests"
 
+# Substring of the login-failure message Check Point returns for a rejected
+# password/API key. This is the one login failure that never clears on retry,
+# so the login coordinator raises it as InvalidCredentialsError (a subclass of
+# AuthenticationError) and stops retrying immediately. Every other rejection
+# ("Database revision is in progress", server restarting, ...) is transient
+# and stays a plain AuthenticationError.
+CREDENTIAL_REJECTION_MESSAGE: Final[str] = "Authentication to server failed"
+
 # Multi-domain manager (MDM) always has an implicit Global domain. Check Point's
 # `show-domains` API never returns it (it only lists manually created domains),
 # so callers that populate/refresh the domain cache must add this row explicitly.
@@ -67,6 +75,7 @@ __all__ = [
     "SESSION_ERROR_CODES",
     "FAILOVER_ERROR_CODES",
     "THROTTLE_ERROR_CODE",
+    "CREDENTIAL_REJECTION_MESSAGE",
     "LOG_LEVELS",
     "GLOBAL_DOMAIN_NAME",
 ]

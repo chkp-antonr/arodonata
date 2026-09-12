@@ -30,13 +30,38 @@ The suite has two layers:
   enforced at ≥85% (`--cov-fail-under`); core logic is held near 100%.
 - **Integration tests** (`tests/integration/`) — run against a real
   Check Point management server and are excluded from default runs. They
-  are organized in cumulative tiers, selected via `pytest.sh`:
+  are split into six buckets (`tests/integration/b1`..`b6`) sized for
+  roughly equal wall-clock time, not by topic. Each bucket runs as its own
+  pytest session — its own run lock, baseline snapshot, and restore — so
+  buckets are independent and can be run in any order or on their own:
 
 ```bash
-./pytest.sh int-fast     # ~3 min: auth, sessions, throttling, rate limits, concurrency
-./pytest.sh int-medium   # ~5 min: + reads/search, cache builds, light publish/revert cycles
-./pytest.sh int-full     # ~25 min: + cache-mode matrix, multi-domain, cross-user publish, soak
+./pytest.sh int-1        # auth, sessions, rate limits, concurrency, reads/search, rulebase reads
+./pytest.sh int-2        # cpcrud live publishes, cache builds
+./pytest.sh int-3        # publish/revert cycles, throttling (deliberately slow; sorts last)
+./pytest.sh int-4        # cache-mode matrix, multi-domain
+./pytest.sh int-5        # whole-server rebuilds, cross-user/domain publish matrix
+./pytest.sh int-6        # soak: repeated publish -> smart-fast -> revert cycles
+./pytest.sh int-full     # all six, back-to-back sessions; ~60 min total measured 2026-09-12
 ```
+
+Every bucket run prints its 15 slowest tests (`--durations=15`). The bucket
+assignment is an estimate (publishes, `revert-to-revision`, and whole-server
+rebuilds dominate, not test count) — when the numbers say a bucket is
+lopsided, rebalance with a `git mv`; the `bucket_N` marker follows the
+directory automatically.
+
+**Only one integration run at a time.** Every run shares one lab server
+(same domains, policies, and reverts) and one SQLite cache file that is
+deleted on teardown, so overlapping runs corrupt each other. A session-scoped
+lock (`tests/integration/run_lock.py`, file `_tmp/integration.lock`) makes a
+second run — from `pytest.sh`, bare `pytest`, or an IDE — exit immediately
+with the holder's PID. The kernel releases it if the holder dies, so a killed
+run never leaves a stale lock. Two gotchas learned the hard way: the conftest
+loads `.env.test` with `override=True`, so blanking `API_MGMT=` on the command
+line does **not** keep a run off the lab; and if you must stop a run, kill it
+by PID — pattern-matching on `pytest` will hit other runs (and your own
+wrapper shell) too.
 
 Integration configuration loads from `.env.test` + `.env.secrets` in the
 repo root (see `.env.example` for the variable names — never commit real

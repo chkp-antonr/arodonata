@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Run the unit suite, then the integration fast tier if the lab env exists.
+"""Run the unit suite, then integration bucket 1 if the lab env exists.
+
+Bucket 1 is the cheapest bucket (logins, sessions, rate limits, reads) and
+mutates nothing on the server — the right smoke test to pair with the unit
+suite. Run the other buckets explicitly: ./pytest.sh int-2 .. int-6.
 
 Usage:
-    uv run run_all_tests.py            # unit (+ int-fast when .env.test present)
+    uv run run_all_tests.py            # unit (+ int-1 when .env.test present)
     uv run run_all_tests.py --unit     # unit suite only
 """
 
@@ -23,7 +27,7 @@ def main() -> int:
     unit_only = "--unit" in sys.argv[1:]
     has_env = (root / ".env.test").exists() and (root / ".env.secrets").exists()
     if not unit_only and has_env:
-        ok &= run(["./pytest.sh", "int-fast"], "Integration fast tier (FPCR lab)")
+        ok &= run(["./pytest.sh", "int-1"], "Integration bucket 1 (FPCR lab)")
     elif not unit_only:
         print("\nSkipping integration: .env.test / .env.secrets not found")
 

@@ -4,8 +4,11 @@ Loads .env.test then .env.secrets from the repo root (symlinks into
 .internal/). Missing variables skip the affected tests, so machines
 without lab access still run the unit suite cleanly.
 
-Tier markers (integration + tier_fast/tier_medium/tier_full) are applied
-automatically from the directory path — tests never declare them.
+Bucket markers (integration + bucket_1..bucket_6) are applied automatically
+from the directory path (tests/integration/b1..b6) — tests never declare
+them. Buckets are sized for roughly equal wall-clock time; each is run as its
+own pytest session by pytest.sh, so each gets its own baseline snapshot and
+restore. Rebalancing a bucket is a `git mv`.
 
 Required environment variables:
     API_MGMT      - Management server IP
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -34,6 +38,7 @@ from .cp_revision import (
     snapshot_baseline,
     write_baseline_file,
 )
+from .run_lock import DEFAULT_LOCK_PATH, IntegrationRunLock, IntegrationRunLocked
 
 log = logging.getLogger(__name__)
 
@@ -60,28 +65,57 @@ def _require_env(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+_BUCKET_DIR = re.compile(r"^b(\d+)$")
+
+
+def _bucket_of(item: pytest.Item) -> int | None:
+    """Bucket number from the test's directory (tests/integration/b<N>/), else None."""
+    for part in Path(str(item.fspath)).parts:
+        m = _BUCKET_DIR.match(part)
+        if m:
+            return int(m.group(1))
+    return None
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
         parts = Path(str(item.fspath)).parts
         if "integration" not in parts:
             continue
         item.add_marker(pytest.mark.integration)
-        for tier in ("fast", "medium", "full"):
-            if tier in parts:
-                item.add_marker(getattr(pytest.mark, f"tier_{tier}"))
+        bucket = _bucket_of(item)
+        if bucket is not None:
+            item.add_marker(getattr(pytest.mark, f"bucket_{bucket}"))
 
-    # Sort integration tests by tier: fast -> medium -> full
-    def _tier_sort_key(item: pytest.Item) -> int:
-        parts = Path(str(item.fspath)).parts
-        if "fast" in parts:
-            return 0
-        if "medium" in parts:
-            return 1
-        if "full" in parts:
-            return 2
-        return 3
+    # Sort integration tests by bucket number; unbucketed last.
+    items.sort(key=lambda item: _bucket_of(item) or 99)
 
-    items.sort(key=_tier_sort_key)
+
+# ---------------------------------------------------------------------------
+# Run lock
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session", autouse=True)
+def integration_run_lock():
+    """Refuse to start while another integration run is in progress.
+
+    All integration runs share one lab server and one SQLite cache file (see
+    run_lock.py for the failure modes). The lock is held for the whole session
+    and released by the kernel if the process dies. `db_engine` and
+    `cp_baseline_snapshot` depend on this fixture explicitly so nothing touches
+    the DB file or the lab before the lock is held. Override the path with
+    ARODONATA_TEST_LOCK (used by the lock's own end-to-end check).
+    """
+    path = Path(os.getenv("ARODONATA_TEST_LOCK", str(DEFAULT_LOCK_PATH)))
+    try:
+        lock = IntegrationRunLock(path).acquire()
+    except IntegrationRunLocked as exc:
+        pytest.exit(str(exc), returncode=3)
+    try:
+        yield lock
+    finally:
+        lock.release()
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +124,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 
 @pytest.fixture(scope="session")
-async def db_engine() -> AsyncEngine:
+async def db_engine(integration_run_lock) -> AsyncEngine:
     """Session-scoped SQLite WAL engine; deletes the DB file on teardown."""
     db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///_tmp/test_cache.db")
 
@@ -240,7 +274,7 @@ def _track_cp_mutations(request: pytest.FixtureRequest):
 
 
 @pytest.fixture(scope="session", autouse=True)
-async def cp_baseline_snapshot(db_engine: AsyncEngine):
+async def cp_baseline_snapshot(db_engine: AsyncEngine, integration_run_lock):
     """Snapshot last published revisions before any test; revert after mutations.
 
     Writes _tmp/cp_baseline/baseline-<UTC>.json (never auto-deleted — it is
