@@ -1,6 +1,7 @@
 """Configuration management for Arodonata library."""
 
 from .constants import (
+    CREDENTIAL_REJECTION_MESSAGE,
     DEFAULT_API_TIMEOUT,
     DEFAULT_CONCURRENT_LIMIT,
     DEFAULT_LOGIN_BACKOFF,
@@ -25,6 +26,7 @@ __all__ = [
     "DEFAULT_LOGIN_RETRIES",
     "SESSION_ERROR_CODES",
     "THROTTLE_ERROR_CODE",
+    "CREDENTIAL_REJECTION_MESSAGE",
     "LOG_LEVELS",
     "FAILOVER_ERROR_CODES",
     "GLOBAL_DOMAIN_NAME",

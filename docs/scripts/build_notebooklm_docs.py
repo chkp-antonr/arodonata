@@ -40,7 +40,7 @@ OUT = REPO / "docs-notebooklm"
 # ---------------------------------------------------------------------------
 
 
-def _get_docstring(node: ast.AST) -> str:
+def _get_docstring(node: ast.AsyncFunctionDef | ast.ClassDef | ast.FunctionDef | ast.Module) -> str:
     ds = ast.get_docstring(node)
     return ds.strip() if ds else ""
 
@@ -65,7 +65,7 @@ def _format_arg(a: ast.arg, defaults_map: dict[str, str]) -> str:
     return f"{a.arg}{ann}{defaults_map.get(a.arg, '')}"
 
 
-def _format_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+def _format_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:  # noqa: C901
     args = node.args
     parts = []
     posonly = list(getattr(args, "posonlyargs", []))
@@ -89,7 +89,7 @@ def _format_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     elif args.kwonlyargs:
         parts.append("*")
 
-    for a, d in zip(args.kwonlyargs, args.kw_defaults):
+    for a, d in zip(args.kwonlyargs, args.kw_defaults, strict=False):
         dm = {}
         if d is not None:
             try:
@@ -324,8 +324,8 @@ def build_guide() -> str:
         "how it's built, how to configure it, and how to use its main features. "
         "It's one of three companion documents (Guide, API Reference, Examples) meant "
         "to be uploaded together to an AI document-chat tool so you can ask questions "
-        "like \"which function do I use to fetch a host object?\" or \"how do I set up "
-        "multi-server config?\" and get grounded answers.\n",
+        'like "which function do I use to fetch a host object?" or "how do I set up '
+        'multi-server config?" and get grounded answers.\n',
     ]
     for title, relpath in GUIDE_SOURCES:
         parts.append(f"\n---\n\n## {title}\n")

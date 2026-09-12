@@ -14,6 +14,7 @@ overrides/
 
 docs/.overrides/
 docs/site/
+docs-notebooklm/
 
 .internal/
 

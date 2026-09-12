@@ -3,7 +3,7 @@
 Uses asyncio.gather() with multiple ArodonataClient instances to simulate
 concurrent access from different credential users.
 
-Run with: ./pytest.sh int-fast tests/integration/fast/test_concurrent_admins.py
+Run with: ./pytest.sh int-1 tests/integration/b1/test_concurrent_admins.py
 """
 
 from __future__ import annotations

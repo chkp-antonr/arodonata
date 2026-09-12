@@ -62,9 +62,7 @@ def make_client(mgmt_names: list[str] | None = None) -> MagicMock:
     return client
 
 
-def make_service(
-    db: DatabaseManager, client: MagicMock | None = None, **kwargs: object
-) -> ObjectService:
+def make_service(db: DatabaseManager, client: MagicMock | None = None, **kwargs: object) -> ObjectService:
     return ObjectService(db_manager=db, client=client or make_client(["mgmt1"]), **kwargs)
 
 
@@ -1616,3 +1614,52 @@ def test_object_service_max_incremental_changes_param(db):
     service = ObjectService(db_manager=db, client=make_client(["m1"]), max_incremental_changes=42)
     assert service.max_incremental_changes == 42
     assert service._make_refresher()._max_changes == 42
+
+
+async def test_is_domain_stale_true_on_invalid_credentials(db):
+    """Rejected credentials mean the probe cannot answer the question.
+
+    Reporting "fresh" would hide a persistent credential/permission problem
+    behind a single warning, and the nightly force job cannot recover from it
+    either — the same login fails there. Treat it as needing a refresh so the
+    reload path runs and surfaces a `domain_failed` event to the caller.
+    """
+    from arodonata.core.exceptions import InvalidCredentialsError
+
+    client = make_client(mgmt_names=["mgmt1"])
+    client.api_call.side_effect = InvalidCredentialsError("Login failed: Authentication to server failed.")
+    service = make_service(db, client)
+    await service._cache.upsert_objects([cpobj("h1", "host", "host")])
+
+    assert await service._is_domain_stale("mgmt1", "dmn1") is True
+
+
+async def test_is_domain_stale_false_on_transient_login_refusal(db):
+    """A login refused for a transient server-side reason is not a credential problem.
+
+    The login coordinator raises plain AuthenticationError for every rejection it
+    cannot classify as invalid credentials — including "Database revision is in
+    progress", which clears within seconds of a revert. That must keep the
+    documented fail-open behaviour, or every revert window would flip the domain
+    to stale and fire a reload that fails at the same login.
+    """
+    from arodonata.core.exceptions import AuthenticationError
+
+    client = make_client(mgmt_names=["mgmt1"])
+    client.api_call.side_effect = AuthenticationError(
+        "Login failed: Unable to connect to the Server. Database revision is in progress."
+    )
+    service = make_service(db, client)
+    await service._cache.upsert_objects([cpobj("h1", "host", "host")])
+
+    assert await service._is_domain_stale("mgmt1", "dmn1") is False
+
+
+async def test_is_domain_stale_still_false_on_transient_error(db):
+    """Non-auth probe failures keep the documented fail-open behaviour."""
+    client = make_client(mgmt_names=["mgmt1"])
+    client.api_call.side_effect = TimeoutError("read timed out")
+    service = make_service(db, client)
+    await service._cache.upsert_objects([cpobj("h1", "host", "host")])
+
+    assert await service._is_domain_stale("mgmt1", "dmn1") is False

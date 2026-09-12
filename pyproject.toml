@@ -109,9 +109,12 @@ pythonpath = ["src"]
 asyncio_mode = "auto"
 markers = [
     "integration: real-environment tests against the FPCR lab (excluded by default)",
-    "tier_fast: integration fast tier (<~5 min total) — auto-applied from tests/integration/fast/",
-    "tier_medium: integration medium tier (<~30 min cumulative) — auto-applied from tests/integration/medium/",
-    "tier_full: integration full tier (hours) — auto-applied from tests/integration/full/",
+    "bucket_1: integration bucket 1 — auto-applied from tests/integration/b1/",
+    "bucket_2: integration bucket 2 — auto-applied from tests/integration/b2/",
+    "bucket_3: integration bucket 3 — auto-applied from tests/integration/b3/",
+    "bucket_4: integration bucket 4 — auto-applied from tests/integration/b4/",
+    "bucket_5: integration bucket 5 — auto-applied from tests/integration/b5/",
+    "bucket_6: integration bucket 6 — auto-applied from tests/integration/b6/",
     "cp_mutates: mutates CP state; triggers baseline revert at session end",
 ]
 filterwarnings = [

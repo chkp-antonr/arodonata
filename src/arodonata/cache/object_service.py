@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from ..config import GLOBAL_DOMAIN_NAME
 from ..core import RefreshMode
 from ..core.domain_list_refresh import DOMAIN_LIST_REFRESH_TTL_SECONDS, DomainListRefreshTracker
+from ..core.exceptions import InvalidCredentialsError
 from ..core.incremental_refresh import FallbackToFull, IncrementalRefresher
 from ..logger import lazy_logger
 from ..utils.helpers import utc_now_naive
@@ -632,9 +633,7 @@ class ObjectService:
 
         # Floor: an empty table must always be populated, regardless of mode/TTL.
         table_was_empty = not all_domains
-        should_refetch = (
-            table_was_empty or mode == RefreshMode.FORCE or self._domain_list_refresh.is_stale(mgmt_name)
-        )
+        should_refetch = table_was_empty or mode == RefreshMode.FORCE or self._domain_list_refresh.is_stale(mgmt_name)
 
         if should_refetch:
             all_domains = await self._refetch_domain_list(
@@ -887,6 +886,24 @@ class ObjectService:
                     log().debug(f"Domain {mgmt_name}/{domain_name} is up to date")
                     return False
 
+        except InvalidCredentialsError as e:
+            # Rejected credentials are categorically different from a transient
+            # probe error: they do not clear on their own, they recur on every
+            # tick, and the nightly force job cannot repair them either because
+            # the same login fails there too. Reporting "fresh" would bury a
+            # credential or permission problem under one warning. Report stale
+            # instead, so the reload path runs, fails at login, and emits a
+            # `domain_failed` event the caller can count and alert on.
+            #
+            # Deliberately NOT the broader AuthenticationError: the login
+            # coordinator raises that for every rejection it cannot classify,
+            # including "Database revision is in progress", which clears within
+            # seconds of a revert. Those must keep the fail-open path below.
+            log().error(
+                f"Staleness check for {mgmt_name}/{domain_name} was refused for invalid credentials: {e}. "
+                f"Treating the domain as stale so the refresh reports the failure."
+            )
+            return True
         except Exception as e:
             log().warning(f"Error checking staleness for {mgmt_name}/{domain_name}: {e}")
             # Fallback: if check fails, assume it's NOT stale to avoid excessive refreshes

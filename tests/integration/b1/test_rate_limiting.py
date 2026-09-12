@@ -4,7 +4,7 @@ Verifies that the distributed rate limiter (RateLimiter) correctly serialises
 concurrent requests to the same domain/server IP while allowing requests to
 different IPs to proceed concurrently.
 
-Run with: ./pytest.sh int-fast tests/integration/fast/test_rate_limiting.py -v
+Run with: ./pytest.sh int-1 tests/integration/b1/test_rate_limiting.py -v
 """
 
 from __future__ import annotations

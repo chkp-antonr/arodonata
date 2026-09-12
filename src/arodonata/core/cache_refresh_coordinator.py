@@ -106,6 +106,7 @@ class CacheRefreshCoordinator:
 
         if failed:
             log().warning(f"Refresh of {mgmt}/{domain} failed; keeping stale cache unmarked")
+            outcome.failed_domains.append((mgmt, domain))
             return
 
         outcome.refreshed_domains.append((mgmt, domain))

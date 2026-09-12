@@ -1,7 +1,7 @@
 """Integration tests for authentication — API key and credential modes.
 
 All tests hit the real CP server. No CP state is mutated.
-Run with: ./pytest.sh int-fast tests/integration/fast/test_auth.py
+Run with: ./pytest.sh int-1 tests/integration/b1/test_auth.py
 """
 
 import asyncio

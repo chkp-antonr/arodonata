@@ -27,19 +27,35 @@ the `-m "not integration"` marker expression.
 ## Integration suite
 
 ```bash
-./pytest.sh int-fast     # ~3 min
-./pytest.sh int-medium   # ~5 min  (fast + medium)
-./pytest.sh int-full     # ~25 min (everything)
+./pytest.sh int-1        # one bucket
+./pytest.sh int-6        # ...
+./pytest.sh int-full     # all six, back-to-back (~60 min measured 2026-09-12)
 ```
 
-Tests live in `tests/integration/{fast,medium,full}/`; tier markers are
-applied automatically from the directory path, and runs are cumulative.
+Tests live in `tests/integration/b1`..`b6`; the `bucket_N` marker is applied
+automatically from the directory path. Buckets are sized for roughly equal
+wall-clock time (~10–15 min each), **not** by topic, and each runs as its own
+pytest session — its own run lock, baseline snapshot and restore — so they are
+independent and can be run in any order or alone. `int-full` runs the six
+sessions back-to-back rather than one long session with a single restore at
+the end.
 
-| Tier | Contents |
+| Bucket | Contents |
 |---|---|
-| `fast` | Logins for every configured identity (API key + credential users), auth failures, SID lifecycle incl. stale-SID recovery, throttling, rate limiting, concurrent admins, live session naming |
-| `medium` | Cache-first reads and search, single-domain cache builds and check-mode partial refresh, rulebase reads, first mutating tests: create→publish→verify→revert cycles |
-| `full` | Cache-mode matrix (cache/smart/smart-fast/force) incl. live fallback triggers, multi-domain isolation, whole-server rebuilds with asset relationship phases, cross-user publish/discard/revert matrix, bounded soak |
+| `b1` | Logins for every configured identity (API key + credential users), auth failures, SID lifecycle incl. stale-SID recovery, rate limiting, concurrent admins, live session naming, cache-first reads and search, rulebase reads. Mutates nothing. |
+| `b2` | Live CPCRUD create/update/delete with real publishes, single-domain cache builds and check-mode partial refresh |
+| `b3` | create→publish→verify→revert cycles, plus throttling (deliberately drives the server into `err_too_many_requests`; sorts last within the bucket) |
+| `b4` | Cache-mode matrix (cache/smart/smart-fast/force) incl. live fallback triggers, multi-domain isolation |
+| `b5` | Whole-server rebuilds with asset relationship phases, cross-user/cross-domain publish/discard/revert matrix |
+| `b6` | Bounded soak: repeated publish → smart-fast → revert cycles |
+
+Every bucket run prints its 15 slowest tests (`--durations=15`). The
+assignment is an estimate — publishes, `revert-to-revision` and whole-server
+rebuilds dominate, not test count — so when the numbers say a bucket is
+lopsided, rebalance with a `git mv`; the marker follows the directory.
+
+Only one integration run at a time: see [Contributing](../../CONTRIBUTING.md)
+for the run lock and the reasons behind it.
 
 ### Configuration
 

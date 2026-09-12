@@ -210,6 +210,30 @@ async def test_acquire_and_release_lock_happy_path(db_manager: DatabaseManager) 
     assert await manager.is_lock_held("happy-key", lock.owner_id) is False
 
 
+async def test_try_acquire_lock_is_non_blocking_and_reports_contention(db_manager: DatabaseManager) -> None:
+    """try_acquire_lock returns a LockContext when free and None when held — no waiting.
+
+    This is the primitive the RateLimiter needs to sweep slots instead of
+    pinning to one; a blocking acquire_lock cannot express "is this slot free?".
+    """
+    manager = DatabaseLockManager(db_manager)
+
+    first = await manager.try_acquire_lock("slot-key", ttl=30)
+    assert isinstance(first, LockContext)
+    assert first.owner_id == manager._owner_id
+
+    async with asyncio.timeout(1):  # must not wait for the TTL or any backoff
+        second = await manager.try_acquire_lock("slot-key", ttl=30)
+    assert second is None
+
+    other = await manager.try_acquire_lock("other-key", ttl=30)
+    assert other is not None, "contention on one key must not affect another"
+
+    await manager.release_lock("slot-key", first.owner_id)
+    third = await manager.try_acquire_lock("slot-key", ttl=30)
+    assert third is not None, "released key must be acquirable again"
+
+
 async def test_acquire_context_manager_releases_on_exit(db_manager: DatabaseManager) -> None:
     manager = DatabaseLockManager(db_manager)
 
