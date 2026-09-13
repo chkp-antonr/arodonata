@@ -96,6 +96,53 @@ async def discard_open_sessions(client: Any, mgmt_name: str, domain: str = "") -
             log.warning("[%s] could not discard uid=%.8s: %s", domain, uid, r.message)
 
 
+async def revert_domain_to(
+    client: Any,
+    mgmt_name: str,
+    domain: str,
+    target_uid: str,
+    *,
+    context: str = "",
+) -> bool:
+    """Discard open sessions, then revert `domain` to `target_uid`.
+
+    The single revert implementation for the whole integration suite: it is
+    the only place that knows a revert needs REVERT_TIMEOUT_SECONDS rather
+    than the client's default API timeout. Call this instead of issuing
+    `revert-to-revision` directly — a unit test enforces that.
+
+    Args:
+        context: Free text added to the failure message (e.g. "cycle 3"),
+            so a failure names which revert died.
+
+    Returns:
+        True when a revert happened, False when CP reports the domain is
+        already at that revision (the desired end state, not a failure).
+
+    Raises:
+        RuntimeError: on any other revert failure.
+    """
+    await discard_open_sessions(client, mgmt_name, domain)
+    result = await client.api_call(
+        mgmt_name,
+        "revert-to-revision",
+        domain,
+        payload={"to-session": target_uid},
+        wait_for_task=True,
+        timeout=REVERT_TIMEOUT_SECONDS,
+    )
+    if result.success:
+        return True
+
+    # CP aborts a revert to the current revision — the state is already correct.
+    if result.code == "err_validation_failed" and "current revision" in (result.message or ""):
+        log.info("[%s] already at target revision — no revert needed.", domain)
+        return False
+
+    where = f" ({context})" if context else ""
+    raise RuntimeError(f"revert-to-revision failed for domain {domain!r}{where}: {result.message} (code={result.code})")
+
+
 async def restore_to_baseline(client: Any, mgmt_name: str, baseline: dict[str, dict]) -> list[str]:
     """Revert every domain whose last published revision drifted from baseline.
 
@@ -111,23 +158,7 @@ async def restore_to_baseline(client: Any, mgmt_name: str, baseline: dict[str, d
         if current["uid"] == target_uid:
             continue
 
-        await discard_open_sessions(client, mgmt_name, domain)
-        result = await client.api_call(
-            mgmt_name,
-            "revert-to-revision",
-            domain,
-            payload={"to-session": target_uid},
-            wait_for_task=True,
-            timeout=REVERT_TIMEOUT_SECONDS,
-        )
-        if not result.success:
-            # CP aborts when already at the target revision — state is correct.
-            if result.code == "err_validation_failed" and "current revision" in (result.message or ""):
-                log.info("[%s] already at baseline — no revert needed.", domain)
-                continue
-            raise RuntimeError(
-                f"revert-to-revision failed for domain {domain!r}: {result.message} (code={result.code})"
-            )
-        log.warning("[%s] reverted to baseline %r (uid=%.8s)", domain, rev.get("name"), target_uid)
-        reverted.append(domain)
+        if await revert_domain_to(client, mgmt_name, domain, target_uid, context="baseline restore"):
+            log.warning("[%s] reverted to baseline %r (uid=%.8s)", domain, rev.get("name"), target_uid)
+            reverted.append(domain)
     return reverted

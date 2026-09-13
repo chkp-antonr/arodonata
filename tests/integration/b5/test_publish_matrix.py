@@ -10,7 +10,7 @@ import uuid
 
 import pytest
 
-from ..cp_revision import discard_open_sessions, last_published_session
+from ..cp_revision import last_published_session, revert_domain_to
 
 pytestmark = pytest.mark.cp_mutates
 
@@ -42,18 +42,6 @@ async def _publish_host(client, mgmt_name: str, domain: str, name: str, ip: str)
         assert r.success, f"publish failed: {r.message}"
     finally:
         await client.logout_sid(sid, server_ip, mgmt_name)
-
-
-async def _revert(client, mgmt_name: str, domain: str, target_uid: str) -> None:
-    await discard_open_sessions(client, mgmt_name, domain)
-    r = await client.api_call(
-        mgmt_name,
-        "revert-to-revision",
-        domain,
-        payload={"to-session": target_uid},
-        wait_for_task=True,
-    )
-    assert r.success, f"revert failed: {r.message}"
 
 
 async def _visible(client, mgmt_name: str, domain: str, name: str) -> bool:
@@ -89,7 +77,7 @@ async def test_publish_visible_to_other_user(admin_client, eng1_client, test_dom
         )
         assert hosts, "eng1's smart-fast read must pick up admin's publish"
     finally:
-        await _revert(a_client, mgmt_name, test_domain_a, pre["uid"])
+        await revert_domain_to(a_client, mgmt_name, test_domain_a, pre["uid"])
 
 
 async def test_discard_isolated_between_users(admin_client, eng2_client, test_domain_b):
@@ -148,9 +136,9 @@ async def test_two_domain_publish_and_revert(admin_client, eng1_client, test_dom
             assert await _visible(a_client, mgmt_name, test_domain_a, host_a)
             assert await _visible(a_client, mgmt_name, test_domain_b, host_b)
         finally:
-            await _revert(a_client, mgmt_name, test_domain_b, pre_b["uid"])
+            await revert_domain_to(a_client, mgmt_name, test_domain_b, pre_b["uid"], context="domain B")
     finally:
-        await _revert(a_client, mgmt_name, test_domain_a, pre_a["uid"])
+        await revert_domain_to(a_client, mgmt_name, test_domain_a, pre_a["uid"], context="domain A")
 
     assert not await _visible(a_client, mgmt_name, test_domain_a, host_a)
     assert not await _visible(a_client, mgmt_name, test_domain_b, host_b)
@@ -197,7 +185,7 @@ async def test_revert_recovers_multiple_objects(admin_client, test_domain_a):
         assert await _visible(client, mgmt_name, test_domain_a, h1)
         assert await _visible(client, mgmt_name, test_domain_a, h2)
     finally:
-        await _revert(client, mgmt_name, test_domain_a, pre["uid"])
+        await revert_domain_to(client, mgmt_name, test_domain_a, pre["uid"])
 
     for name in (h1, h2):
         assert not await _visible(client, mgmt_name, test_domain_a, name)

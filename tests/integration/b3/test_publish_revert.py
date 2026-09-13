@@ -19,7 +19,7 @@ from arodonata.core.change_processor import ChangeProcessor, ChangeType
 from arodonata.helpers import add_object, create_session, discard_session
 from arodonata.helpers._context import UserContext
 
-from ..cp_revision import discard_open_sessions, last_published_session
+from ..cp_revision import last_published_session, revert_domain_to
 
 pytestmark = pytest.mark.cp_mutates
 
@@ -34,18 +34,6 @@ def _unique_host() -> tuple[str, str]:
 async def _host_visible_via_api(client, mgmt_name: str, domain: str, name: str) -> bool:
     result = await client.api_call(mgmt_name, "show-host", domain, payload={"name": name})
     return bool(result.success)
-
-
-async def _revert_domain_to(client, mgmt_name: str, domain: str, target_uid: str) -> None:
-    await discard_open_sessions(client, mgmt_name, domain)
-    result = await client.api_call(
-        mgmt_name,
-        "revert-to-revision",
-        domain,
-        payload={"to-session": target_uid},
-        wait_for_task=True,
-    )
-    assert result.success, f"revert-to-revision failed: {result.message}"
 
 
 async def test_create_publish_verify_revert_cycle(admin_client, test_domain_a):
@@ -132,7 +120,7 @@ async def test_create_publish_verify_revert_cycle(admin_client, test_domain_a):
     finally:
         # 5. Revert the domain to the pre-test revision.
         if published:
-            await _revert_domain_to(client, mgmt_name, test_domain_a, pre["uid"])
+            await revert_domain_to(client, mgmt_name, test_domain_a, pre["uid"], context="publish/verify/revert cycle")
 
     # 6. Server truth: the host is gone again.
     assert not await _host_visible_via_api(client, mgmt_name, test_domain_a, host_name)

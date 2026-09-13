@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from ..cp_revision import discard_open_sessions, last_published_session
+from ..cp_revision import last_published_session, revert_domain_to
 
 pytestmark = pytest.mark.cp_mutates
 
@@ -74,15 +74,7 @@ async def test_publish_smartfast_revert_soak(admin_client, test_domain_a):
                 incremental_adds += 1
 
             # Revert to the ORIGINAL pre-test revision every cycle.
-            await discard_open_sessions(client, mgmt_name, test_domain_a)
-            r = await client.api_call(
-                mgmt_name,
-                "revert-to-revision",
-                test_domain_a,
-                payload={"to-session": pre["uid"]},
-                wait_for_task=True,
-            )
-            assert r.success, f"cycle {cycle}: revert failed: {r.message}"
+            await revert_domain_to(client, mgmt_name, test_domain_a, pre["uid"], context=f"cycle {cycle}")
 
             # Converge the cache after the revert (revert sessions may not
             # diff cleanly; a smart-fast read must at least not resurrect
@@ -114,15 +106,7 @@ async def test_publish_smartfast_revert_soak(admin_client, test_domain_a):
         # to the current revision).
         current = await last_published_session(client, mgmt_name, test_domain_a)
         if current["uid"] != pre["uid"]:
-            await discard_open_sessions(client, mgmt_name, test_domain_a)
-            r = await client.api_call(
-                mgmt_name,
-                "revert-to-revision",
-                test_domain_a,
-                payload={"to-session": pre["uid"]},
-                wait_for_task=True,
-            )
-            assert r.success, f"final revert failed: {r.message}"
+            await revert_domain_to(client, mgmt_name, test_domain_a, pre["uid"], context="final revert")
 
     # The ADD half must have applied incrementally in (nearly) every cycle.
     assert incremental_adds >= CYCLES - 1, f"smart-fast picked up only {incremental_adds}/{CYCLES} published adds"
