@@ -16,7 +16,7 @@ from arodonata.core.cache_policy import CachePolicy, RefreshScope
 from arodonata.core.cache_refresh_coordinator import CacheRefreshCoordinator
 from arodonata.utils.helpers import utc_now_naive
 
-from ..cp_revision import discard_open_sessions, last_published_session
+from ..cp_revision import last_published_session, revert_domain_to
 
 
 def _phantom_host(mgmt_name: str, domain: str) -> CPObject:
@@ -212,15 +212,7 @@ async def test_smart_fast_falls_back_on_too_many_changes(admin_client, test_doma
         )
         assert outcome.fell_back is True, f"1 change > limit 0 must fall back, got {outcome}"
     finally:
-        await discard_open_sessions(client, mgmt_name, test_domain_a)
-        r = await client.api_call(
-            mgmt_name,
-            "revert-to-revision",
-            test_domain_a,
-            payload={"to-session": pre["uid"]},
-            wait_for_task=True,
-        )
-        assert r.success, f"revert failed: {r.message}"
+        await revert_domain_to(client, mgmt_name, test_domain_a, pre["uid"])
 
 
 @pytest.mark.cp_mutates
@@ -280,12 +272,4 @@ async def test_bulk_incremental_mode_applies_publish_without_full_reload(admin_c
         )
         assert hosts, "incremental refresh must apply the newly published host to the cache"
     finally:
-        await discard_open_sessions(client, mgmt_name, test_domain_a)
-        r = await client.api_call(
-            mgmt_name,
-            "revert-to-revision",
-            test_domain_a,
-            payload={"to-session": pre["uid"]},
-            wait_for_task=True,
-        )
-        assert r.success, f"revert failed: {r.message}"
+        await revert_domain_to(client, mgmt_name, test_domain_a, pre["uid"])

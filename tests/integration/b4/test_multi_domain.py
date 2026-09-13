@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from ..cp_revision import discard_open_sessions, last_published_session
+from ..cp_revision import last_published_session, revert_domain_to
 
 
 async def _force_build(client, mgmt_name: str, domain: str) -> None:
@@ -38,18 +38,6 @@ async def _publish_host(client, mgmt_name: str, domain: str, name: str, ip: str)
         assert r.success, f"publish failed: {r.message}"
     finally:
         await client.logout_sid(sid, server_ip, mgmt_name)
-
-
-async def _revert(client, mgmt_name: str, domain: str, target_uid: str) -> None:
-    await discard_open_sessions(client, mgmt_name, domain)
-    r = await client.api_call(
-        mgmt_name,
-        "revert-to-revision",
-        domain,
-        payload={"to-session": target_uid},
-        wait_for_task=True,
-    )
-    assert r.success, f"revert failed: {r.message}"
 
 
 @pytest.mark.cp_mutates
@@ -100,7 +88,7 @@ async def test_publish_in_a_invisible_in_b(admin_client, test_domain_a, test_dom
         post_b_uid = (await last_published_session(client, mgmt_name, test_domain_b))["uid"]
         assert post_b_uid == pre_b_uid
     finally:
-        await _revert(client, mgmt_name, test_domain_a, pre_a["uid"])
+        await revert_domain_to(client, mgmt_name, test_domain_a, pre_a["uid"])
 
 
 async def test_concurrent_refresh_of_two_domains(apikey_client, test_domain_a, test_domain_b):
