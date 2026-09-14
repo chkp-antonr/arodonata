@@ -1357,11 +1357,21 @@ async def _seed_incremental_domain_empty(db, *, mgmt="m1", domain="d1"):
         await session.commit()
 
 
-def _stale_probe_response():
+# 2026-07-02, i.e. AFTER _lps()'s 2026-07-01 baseline: a forward publish. The
+# posix value here used to be 2025-08-13 — a head a year BEHIND the baseline,
+# which is the shape of a revert, not a publish. Nothing checked, so the
+# incremental tests were quietly asserting that a diff gets applied across a
+# revert; IncrementalRefresher._require_forward_history now refuses that.
+_FORWARD_PUBLISH_POSIX_MS = 1782950400000
+# 2026-06-21, before the baseline: what the head looks like after a revert.
+_REVERTED_PUBLISH_POSIX_MS = 1782000000000
+
+
+def _stale_probe_response(posix_ms: int = _FORWARD_PUBLISH_POSIX_MS):
     """show-last-published-session response with a NEW session uid -> stale."""
     return ApiCallResult(
         success=True,
-        data={"uid": "sess-new", "meta-info": {"last-modify-time": {"posix": 1755100000000}}},
+        data={"uid": "sess-new", "meta-info": {"last-modify-time": {"posix": posix_ms}}},
     )
 
 
@@ -1408,6 +1418,45 @@ async def test_incremental_mode_applies_diff_and_advances_baseline(db):
     async with db.session() as session:
         lps = (await session.execute(select(LastPublishedSession))).scalars().one()
     assert lps.uid == "sess-new"
+
+
+async def test_incremental_mode_falls_back_to_full_after_a_revert(db):
+    """A revert must rebuild the domain, never apply a diff on top of it.
+
+    The bulk path had no guard of its own: it went straight to
+    IncrementalRefresher.apply() and reached a full reload only if Check Point
+    happened to refuse the show-changes call. A domain whose head is BEHIND the
+    cached baseline has been reverted, and a forward change list cannot describe
+    that — objects the revert removed would stay in the cache and ones it
+    restored would be missing.
+    """
+    await _seed_incremental_domain(db)
+    client = make_client(["m1"])
+
+    def api_call_side_effect(**kwargs):
+        if kwargs["command"] == "show-last-published-session":
+            return _stale_probe_response(_REVERTED_PUBLISH_POSIX_MS)
+        if kwargs["command"] == "show-object":
+            raise AssertionError("no object may be re-fetched: the diff must not run at all")
+        return ApiCallResult(success=True, data={"objects": []})
+
+    client.api_call.side_effect = lambda **kw: api_call_side_effect(**kw)
+    client._api_adapter.show_changes = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {"changes": [{"uid": "u1", "type": "host", "change-type": "add", "name": "h1"}]},
+        }
+    )
+    service = make_service(db, client)
+
+    events = await collect(service.refresh_objects(mgmt_names=["m1"], mode="incremental"))
+
+    statuses = [e.get("status") for e in events]
+    assert "domain_fallback" in statuses
+    assert "domain_incremental" not in statuses
+    fallback = next(e for e in events if e.get("status") == "domain_fallback")
+    assert "moved backwards" in fallback["reason"]
+    client._api_adapter.show_changes.assert_not_awaited()
 
 
 async def test_incremental_mode_skips_fresh_domain(db):

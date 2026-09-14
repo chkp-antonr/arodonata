@@ -14,8 +14,10 @@ from typing import Any
 from arlogi.otel.decorator import traced
 from cpapi import APIClient, APIClientArgs
 
+from ..config.constants import DEFAULT_LOGIN_TIMEOUT
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
+from .task_waiter import TaskStatus, TaskWaiter, extract_task_ids
 
 log = lazy_logger("arodonata.asdk.transport")
 
@@ -39,8 +41,18 @@ class ApiTransport:
         )
     """
 
-    def __init__(self) -> None:
-        """Initialize API transport."""
+    def __init__(self, task_waiter: TaskWaiter | None = None) -> None:
+        """Initialize API transport.
+
+        Args:
+            task_waiter: Optional pre-configured waiter for long-running Check
+                Point tasks (publish, revert-to-revision, install-policy,
+                run-script). One is built with the default poll policy when
+                omitted, so existing `ApiTransport()` call sites are unchanged;
+                tests inject one with a fake clock. Stateless and shared across
+                every call this transport makes.
+        """
+        self._task_waiter = task_waiter or TaskWaiter()
         log().trace("ApiTransport initialized")
 
     @asynccontextmanager
@@ -178,20 +190,29 @@ class ApiTransport:
             sid: Session identifier.
             command: API command to execute.
             payload: Request payload.
-            wait_for_task: Whether to wait for task completion.
-            timeout: Request timeout in seconds.
+            wait_for_task: Whether to wait for task completion. The wait is done
+                here, by `TaskWaiter`, never by cpapi -- see `_await_tasks`.
+            timeout: Budget in seconds for the WHOLE operation: the initial call
+                plus, when it returns a task, the polling until that task ends.
+                <= 0 means unbounded.
             port: Optional port number (defaults to 443 if not specified).
 
         Returns:
-            API response dictionary.
+            API response dictionary. For a task-returning command with
+            `wait_for_task=True`, the final `show-task` response, with `success`
+            False if any task ended other than `succeeded`.
 
         Raises:
-            asyncio.TimeoutError: If operation times out.
+            TaskTimeoutError: The task did not finish within `timeout`. A
+                `TimeoutError` subclass, so `except TimeoutError` still catches it.
+            TimeoutError: The initial call itself did not return within `timeout`.
+            TaskPollError: `show-task` kept failing past the tolerated count.
         """
         if payload is None:
             payload = {}
 
         span_attrs(command=command, server_ip=server_ip, port=port)
+        started = asyncio.get_running_loop().time()
 
         try:
             log().trace(f"API CALL: {command}")
@@ -202,7 +223,12 @@ class ApiTransport:
                         command,
                         payload,
                         client.sid,
-                        wait_for_task,
+                        # Never let cpapi run its own blocking show-task loop: it
+                        # bypasses this transport entirely (no rate limit, no span,
+                        # no log line) and times out into a bare, detail-free
+                        # TimeoutError. The waiting is done below, where we can
+                        # see it.
+                        False,
                         timeout,
                     ),
                     timeout=timeout if timeout > 0 else None,
@@ -213,6 +239,17 @@ class ApiTransport:
             else:
                 log().trace(f"API CALL FAILED: {command} - {result.get('message', 'Unknown error')}")
                 span_attrs(response_code=result.get("code"))
+
+            if wait_for_task and command != "show-task":
+                result = await self._await_tasks(
+                    result,
+                    server_ip=server_ip,
+                    sid=sid,
+                    port=port,
+                    command=command,
+                    timeout=timeout,
+                    elapsed=asyncio.get_running_loop().time() - started,
+                )
             return result
         except TimeoutError:
             log().error(f"API CALL TIMEOUT: {command} (timeout={timeout}s)")
@@ -220,6 +257,72 @@ class ApiTransport:
         except Exception as e:
             log().error(f"API CALL ERROR: {command} - {e}")
             raise
+
+    async def _await_tasks(
+        self,
+        result: RawApiResponse,
+        *,
+        server_ip: str,
+        sid: str,
+        port: int | None,
+        command: str,
+        timeout: int,
+        elapsed: float,
+    ) -> RawApiResponse:
+        """Wait out any task the response announced; return the final show-task result.
+
+        Mirrors cpapi's own guards exactly: an unsuccessful call is never waited on,
+        and a response carrying neither `task-id` nor `tasks` is returned untouched
+        (the overwhelmingly common path). `timeout` is the budget for the WHOLE
+        operation, so the initial call's `elapsed` is charged against it -- which is
+        why `REVERT_TIMEOUT_SECONDS` keeps meaning what it meant.
+        """
+        if not result.get("success"):
+            return result
+
+        task_ids = extract_task_ids(result.get("data"))
+        if not task_ids:
+            return result
+
+        # The waiter returns statuses, not responses, so keep the last raw
+        # show-task response here: returning it verbatim (minus the recomputed
+        # success flag) is what makes `.data`, `.message` and `.code` identical to
+        # what cpapi's `check_tasks_status` path produced.
+        last_response: RawApiResponse = {}
+
+        async def show_task(task_payload: dict[str, Any]) -> RawApiResponse:
+            nonlocal last_response
+            # Straight back into this transport, never through the client path: we
+            # are already inside the enclosing call's rate-limiter slot and its
+            # session, so the client path would re-run login resolution,
+            # re-acquire the limiter and spawn a keepalive sweep ~70 times per
+            # revert. Holding the one slot for the whole task is the intended
+            # throttle. `timeout=-1` because the waiter owns the budget.
+            last_response = await self.api_call(
+                server_ip=server_ip,
+                sid=sid,
+                command="show-task",
+                payload=task_payload,
+                wait_for_task=False,
+                timeout=-1,
+                port=port,
+            )
+            return last_response
+
+        remaining = timeout - elapsed if timeout > 0 else -1.0
+        statuses: list[TaskStatus] = await self._task_waiter.wait(
+            show_task, task_ids, timeout=remaining, context=f"{command} on {server_ip}"
+        )
+
+        final = dict(last_response)
+        # Reproduces cpapi's check_tasks_status: failed / partially succeeded /
+        # still in progress all yield success=False on the returned response, and
+        # nothing is raised. Stricter in one respect -- an unrecognized status is
+        # not a success either (allowlist, where cpapi's was a denylist).
+        final["success"] = bool(statuses) and all(status.is_success for status in statuses)
+        if not final["success"]:
+            span_attrs(response_code=final.get("code"))
+        return final
 
     @traced
     async def api_query(
@@ -291,7 +394,7 @@ class ApiTransport:
         server_ip: str,
         api_key: str,
         domain: str | None = None,
-        timeout: int = 120,
+        timeout: int = DEFAULT_LOGIN_TIMEOUT,
         port: int | None = None,
         session_name: str | None = None,
         session_description: str | None = None,
@@ -303,7 +406,9 @@ class ApiTransport:
             server_ip: Management server IP address.
             api_key: API key for authentication.
             domain: Optional domain name.
-            timeout: Login timeout in seconds (default: 120).
+            timeout: Per-attempt login timeout in seconds (default:
+                DEFAULT_LOGIN_TIMEOUT). A login is one round trip; it does not
+                inherit the much larger API/task budget.
             port: Optional port number (defaults to 443 if not specified).
             session_name: Optional session name visible in SmartConsole.
             session_description: Optional session description.
@@ -362,7 +467,9 @@ class ApiTransport:
                 )
             return result
         except TimeoutError as e:
-            log().error(f"LOGIN (apikey) TIMEOUT: {server_ip}{domain_context} - {e}")
+            # `e` is asyncio.wait_for's bare TimeoutError and stringifies to "";
+            # say how long we waited instead (int-4, 2026-09-13, logged an empty reason).
+            log().error(f"LOGIN (apikey) TIMEOUT: {server_ip}{domain_context} (timeout={timeout}s)")
             raise TimeoutError(f"Login timed out after {timeout}s") from e
         except Exception as e:
             log().error(f"LOGIN (apikey) ERROR: {server_ip}{domain_context} - {e}")
@@ -375,7 +482,7 @@ class ApiTransport:
         username: str,
         password: str,
         domain: str | None = None,
-        timeout: int = 120,
+        timeout: int = DEFAULT_LOGIN_TIMEOUT,
         port: int | None = None,
         session_name: str | None = None,
         session_description: str | None = None,
@@ -388,7 +495,9 @@ class ApiTransport:
             username: Username for authentication.
             password: Password for authentication.
             domain: Optional domain name.
-            timeout: Login timeout in seconds (default: 120).
+            timeout: Per-attempt login timeout in seconds (default:
+                DEFAULT_LOGIN_TIMEOUT). A login is one round trip; it does not
+                inherit the much larger API/task budget.
             port: Optional port number (defaults to 443 if not specified).
             session_name: Optional session name visible in SmartConsole.
             session_description: Optional session description.
@@ -443,7 +552,7 @@ class ApiTransport:
                 log().warning(f"LOGIN (credentials) FAILED: {server_ip}{domain_context} - {result['message']}")
             return result
         except TimeoutError as e:
-            log().error(f"LOGIN (credentials) TIMEOUT: {server_ip}{domain_context} - {e}")
+            log().error(f"LOGIN (credentials) TIMEOUT: {server_ip}{domain_context} (timeout={timeout}s)")
             raise TimeoutError(f"Credential login timed out after {timeout}s") from e
         except Exception as e:
             log().error(f"LOGIN (credentials) ERROR: {server_ip}{domain_context} - {e}")

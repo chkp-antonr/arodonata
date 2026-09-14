@@ -25,7 +25,10 @@ from .exceptions import (
     InvalidCredentialsError,
     MissingConfigurationError,
     ServerNotFoundError,
+    ServerUnreachableError,
     SessionExpiredError,
+    TaskPollError,
+    TaskTimeoutError,
     ThrottlingError,
 )
 from .orchestration import CacheOrchestrationService
@@ -70,6 +73,7 @@ __all__ = [
     "ConnectionError",
     "DatabaseConnectionError",
     "ApiConnectionError",
+    "ServerUnreachableError",
     "AuthenticationError",
     "SessionExpiredError",
     "InvalidCredentialsError",
@@ -77,6 +81,8 @@ __all__ = [
     "ApiCallError",
     "ApiQueryError",
     "ThrottlingError",
+    "TaskTimeoutError",
+    "TaskPollError",
     "CacheError",
     "CacheNotInitializedError",
     "ClientError",

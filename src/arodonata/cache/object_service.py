@@ -936,6 +936,37 @@ class ObjectService:
             The upserted LastPublishedSession record, or None if the API
             call failed or returned no usable timestamp.
         """
+        record = await self.fetch_last_published_session(mgmt_name, domain_name)
+        if record is None:
+            return None
+        try:
+            await self._cache.upsert_last_published_session(record)
+        except Exception as e:
+            log().warning(f"Failed to store LastPublishedSession for {mgmt_name}/{domain_name}: {e}")
+            return None
+        return record
+
+    async def fetch_last_published_session(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+    ) -> LastPublishedSession | None:
+        """Read the domain's current last-published session WITHOUT storing it.
+
+        The read-only half of `refresh_last_published_session`. Callers that need
+        to know where the domain's head is *before* deciding what to do with the
+        cache must not advance the stored baseline in the process — doing so
+        empties the diff window they are about to use. `CacheRefreshCoordinator`
+        uses this to tell a forward publish from a revert.
+
+        Args:
+            mgmt_name: Management server name.
+            domain_name: Domain name.
+
+        Returns:
+            An unsaved LastPublishedSession, or None if the API call failed or
+            returned no usable timestamp.
+        """
         try:
             api_domain = "" if domain_name in ("SMC User", "System Data") else domain_name
 
@@ -953,7 +984,7 @@ class ObjectService:
                 published_time = self._parse_api_timestamp(last_modify_time)
 
                 if published_time:
-                    record = LastPublishedSession(
+                    return LastPublishedSession(
                         id=f"{mgmt_name}:{domain_name}",
                         mgmt_name=mgmt_name,
                         domain_name=domain_name,
@@ -964,10 +995,8 @@ class ObjectService:
                         creator=data.get("creator", ""),
                         description=data.get("description", ""),
                     )
-                    await self._cache.upsert_last_published_session(record)
-                    return record
         except Exception as e:
-            log().warning(f"Failed to update LastPublishedSession for {mgmt_name}/{domain_name}: {e}")
+            log().warning(f"Failed to read LastPublishedSession for {mgmt_name}/{domain_name}: {e}")
 
         return None
 
@@ -1009,6 +1038,9 @@ class ObjectService:
             cache=self._cache,
             fetch_full_object=self.fetch_full_object,
             to_cpobject=api_object_to_cpobject,
+            # Read-only on purpose: refresh_last_published_session would advance
+            # the baseline before the apply and empty the diff window.
+            fetch_head=self.fetch_last_published_session,
             max_changes=self.max_incremental_changes,
         )
 

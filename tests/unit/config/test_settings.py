@@ -35,6 +35,7 @@ _ENV_VARS = [
     "LOG_LEVEL",
     "ARODONATA_LOG_LEVEL",
     "ARODONATA_RATE_LIMIT_SLOT_TIMEOUT",
+    "ARODONATA_LOGIN_TIMEOUT",
 ]
 
 
@@ -67,6 +68,9 @@ class TestDefaults:
         assert settings.login_retry_backoff == 5
         assert settings.login_max_retries == 8
         assert settings.rate_limit_slot_timeout == 90
+        # A login gets its own budget, separately tunable from api_timeout even
+        # though it currently matches it -- see DEFAULT_LOGIN_TIMEOUT.
+        assert settings.login_timeout == 120
 
 
 class TestCommaSeparatedParsing:
@@ -200,6 +204,42 @@ class TestFieldConstraints:
     def test_zero_api_timeout_raises(self):
         with pytest.raises(ValidationError):
             ArodonataSettings(api_timeout=0)
+
+    def test_login_timeout_matches_its_constant(self):
+        from arodonata.config.constants import DEFAULT_LOGIN_TIMEOUT
+
+        assert ArodonataSettings().login_timeout == DEFAULT_LOGIN_TIMEOUT
+        # Generous on purpose: a domain-server login on a loaded MDS takes longer
+        # than a minute, and a budget that cannot tell "slow" from "dead" fails
+        # working servers. The value being separately tunable is the point, not
+        # the value being small.
+        assert DEFAULT_LOGIN_TIMEOUT >= 120
+
+    def test_login_timeout_configurable_via_kwarg(self):
+        settings = ArodonataSettings(login_timeout=45)
+        assert settings.login_timeout == 45
+
+    def test_login_timeout_configurable_via_env_alias(self, monkeypatch):
+        monkeypatch.setenv("ARODONATA_LOGIN_TIMEOUT", "45")
+        settings = ArodonataSettings()
+        assert settings.login_timeout == 45
+
+    def test_login_throttle_window_defaults_to_its_constant(self):
+        from arodonata.config.constants import LOGIN_THROTTLE_WINDOW_SECONDS
+
+        assert ArodonataSettings().login_throttle_window == LOGIN_THROTTLE_WINDOW_SECONDS == 70
+
+    def test_login_throttle_window_configurable_via_env_alias(self, monkeypatch):
+        monkeypatch.setenv("ARODONATA_LOGIN_THROTTLE_WINDOW", "5")
+        assert ArodonataSettings().login_throttle_window == 5
+
+    def test_zero_login_throttle_window_raises(self):
+        with pytest.raises(ValidationError):
+            ArodonataSettings(login_throttle_window=0)
+
+    def test_zero_login_timeout_raises(self):
+        with pytest.raises(ValidationError):
+            ArodonataSettings(login_timeout=0)
 
 
 class TestExtraFieldsIgnored:

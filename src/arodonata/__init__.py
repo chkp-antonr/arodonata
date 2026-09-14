@@ -58,6 +58,8 @@ from .core import (
     RefreshMode,
     ServerNotFoundError,
     SessionExpiredError,
+    TaskPollError,
+    TaskTimeoutError,
 )
 
 # CPCRUD (NAT write-payload constants other in-org consumers may need to reuse, e.g. MMP's
@@ -106,6 +108,8 @@ __all__ = [
     "ClientError",
     "ClientClosedError",
     "ServerNotFoundError",
+    "TaskTimeoutError",
+    "TaskPollError",
     # Enums
     "RefreshMode",
     # Utilities

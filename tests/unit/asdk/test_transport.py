@@ -291,7 +291,9 @@ async def test_api_call_success_invokes_client_api_call_with_expected_args():
             "10.0.0.1", "sid-1", "show-hosts", payload={"limit": 5}, wait_for_task=True, timeout=-1
         )
 
-    mock_client.api_call.assert_called_once_with("show-hosts", {"limit": 5}, "sid-1", True, -1)
+    # Self-managed polling: cpapi is never asked to wait (see task_waiter.py), so the
+    # wait_for_task positional reaching the SDK is False even though the caller passed True.
+    mock_client.api_call.assert_called_once_with("show-hosts", {"limit": 5}, "sid-1", False, -1)
     assert result["success"] is True
     assert result["data"] == {"uid": "u1"}
 
@@ -307,7 +309,7 @@ async def test_api_call_defaults_payload_to_empty_dict():
     with p1, p2, p3:
         await transport.api_call("10.0.0.1", "sid-1", "show-hosts")
 
-    mock_client.api_call.assert_called_once_with("show-hosts", {}, "sid-1", True, -1)
+    mock_client.api_call.assert_called_once_with("show-hosts", {}, "sid-1", False, -1)
 
 
 async def test_api_call_failure_returns_error_result():
@@ -403,6 +405,42 @@ async def test_api_query_exception_propagates():
     p1, p2, p3 = _patch_sdk(mock_client)
     with p1, p2, p3, pytest.raises(RuntimeError, match="boom"):
         await transport.api_query("10.0.0.1", "sid-1", "show-hosts")
+
+
+# --------------------------------------------------------------------------
+# login timeout: its own budget, and a log line that says what it was
+# --------------------------------------------------------------------------
+
+
+def test_login_methods_default_to_the_login_timeout_constant():
+    """A login is one round trip, so it does not inherit DEFAULT_API_TIMEOUT (int-4, 2026-09-13)."""
+    import inspect
+
+    from arodonata.config.constants import DEFAULT_LOGIN_TIMEOUT
+
+    for method in (ApiTransport.login_with_apikey, ApiTransport.login_with_credentials):
+        assert inspect.signature(method).parameters["timeout"].default == DEFAULT_LOGIN_TIMEOUT
+
+
+@pytest.mark.parametrize(
+    ("method_name", "sdk_attr", "args", "expected"),
+    [
+        ("login_with_apikey", "login_with_api_key", ("10.0.0.1", "a-very-long-api-key-1234"), "LOGIN (apikey)"),
+        ("login_with_credentials", "login", ("10.0.0.1", "svc", "pw"), "LOGIN (credentials)"),
+    ],
+)
+async def test_login_timeout_log_line_names_the_budget(caplog, method_name, sdk_attr, args, expected):
+    """asyncio.wait_for's TimeoutError stringifies to "", so `- {e}` logged nothing useful."""
+    transport = ApiTransport()
+    mock_client = MagicMock()
+    getattr(mock_client, sdk_attr).side_effect = TimeoutError()
+
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with p1, p2, p3, caplog.at_level("ERROR"), pytest.raises(TimeoutError):
+        await getattr(transport, method_name)(*args, domain="Domain4", timeout=7)
+
+    errors = [r.message for r in caplog.records if r.levelname == "ERROR"]
+    assert any(f"{expected} TIMEOUT" in m and "(timeout=7s)" in m and "Domain4" in m for m in errors), errors
 
 
 # --------------------------------------------------------------------------

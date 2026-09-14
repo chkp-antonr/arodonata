@@ -15,7 +15,14 @@ from typing import TYPE_CHECKING, Any, Never
 from arlogi.otel.decorator import traced
 
 from ..cache.lock_manager import DatabaseLockManager
-from ..config import CREDENTIAL_REJECTION_MESSAGE, GLOBAL_DOMAIN_NAME, SESSION_ERROR_CODES, THROTTLE_ERROR_CODE
+from ..config import (
+    CREDENTIAL_REJECTION_MESSAGE,
+    GLOBAL_DOMAIN_NAME,
+    LOGIN_THROTTLE_WINDOW_SECONDS,
+    SERVER_UNREACHABLE_MESSAGE,
+    SESSION_ERROR_CODES,
+    THROTTLE_ERROR_CODE,
+)
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
 
@@ -28,6 +35,52 @@ if TYPE_CHECKING:
     from .transport import ApiTransport
 
 log = lazy_logger("arodonata.asdk.login_coordinator")
+
+
+# How many full throttle windows to wait out before giving up on a login. The
+# retry sequence holds a rate-limiter slot throughout, so waiting all
+# DEFAULT_LOGIN_RETRIES attempts at LOGIN_THROTTLE_WINDOW_SECONDS each would pin
+# one of three slots for ~9 minutes and outlive the login lock's TTL. If three
+# consecutive windows have not cleared the lockout, the cause is systemic -- more
+# login pressure on that IP than its per-minute allowance -- and failing says so
+# sooner.
+LOGIN_THROTTLE_MAX_WAITS = 3
+
+
+def _login_failure_kind(exc: BaseException) -> str:
+    """Classify a login failure as "throttle", "refusal", "timeout" or "unreachable".
+
+    The classification decides the remedy, and the four cases want different ones:
+
+    * **throttle** -- we exceeded Check Point's per-minute login allowance for
+      this user and IP. Clears only after a wait longer than the window itself,
+      so it gets LOGIN_THROTTLE_WINDOW_SECONDS rather than the ramp.
+    * **refusal** -- the server answered and said no for now: Check Point's
+      "Database revision is in progress" during the window after a revert, for
+      instance. The address is right and the condition clears on its own, so retry
+      it with backoff. This is the default for anything unrecognized.
+    * **timeout** -- no answer yet, and the one failure that cannot be classified
+      on the spot: a slow server and a dead one look identical until one of them
+      eventually answers. Retried like any other transient failure, for the full
+      budget; only once that is spent is the address itself treated as suspect.
+      Calling it sooner cost three green integration buckets on 2026-09-13, when
+      domain servers that were merely slow got written off.
+    * **unreachable** -- conclusive: the socket was refused or unroutable, or Check
+      Point itself said it cannot reach the target server. Nothing is listening,
+      so re-resolve the domain's active server rather than knocking again.
+
+    `TimeoutError` is checked first because it is an `OSError` subclass and would
+    otherwise be swallowed by the socket-error branch.
+    """
+    from ..core.exceptions import ApiConnectionError, ThrottlingError
+
+    if isinstance(exc, ThrottlingError) or THROTTLE_ERROR_CODE in str(exc):
+        return "throttle"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, OSError | ApiConnectionError) or SERVER_UNREACHABLE_MESSAGE in str(exc):
+        return "unreachable"
+    return "refusal"
 
 
 class LoginCoordinator:
@@ -86,6 +139,17 @@ class LoginCoordinator:
         self._password_secret = settings.password  # SecretStr | None
 
         log().trace(f"LoginCoordinator initialized (auth_mode={self._auth_mode})")
+
+    @property
+    def _throttle_window(self) -> int:
+        """Seconds to wait for Check Point's login rate limit to clear.
+
+        Read from settings rather than the constant so a deployment whose server
+        enforces a different limit -- or a caller that knows it will not meet a
+        real throttle -- is not made to wait out a window that does not apply.
+        """
+        window = getattr(self._settings, "login_throttle_window", LOGIN_THROTTLE_WINDOW_SECONDS)
+        return window if isinstance(window, int) else LOGIN_THROTTLE_WINDOW_SECONDS
 
     @property
     def _credential_username(self) -> str | None:
@@ -400,10 +464,9 @@ class LoginCoordinator:
         max_retries = max_retries or self._settings.login_max_retries
         backoff = backoff or self._settings.login_retry_backoff
         last_exception = None
-
-        # Check if this is a server connection error (e.g., domain doesn't exist)
-        # These errors should stop after 2 retries instead of full max_retries
-        server_connection_error = False
+        timeouts = 0
+        throttle_waits = 0
+        kind = "refusal"
 
         for attempt in range(max_retries):
             try:
@@ -412,47 +475,92 @@ class LoginCoordinator:
                     return result
             except Exception as e:
                 last_exception = e
-                error_str = str(e)
-
-                # Don't retry on developer errors (TypeError) or pure authentication
-                # failures (wrong password/domain) to avoid long hangs and server lockouts.
-                if isinstance(e, TypeError) or CREDENTIAL_REJECTION_MESSAGE in error_str:
-                    log().error(f"{operation_name} failed: {e} (Fatal error - not retrying)")
-                    raise e
-
-                # Detect server connection errors (e.g., "Unable to connect to server...")
-                # These indicate permanent issues like missing domains and should stop early
-                if (
-                    "Unable to connect to server. Please make sure that all processes of the server are up and running."
-                    in error_str
-                ):
-                    server_connection_error = True
-                    log().warning(
-                        f"{operation_name} attempt {attempt + 1} failed: {e} (Server connection error - limiting retries)"
-                    )
-
-                log().warning(f"{operation_name} attempt {attempt + 1} failed: {e}")
-
-            # For server connection errors, stop after 2 attempts instead of max_retries
-            if server_connection_error and attempt >= 1:
-                log().error(f"{operation_name} failed after {attempt + 1} attempts due to server connection error")
-                if last_exception:
-                    raise last_exception
-                return None
+                kind, timeouts = self._classify_or_raise(e, operation_name, attempt, timeouts, throttle_waits)
 
             if attempt < max_retries - 1:
                 span_attrs(attempt=attempt)
-                # Use exponential backoff to handle and clear server-side lockouts/throttling.
-                # 1.3^6 is ~4.8, reaching >60s total wait after 6-7 attempts (with base 5s).
-                # This ensures we clear 60s lockouts accurately even if some attempts reset the timer.
-                current_backoff = (backoff * (1.3**attempt)) + random.uniform(0, 2.0)
-                # Cap backoff at 60s to definitely clear standard lockouts
-                current_backoff = min(current_backoff, 60.0)
-                await asyncio.sleep(current_backoff)
+                if kind == "throttle":
+                    throttle_waits += 1
+                await asyncio.sleep(self._retry_delay(kind, attempt, backoff, throttle_waits, operation_name))
 
         if last_exception:
+            # The budget is spent and the server never answered. Now -- and only
+            # now -- is a timeout worth treating as a possibly-wrong address: hand
+            # it over as unreachable so `_acquire_new_sid` re-resolves the domain's
+            # active server and gets one attempt there. Nothing is cut short by
+            # this; it is the step after the last retry, not instead of them.
+            if timeouts and _login_failure_kind(last_exception) == "timeout":
+                from ..core.exceptions import ServerUnreachableError
+
+                log().warning(
+                    f"{operation_name} timed out on all {max_retries} attempts - "
+                    f"treating the address as unreachable and re-resolving"
+                )
+                raise ServerUnreachableError(f"{operation_name} failed: {last_exception}") from last_exception
             raise last_exception
         return None
+
+    def _classify_or_raise(
+        self, exc: Exception, operation_name: str, attempt: int, timeouts: int, throttle_waits: int
+    ) -> tuple[str, int]:
+        """Classify a failed attempt; raise when the sequence should end here.
+
+        Returns the failure kind and the running timeout count.
+        """
+        # Don't retry on developer errors (TypeError) or pure authentication
+        # failures (wrong password/domain) to avoid long hangs and server lockouts.
+        if isinstance(exc, TypeError) or CREDENTIAL_REJECTION_MESSAGE in str(exc):
+            log().error(f"{operation_name} failed: {exc} (Fatal error - not retrying)")
+            raise exc
+
+        kind = _login_failure_kind(exc)
+        if kind == "timeout":
+            timeouts += 1
+
+        if kind == "throttle" and throttle_waits >= LOGIN_THROTTLE_MAX_WAITS:  # noqa: SIM102
+            log().error(
+                f"{operation_name} still throttled after {throttle_waits} full "
+                f"{self._throttle_window}s windows - more login pressure on this "
+                f"server than Check Point's per-minute login allowance"
+            )
+            raise exc
+
+        # Backoff clears lockouts, not addresses. Once the evidence says nothing is
+        # listening, hand the failure up instead of spending the rest of the budget
+        # on it: `_acquire_new_sid` re-resolves the domain's active server and
+        # retries against what `show-domains` now reports. Only conclusive evidence
+        # qualifies here; a timeout waits for the budget to run out (see below).
+        if kind == "unreachable":
+            from ..core.exceptions import ServerUnreachableError
+
+            log().warning(
+                f"{operation_name} attempt {attempt + 1} failed: {exc} "
+                f"(server did not answer - not retrying this address)"
+            )
+            raise ServerUnreachableError(f"{operation_name} failed: {exc}") from exc
+
+        log().warning(f"{operation_name} attempt {attempt + 1} failed: {exc}")
+        return kind, timeouts
+
+    def _retry_delay(self, kind: str, attempt: int, backoff: int, throttle_waits: int, operation_name: str) -> float:
+        """Seconds to wait before the next attempt."""
+        if kind == "throttle":
+            # A throttle lockout is not cleared by ramping up to it: every step of
+            # the ramp is shorter than the window, and each rejected attempt re-arms
+            # it. One wait longer than the window is the only thing that works.
+            # Jitter keeps concurrent callers from all coming back at the same
+            # instant and re-tripping it together.
+            delay = self._throttle_window + random.uniform(0, 5.0)
+            log().warning(
+                f"{operation_name} throttled - waiting {delay:.0f}s for the login window "
+                f"to clear ({throttle_waits}/{LOGIN_THROTTLE_MAX_WAITS})"
+            )
+            return delay
+
+        # Exponential backoff for everything else, capped at the throttle window: a
+        # longer sleep belongs to the branch above, and a shorter cap would sit just
+        # under the one lockout we know about.
+        return min((backoff * (1.3**attempt)) + random.uniform(0, 2.0), float(self._throttle_window))
 
     @traced
     async def logout(self, mgmt_name: str, domain: str) -> bool:
@@ -519,6 +627,7 @@ class LoginCoordinator:
                 session_name=session_name,
                 session_description=session_description,
                 session_timeout=session_timeout,
+                timeout=self._settings.login_timeout,
             )
 
         masked_key = f"{api_key[:4]}...{api_key[-4:]}" if api_key and len(api_key) > 8 else "****"
@@ -531,6 +640,10 @@ class LoginCoordinator:
             session_name=session_name,
             session_description=session_description,
             session_timeout=session_timeout,
+            # A login is one HTTP round trip. Without this it inherited the
+            # transport's much larger default, so an unresponsive server cost
+            # 120 s per attempt across every retry (int-4, 2026-09-13).
+            timeout=self._settings.login_timeout,
         )
 
     def _raise_as_auth_error(self, exc: Exception, mgmt_name: str, domain: str) -> Never:
@@ -642,7 +755,7 @@ class LoginCoordinator:
         not re-acquired per attempt), preventing concurrent logins to the same
         IP from compounding throttling issues.
         """
-        from ..core.exceptions import AuthenticationError
+        from ..core.exceptions import AuthenticationError, ServerUnreachableError
 
         async with self._rate_limiter.acquire(server_ip):
             log().trace(f"Rate limiter acquired for '{mgmt_name}:{domain}', starting login retry sequence")
@@ -665,6 +778,11 @@ class LoginCoordinator:
                     raise AuthenticationError("Login failed: No session ID returned")
                 sid, uid = result  # type: ignore[assignment]
                 return sid, uid
+            except ServerUnreachableError as e:
+                # Must survive unwrapped: `_acquire_new_sid` decides, on this type,
+                # whether to re-resolve the domain's active server and try there.
+                e.server_ip = e.server_ip or server_ip
+                raise
             except AuthenticationError:
                 raise
             except Exception as e:
@@ -1032,16 +1150,31 @@ class LoginCoordinator:
             f"cached_created={cached.created_at.isoformat() if cached and cached.created_at else 'None'}"
         )
 
-        sid, uid = await self._perform_login(
-            mgmt_name,
-            domain,
-            server_ip,
-            api_key,
-            force_relogin=force,
-            port=port,
-            session_name=session_name,
-            session_description=session_description,
-        )
+        from ..core.exceptions import ServerUnreachableError
+
+        try:
+            sid, uid = await self._perform_login(
+                mgmt_name,
+                domain,
+                server_ip,
+                api_key,
+                force_relogin=force,
+                port=port,
+                session_name=session_name,
+                session_description=session_description,
+            )
+        except ServerUnreachableError as exc:
+            server_ip, sid, uid = await self._relogin_at_resolved_ip(
+                exc,
+                mgmt_name,
+                domain,
+                server_ip,
+                api_key,
+                force=force,
+                port=port,
+                session_name=session_name,
+                session_description=session_description,
+            )
 
         try:
             await self._cache.set_sid(mgmt_name, domain, sid, server_ip, uid, username=self._credential_username)
@@ -1050,6 +1183,92 @@ class LoginCoordinator:
             log().error(f"Cache store error for '{mgmt_name}:{domain}': {e}")
 
         return sid, server_ip
+
+    async def _relogin_at_resolved_ip(
+        self,
+        exc: Exception,
+        mgmt_name: str,
+        domain: str,
+        dead_ip: str,
+        api_key: str,
+        *,
+        force: bool,
+        port: int | None,
+        session_name: str | None,
+        session_description: str | None,
+    ) -> tuple[str, str, str | None]:
+        """Re-resolve a silent domain server and log in there; returns (ip, sid, uid).
+
+        Only reached when the server never answered. The cached SID for this
+        domain is dropped first -- it was issued by, or points at, a server we can
+        no longer reach -- and then `show-domains` is asked where the domain's
+        active server is now, bypassing the domain cache. A genuinely moved domain
+        recovers here; a domain whose server is simply down fails immediately
+        afterwards rather than spending the full retry budget knocking on it.
+
+        The system domain has no per-domain server to re-resolve: that IS the
+        management server, so there is nowhere else to look.
+        """
+        from ..core.exceptions import ServerUnreachableError
+
+        await self._forget_sid(mgmt_name, domain)
+
+        if not domain:
+            log().error(f"Management server {dead_ip} did not answer for '{mgmt_name}' - no domain IP to re-resolve")
+            raise self._unreachable_login_error(exc, mgmt_name, domain, dead_ip) from exc
+
+        log().warning(
+            f"Domain server {dead_ip} did not answer for '{mgmt_name}:{domain}' - "
+            f"re-resolving the domain's active server before retrying"
+        )
+        fresh_ip = await self._prefetch_domain_server_ip(mgmt_name, domain, force=True)
+
+        if not fresh_ip or fresh_ip == dead_ip:
+            log().error(
+                f"'{mgmt_name}:{domain}' still resolves to {dead_ip}, which is not answering - giving up on this login"
+            )
+            raise self._unreachable_login_error(exc, mgmt_name, domain, dead_ip) from exc
+
+        log().info(f"'{mgmt_name}:{domain}' moved: {dead_ip} -> {fresh_ip}, retrying login there")
+        try:
+            sid, uid = await self._perform_login(
+                mgmt_name,
+                domain,
+                fresh_ip,
+                api_key,
+                force_relogin=force,
+                port=port,
+                session_name=session_name,
+                session_description=session_description,
+            )
+        except ServerUnreachableError as second:
+            # Two addresses, no answer from either: stop rather than chase.
+            log().error(f"Re-resolved address {fresh_ip} for '{mgmt_name}:{domain}' did not answer either")
+            raise self._unreachable_login_error(second, mgmt_name, domain, dead_ip, fresh_ip) from second
+        return fresh_ip, sid, uid
+
+    def _unreachable_login_error(self, exc: Exception, mgmt_name: str, domain: str, *addresses: str) -> Exception:
+        """An AuthenticationError naming the address(es) that went silent.
+
+        Deliberately an `AuthenticationError` and not the `ServerUnreachableError`
+        underneath it: every consumer already handles a failed login by catching
+        `AuthenticationError`, and the reason a login failed should not change the
+        type they have to catch. The address goes in the message, where it costs
+        nothing and answers the first question anyone will ask.
+        """
+        from ..core.exceptions import AuthenticationError
+
+        where = " then ".join(dict.fromkeys(a for a in addresses if a))
+        return AuthenticationError(
+            f"Login to '{mgmt_name}:{domain or 'system'}' failed: no answer from {where} ({exc})"
+        )
+
+    async def _forget_sid(self, mgmt_name: str, domain: str) -> None:
+        """Drop the cached SID for this domain; never fatal."""
+        try:
+            await self._cache.delete_sid(mgmt_name, domain, username=self._credential_username)
+        except Exception as e:  # noqa: BLE001 - cache hygiene must not mask the login failure
+            log().warning(f"Could not clear cached SID for '{mgmt_name}:{domain}': {e}")
 
     @traced
     async def create_dedicated_session(

@@ -14,6 +14,15 @@ import time
 
 import pytest
 
+# Budget for a batch of concurrent domain logins to finish. Generous on purpose: a
+# first login to a domain server on a loaded MDS takes tens of seconds on this lab,
+# and this test deliberately forces a fresh login per domain by clearing their
+# SIDs. A tighter per-call budget measures the lab's mood, not the rate limiter --
+# it failed on 2026-09-13 with two TimeoutErrors while the library was working
+# correctly. The same number bounds each call and the batch as a whole, so a single
+# slow login can consume the budget but nothing exceeds it silently.
+_CONCURRENT_LOGIN_BUDGET_SECONDS = 150
+
 
 async def test_same_domain_calls_are_serialised(apikey_client, all_domains):
     """Concurrent show-objects calls to the same domain are serialised through
@@ -88,16 +97,18 @@ async def test_different_domain_calls_are_concurrent(apikey_client, all_domains)
         r = await client.api_call(mgmt_name, "show-api-versions", domain=d["name"])
         assert r.success, f"Warmup failed for {d['name']}: {r.message}"
 
-    # Clear domain SIDs so each call needs a domain login (to different IPs)
+    # Log out each domain so the call needs a fresh login (to different IPs).
+    # logout() rather than cache.delete_sid(): the latter forgets our record but
+    # leaves the server-side session open and counted.
     for d in distinct_domains:
-        await client.cache.delete_sid(mgmt_name, d["name"])
+        await client.logout(mgmt_name, d["name"])
 
     start = time.monotonic()
     results = await asyncio.gather(
         *[
             asyncio.wait_for(
                 client.api_call(mgmt_name, "show-api-versions", domain=d["name"]),
-                timeout=60,
+                timeout=_CONCURRENT_LOGIN_BUDGET_SECONDS,
             )
             for d in distinct_domains
         ],
@@ -111,9 +122,9 @@ async def test_different_domain_calls_are_concurrent(apikey_client, all_domains)
     successes = [r for r in results if not isinstance(r, Exception) and r.success]
     assert len(successes) == len(distinct_domains), f"Expected {len(distinct_domains)} successes, got {len(successes)}"
 
-    # No assertion on elapsed time — different IPs mean no rate-limit serialisation,
-    # but we can't guarantee strict wall-clock bounds due to CP server variability.
-    assert elapsed < 120, f"Concurrent different-IP calls took too long: {elapsed:.1f}s"
+    # No strict wall-clock assertion — different IPs mean no rate-limit
+    # serialisation, but CP server variability makes a tight bound meaningless.
+    assert elapsed < _CONCURRENT_LOGIN_BUDGET_SECONDS, f"Concurrent different-IP calls took too long: {elapsed:.1f}s"
 
 
 async def test_rate_limiter_slot_based_distribution(apikey_client):

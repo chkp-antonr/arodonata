@@ -30,6 +30,7 @@ def _make_settings(*, auth_mode="api_key", username=None, password=None):
     settings.login_retry_backoff = 1
     settings.session_expire_seconds = 3600
     settings.session_timeout = 600
+    settings.login_timeout = 30
     settings.auth_mode = auth_mode
     settings.username = username
     settings.password = password
@@ -298,8 +299,27 @@ async def test_execute_login_request_apikey_mode_forwards_session_timeout():
         session_name="n",
         session_description="d",
         session_timeout=900,
+        timeout=30,
     )
     transport.login_with_credentials.assert_not_called()
+
+
+async def test_execute_login_request_forwards_the_login_timeout_setting():
+    """A login is one round trip; it must not inherit the 120 s API budget.
+
+    The 2026-09-13 int-4 run showed why: two attempts against an unresponsive
+    domain server each sat for the full 120 s, exhausting the caller's own budget
+    before a third could run.
+    """
+    settings = _make_settings()
+    settings.login_timeout = 45
+    transport = AsyncMock()
+    transport.login_with_apikey.return_value = {"success": True, "sid": "s"}
+    coord = _make_coordinator(settings=settings, transport=transport)
+
+    await coord._execute_login_request("mgmt1", "General", "10.0.0.1", "api-key-1234")
+
+    assert transport.login_with_apikey.await_args.kwargs["timeout"] == 45
 
 
 async def test_execute_login_request_empty_domain_passes_none():
@@ -335,6 +355,7 @@ async def test_execute_login_request_credential_mode_uses_credentials():
         session_name=None,
         session_description=None,
         session_timeout=120,
+        timeout=30,
     )
     transport.login_with_apikey.assert_not_called()
 

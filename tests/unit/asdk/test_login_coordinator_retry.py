@@ -4,14 +4,16 @@ Retry timing is neutralized by patching ``asyncio.sleep``; no real waits.
 Transport/APIClient seam is mocked; offline only.
 """
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import SecretStr
 
-from arodonata.asdk.login_coordinator import LoginCoordinator
+from arodonata.asdk.login_coordinator import LOGIN_THROTTLE_MAX_WAITS, LoginCoordinator
 from arodonata.asdk.session_cleaner import CleanupResult, SessionCleaner
-from arodonata.core.exceptions import AuthenticationError
+from arodonata.config import LOGIN_THROTTLE_WINDOW_SECONDS
+from arodonata.core.exceptions import AuthenticationError, ServerUnreachableError, ThrottlingError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -24,6 +26,8 @@ def _make_settings(*, auth_mode="api_key", username=None, password=None, max_ret
     settings.login_retry_backoff = backoff
     settings.session_expire_seconds = 3600
     settings.session_timeout = 600
+    settings.login_timeout = 120
+    settings.login_throttle_window = LOGIN_THROTTLE_WINDOW_SECONDS
     settings.auth_mode = auth_mode
     settings.username = username
     settings.password = password
@@ -57,7 +61,14 @@ def _make_coordinator(
 # ---------------------------------------------------------------------------
 
 
-async def test_retry_stops_after_2_attempts_for_server_connection_error():
+async def test_retry_stops_immediately_for_server_connection_error():
+    """The server did not answer: a second attempt at the same address is pointless.
+
+    The retry loop hands off to `_acquire_new_sid`, which re-resolves the domain's
+    active server and tries there instead -- see the ServerUnreachableError tests
+    below. Previously this burned a second attempt (and, for a timeout, all eight)
+    against an address nobody was listening on.
+    """
     coord = _make_coordinator(settings=_make_settings(max_retries=6))
     attempts = 0
 
@@ -69,11 +80,145 @@ async def test_retry_stops_after_2_attempts_for_server_connection_error():
             "processes of the server are up and running."
         )
 
+    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+        with pytest.raises(ServerUnreachableError):
+            await coord._retry_with_backoff(op, "Login")
+
+    assert attempts == 1
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ConnectionRefusedError(61, "Connection refused"),
+        ConnectionResetError(54, "Connection reset by peer"),
+        OSError(65, "No route to host"),
+    ],
+)
+async def test_retry_stops_immediately_when_the_socket_was_refused(error):
+    """A refused or unroutable socket is conclusive: nothing is listening there."""
+    coord = _make_coordinator(settings=_make_settings(max_retries=8))
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        raise error
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(ServerUnreachableError):
+            await coord._retry_with_backoff(op, "Login")
+
+    assert attempts == 1
+
+
+async def test_a_single_timeout_is_retried_at_the_same_address():
+    """A slow server is not an absent one.
+
+    A timeout is weaker evidence than a refused socket: the server may simply be
+    busy -- which is exactly what happens when a bucket of concurrent tests leans
+    on one management server. So a timeout keeps its place in the normal retry
+    budget; the address is only treated as suspect once that budget is spent
+    (test_timeouts_use_the_whole_retry_budget_before_giving_up).
+    """
+    coord = _make_coordinator(settings=_make_settings(max_retries=8))
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise TimeoutError("Login timed out after 60s")
+        return ("sid-1", "uid-1")
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await coord._retry_with_backoff(op, "Login")
+
+    assert result == ("sid-1", "uid-1")
+    assert attempts == 2
+
+
+async def test_timeouts_use_the_whole_retry_budget_before_giving_up():
+    """Only after the last retry is a timeout worth treating as a wrong address.
+
+    Cutting this short is what turned three green integration buckets red on
+    2026-09-13: slow-but-alive domain servers were written off after two attempts.
+    """
+    coord = _make_coordinator(settings=_make_settings(max_retries=4))
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        raise TimeoutError("Login timed out after 120s")
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(ServerUnreachableError):
+            await coord._retry_with_backoff(op, "Login")
+
+    assert attempts == 4
+
+
+async def test_a_slow_server_that_answers_on_a_later_attempt_succeeds():
+    """The case the aggressive version broke: slow is not dead."""
+    coord = _make_coordinator(settings=_make_settings(max_retries=8))
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        if attempts < 4:
+            raise TimeoutError("Login timed out after 120s")
+        return ("sid-1", "uid-1")
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await coord._retry_with_backoff(op, "Login")
+
+    assert result == ("sid-1", "uid-1")
+    assert attempts == 4
+
+
+async def test_a_non_timeout_failure_after_timeouts_is_raised_as_itself():
+    """Only an all-timeouts sequence hands over for re-resolution."""
+    coord = _make_coordinator(settings=_make_settings(max_retries=3))
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise TimeoutError("Login timed out after 120s")
+        raise AuthenticationError("Login failed: Invalid API key")
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(AuthenticationError) as excinfo:
+            await coord._retry_with_backoff(op, "Login")
+
+    assert not isinstance(excinfo.value, ServerUnreachableError)
+    assert attempts == 3
+
+
+async def test_retry_keeps_retrying_a_transient_refusal_from_a_live_server():
+    """Check Point returns this for a window after every revert-to-revision.
+
+    The server answered, so the address is right and the condition clears on its
+    own within seconds -- this MUST keep retrying, or every revert in the
+    integration suite breaks at the login that follows it.
+    """
+    coord = _make_coordinator(settings=_make_settings(max_retries=5))
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        raise AuthenticationError("Login failed: Unable to connect to the Server. Database revision is in progress.")
+
     with patch("asyncio.sleep", new_callable=AsyncMock):
         with pytest.raises(AuthenticationError):
             await coord._retry_with_backoff(op, "Login")
 
-    assert attempts == 2
+    assert attempts == 5
 
 
 async def test_retry_continues_full_max_for_generic_error():
@@ -166,7 +311,7 @@ async def test_retry_explicit_backoff_and_max_retries_args():
     assert sleep.await_count == 3  # sleeps between attempts, not after last
 
 
-async def test_retry_backoff_capped_at_60s():
+async def test_retry_backoff_capped_at_the_throttle_window():
     coord = _make_coordinator()
 
     async def op():
@@ -177,7 +322,114 @@ async def test_retry_backoff_capped_at_60s():
             await coord._retry_with_backoff(op, "Login", max_retries=3, backoff=100)
 
     for call in sleep.await_args_list:
-        assert call.args[0] <= 60.0
+        assert call.args[0] <= LOGIN_THROTTLE_WINDOW_SECONDS
+
+
+# ---------------------------------------------------------------------------
+# Throttling: Check Point rate-limits logins per (user, server IP) per minute
+# ---------------------------------------------------------------------------
+
+
+async def test_throttling_waits_the_whole_window_instead_of_the_ramp():
+    """The ramp never cleared a lockout: every one of its sleeps is shorter than it.
+
+    Check Point rate-limits logins per user per server IP over a one-minute
+    window (the allowance inside it is server-side configuration), and a rejected
+    attempt re-arms that window -- so N short sleeps land back inside it N times.
+    Only a single wait longer than the window gets us out.
+    """
+    coord = _make_coordinator(settings=_make_settings(max_retries=3, backoff=5))
+
+    async def op():
+        raise ThrottlingError("Login throttled: err_too_many_requests")
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+        with pytest.raises(ThrottlingError):
+            await coord._retry_with_backoff(op, "Login")
+
+    assert sleep.await_args_list, "a throttled login must wait before retrying"
+    for call in sleep.await_args_list:
+        assert call.args[0] >= LOGIN_THROTTLE_WINDOW_SECONDS
+
+
+async def test_throttling_gives_up_after_a_few_windows_rather_than_holding_a_slot():
+    """The retry sequence holds a rate-limiter slot throughout.
+
+    Waiting out the full 8 attempts at 70 s each would pin one of three slots for
+    ~9 minutes and outlive the login lock's TTL. If three full windows have not
+    cleared it, the problem is systemic, not transient.
+    """
+    coord = _make_coordinator(settings=_make_settings(max_retries=8, backoff=5))
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        raise ThrottlingError("Login throttled: err_too_many_requests")
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+        with pytest.raises(ThrottlingError):
+            await coord._retry_with_backoff(op, "Login")
+
+    assert attempts == LOGIN_THROTTLE_MAX_WAITS + 1
+    assert len(sleep.await_args_list) == LOGIN_THROTTLE_MAX_WAITS
+
+
+async def test_the_throttle_wait_honours_the_configured_window():
+    """A caller that knows no real lockout exists must not be made to wait one out.
+
+    The mocked-throttle integration test is exactly that case: its retry is served
+    from a captured SID and never reaches the server, so sitting through the full
+    70 s window bought nothing and blew the test's own budget.
+    """
+    settings = _make_settings(max_retries=2)
+    settings.login_throttle_window = 3
+    coord = _make_coordinator(settings=settings)
+
+    async def op():
+        raise ThrottlingError("Login throttled: err_too_many_requests")
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+        with pytest.raises(ThrottlingError):
+            await coord._retry_with_backoff(op, "Login")
+
+    assert sleep.await_args_list
+    for call in sleep.await_args_list:
+        assert 3 <= call.args[0] < LOGIN_THROTTLE_WINDOW_SECONDS
+
+
+async def test_the_throttle_window_falls_back_to_the_constant_when_unset():
+    """Settings objects without the field (older configs, mocks) still behave."""
+    settings = _make_settings(max_retries=2)
+    del settings.login_throttle_window
+    coord = _make_coordinator(settings=settings)
+
+    async def op():
+        raise ThrottlingError("Login throttled: err_too_many_requests")
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+        with pytest.raises(ThrottlingError):
+            await coord._retry_with_backoff(op, "Login")
+
+    assert sleep.await_args_list[0].args[0] >= LOGIN_THROTTLE_WINDOW_SECONDS
+
+
+async def test_a_throttle_that_clears_lets_the_login_through():
+    coord = _make_coordinator(settings=_make_settings(max_retries=8, backoff=5))
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ThrottlingError("Login throttled: err_too_many_requests")
+        return ("sid-1", "uid-1")
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await coord._retry_with_backoff(op, "Login")
+
+    assert result == ("sid-1", "uid-1")
+    assert attempts == 2
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +563,118 @@ async def test_perform_login_retries_transient_then_succeeds():
 
     assert sid == "sid-final"
     assert attempts == 3
+
+
+# ---------------------------------------------------------------------------
+# Unreachable server -> re-resolve the domain IP and relogin (_acquire_new_sid)
+# ---------------------------------------------------------------------------
+
+
+def _registry_with_server(server_ip="10.0.0.1", port=443):
+    registry = MagicMock()
+    config = MagicMock()
+    config.server_ip = server_ip
+    config.port = port
+    config.api_key = SecretStr("api-key-1234567890")
+    registry.get_server.return_value = config
+    return registry
+
+
+def _coord_for_relogin(cache=None, registry=None):
+    cache = cache or AsyncMock()
+    cache.get_sid.return_value = None
+    return _make_coordinator(cache=cache, registry=registry or _registry_with_server())
+
+
+async def test_acquire_new_sid_re_resolves_the_domain_ip_and_retries_there():
+    """A domain server that never answered may simply have moved.
+
+    The cached `active_ip` is the whole reason this can go stale, and a hang
+    carries no response code -- so `FAILOVER_ERROR_CODES` never fires and, before
+    this, we retried the dead address eight times without ever asking
+    `show-domains` where the domain actually lives now.
+    """
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _coord_for_relogin(cache=cache)
+    coord._prefetch_domain_server_ip = AsyncMock(return_value="10.0.0.9")
+    coord._perform_login = AsyncMock(
+        side_effect=[ServerUnreachableError("no answer", server_ip="10.0.0.1"), ("sid-new", "uid-1")]
+    )
+
+    entry = datetime.now(UTC).replace(tzinfo=None)
+    sid, ip = await coord._acquire_new_sid("mgmt1", "Domain4", False, entry, "10.0.0.1", None, None)
+
+    assert (sid, ip) == ("sid-new", "10.0.0.9")
+    coord._prefetch_domain_server_ip.assert_awaited_once_with("mgmt1", "Domain4", force=True)
+    cache.delete_sid.assert_awaited_once()
+    # The second attempt went to the freshly resolved address, not the dead one.
+    assert coord._perform_login.await_args_list[1].args[2] == "10.0.0.9"
+    # ... and the SID is cached against the address that actually answered.
+    assert cache.set_sid.await_args.args[3] == "10.0.0.9"
+
+
+async def test_acquire_new_sid_fails_fast_when_the_re_resolved_ip_is_unchanged():
+    """Nothing moved and nobody is answering: stop, do not keep knocking."""
+    coord = _coord_for_relogin()
+    coord._prefetch_domain_server_ip = AsyncMock(return_value="10.0.0.1")
+    coord._perform_login = AsyncMock(side_effect=ServerUnreachableError("no answer", server_ip="10.0.0.1"))
+
+    entry = datetime.now(UTC).replace(tzinfo=None)
+    with pytest.raises(AuthenticationError):
+        await coord._acquire_new_sid("mgmt1", "Domain4", False, entry, "10.0.0.1", None, None)
+
+    assert coord._perform_login.await_count == 1
+
+
+async def test_acquire_new_sid_does_not_re_resolve_for_the_system_domain():
+    """The system domain has no per-domain server to re-resolve -- that IS the server."""
+    coord = _coord_for_relogin()
+    coord._prefetch_domain_server_ip = AsyncMock()
+    coord._perform_login = AsyncMock(side_effect=ServerUnreachableError("no answer", server_ip="10.0.0.1"))
+
+    entry = datetime.now(UTC).replace(tzinfo=None)
+    with pytest.raises(AuthenticationError):
+        await coord._acquire_new_sid("mgmt1", "", False, entry, "10.0.0.1", None, None)
+
+    coord._prefetch_domain_server_ip.assert_not_awaited()
+    assert coord._perform_login.await_count == 1
+
+
+async def test_unreachable_login_still_surfaces_as_authentication_error():
+    """Backward compatibility: callers catch AuthenticationError on login failure."""
+    coord = _coord_for_relogin()
+    coord._prefetch_domain_server_ip = AsyncMock(return_value="10.0.0.1")
+    coord._perform_login = AsyncMock(side_effect=ServerUnreachableError("no answer", server_ip="10.0.0.1"))
+
+    entry = datetime.now(UTC).replace(tzinfo=None)
+    with pytest.raises(AuthenticationError) as excinfo:
+        await coord._acquire_new_sid("mgmt1", "Domain4", False, entry, "10.0.0.1", None, None)
+
+    assert "10.0.0.1" in str(excinfo.value)
+
+
+async def test_a_second_unreachable_at_the_new_ip_is_not_retried_again():
+    """One re-resolution, not a loop: two dead addresses end the attempt."""
+    coord = _coord_for_relogin()
+    coord._prefetch_domain_server_ip = AsyncMock(return_value="10.0.0.9")
+    coord._perform_login = AsyncMock(side_effect=ServerUnreachableError("no answer", server_ip="x"))
+
+    entry = datetime.now(UTC).replace(tzinfo=None)
+    with pytest.raises(AuthenticationError):
+        await coord._acquire_new_sid("mgmt1", "Domain4", False, entry, "10.0.0.1", None, None)
+
+    assert coord._perform_login.await_count == 2
+    coord._prefetch_domain_server_ip.assert_awaited_once()
+
+
+async def test_try_login_once_passes_server_unreachable_through_unwrapped():
+    """`_acquire_new_sid` needs the type to decide on re-resolution."""
+    coord = _make_coordinator()
+    coord._retry_with_backoff = AsyncMock(side_effect=ServerUnreachableError("no answer", server_ip="10.0.0.1"))
+
+    with pytest.raises(ServerUnreachableError):
+        await coord._try_login_once("m", "d", "10.0.0.1", "key", False, None, None, None)
 
 
 # ---------------------------------------------------------------------------

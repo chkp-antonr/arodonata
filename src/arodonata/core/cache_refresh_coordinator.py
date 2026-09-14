@@ -122,6 +122,9 @@ class CacheRefreshCoordinator:
             cache=self._cache,
             fetch_full_object=self._object_service.fetch_full_object,
             to_cpobject=api_object_to_cpobject,
+            # Read-only on purpose: refresh_last_published_session would advance
+            # the baseline before the apply and empty the diff window.
+            fetch_head=self._object_service.fetch_last_published_session,
             max_changes=self.max_incremental_changes,
         )
 

@@ -16,6 +16,17 @@ import pytest
 from arodonata import ArodonataClient, ArodonataSettings
 from arodonata.config.constants import THROTTLE_ERROR_CODE
 
+# 10 logout->login cycles against one IP is far past Check Point's per-minute
+# login allowance (server-side configuration, 3 by default), so this test is
+# *expected* to be throttled -- that is what it checks.
+# Absorbing a throttle costs a full LOGIN_THROTTLE_WINDOW_SECONDS wait (70 s,
+# the only wait that clears the lockout) plus the login attempt that follows it,
+# so a cycle can legitimately take well over two minutes. The previous 120 s
+# budget was calibrated against an exponential ramp whose every step was shorter
+# than the window -- a ramp that, as it turned out, never cleared a lockout at
+# all. Sized for two windows plus a slow login.
+_THROTTLED_CYCLE_BUDGET_SECONDS = 300
+
 
 async def test_rapid_logout_login_cycles_handled(apikey_client):
     """10 rapid logout→login cycles complete without permanent auth failure.
@@ -25,8 +36,8 @@ async def test_rapid_logout_login_cycles_handled(apikey_client):
       2. api_call() to force a fresh login
 
     If the server throttles (err_too_many_requests), the retry logic must
-    back off and eventually succeed.  We allow up to 10 cycles; the test
-    passes if all 10 complete without AuthenticationError or deadlock.
+    wait out the login window and eventually succeed.  We allow up to 10 cycles;
+    the test passes if all 10 complete without AuthenticationError or deadlock.
     """
     client, mgmt_name = apikey_client
 
@@ -35,7 +46,7 @@ async def test_rapid_logout_login_cycles_handled(apikey_client):
         await client.logout(mgmt_name)
         result = await asyncio.wait_for(
             client.api_call(mgmt_name, "show-api-versions"),
-            timeout=120,
+            timeout=_THROTTLED_CYCLE_BUDGET_SECONDS,
         )
         assert result.success, f"Cycle {i + 1}/{MAX_CYCLES}: api_call failed after logout: {result.message}"
 
@@ -63,6 +74,10 @@ async def test_throttle_error_code_is_retried_not_fatal(db_engine):
         api_keys=api_key,
         login_max_retries=3,
         login_retry_backoff=1,
+        # The throttle here is mocked and the retry is served from a captured SID,
+        # so no real lockout exists to wait out. Without this the retry would sit
+        # through the full 70 s window for nothing and blow the budget below.
+        login_throttle_window=1,
     )
 
     throttle_count = 0

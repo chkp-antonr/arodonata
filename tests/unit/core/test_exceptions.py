@@ -24,6 +24,8 @@ _HIERARCHY = [
     (exc.ApiCallError, exc.ApiError),
     (exc.ApiQueryError, exc.ApiError),
     (exc.ThrottlingError, exc.ApiError),
+    (exc.TaskTimeoutError, exc.ArodonataError),
+    (exc.TaskPollError, exc.ApiCallError),
     (exc.CacheError, exc.ArodonataError),
     (exc.CacheNotInitializedError, exc.CacheError),
     (exc.ClientError, exc.ArodonataError),
@@ -110,3 +112,48 @@ def test_all_exports_are_defined():
     exported = {getattr(exc, name) for name in exc.__all__}
     for cls in _ALL_CLASSES:
         assert cls in exported
+
+
+# --------------------------------------------------------------------------
+# Task errors (self-managed show-task polling, asdk/task_waiter.py)
+# --------------------------------------------------------------------------
+
+
+def test_task_timeout_error_is_caught_by_bare_timeout_error():
+    """The backward-compatibility guarantee: before self-managed polling a task
+    timeout surfaced as a bare TimeoutError, so today's handlers must keep working."""
+    caught: BaseException | None = None
+    try:
+        raise exc.TaskTimeoutError("task 01ab 'in progress' at 40% after 900s")
+    except TimeoutError as e:
+        caught = e
+    assert isinstance(caught, exc.TaskTimeoutError)
+    assert str(caught) == "task 01ab 'in progress' at 40% after 900s"
+
+
+def test_task_timeout_error_carries_task_ids_and_statuses():
+    err = exc.TaskTimeoutError("boom", task_ids=["01ab", "02cd"], statuses=["in progress"])
+    assert err.message == "boom"
+    assert err.task_ids == ["01ab", "02cd"]
+    assert err.statuses == ["in progress"]
+
+
+def test_task_timeout_error_defaults_to_empty_detail():
+    err = exc.TaskTimeoutError("boom")
+    assert err.task_ids == []
+    assert err.statuses == []
+
+
+def test_task_poll_error_carries_task_ids_and_api_error_detail():
+    err = exc.TaskPollError("show-task failed 6 times", task_ids=["01ab"], err_code="err_x", err_message="reset")
+    assert err.task_ids == ["01ab"]
+    assert err.err_code == "err_x"
+    assert err.err_message == "reset"
+
+
+def test_task_errors_are_exported_from_package_roots():
+    import arodonata
+    from arodonata.core import TaskPollError, TaskTimeoutError
+
+    assert arodonata.TaskTimeoutError is TaskTimeoutError is exc.TaskTimeoutError
+    assert arodonata.TaskPollError is TaskPollError is exc.TaskPollError

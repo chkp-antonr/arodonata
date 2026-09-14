@@ -132,8 +132,9 @@ async def test_concurrent_login_deduplication(apikey_client):
         return await original_login(*args, **kwargs)
 
     with patch.object(client._mgmt._transport, "login_with_apikey", side_effect=counting_login):
-        # Clear cached SID so all 10 tasks must compete to re-authenticate
-        await client.cache.delete_sid(mgmt_name, "")
+        # Log out (not just forget) so all 10 tasks must compete to re-authenticate
+        # without leaving the old session alive on the server.
+        await client.logout(mgmt_name)
 
         tasks = [client.api_call(mgmt_name, "show-api-versions") for _ in range(10)]
         results = await asyncio.gather(*tasks)
@@ -142,6 +143,17 @@ async def test_concurrent_login_deduplication(apikey_client):
     assert login_call_count == 1, (
         f"Expected exactly 1 real login request (distributed lock prevents stampede), got {login_call_count}"
     )
+
+
+# This test warms up every domain, drops every SID, then logs in to all of them
+# again -- two logins per server IP in quick succession, on top of whatever the
+# preceding tests already spent against the same IPs inside the same minute. It
+# is *expected* to meet Check Point's per-minute login limit (the allowance is
+# server-side configuration, 3 by default); absorbing that costs a full
+# LOGIN_THROTTLE_WINDOW_SECONDS wait (70 s, the only wait that clears the
+# lockout) plus the login attempt after it. The previous 120 s budget could not
+# hold one such cycle.
+_THROTTLED_LOGIN_BUDGET_SECONDS = 300
 
 
 async def test_login_to_all_domains_concurrently(apikey_client, all_domains):
@@ -156,14 +168,19 @@ async def test_login_to_all_domains_concurrently(apikey_client, all_domains):
     for d in all_domains:
         await client.api_call(mgmt_name, "show-api-versions", domain=d["name"])
 
-    # Clear all domain SIDs so each task must perform a fresh domain login
+    # Log out each domain so the next call must perform a fresh login. Note this
+    # is logout(), not cache.delete_sid(): the latter drops only OUR record and
+    # leaves the session alive and counted on the server. Nine such orphans per
+    # b1 run were enough to make later logins to some domain servers hang for the
+    # full timeout -- this test passes in 10s on its own and fails after the rest
+    # of the bucket has run.
     for d in all_domains:
-        await client.cache.delete_sid(mgmt_name, d["name"])
+        await client.logout(mgmt_name, d["name"])
 
     async def login_to_domain(domain_name: str):
         return await asyncio.wait_for(
             client.api_call(mgmt_name, "show-api-versions", domain=domain_name),
-            timeout=120,
+            timeout=_THROTTLED_LOGIN_BUDGET_SECONDS,
         )
 
     results = await asyncio.gather(

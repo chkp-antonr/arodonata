@@ -10,6 +10,7 @@ from .login_coordinator import LoginCoordinator
 from .rate_limiter import RateLimiter
 from .server_registry import ServerConfig, ServerRegistry
 from .session_cleaner import CleanupResult, SessionCleaner
+from .task_waiter import TaskStatus, TaskWaiter
 from .transport import ApiTransport, RawApiResponse
 
 __all__ = [
@@ -22,4 +23,6 @@ __all__ = [
     "CleanupResult",
     "ApiTransport",
     "RawApiResponse",
+    "TaskStatus",
+    "TaskWaiter",
 ]

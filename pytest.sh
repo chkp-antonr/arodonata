@@ -13,7 +13,10 @@
 # snapshots the lab baseline, and restores it at teardown if the bucket
 # mutated anything. int-full runs the six sessions back-to-back -- continue on
 # failure, non-zero exit if any bucket failed -- instead of one long session
-# with a single restore at the very end.
+# with a single restore at the very end. It pauses BUCKET_PAUSE_SECONDS between
+# buckets so the next one does not open into Check Point's login rate-limit
+# window; override it (e.g. BUCKET_PAUSE_SECONDS=0) if your server does not
+# enforce one.
 #
 # Every bucket run prints its 15 slowest tests (--durations=15); use those
 # numbers to rebalance the buckets -- moving a test file is a `git mv`.
@@ -28,6 +31,14 @@ set -uo pipefail
 INT_ROOT=tests/integration
 BUCKETS=(1 2 3 4 5 6)
 INT_OPTS=(--override-ini=addopts= --no-cov -ra --durations=15)
+
+# Gap between buckets in int-full. Every bucket opens with a burst of logins --
+# the baseline snapshot alone logs in to each domain -- and Check Point allows 3
+# logins per minute per user per server IP, re-arming that window on every
+# rejected attempt. Starting the next bucket immediately walks into a window the
+# previous one just armed; this waits it out with margin (the window is ~70s,
+# see LOGIN_THROTTLE_WINDOW_SECONDS). Costs ~7 minutes across a ~2 hour run.
+BUCKET_PAUSE_SECONDS="${BUCKET_PAUSE_SECONDS:-90}"
 
 run_bucket() {  # $1 = bucket number; remaining args passed through to pytest
     local n="$1"
@@ -49,6 +60,10 @@ case "$tier" in
             echo "=================== integration bucket b$n ==================="
             if ! run_bucket "$n" "$@"; then
                 failed+=("b$n")
+            fi
+            if [[ "$n" != "${BUCKETS[-1]}" ]]; then
+                echo "--- pausing ${BUCKET_PAUSE_SECONDS}s to clear Check Point's login window ---"
+                sleep "$BUCKET_PAUSE_SECONDS"
             fi
         done
         echo "=================== int-full summary ==================="

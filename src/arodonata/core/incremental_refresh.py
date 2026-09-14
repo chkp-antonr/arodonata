@@ -45,6 +45,7 @@ class IncrementalRefresher:
         cache: Any,
         fetch_full_object: Callable[[str, str, str], Awaitable[dict[str, Any] | None]],
         to_cpobject: Callable[[dict[str, Any], str, str], CPObject | None],
+        fetch_head: Callable[[str, str], Awaitable[Any]] | None = None,
         in_scope_types: frozenset[str] = DEFAULT_IN_SCOPE_TYPES,
         max_changes: int = DEFAULT_MAX_CHANGES,
     ) -> None:
@@ -52,6 +53,7 @@ class IncrementalRefresher:
         self._cache = cache
         self._fetch_full_object = fetch_full_object
         self._to_cpobject = to_cpobject
+        self._fetch_head = fetch_head
         self._in_scope_types = in_scope_types
         self._max_changes = max_changes
 
@@ -66,6 +68,8 @@ class IncrementalRefresher:
         baseline = await self._cache.get_last_published_session(mgmt, domain)
         if baseline is None or not getattr(baseline, "published_time", None):
             raise FallbackToFull("no baseline session")
+
+        await self._require_forward_history(mgmt, domain, baseline)
 
         response = await self._fetch_changes(mgmt, domain, baseline)
         changes = self._parse_in_scope(response)
@@ -129,6 +133,51 @@ class IncrementalRefresher:
             applied += 1
         log().debug(f"Incremental apply for {mgmt}/{domain}: {len(to_upsert)} upsert(s), {len(deleted_uids)} delete(s)")
         return applied
+
+    async def _require_forward_history(self, mgmt: str, domain: str, baseline: Any) -> None:
+        """Raise FallbackToFull unless the domain's head is later than the baseline.
+
+        A diff is a forward change list, so it only describes reality when the
+        domain's head is a later revision than the one the cache was built from.
+        A `revert-to-revision` moves the head BACKWARDS and discards the sessions
+        in between: the objects it restores were deleted in sessions that no
+        longer exist, and the ones it removes were added in sessions that no
+        longer exist. Nothing in a change list describes that, so applying one
+        across a revert leaves removed objects sitting in the cache and drops
+        restored ones — they "disappear" from the caller's point of view.
+
+        Until this check existed, the full reload after a revert happened only
+        because Check Point refused the `show-changes` call and `_fetch_changes`
+        turned every failure into FallbackToFull — the right outcome by luck
+        rather than by design, and dependent on a server-side behaviour nothing
+        here controls.
+
+        Only a head that is STRICTLY earlier counts as reverted. Requiring it to
+        be strictly *later* was tried first and was too strict to live with:
+        Check Point publish-times have MINUTE resolution, so a publish read back
+        in the same minute has a head timestamp equal to the baseline's, and
+        every prompt publish-then-read fell back to a full reload — which is what
+        `test_bulk_incremental_mode_applies_publish_without_full_reload` exists to
+        catch, and did.
+
+        The residual gap is narrow and worth naming: reverting to a revision
+        published in the same minute as the cache baseline is invisible here, and
+        falls back to the `show-changes` failure path that this check exists to
+        stop relying on. Closing it properly means diffing by `from-session`
+        rather than `from-date`, so the server itself rejects a baseline that is
+        no longer in history.
+        """
+        if self._fetch_head is None:
+            return  # caller opted out; the show-changes failure path still applies
+
+        head = await self._fetch_head(mgmt, domain)
+        if head is None or not getattr(head, "published_time", None):
+            raise FallbackToFull("current head unknown")
+
+        if head.published_time < baseline.published_time:
+            raise FallbackToFull(
+                f"history moved backwards (head {head.published_time}, baseline {baseline.published_time}) - reverted"
+            )
 
     # ---- diff fetching / parsing ------------------------------------------
 

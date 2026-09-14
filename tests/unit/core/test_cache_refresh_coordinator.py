@@ -77,13 +77,26 @@ class StatefulCache(FakeCache):
 class FakeObjectService:
     """Collaborator the coordinator drives for staleness + reloads + re-fetches."""
 
-    def __init__(self, stale=False, objects_by_uid=None) -> None:
+    # Default head sits after _Baseline's default published_time, so the smart-fast
+    # tests below exercise the diff path; the revert tests override it.
+    DEFAULT_HEAD = datetime(2026, 7, 2)
+
+    def __init__(self, stale=False, objects_by_uid=None, head_published_time=DEFAULT_HEAD) -> None:
         self.stale = stale
         self.full_reloads: list[tuple[str, str]] = []
         self.baseline_refreshes: list[tuple[str, str]] = []
         self.stale_checks = 0
         self.fetched: list[str] = []
         self.objects_by_uid = objects_by_uid or {}
+        self.head_published_time = head_published_time
+        self.head_fetches: list[tuple[str, str]] = []
+
+    async def fetch_last_published_session(self, mgmt, domain):
+        """Read-only head lookup; must never advance the cached baseline."""
+        self.head_fetches.append((mgmt, domain))
+        if self.head_published_time is None:
+            return None
+        return _Baseline(self.head_published_time)
 
     async def _is_domain_stale(self, mgmt, domain):
         self.stale_checks += 1
@@ -376,6 +389,98 @@ async def test_smart_fast_applies_diff_without_full_reload():
     assert outcome.refreshed_domains == [("m1", "d1")]
     # baseline.published_time was passed as from_date (ISO).
     assert api.calls[0]["from_date"] == datetime(2026, 7, 1).isoformat()
+
+
+# --------------------------------------------------------------------------- #
+# A revert must always produce a full reload, never an incremental diff         #
+# --------------------------------------------------------------------------- #
+
+
+async def test_smart_fast_falls_back_to_full_when_the_head_moved_backwards():
+    """A revert rolls the domain back to an earlier revision, which no forward
+    change list can describe: the objects it restores were deleted in sessions
+    that no longer exist, and the ones it removes were added in sessions that no
+    longer exist. Applying a diff across that boundary leaves objects that the
+    revert removed sitting in the cache, and drops ones it restored.
+
+    Until now the full reload happened only because Check Point refused the
+    `show-changes` call and `_fetch_changes` turned every failure into
+    FallbackToFull -- correct by luck, not by design. This pins it by design.
+    """
+    obj = FakeObjectService(stale=True, head_published_time=datetime(2026, 6, 1))
+    cache = StatefulCache({("m1", "d1"): ["x"]}, baseline=_Baseline(datetime(2026, 7, 1)))
+    api = RecordingApi(_changes_response(adds=["a1"]))
+    coord = make_coord(cache, obj, api=api, mode=CacheMode.SMART_FAST)
+
+    outcome = await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART_FAST, 300))
+
+    assert obj.full_reloads == [("m1", "d1")]
+    assert api.calls == [], "no diff may be requested once the head is behind the baseline"
+    assert cache.upserted == []
+    assert cache.deleted == []
+    assert outcome.fell_back is True
+
+
+async def test_smart_fast_still_diffs_when_the_publish_lands_in_the_baseline_minute():
+    """Equal timestamps must NOT block the diff.
+
+    Check Point publish-times have MINUTE resolution (see
+    ObjectService._compare_published_times), so a publish read back in the same
+    minute has a head timestamp equal to the baseline's. Treating that as
+    suspicious was tried and made every prompt publish-then-read fall back to a
+    full reload — smart-fast in name only.
+    """
+    obj = FakeObjectService(stale=True, head_published_time=datetime(2026, 7, 1))
+    cache = StatefulCache({("m1", "d1"): ["x"]}, baseline=_Baseline(datetime(2026, 7, 1)))
+    api = RecordingApi(_changes_response(adds=["a1"]))
+    coord = make_coord(cache, obj, api=api, mode=CacheMode.SMART_FAST)
+
+    outcome = await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART_FAST, 300))
+
+    assert obj.full_reloads == []
+    assert cache.upserted == ["a1"]
+    assert outcome.fell_back is False
+
+
+async def test_smart_fast_falls_back_to_full_when_the_head_cannot_be_read():
+    """If we cannot establish where the domain's head is, we cannot establish that
+    a diff is safe."""
+    obj = FakeObjectService(stale=True, head_published_time=None)
+    cache = StatefulCache({("m1", "d1"): ["x"]}, baseline=_Baseline(datetime(2026, 7, 1)))
+    api = RecordingApi(_changes_response(adds=["a1"]))
+    coord = make_coord(cache, obj, api=api, mode=CacheMode.SMART_FAST)
+
+    outcome = await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART_FAST, 300))
+
+    assert obj.full_reloads == [("m1", "d1")]
+    assert api.calls == []
+    assert outcome.fell_back is True
+
+
+async def test_smart_fast_checks_the_head_without_advancing_the_baseline():
+    """The head lookup must be read-only: advancing the baseline before the apply
+    would make the diff window empty and silently lose the changes in it."""
+    obj = FakeObjectService(stale=True, head_published_time=datetime(2026, 6, 1))
+    cache = StatefulCache({("m1", "d1"): ["x"]}, baseline=_Baseline(datetime(2026, 7, 1)))
+    coord = make_coord(cache, obj, api=RecordingApi(_changes_response()), mode=CacheMode.SMART_FAST)
+
+    await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART_FAST, 300))
+
+    assert obj.head_fetches == [("m1", "d1")]
+    assert obj.baseline_refreshes == [], "the read-only head check must not advance the baseline"
+
+
+async def test_smart_fast_still_applies_a_diff_when_the_head_moved_forward():
+    obj = FakeObjectService(stale=True, head_published_time=datetime(2026, 7, 5))
+    cache = StatefulCache({("m1", "d1"): ["x"]}, baseline=_Baseline(datetime(2026, 7, 1)))
+    api = RecordingApi(_changes_response(adds=["a1"]))
+    coord = make_coord(cache, obj, api=api, mode=CacheMode.SMART_FAST)
+
+    outcome = await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART_FAST, 300))
+
+    assert obj.full_reloads == []
+    assert cache.upserted == ["a1"]
+    assert outcome.fell_back is False
 
 
 async def test_smart_fast_delete_only_diff_skips_upsert():
