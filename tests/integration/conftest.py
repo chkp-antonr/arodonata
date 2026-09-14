@@ -17,6 +17,8 @@ Required environment variables:
     USER_admin, USER_AntonR, USER_Eng1..USER_Eng4 - credential passwords
 Optional:
     TEST_DOMAIN_A / TEST_DOMAIN_B - MDM sandbox domains for mutating tests
+    ARODONATA_TEST_TRACE - set to export OTel spans to _tmp/otel_traces/ for
+        one run (see the integration_tracing fixture); off by default
 """
 
 from __future__ import annotations
@@ -92,12 +94,54 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tracing (opt-in)
+# ---------------------------------------------------------------------------
+
+TRACE_DIR = Path("_tmp/otel_traces")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def integration_tracing():
+    """Export OTel spans for this run when ARODONATA_TEST_TRACE is set; off otherwise.
+
+    arodonata produces spans but never owns a TracerProvider, so without one every
+    `@traced` call is a no-op -- which is the right default for a lab run and also
+    why an integration failure has never had a trace to read. Set the variable to
+    turn it on for a run you cannot explain from the log alone:
+
+        ARODONATA_TEST_TRACE=1 ./pytest.sh int-1 -k some_unclear_test
+
+    Spans land in `_tmp/otel_traces/` with durations per login, per transport call
+    and per rate-limiter acquisition -- the breakdown that says whether a slow test
+    was waiting on the wire, on a lockout, or on a slot.
+
+    `integration_run_lock` depends on this so the provider is registered before any
+    other fixture touches the lab: OpenTelemetry's ProxyTracer permanently caches
+    the first real provider it sees, so a late registration traces nothing.
+    """
+    if not os.getenv("ARODONATA_TEST_TRACE"):
+        yield None
+        return
+
+    from arlogi.otel import setup_tracing, shutdown_tracing
+
+    TRACE_DIR.mkdir(parents=True, exist_ok=True)
+    setup_tracing("arodonata-integration", file_dir=TRACE_DIR, file_prefix="int")
+    log.warning("OTel tracing enabled for this run: %s", TRACE_DIR)
+    try:
+        yield TRACE_DIR
+    finally:
+        shutdown_tracing()  # flush the batch processor before the session ends
+        log.warning("OTel traces written to %s", TRACE_DIR)
+
+
+# ---------------------------------------------------------------------------
 # Run lock
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="session", autouse=True)
-def integration_run_lock():
+def integration_run_lock(integration_tracing):
     """Refuse to start while another integration run is in progress.
 
     All integration runs share one lab server and one SQLite cache file (see
