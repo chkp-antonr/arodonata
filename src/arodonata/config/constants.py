@@ -49,11 +49,12 @@ DEFAULT_CONCURRENT_LIMIT: Final[int] = 3
 DEFAULT_LOGIN_BACKOFF: Final[int] = 5  # seconds
 DEFAULT_LOGIN_RETRIES: Final[int] = 8
 # How long a caller waits for a free RateLimiter concurrency slot (asdk/rate_limiter.py)
-# before giving up. Must comfortably exceed how long another caller can legitimately
-# hold a slot: login's own retry-with-backoff (DEFAULT_LOGIN_BACKOFF * 1.3^attempt,
-# capped at 60s/attempt) is held for the ENTIRE slot lease to avoid compounding
-# server-side throttling, so a too-short slot-wait timeout makes concurrent callers
-# fail fast even though the server would have accepted a login moments later.
+# before giving up. A slot is held for one in-flight request. Since 2026-09-14 that
+# includes logins: a login takes the target server's slot for a single HTTP round
+# trip (bounded by DEFAULT_LOGIN_TIMEOUT), never across its retry ladder or a
+# throttle wait -- those happen outside the slot, and pacing belongs to the login
+# gate (asdk/login_gate.py). Long-running tasks (publish, revert) legitimately hold
+# a slot for their whole run, so this stays generous.
 DEFAULT_RATE_LIMIT_SLOT_TIMEOUT: Final[int] = 90  # seconds
 
 # Total wall-clock one login() may spend waiting out Check Point's per-MDS login

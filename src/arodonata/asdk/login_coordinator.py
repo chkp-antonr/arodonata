@@ -613,38 +613,47 @@ class LoginCoordinator:
         session_description: str | None = None,
         session_timeout: int | None = None,
     ) -> dict[str, Any]:
-        """Execute the actual login request to the API."""
+        """One login round trip to `server_ip`, inside that server's RateLimiter slot.
+
+        The slot covers the HTTP call only. It used to be held by the caller for
+        the whole retry ladder, which pinned one of three domain-server slots for
+        minutes while a throttled login waited (2026-09-14); pacing is the login
+        gate's job now (asdk/login_gate.py), and the slot goes back to meaning
+        what it means everywhere else -- one in-flight request.
+        """
         if self._auth_mode == "credential" and self._username and self._password_secret:
             log().trace(
                 f"Attempting credential login: mgmt='{mgmt_name}', domain='{domain}', IP={server_ip}, user={self._username}"
             )
-            return await self._transport.login_with_credentials(
+            async with self._rate_limiter.acquire(server_ip):
+                return await self._transport.login_with_credentials(
+                    server_ip=server_ip,
+                    username=self._username,
+                    password=self._password_secret.get_secret_value(),
+                    domain=domain if domain else None,
+                    port=port,
+                    session_name=session_name,
+                    session_description=session_description,
+                    session_timeout=session_timeout,
+                    timeout=self._settings.login_timeout,
+                )
+
+        masked_key = f"{api_key[:4]}...{api_key[-4:]}" if api_key and len(api_key) > 8 else "****"
+        log().trace(f"Attempting login: mgmt='{mgmt_name}', domain='{domain}', IP={server_ip}, API_KEY={masked_key}")
+        async with self._rate_limiter.acquire(server_ip):
+            return await self._transport.login_with_apikey(
                 server_ip=server_ip,
-                username=self._username,
-                password=self._password_secret.get_secret_value(),
+                api_key=api_key,
                 domain=domain if domain else None,
                 port=port,
                 session_name=session_name,
                 session_description=session_description,
                 session_timeout=session_timeout,
+                # A login is one HTTP round trip. Without this it inherited the
+                # transport's much larger default, so an unresponsive server cost
+                # 120 s per attempt across every retry (int-4, 2026-09-13).
                 timeout=self._settings.login_timeout,
             )
-
-        masked_key = f"{api_key[:4]}...{api_key[-4:]}" if api_key and len(api_key) > 8 else "****"
-        log().trace(f"Attempting login: mgmt='{mgmt_name}', domain='{domain}', IP={server_ip}, API_KEY={masked_key}")
-        return await self._transport.login_with_apikey(
-            server_ip=server_ip,
-            api_key=api_key,
-            domain=domain if domain else None,
-            port=port,
-            session_name=session_name,
-            session_description=session_description,
-            session_timeout=session_timeout,
-            # A login is one HTTP round trip. Without this it inherited the
-            # transport's much larger default, so an unresponsive server cost
-            # 120 s per attempt across every retry (int-4, 2026-09-13).
-            timeout=self._settings.login_timeout,
-        )
 
     def _raise_as_auth_error(self, exc: Exception, mgmt_name: str, domain: str) -> Never:
         """Always raises AuthenticationError wrapping exc. Never returns."""
@@ -749,44 +758,40 @@ class LoginCoordinator:
         session_name: str | None,
         session_description: str | None,
     ) -> tuple[str, str | None]:
-        """Acquire the rate limiter and run the retry-with-backoff sequence once.
+        """Run the retry-with-backoff sequence once; translate the outcome for `_acquire_new_sid`.
 
-        The rate limiter is held for the ENTIRE retry sequence (acquired once,
-        not re-acquired per attempt), preventing concurrent logins to the same
-        IP from compounding throttling issues.
+        Takes no RateLimiter slot itself: each attempt takes the target server's
+        slot around its own HTTP call, inside `_execute_login_request`.
         """
         from ..core.exceptions import AuthenticationError, ServerUnreachableError
 
-        async with self._rate_limiter.acquire(server_ip):
-            log().trace(f"Rate limiter acquired for '{mgmt_name}:{domain}', starting login retry sequence")
-
-            try:
-                result = await self._retry_with_backoff(
-                    lambda: self._login_operation_for(
-                        mgmt_name,
-                        domain,
-                        server_ip,
-                        api_key,
-                        force_relogin,
-                        port,
-                        session_name,
-                        session_description,
-                    ),
-                    "Login",
-                )
-                if result is None:
-                    raise AuthenticationError("Login failed: No session ID returned")
-                sid, uid = result  # type: ignore[assignment]
-                return sid, uid
-            except ServerUnreachableError as e:
-                # Must survive unwrapped: `_acquire_new_sid` decides, on this type,
-                # whether to re-resolve the domain's active server and try there.
-                e.server_ip = e.server_ip or server_ip
-                raise
-            except AuthenticationError:
-                raise
-            except Exception as e:
-                self._raise_as_auth_error(e, mgmt_name, domain)
+        try:
+            result = await self._retry_with_backoff(
+                lambda: self._login_operation_for(
+                    mgmt_name,
+                    domain,
+                    server_ip,
+                    api_key,
+                    force_relogin,
+                    port,
+                    session_name,
+                    session_description,
+                ),
+                "Login",
+            )
+            if result is None:
+                raise AuthenticationError("Login failed: No session ID returned")
+            sid, uid = result  # type: ignore[assignment]
+            return sid, uid
+        except ServerUnreachableError as e:
+            # Must survive unwrapped: `_acquire_new_sid` decides, on this type,
+            # whether to re-resolve the domain's active server and try there.
+            e.server_ip = e.server_ip or server_ip
+            raise
+        except AuthenticationError:
+            raise
+        except Exception as e:
+            self._raise_as_auth_error(e, mgmt_name, domain)
 
     async def _login_with_cleanup_retry(
         self,
@@ -855,8 +860,8 @@ class LoginCoordinator:
     ) -> tuple[str, str | None]:
         """Perform actual login operation with retry logic.
 
-        Acquires the rate limiter lock ONCE and holds it through all retry attempts.
-        This prevents concurrent logins to the same IP from compounding throttling issues.
+        Delegates to `_login_with_cleanup_retry`; see `_try_login_once` for how slots
+        and pacing are handled.
 
         Args:
             mgmt_name: Management server name.
@@ -1345,12 +1350,9 @@ class LoginCoordinator:
                 raise AuthenticationError(f"Dedicated session login failed for '{mgmt_name}:{domain}': {error_msg}")
             return str(response["sid"]), response.get("data", {}).get("uid")
 
-        # Rate limiter held for the ENTIRE retry sequence (acquired once, not
-        # re-acquired per attempt), matching _try_login_once's pattern -- prevents
-        # concurrent dedicated-session logins to the same IP from compounding
-        # throttling issues.
-        async with self._rate_limiter.acquire(server_ip):
-            result = await self._retry_with_backoff(_attempt, "Dedicated session login")
+        # Each attempt takes the target's RateLimiter slot around its own HTTP call
+        # (inside _execute_login_request); nothing is held across the ladder.
+        result = await self._retry_with_backoff(_attempt, "Dedicated session login")
 
         if result is None:
             raise AuthenticationError(

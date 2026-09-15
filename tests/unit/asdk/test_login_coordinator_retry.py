@@ -509,7 +509,12 @@ async def test_try_login_once_wraps_other_exception_as_auth_error():
         await coord._try_login_once("m", "", "ip", "key", False, None, None, None)
 
 
-async def test_try_login_once_acquires_rate_limiter_once():
+async def test_try_login_once_takes_no_slot_itself():
+    """The slot is per attempt, inside _execute_login_request -- not held across the ladder.
+
+    Holding it across every retry and throttle wait pinned one of three domain-server
+    slots for minutes while a login was paced (2026-09-14).
+    """
     rl = _make_rate_limiter()
     coord = LoginCoordinator(
         registry=MagicMock(),
@@ -522,7 +527,37 @@ async def test_try_login_once_acquires_rate_limiter_once():
 
     await coord._try_login_once("m", "", "10.0.0.1", "key", False, None, None, None)
 
-    rl.acquire.assert_called_once_with("10.0.0.1")
+    rl.acquire.assert_not_called()
+
+
+async def test_execute_login_request_takes_the_target_slot_around_the_transport_call():
+    events: list[str] = []
+
+    async def slot_in(*args):
+        events.append("slot-in")
+
+    async def slot_out(*args):
+        events.append("slot-out")
+        return False
+
+    rl = MagicMock()
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(side_effect=slot_in)
+    cm.__aexit__ = AsyncMock(side_effect=slot_out)
+    rl.acquire = MagicMock(return_value=cm)
+    transport = AsyncMock()
+
+    async def http(**kwargs):
+        events.append("http")
+        return {"success": True, "sid": "s"}
+
+    transport.login_with_apikey = AsyncMock(side_effect=http)
+    coord = _make_coordinator(rate_limiter=rl, transport=transport)
+
+    await coord._execute_login_request("m", "", "10.0.0.7", "key")
+
+    rl.acquire.assert_called_once_with("10.0.0.7")
+    assert events == ["slot-in", "http", "slot-out"]
 
 
 # ---------------------------------------------------------------------------
@@ -724,30 +759,31 @@ async def test_create_dedicated_session_persistent_failure_raises_after_retries(
     assert transport_login.await_count == 3
 
 
-async def test_create_dedicated_session_holds_rate_limiter_for_entire_retry_sequence():
-    """Matches _try_login_once's pattern: the rate limiter is acquired ONCE for the
-    whole retry sequence, not re-acquired per attempt."""
+async def test_create_dedicated_session_takes_one_slot_per_attempt():
+    """Backoff sleeps between attempts hold no slot."""
     registry = MagicMock()
     registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", api_key=SecretStr("key"), port=None)
     rate_limiter = _make_rate_limiter()
-    coord = _make_coordinator(registry=registry, rate_limiter=rate_limiter, settings=_make_settings(max_retries=4))
-
+    transport = AsyncMock()
     attempts = 0
 
-    async def fake_login(*a, **k):
+    async def fake_login(**kwargs):
         nonlocal attempts
         attempts += 1
         if attempts < 2:
-            return {"success": False, "message": "throttled"}
+            return {"success": False, "message": "transient"}
         return {"success": True, "sid": "ded-sid", "data": {}}
 
-    coord._execute_login_request = AsyncMock(side_effect=fake_login)
+    transport.login_with_apikey = AsyncMock(side_effect=fake_login)
+    coord = _make_coordinator(
+        registry=registry, rate_limiter=rate_limiter, transport=transport, settings=_make_settings(max_retries=4)
+    )
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
         await coord.create_dedicated_session("mgmt1", "")
 
     assert attempts == 2
-    rate_limiter.acquire.assert_called_once()
+    assert rate_limiter.acquire.call_count == 2
 
 
 # ---------------------------------------------------------------------------
