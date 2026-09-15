@@ -525,6 +525,17 @@ class LoginCoordinator:
         failures = 0
 
         while failures < max_retries:
+            # wait_open only stops the loop if it observes a live gate row; if the
+            # row is (or looks) open -- a close() that didn't take, a window that
+            # lapsed between a close and this peek, clock skew between workers --
+            # nothing else would end this loop, and it would hammer the server at
+            # full speed instead of pacing. This is the backstop: same error,
+            # raised the same way, whichever one notices the deadline first.
+            now = asyncio.get_running_loop().time()
+            if now > deadline:
+                raise LoginGateDeadlineError(
+                    mds_host, waited=self._max_wait - (deadline - now), max_wait=self._max_wait
+                )
             # Raises LoginGateDeadlineError past the deadline -- outside the try
             # below on purpose, so it is never classified and never closes the gate.
             await gate.wait_open(mds_host, deadline=deadline, max_wait=self._max_wait, keepalive=keepalive)
@@ -706,6 +717,21 @@ class LoginCoordinator:
             raise AuthenticationError(f"Credential authentication failed for '{mgmt_name}:{domain}': {exc}") from exc
         raise AuthenticationError(f"Login failed after {self._settings.login_max_retries} attempts: {exc}") from exc
 
+    def _raise_gate_deadline_as_auth_error(
+        self, exc: LoginGateDeadlineError, mgmt_name: str, domain: str, label: str
+    ) -> Never:
+        """Translate a gate deadline into the type every login path already surfaces failures as.
+
+        The server never refused this particular attempt; the login gave up
+        waiting for its turn at the gate. `LoginGateDeadlineError` must never
+        leave `LoginCoordinator` unwrapped (see asdk/login_gate.py) -- every
+        call site that can see one (`_try_login_once`, `create_dedicated_session`)
+        routes through here so a future call site can't forget the translation.
+        """
+        from ..core.exceptions import AuthenticationError
+
+        raise AuthenticationError(f"{label} to '{mgmt_name}:{domain}' gave up: {exc}") from exc
+
     def _parse_login_response(
         self, response: dict[str, Any], mgmt_name: str, domain: str, server_ip: str, api_key: str
     ) -> tuple[str, str | None]:
@@ -808,8 +834,11 @@ class LoginCoordinator:
         """
         from ..core.exceptions import AuthenticationError, ServerUnreachableError
 
-        mds_host = await self._mds_host(mgmt_name, domain)
         try:
+            # Inside the try: a transient failure resolving the hosting member
+            # (e.g. a cache lookup error) is a login failure like any other and
+            # must come out as AuthenticationError, not propagate raw.
+            mds_host = await self._mds_host(mgmt_name, domain)
             result = await self._retry_with_backoff(
                 lambda: self._login_operation_for(
                     mgmt_name,
@@ -837,7 +866,7 @@ class LoginCoordinator:
             # The server never refused *this* attempt; we ran out of time
             # waiting for our turn. Same type consumers already catch, a
             # message that says which it was.
-            raise AuthenticationError(f"Login to '{mgmt_name}:{domain}' gave up: {e}") from e
+            self._raise_gate_deadline_as_auth_error(e, mgmt_name, domain, "Login")
         except AuthenticationError:
             raise
         except Exception as e:
@@ -1462,11 +1491,18 @@ class LoginCoordinator:
                 raise AuthenticationError(f"Dedicated session login failed for '{mgmt_name}:{domain}': {error_msg}")
             return str(response["sid"]), response.get("data", {}).get("uid")
 
-        # Each attempt takes the target's RateLimiter slot around its own HTTP call
-        # (inside _execute_login_request); nothing is held across the ladder.
-        result = await self._retry_with_backoff(
-            _attempt, "Dedicated session login", mds_host=await self._mds_host(mgmt_name, domain)
-        )
+        try:
+            # Inside the try along with the retry call, for the same reason as
+            # _try_login_once: a failure resolving the hosting member is a login
+            # failure like any other, not a raw exception past this method.
+            mds_host = await self._mds_host(mgmt_name, domain)
+            # Each attempt takes the target's RateLimiter slot around its own HTTP call
+            # (inside _execute_login_request); nothing is held across the ladder.
+            result = await self._retry_with_backoff(_attempt, "Dedicated session login", mds_host=mds_host)
+        except LoginGateDeadlineError as e:
+            # Must never leave LoginCoordinator unwrapped -- see
+            # _raise_gate_deadline_as_auth_error and asdk/login_gate.py.
+            self._raise_gate_deadline_as_auth_error(e, mgmt_name, domain, "Dedicated session login")
 
         if result is None:
             raise AuthenticationError(

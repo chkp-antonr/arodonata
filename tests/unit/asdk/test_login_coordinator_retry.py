@@ -486,17 +486,21 @@ async def test_retry_uses_the_login_pacing_deadline_and_renews_the_lock():
     coord = _make_coordinator(login_gate=gate)
     lock = MagicMock()
     lock.renew_if_needed = AsyncMock()
+    # Real time, not an arbitrary sentinel: _retry_with_backoff now compares the
+    # pacing deadline against asyncio.get_running_loop().time() itself (the
+    # deadline-guard backstop), and that clock does not start at 0.
+    deadline = asyncio.get_running_loop().time() + 12345.0
 
     async def op():
         return ("sid", None)
 
-    token = _login_pacing.set(_LoginPacing(deadline=12345.0, lock=lock))
+    token = _login_pacing.set(_LoginPacing(deadline=deadline, lock=lock))
     try:
         await coord._retry_with_backoff(op, "Login", mds_host="mds")
     finally:
         _login_pacing.reset(token)
 
-    assert gate.waits[0]["deadline"] == 12345.0
+    assert gate.waits[0]["deadline"] == deadline
     assert gate.waits[0]["max_wait"] == 900
     lock.renew_if_needed.assert_awaited_once()
 
@@ -512,6 +516,37 @@ async def test_retry_outside_login_starts_its_own_deadline():
     await coord._retry_with_backoff(op, "Login", mds_host="mds")
 
     assert gate.waits[0]["deadline"] >= before + 900
+
+
+async def test_retry_terminates_on_an_already_passed_deadline_instead_of_spinning():
+    """The deadline guard is the backstop for a gate that never shows a live refusal.
+
+    `wait_open` only stops the loop by observing a closed row; if that row is
+    never visible -- a `close()` that didn't take, a window that lapsed between a
+    close and the next peek, clock skew between workers -- nothing else would end
+    this loop, and it would hammer the server at full, unthrottled speed forever.
+    Starting past the deadline is the simplest case that exercises the same guard:
+    the loop must raise before ever reaching the gate or the operation.
+    """
+    gate = FakeGate()
+    coord = _make_coordinator(login_gate=gate)
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        return ("sid", None)
+
+    past_deadline = asyncio.get_running_loop().time() - 1.0
+    token = _login_pacing.set(_LoginPacing(deadline=past_deadline, lock=None))
+    try:
+        with pytest.raises(LoginGateDeadlineError):
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
+    finally:
+        _login_pacing.reset(token)
+
+    assert attempts == 0
+    assert gate.waits == []
 
 
 # ---------------------------------------------------------------------------
@@ -588,6 +623,18 @@ async def test_try_login_once_wraps_other_exception_as_auth_error():
     coord._retry_with_backoff = AsyncMock(side_effect=ValueError("weird"))
 
     with pytest.raises(AuthenticationError, match="Login failed after"):
+        await coord._try_login_once("m", "", "ip", "key", False, None, None, None)
+
+
+async def test_try_login_once_translates_an_mds_host_failure_as_authentication_error():
+    """`_mds_host` is inside the try now: a transient cache failure resolving the
+    hosting member is a login failure like any other, not a raw exception past
+    this method (it used to sit before the try, and would have propagated as-is).
+    """
+    coord = _make_coordinator()
+    coord._mds_host = AsyncMock(side_effect=RuntimeError("cache backend unavailable"))
+
+    with pytest.raises(AuthenticationError):
         await coord._try_login_once("m", "", "ip", "key", False, None, None, None)
 
 
@@ -889,6 +936,23 @@ async def test_create_dedicated_session_takes_one_slot_per_attempt():
 
     assert attempts == 2
     assert rate_limiter.acquire.call_count == 2
+
+
+async def test_create_dedicated_session_gate_deadline_surfaces_as_authentication_error():
+    """LoginGateDeadlineError must never leave LoginCoordinator unwrapped (asdk/login_gate.py) --
+    create_dedicated_session is a second call site into _retry_with_backoff and needs the
+    same translation _try_login_once already has.
+    """
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", api_key=SecretStr("key"), port=None)
+    coord = _make_coordinator(registry=registry)
+    coord._retry_with_backoff = AsyncMock(side_effect=LoginGateDeadlineError("10.0.0.1", 900.0, 900))
+
+    with pytest.raises(AuthenticationError, match="gave up") as excinfo:
+        await coord.create_dedicated_session("mgmt1", "")
+
+    assert isinstance(excinfo.value.__cause__, ThrottlingError)
+    assert "login_max_wait=900s" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------
