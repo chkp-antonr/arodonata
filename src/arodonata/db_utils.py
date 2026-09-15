@@ -19,9 +19,10 @@ from .logger import get_logger
 
 logger = get_logger(__name__)
 
-# What the database says when another worker added the column first. SQLite:
-# "duplicate column name: x"; PostgreSQL: 'column "x" of relation "y" already exists'.
-_DUPLICATE_COLUMN_MARKERS = ("duplicate column", "already exists")
+# What the database says when another worker created the column or index first.
+# SQLite: "duplicate column name: x", "index ix_x already exists"; PostgreSQL:
+# 'column "x" of relation "y" already exists', 'relation "ix_x" already exists'.
+_DUPLICATE_OBJECT_MARKERS = ("duplicate column", "already exists")
 
 # The value existing rows get when a NOT NULL column is added and the column
 # declares no default of its own, keyed on the column's declared Python type.
@@ -212,10 +213,10 @@ def _not_null_default_sql(col: Column[Any], dialect: Dialect) -> str:
     )
 
 
-def _is_duplicate_column_error(exc: BaseException) -> bool:
-    """True when the database is saying the column we just tried to add is already there."""
+def _is_duplicate_object_error(exc: BaseException) -> bool:
+    """True when the database is saying the column or index we just tried to add is already there."""
     message = str(exc).lower()
-    return any(marker in message for marker in _DUPLICATE_COLUMN_MARKERS)
+    return any(marker in message for marker in _DUPLICATE_OBJECT_MARKERS)
 
 
 def _add_missing_columns(sync_conn: Any, table: Table, table_name: str, model_columns: dict[str, Any]) -> None:
@@ -257,7 +258,7 @@ def _add_missing_columns(sync_conn: Any, table: Table, table_name: str, model_co
             sync_conn.execute(text(ddl))
         except Exception as exc:
             savepoint.rollback()
-            if _is_duplicate_column_error(exc):
+            if _is_duplicate_object_error(exc):
                 logger.info(
                     f"Column '{col_name}' already present on '{table_name}' "
                     f"(added concurrently by another worker) - continuing"
@@ -305,13 +306,30 @@ def _create_missing_indexes(sync_conn: Any, table: Table, table_name: str) -> No
     """Create any indexes defined in the model that are missing from the live
     table. Covers columns added by ``_add_missing_columns`` as well as indexes
     dropped manually.
+
+    Savepointed and duplicate-tolerant for the same reason as
+    ``_add_missing_columns``: inspect-then-create is a TOCTOU window, and two
+    workers starting together both see the index missing.
     """
     inspector = sa_inspect(sync_conn)
     existing_indexes = {idx["name"] for idx in inspector.get_indexes(table_name)}
     for index in table.indexes:
-        if index.name not in existing_indexes:
+        if index.name in existing_indexes:
+            continue
+        savepoint = sync_conn.begin_nested()
+        try:
             index.create(sync_conn, checkfirst=False)
-            logger.info(f"Auto-migrated: created index '{index.name}' on '{table_name}'")
+        except Exception as exc:
+            savepoint.rollback()
+            if _is_duplicate_object_error(exc):
+                logger.info(
+                    f"Index '{index.name}' already present on '{table_name}' "
+                    f"(created concurrently by another worker) - continuing"
+                )
+                continue
+            raise
+        savepoint.commit()
+        logger.info(f"Auto-migrated: created index '{index.name}' on '{table_name}'")
 
 
 async def ensure_missing_columns(

@@ -297,6 +297,41 @@ async def test_ensure_missing_columns_creates_missing_index():
 
 
 @pytest.mark.asyncio
+async def test_ensure_missing_columns_tolerates_an_index_created_concurrently(caplog):
+    """Index creation is the same TOCTOU window as the column ALTER, in the same function.
+
+    Left untolerated, the loser of the index race fails startup exactly as the
+    loser of the column race did — just one statement later.
+    """
+
+    class _IndexBlindInspector:
+        def __init__(self, real):
+            self._real = real
+
+        def has_table(self, table_name):
+            return self._real.has_table(table_name)
+
+        def get_columns(self, table_name):
+            return self._real.get_columns(table_name)
+
+        def get_indexes(self, table_name):
+            return []
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE _gadget_test_table (id INTEGER PRIMARY KEY, name VARCHAR)"))
+            await conn.execute(text("CREATE INDEX ix_gadget_name ON _gadget_test_table (name)"))
+
+        with patch("arodonata.db_utils.sa_inspect", lambda conn: _IndexBlindInspector(sa_inspect(conn))):
+            await ensure_missing_columns(engine, _Gadget)
+
+        assert any("created concurrently" in r.message for r in caplog.records)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_ensure_missing_columns_accepts_connection_not_just_engine():
     """ensure_missing_columns should also work when passed an AsyncConnection."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
