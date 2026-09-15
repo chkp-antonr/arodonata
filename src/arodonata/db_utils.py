@@ -154,8 +154,13 @@ def _not_null_default_value(col: Column[Any]) -> Any:
             into a loud failure rather than emitting DDL the database rejects.
     """
     default = col.default
-    if default is not None and getattr(default, "is_scalar", False) and getattr(default, "arg", None) is not None:
-        return default.arg
+    if default is not None and getattr(default, "is_scalar", False):
+        # `arg` lives on ScalarElementColumnDefault, not on the DefaultGenerator
+        # base that `col.default` is typed as -- read it through getattr rather
+        # than narrowing a union SQLAlchemy does not expose.
+        scalar_arg = getattr(default, "arg", None)
+        if scalar_arg is not None:
+            return scalar_arg
 
     python_type = _declared_python_type(col.type)
     if python_type is None:

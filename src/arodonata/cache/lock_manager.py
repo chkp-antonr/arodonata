@@ -534,7 +534,7 @@ class DatabaseLockManager:
         """
         now = datetime.now(UTC).replace(tzinfo=None)
         async with self._db_manager.session() as session:
-            stmt = select(DistributedLock.expires_at).where(
+            stmt = select(DistributedLock.expires_at).where(  # type: ignore[call-overload]
                 and_(
                     DistributedLock.lock_key == lock_key,  # type: ignore
                     DistributedLock.expires_at > now,  # type: ignore
