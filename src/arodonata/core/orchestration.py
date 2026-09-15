@@ -155,9 +155,11 @@ class CacheOrchestrationService:
                 name=d.domain_name,
                 active_mds=d.active_mds,
                 active_ip=d.active_ip,
+                active_mds_ip=d.active_mds_ip,
                 active_server=d.active_server,
                 standby_ips=d.standby_ips.split(",") if d.standby_ips else [],
                 standby_servers=d.standby_servers.split(",") if d.standby_servers else [],
+                standby_mdss=d.standby_mdss.split(",") if d.standby_mdss else [],
                 mgmt_name=d.mgmt_name,
                 is_mdm=d.is_mdm,
             )

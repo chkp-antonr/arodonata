@@ -750,3 +750,65 @@ async def test_distributed_lock_async_generator_logs_release_failure(
     warning_msg = mock_log.return_value.warning.call_args.args[0]
     assert "stream:delta" in warning_msg
     assert "db down" in warning_msg
+
+
+# --------------------------------------------------------------------------
+# peek_expiry / extend_lock: rows used as shared markers (asdk/login_gate.py)
+# --------------------------------------------------------------------------
+
+
+async def test_peek_expiry_returns_none_when_no_row(db_manager: DatabaseManager) -> None:
+    manager = DatabaseLockManager(db_manager)
+    assert await manager.peek_expiry("loginthrottle:mds") is None
+
+
+async def test_peek_expiry_returns_expires_at_of_a_live_row(db_manager: DatabaseManager) -> None:
+    manager = DatabaseLockManager(db_manager)
+    ctx = await manager.try_acquire_lock("loginthrottle:mds", ttl=60)
+    assert ctx is not None
+    assert await manager.peek_expiry("loginthrottle:mds") == ctx.expires_at
+
+
+async def test_peek_expiry_ignores_an_expired_row(db_manager: DatabaseManager) -> None:
+    manager = DatabaseLockManager(db_manager)
+    past = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=5)
+    async with db_manager.session() as session:
+        session.add(
+            DistributedLock(
+                lock_key="loginthrottle:mds",
+                owner_id="gone:1:main",
+                acquired_at=past - timedelta(seconds=60),
+                expires_at=past,
+            )
+        )
+        await session.commit()
+    assert await manager.peek_expiry("loginthrottle:mds") is None
+
+
+async def test_extend_lock_pushes_expiry_out_regardless_of_owner(db_manager: DatabaseManager) -> None:
+    """A marker row records *when*, not *who*: any worker that sees a refusal may extend it."""
+    writer = DatabaseLockManager(db_manager)
+    other = DatabaseLockManager(db_manager)
+    other._owner_id = "someone-else:1:main"
+
+    ctx = await writer.try_acquire_lock("loginthrottle:mds", ttl=10)
+    assert ctx is not None
+
+    assert await other.extend_lock("loginthrottle:mds", ttl=120) is True
+    later = await other.peek_expiry("loginthrottle:mds")
+    assert later is not None
+    assert later - ctx.expires_at >= timedelta(seconds=100)
+
+
+async def test_extend_lock_never_shortens(db_manager: DatabaseManager) -> None:
+    manager = DatabaseLockManager(db_manager)
+    ctx = await manager.try_acquire_lock("loginthrottle:mds", ttl=300)
+    assert ctx is not None
+
+    assert await manager.extend_lock("loginthrottle:mds", ttl=10) is True
+    assert await manager.peek_expiry("loginthrottle:mds") == ctx.expires_at
+
+
+async def test_extend_lock_returns_false_without_a_row(db_manager: DatabaseManager) -> None:
+    manager = DatabaseLockManager(db_manager)
+    assert await manager.extend_lock("loginthrottle:mds", ttl=60) is False

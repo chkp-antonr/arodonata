@@ -11,8 +11,10 @@ class Domain(BaseModelWithRaw):
     active_mds: str
     active_ip: str
     active_server: str
+    active_mds_ip: str = ""
     standby_ips: list[str] = []
     standby_servers: list[str] = []
+    standby_mdss: list[str] = []
     mgmt_name: str
     is_mdm: bool = False
 

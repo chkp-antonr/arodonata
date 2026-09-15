@@ -25,36 +25,47 @@ DEFAULT_API_TIMEOUT: Final[int] = 120  # seconds
 # ARODONATA_LOGIN_TIMEOUT without touching the API budget.
 DEFAULT_LOGIN_TIMEOUT: Final[int] = 120  # seconds
 
-# Check Point rate-limits logins per user per server IP over a ONE-MINUTE window.
-# How many it allows in that window is server-side configuration (3 by default);
-# with one shared API key the allowance is shared by every caller, no matter how
-# many there are. What matters here is the window, not the allowance: exceeding it
-# locks the user out for the remainder, and a rejected attempt RE-ARMS it, so the
-# only wait that reliably clears it is a single one longer than a minute. 70 s is
-# that wait with margin.
+# Check Point rate-limits logins per management server machine -- every domain
+# whose active server is hosted on a Multi-Domain Server member shares that
+# member's allowance -- over roughly a minute, to a server-configured count (3 by
+# default). Exceeding it returns err_too_many_requests in ~0.5 s. It is NOT a clean
+# N-per-60 s window: probed on 2026-09-14 (tests/integration/probe_login_throttle.py)
+# a server set to 10 allowed 10 logins in 18 s on one run and 18 in 43 s on the next,
+# and recovered in 20 s and 41-57 s respectively. Whether a refused attempt delays
+# recovery is unconfirmed (two runs, mixed evidence). This library does not model
+# the allowance; it reacts to refusals (asdk/login_gate.py), and this value is how
+# long a refusal closes the gate for, counted from the *last* refusal. 70 s covers
+# the worst recovery seen with margin.
 #
 # Note this is a *rate* limit, and is NOT what RateLimiter enforces: that caps
-# concurrency (DEFAULT_CONCURRENT_LIMIT simultaneous calls per IP). Concurrent
-# logins are allowed by the limiter and can consume the whole per-minute login
-# allowance in a few seconds -- the two limits are easy to confuse and unrelated.
+# concurrency (DEFAULT_CONCURRENT_LIMIT simultaneous calls per target IP). The two
+# are easy to confuse and unrelated.
 #
 # Tunable via ArodonataSettings.login_throttle_window, because the limit is
 # server-side configuration rather than a universal constant -- and because a
 # caller that knows it will not hit a real throttle (a test with a mocked one,
-# say) should not be made to wait out a window that does not exist. Waiting is
-# never free: a throttled login costs this much before it can even retry, so
-# any budget a caller wraps around a login has to exceed it.
+# say) should not be made to wait out a window that does not exist.
 LOGIN_THROTTLE_WINDOW_SECONDS: Final[int] = 70  # seconds
 DEFAULT_CONCURRENT_LIMIT: Final[int] = 3
 DEFAULT_LOGIN_BACKOFF: Final[int] = 5  # seconds
 DEFAULT_LOGIN_RETRIES: Final[int] = 8
 # How long a caller waits for a free RateLimiter concurrency slot (asdk/rate_limiter.py)
-# before giving up. Must comfortably exceed how long another caller can legitimately
-# hold a slot: login's own retry-with-backoff (DEFAULT_LOGIN_BACKOFF * 1.3^attempt,
-# capped at 60s/attempt) is held for the ENTIRE slot lease to avoid compounding
-# server-side throttling, so a too-short slot-wait timeout makes concurrent callers
-# fail fast even though the server would have accepted a login moments later.
+# before giving up. A slot is held for one in-flight request. Since 2026-09-14 that
+# includes logins: a login takes the target server's slot for a single HTTP round
+# trip (bounded by DEFAULT_LOGIN_TIMEOUT), never across its retry ladder or a
+# throttle wait -- those happen outside the slot, and pacing belongs to the login
+# gate (asdk/login_gate.py). Long-running tasks (publish, revert) legitimately hold
+# a slot for their whole run, so this stays generous.
 DEFAULT_RATE_LIMIT_SLOT_TIMEOUT: Final[int] = 90  # seconds
+
+# Total wall-clock one login() may spend waiting out Check Point's per-MDS login
+# rate limit before giving up (asdk/login_gate.py). Also the timeout for acquiring
+# the per-domain login lock, since a second caller for the same domain has to
+# outlast the first one's pacing. Sized for a cold multi-domain collection at the
+# default allowance: 20 domains is 21 logins, and at 3 per minute that is ~8
+# minutes. A deployment with more domains per MDS raises it via
+# ARODONATA_LOGIN_MAX_WAIT; the failure message says when it was exceeded.
+DEFAULT_LOGIN_MAX_WAIT: Final[int] = 900  # seconds
 
 # Self-managed `show-task` polling (asdk/task_waiter.py). Start responsive -- most
 # publishes finish in seconds -- then back off to a ceiling, because a long revert's
@@ -130,6 +141,7 @@ __all__ = [
     "DEFAULT_LOGIN_BACKOFF",
     "DEFAULT_LOGIN_RETRIES",
     "DEFAULT_RATE_LIMIT_SLOT_TIMEOUT",
+    "DEFAULT_LOGIN_MAX_WAIT",
     "DEFAULT_TASK_POLL_INITIAL_SECONDS",
     "DEFAULT_TASK_POLL_MAX_SECONDS",
     "DEFAULT_TASK_POLL_FAILURE_TOLERANCE",

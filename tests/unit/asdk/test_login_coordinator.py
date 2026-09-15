@@ -16,6 +16,7 @@ from pydantic import SecretStr
 
 from arodonata import GLOBAL_DOMAIN_NAME
 from arodonata.asdk.login_coordinator import LoginCoordinator
+from arodonata.asdk.login_gate import LoginGateDeadlineError
 from arodonata.asdk.server_registry import ServerConfig
 from arodonata.core.exceptions import AuthenticationError, InvalidCredentialsError, ThrottlingError
 
@@ -31,6 +32,8 @@ def _make_settings(*, auth_mode="api_key", username=None, password=None):
     settings.session_expire_seconds = 3600
     settings.session_timeout = 600
     settings.login_timeout = 30
+    settings.login_throttle_window = 70
+    settings.login_max_wait = 900
     settings.auth_mode = auth_mode
     settings.username = username
     settings.password = password
@@ -58,6 +61,34 @@ def _make_lock_manager():
     return lm
 
 
+class FakeGate:
+    """Stand-in for LoginGate: never sleeps, records every close and wait.
+
+    After `give_up_after` refusals, the next wait raises LoginGateDeadlineError --
+    the way the real gate does when the next window would pass the login's
+    deadline. Without that, an operation that throttles forever would loop forever.
+    """
+
+    def __init__(self, give_up_after: int = 3) -> None:
+        self.closed: list[str] = []
+        self.waits: list[dict] = []
+        self.give_up_after = give_up_after
+
+    async def wait_open(self, mds_host, *, deadline, max_wait, keepalive=None):
+        self.waits.append({"mds_host": mds_host, "deadline": deadline, "max_wait": max_wait})
+        if len(self.closed) >= self.give_up_after:
+            raise LoginGateDeadlineError(mds_host, waited=float(max_wait), max_wait=max_wait)
+        # Faithful to the real gate: `keepalive` runs before a *sleep chunk*, so
+        # only when a refusal is actually live for this host. A fake that awaited
+        # it on every wait made "the lock is renewed" pass without the gate ever
+        # having closed, which is the only situation the renewal exists for.
+        if keepalive is not None and mds_host in self.closed:
+            await keepalive()
+
+    async def close(self, mds_host):
+        self.closed.append(mds_host)
+
+
 def _make_coordinator(
     *,
     settings=None,
@@ -67,6 +98,7 @@ def _make_coordinator(
     rate_limiter=None,
     lock_manager=None,
     session_cleaner=None,
+    login_gate=None,
 ):
     return LoginCoordinator(
         registry=registry or MagicMock(),
@@ -76,6 +108,7 @@ def _make_coordinator(
         settings=settings or _make_settings(),
         lock_manager=lock_manager,
         session_cleaner=session_cleaner,
+        login_gate=login_gate if login_gate is not None else FakeGate(),
     )
 
 
@@ -870,6 +903,124 @@ async def test_prefetch_data_dict_without_objects_key():
     assert ip == "10.0.0.1"
 
 
+def _mds_layout_response():
+    return {
+        "success": True,
+        "data": {
+            "objects": [
+                {
+                    "name": "General",
+                    "uid": "u",
+                    "servers": [
+                        {
+                            "name": "General_srv",
+                            "ipv4-address": "10.0.0.9",
+                            "active": True,
+                            "multi-domain-server": "mds2",
+                        },
+                        {
+                            "name": "General_sby",
+                            "ipv4-address": "10.0.0.8",
+                            "active": False,
+                            "multi-domain-server": "mds1",
+                        },
+                    ],
+                }
+            ]
+        },
+    }
+
+
+def _mdss_response():
+    return {
+        "success": True,
+        "data": {
+            "objects": [{"name": "mds1", "ipv4-address": "10.0.0.1"}, {"name": "mds2", "ipv4-address": "10.0.0.2"}]
+        },
+    }
+
+
+async def test_prefetch_records_the_hosting_member_from_show_domains_and_show_mdss():
+    """Domains live on one MDS member and move on failover; the gate keys on that member's IP."""
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", port=None, is_mdm=True)
+    cache = AsyncMock()
+    cache.get_domain.return_value = None
+    transport = AsyncMock()
+    transport.api_call.side_effect = [_mds_layout_response(), _mdss_response()]
+    coord = _make_coordinator(registry=registry, cache=cache, transport=transport)
+    coord.login = AsyncMock(return_value=("sys-sid", "10.0.0.1"))
+
+    ip = await coord._prefetch_domain_server_ip("mgmt1", "General")
+
+    assert ip == "10.0.0.9"
+    assert [c.kwargs["command"] for c in transport.api_call.await_args_list] == ["show-domains", "show-mdss"]
+    saved = cache.upsert_domain.await_args.args[0]
+    assert (saved.active_mds, saved.active_mds_ip, saved.active_server) == ("mds2", "10.0.0.2", "General_srv")
+    assert (saved.standby_mdss, saved.standby_ips, saved.standby_servers) == ("mds1", "10.0.0.8", "General_sby")
+
+
+async def test_prefetch_skips_show_mdss_on_a_smartcenter():
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", port=None, is_mdm=False)
+    cache = AsyncMock()
+    cache.get_domain.return_value = None
+    transport = AsyncMock()
+    transport.api_call.return_value = _mds_layout_response()
+    coord = _make_coordinator(registry=registry, cache=cache, transport=transport)
+    coord.login = AsyncMock(return_value=("sys-sid", "10.0.0.1"))
+
+    await coord._prefetch_domain_server_ip("mgmt1", "General")
+
+    assert [c.kwargs["command"] for c in transport.api_call.await_args_list] == ["show-domains"]
+
+
+async def test_prefetch_tolerates_a_failed_show_mdss():
+    """Enrichment only: the login proceeds, and the gate falls back to the configured host."""
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", port=None, is_mdm=True)
+    cache = AsyncMock()
+    cache.get_domain.return_value = None
+    transport = AsyncMock()
+    transport.api_call.side_effect = [_mds_layout_response(), {"success": False, "message": "nope"}]
+    coord = _make_coordinator(registry=registry, cache=cache, transport=transport)
+    coord.login = AsyncMock(return_value=("sys-sid", "10.0.0.1"))
+
+    ip = await coord._prefetch_domain_server_ip("mgmt1", "General")
+
+    assert ip == "10.0.0.9"
+    saved = cache.upsert_domain.await_args.args[0]
+    assert (saved.active_mds, saved.active_mds_ip) == ("mds2", "")
+
+
+async def test_mds_host_prefers_the_domain_rows_member_ip():
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1")
+    cache = AsyncMock()
+    cache.get_domain.return_value = MagicMock(active_mds_ip="10.0.0.2")
+    coord = _make_coordinator(registry=registry, cache=cache)
+
+    assert await coord._mds_host("mgmt1", "General") == "10.0.0.2"
+    cache.get_domain.assert_awaited_once_with(mdm_dmn="mgmt1:General")
+
+
+async def test_mds_host_falls_back_to_the_configured_host():
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1")
+    cache = AsyncMock()
+    coord = _make_coordinator(registry=registry, cache=cache)
+
+    cache.get_domain.return_value = None
+    assert await coord._mds_host("mgmt1", "General") == "10.0.0.1"
+
+    cache.get_domain.return_value = MagicMock(active_mds_ip="")
+    assert await coord._mds_host("mgmt1", "General") == "10.0.0.1"
+
+    cache.get_domain.reset_mock()
+    assert await coord._mds_host("mgmt1", "") == "10.0.0.1"
+    cache.get_domain.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # _acquire_new_sid
 # ---------------------------------------------------------------------------
@@ -1040,6 +1191,220 @@ async def test_login_credential_mode_scopes_cache_by_username():
 
     # pre-lock cache lookup scoped by username
     assert cache.get_sid.await_args.kwargs["username"] == "svc"
+
+
+async def test_login_acquires_the_domain_lock_with_the_remaining_budget_as_timeout():
+    """A second caller for the same domain must outlast the first one's pacing.
+
+    ...but no longer than this call's own deadline: a flat `login_max_wait` here
+    meant the pre-lock prefetch (up to the deadline) and this wait (a further
+    900 s) could together take roughly double what `login_max_wait` documents as
+    the total one `login()` may spend.
+    """
+    lm = _make_lock_manager()
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    coord._acquire_new_sid = AsyncMock(return_value=("sid", "10.0.0.1"))
+
+    await coord.login("mgmt1", "")
+
+    # Nothing has been spent yet, so the remaining budget is the whole setting.
+    assert 895 <= lm.acquire.call_args.kwargs["timeout"] <= 900
+    assert lm.acquire.call_args.kwargs["ttl"] == 90
+
+
+async def test_login_clamps_the_lock_timeout_to_the_remaining_budget():
+    """Half the budget already spent means half a budget left to wait for the lock."""
+    from arodonata.asdk.login_coordinator import _login_pacing, _LoginPacing
+
+    lm = _make_lock_manager()
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    coord._acquire_new_sid = AsyncMock(return_value=("sid", "10.0.0.1"))
+
+    # An outer login() that started 800 s ago: 100 s of the 900 s budget is left.
+    deadline = asyncio.get_running_loop().time() + 100.0
+    token = _login_pacing.set(_LoginPacing(deadline=deadline))
+    try:
+        await coord.login("mgmt1", "")
+    finally:
+        _login_pacing.reset(token)
+
+    assert 95 <= lm.acquire.call_args.kwargs["timeout"] <= 100
+
+
+async def test_login_never_asks_for_a_zero_or_negative_lock_timeout():
+    """Past the deadline the acquire still gets a positive timeout, not 0 or -5."""
+    from arodonata.asdk.login_coordinator import _login_pacing, _LoginPacing
+
+    lm = _make_lock_manager()
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    coord._acquire_new_sid = AsyncMock(return_value=("sid", "10.0.0.1"))
+
+    token = _login_pacing.set(_LoginPacing(deadline=asyncio.get_running_loop().time() - 30.0))
+    try:
+        await coord.login("mgmt1", "")
+    finally:
+        _login_pacing.reset(token)
+
+    assert lm.acquire.call_args.kwargs["timeout"] == 1
+
+
+async def test_login_sets_pacing_for_its_body_and_clears_it_after():
+    from arodonata.asdk.login_coordinator import _login_pacing
+
+    lm = _make_lock_manager()
+    lock_ctx = MagicMock()
+    lm.acquire.return_value.__aenter__ = AsyncMock(return_value=lock_ctx)
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    seen = {}
+
+    async def capture(*args, **kwargs):
+        seen["pacing"] = _login_pacing.get()
+        return ("sid", "10.0.0.1")
+
+    coord._acquire_new_sid = AsyncMock(side_effect=capture)
+
+    before = asyncio.get_running_loop().time()
+    await coord.login("mgmt1", "")
+
+    assert seen["pacing"].locks == (lock_ctx,)
+    assert seen["pacing"].deadline >= before + 900
+    assert _login_pacing.get() is None
+
+
+async def test_a_nested_login_inherits_the_outer_deadline():
+    """`login()` is re-entrant; the inner call must not restart the clock.
+
+    `_acquire_new_sid`, already holding `login:{mgmt}:{domain}`, reaches
+    `_relogin_at_resolved_ip` -> `_prefetch_domain_server_ip` ->
+    `login(mgmt, "")`. A fresh `now + login_max_wait` there turned a setting
+    documented as the total one `login()` may spend into roughly double it.
+    """
+    from arodonata.asdk.login_coordinator import _login_pacing, _LoginPacing
+
+    lm = _make_lock_manager()
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    seen = {}
+
+    async def capture(*args, **kwargs):
+        seen["pacing"] = _login_pacing.get()
+        return ("sid", "10.0.0.1")
+
+    coord._acquire_new_sid = AsyncMock(side_effect=capture)
+
+    outer_deadline = asyncio.get_running_loop().time() + 42.0
+    token = _login_pacing.set(_LoginPacing(deadline=outer_deadline))
+    try:
+        await coord.login("mgmt1", "")
+    finally:
+        _login_pacing.reset(token)
+
+    assert seen["pacing"].deadline == outer_deadline
+
+
+async def test_login_reports_a_lost_login_lock_as_an_authentication_error():
+    """A lock lost or stolen mid-login must not escape as a raw LockOwnershipError.
+
+    `_renew_paced_locks` aborts the paced login with that type, and
+    `release_lock` raises it on the way out of a stolen lock too. Neither is a
+    type consumers catch, and the reason a login failed should not change the
+    type they have to handle.
+    """
+    from arodonata.cache.lock_manager import LockOwnershipError
+
+    lm = _make_lock_manager()
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    coord._acquire_new_sid = AsyncMock(side_effect=LockOwnershipError("login:mgmt1:", "owner-1"))
+
+    with pytest.raises(AuthenticationError, match="lost its login lock") as excinfo:
+        await coord.login("mgmt1", "")
+
+    assert isinstance(excinfo.value.__cause__, LockOwnershipError)
+
+
+async def test_a_login_whose_lock_is_stolen_at_the_gate_reports_the_lost_lock():
+    """End to end: the keepalive discovers the theft and the caller is told what happened.
+
+    Not "Login failed after 3 attempts" — the server refused once and was then
+    never asked again; what ended this login was losing the lock that made it
+    ours to run.
+    """
+    from arodonata.cache.lock_manager import LockOwnershipError
+
+    lock_ctx = MagicMock()
+    lock_ctx.lock_key = "login:mgmt1:"
+    lock_ctx.owner_id = "owner-1"
+    lock_ctx.ttl = 90
+    lock_ctx.acquired_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=60)
+    lock_ctx.renew_if_needed = AsyncMock(side_effect=LockOwnershipError("login:mgmt1:", "owner-1"))
+    lm = _make_lock_manager()
+    lm.acquire.return_value.__aenter__ = AsyncMock(return_value=lock_ctx)
+
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    registry = MagicMock()
+    registry.get_server.return_value = ServerConfig(name="mgmt1", server_ip="10.0.0.1", api_key=SecretStr("k"))
+    transport = AsyncMock()
+    transport.login_with_apikey.return_value = {
+        "success": False,
+        "code": "err_too_many_requests",
+        "message": "Too many requests",
+    }
+    gate = FakeGate(give_up_after=5)
+    coord = _make_coordinator(lock_manager=lm, cache=cache, registry=registry, transport=transport, login_gate=gate)
+
+    with pytest.raises(AuthenticationError, match="lost its login lock"):
+        await coord.login("mgmt1", "")
+
+    # One refusal, which closed the gate; the wait that followed found the lock gone.
+    assert gate.closed == ["10.0.0.1"]
+    assert transport.login_with_apikey.await_count == 1
+
+
+async def test_a_nested_login_extends_the_lock_chain_instead_of_replacing_it():
+    """The outer lock must stay on the chain, or nobody renews it while we wait.
+
+    A single-slot pacing let the inner login's lock replace the outer's: the
+    outer `login:{mgmt}:{domain}` row lapsed after 90 s, `_try_acquire` handed it
+    to another worker, and two concurrent logins hit the same domain -- spending
+    exactly the allowance the gate exists to conserve.
+    """
+    from arodonata.asdk.login_coordinator import _login_pacing, _LoginPacing
+
+    lm = _make_lock_manager()
+    inner_lock = MagicMock()
+    lm.acquire.return_value.__aenter__ = AsyncMock(return_value=inner_lock)
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    seen = {}
+
+    async def capture(*args, **kwargs):
+        seen["pacing"] = _login_pacing.get()
+        return ("sid", "10.0.0.1")
+
+    coord._acquire_new_sid = AsyncMock(side_effect=capture)
+
+    outer_lock = MagicMock()
+    loop_time = asyncio.get_running_loop().time()
+    token = _login_pacing.set(_LoginPacing(deadline=loop_time + 900.0, locks=(outer_lock,)))
+    try:
+        await coord.login("mgmt1", "")
+    finally:
+        _login_pacing.reset(token)
+
+    assert seen["pacing"].locks == (outer_lock, inner_lock)
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ...asdk.domain_servers import extract_domain_servers, mds_ip_map
 from ...config import GLOBAL_DOMAIN_NAME
 from ...logger import lazy_logger
 
@@ -175,6 +176,11 @@ class DomainService:
 
         global_seen = False
         if response.success and response.objects:
+            # Which member hosts each server matters to the login gate
+            # (asdk/login_gate.py). Enrichment only: a failed show-mdss leaves
+            # active_mds_ip empty and the gate keys on the configured host.
+            mds_ips = await self._fetch_mds_ips(mgmt_name, cache_mode)
+
             for obj in response.objects:
                 if not isinstance(obj, dict):
                     continue
@@ -187,13 +193,20 @@ class DomainService:
                     global_seen = True
 
                 domain_uid = obj.get("uid", "")
-                active_ip = self._extract_active_server_ip(obj)
+                layout = extract_domain_servers(obj)
+                active_ip = layout.active_ip
 
                 domain = Domain.build(
                     mgmt_name=mgmt_name,
                     domain_name=domain_name,
                     domain_uid=domain_uid,
                     active_ip=active_ip,
+                    active_server=layout.active_server,
+                    active_mds=layout.active_mds,
+                    active_mds_ip=mds_ips.get(layout.active_mds, ""),
+                    standby_mdss=",".join(layout.standby_mdss),
+                    standby_ips=",".join(layout.standby_ips),
+                    standby_servers=",".join(layout.standby_servers),
                     is_mdm=bool(is_mdm),
                 )
                 await self._cache.upsert_domain(domain)
@@ -235,26 +248,30 @@ class DomainService:
             return domain_names
         return [d for d in domain_names if d != GLOBAL_DOMAIN_NAME]
 
-    def _extract_active_server_ip(self, domain_obj: dict[str, Any]) -> str:
-        """Extract active server IP from domain object.
+    async def _fetch_mds_ips(self, mgmt_name: str, cache_mode: str) -> dict[str, str]:
+        """{MDS member name: IPv4} via `show-mdss`; {} on any failure.
 
-        Args:
-            domain_obj: Domain object from API response.
-
-        Returns:
-            Active server IP address or empty string.
+        The login gate keys on the member that hosts a domain's active server
+        (asdk/login_gate.py). Enrichment only: a failed or unsuccessful call
+        must never abort domain population, so any exception (transport
+        timeout, connection error, ...) and any unsuccessful/empty response
+        both degrade to an empty map, logged at debug.
         """
-        servers = domain_obj.get("servers", [])
-        if not isinstance(servers, list):
-            return ""
+        try:
+            mds_response = await self._api_client.api_query(
+                mgmt_name=mgmt_name, command="show-mdss", details_level="full", cache_mode=cache_mode
+            )
+        except Exception as exc:  # noqa: BLE001 - enrichment only; domain population must proceed
+            log().debug(f"show-mdss failed for {mgmt_name}: {exc}; domain rows will not carry member IPs")
+            return {}
+        if mds_response.success and mds_response.objects:
+            return mds_ip_map(list(mds_response.objects))
+        log().debug(f"show-mdss unavailable for {mgmt_name}; domain rows will not carry member IPs")
+        return {}
 
-        for server in servers:
-            if isinstance(server, dict) and server.get("active") is True:
-                ipv4_address = server.get("ipv4-address", "")
-                if isinstance(ipv4_address, str) and ipv4_address:
-                    return ipv4_address
-
-        return ""
+    def _extract_active_server_ip(self, domain_obj: dict[str, Any]) -> str:
+        """Active server IP from a `show-domains` object; '' if none. See asdk/domain_servers.py."""
+        return extract_domain_servers(domain_obj).active_ip
 
     async def get_domain_uid(self, mgmt_name: str, domain_name: str) -> str:
         """Get domain UID from cache.

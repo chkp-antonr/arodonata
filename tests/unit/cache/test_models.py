@@ -239,6 +239,27 @@ def test_domain_build_with_standby_servers_and_mdm_flag() -> None:
     assert domain.is_mdm is True
 
 
+def test_domain_build_records_the_hosting_member() -> None:
+    domain = Domain.build(
+        mgmt_name="mgmt1",
+        domain_name="dmn1",
+        active_ip="10.0.0.9",
+        active_server="dmn1_srv",
+        active_mds="mds2",
+        active_mds_ip="10.2.2.2",
+    )
+    assert domain.active_mds == "mds2"
+    assert domain.active_mds_ip == "10.2.2.2"
+    assert domain.active_server == "dmn1_srv"
+
+
+def test_domain_build_active_mds_falls_back_to_mgmt_name_when_unknown() -> None:
+    """SmartCenters have no members, and rows written before the column existed have no IP."""
+    domain = Domain.build(mgmt_name="mgmt1", domain_name="dmn1", active_ip="10.0.0.9")
+    assert domain.active_mds == "mgmt1"
+    assert domain.active_mds_ip == ""
+
+
 def test_domain_repr() -> None:
     """repr surfaces name, uid, and active_mds."""
     domain = Domain.build(mgmt_name="mgmt1", domain_name="dmn1", domain_uid="uid-1", active_ip="192.168.1.10")

@@ -8,15 +8,18 @@ from __future__ import annotations
 
 import asyncio
 import random
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Never
 
 from arlogi.otel.decorator import traced
 
-from ..cache.lock_manager import DatabaseLockManager
+from ..cache.lock_manager import DatabaseLockManager, LockAcquisitionError, LockOwnershipError
 from ..config import (
     CREDENTIAL_REJECTION_MESSAGE,
+    DEFAULT_LOGIN_MAX_WAIT,
     GLOBAL_DOMAIN_NAME,
     LOGIN_THROTTLE_WINDOW_SECONDS,
     SERVER_UNREACHABLE_MESSAGE,
@@ -25,6 +28,8 @@ from ..config import (
 )
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
+from .domain_servers import extract_domain_servers, mds_ip_map
+from .login_gate import LoginGate, LoginGateDeadlineError
 
 if TYPE_CHECKING:
     from ..cache import CacheRepository
@@ -37,14 +42,44 @@ if TYPE_CHECKING:
 log = lazy_logger("arodonata.asdk.login_coordinator")
 
 
-# How many full throttle windows to wait out before giving up on a login. The
-# retry sequence holds a rate-limiter slot throughout, so waiting all
-# DEFAULT_LOGIN_RETRIES attempts at LOGIN_THROTTLE_WINDOW_SECONDS each would pin
-# one of three slots for ~9 minutes and outlive the login lock's TTL. If three
-# consecutive windows have not cleared the lockout, the cause is systemic -- more
-# login pressure on that IP than its per-minute allowance -- and failing says so
-# sooner.
-LOGIN_THROTTLE_MAX_WAITS = 3
+@dataclass(frozen=True)
+class _LoginPacing:
+    """What one `login()` call carries down to its attempts: when to give up, and what to keep alive.
+
+    `locks` is the *chain* of login locks the current call stack holds, outermost
+    first, and not a single slot, because `login()` is re-entrant: on a silent
+    domain server `_acquire_new_sid` -- already inside `login:{mgmt}:{domain}` --
+    calls `_relogin_at_resolved_ip` -> `_prefetch_domain_server_ip` ->
+    `login(mgmt, "")`, which takes `login:{mgmt}:` as well. A single slot meant
+    the inner login's pacing replaced the outer's, so while the inner login slept
+    at the gate only the inner lock was renewed; the outer lock lapsed after its
+    90 s TTL, `_try_acquire` let another worker steal it, and a second concurrent
+    login to the same domain spent the very allowance the gate exists to
+    conserve -- after which the original owner's `release_lock` no-opped on
+    someone else's row. Every lock in the chain is renewed on every keepalive.
+    """
+
+    deadline: float  # absolute loop.time(), shared by every login in the chain
+    locks: tuple[Any, ...] = ()  # LockContexts of login:{mgmt}:{domain}, outermost first
+
+    def nest(self, lock: Any | None) -> _LoginPacing:
+        """The pacing a nested `login()` runs under: this deadline, plus `lock` on the chain."""
+        if lock is None:
+            return self
+        return _LoginPacing(deadline=self.deadline, locks=(*self.locks, lock))
+
+
+# Set by `login()` for the duration of its body (the same pattern as
+# lock_manager._current_lock_context). Read by `_retry_with_backoff`, which
+# otherwise -- dedicated sessions, cleanup logins -- starts a deadline of its own.
+_login_pacing: ContextVar[_LoginPacing | None] = ContextVar("_login_pacing", default=None)
+
+# Fraction of a login lock's TTL that must elapse before a keepalive renews it.
+# Passed explicitly to `LockContext.renew_if_needed` *and* used to tell its
+# "not due yet" False from its "lock lost" False -- the two share one number on
+# purpose, because guessing the other side's threshold is how a login ends up
+# aborted for a renewal that was never attempted.
+_LOCK_RENEW_THRESHOLD = 0.5
 
 
 def _login_failure_kind(exc: BaseException) -> str:
@@ -88,6 +123,9 @@ class LoginCoordinator:
 
     Manages distributed locks per (mgmt_name, domain) to prevent concurrent
     login attempts across multiple workers and implements proper retry logic with backoff.
+    Logins to one management server are paced together through a `LoginGate`
+    (asdk/login_gate.py), keyed on the MDS member hosting the domain, because
+    Check Point rate-limits logins per server machine.
 
     Example:
         coordinator = LoginCoordinator(
@@ -109,6 +147,7 @@ class LoginCoordinator:
         settings: ArodonataSettings,
         lock_manager: DatabaseLockManager | None = None,
         session_cleaner: SessionCleaner | None = None,
+        login_gate: LoginGate | None = None,
     ) -> None:
         """Initialize login coordinator.
 
@@ -120,6 +159,7 @@ class LoginCoordinator:
             settings: Configuration settings.
             lock_manager: Optional DatabaseLockManager instance.
             session_cleaner: Optional SessionCleaner for max-sessions cleanup.
+            login_gate: Optional LoginGate; built lazily over the lock manager when absent.
         """
         self._registry = registry
         self._transport = transport
@@ -128,6 +168,7 @@ class LoginCoordinator:
         self._settings = settings
         self._lock_manager = lock_manager
         self._session_cleaner = session_cleaner
+        self._login_gate = login_gate
         self._in_process_locks: dict[str, asyncio.Lock] = {}  # For in-process synchronization
         self._lock_init_lock = asyncio.Lock()  # Protection for lock manager initialization
         self._keepalive_sweep_lock = asyncio.Lock()  # At most one keepalive sweep in flight
@@ -150,6 +191,105 @@ class LoginCoordinator:
         """
         window = getattr(self._settings, "login_throttle_window", LOGIN_THROTTLE_WINDOW_SECONDS)
         return window if isinstance(window, int) else LOGIN_THROTTLE_WINDOW_SECONDS
+
+    @property
+    def _max_wait(self) -> int:
+        """Total seconds one login may spend waiting out throttle windows (settings.login_max_wait)."""
+        value = getattr(self._settings, "login_max_wait", DEFAULT_LOGIN_MAX_WAIT)
+        return value if isinstance(value, int) else DEFAULT_LOGIN_MAX_WAIT
+
+    async def _get_login_gate(self) -> LoginGate:
+        """The per-MDS login gate, built over the lock manager on first use."""
+        if self._login_gate is None:
+            lock_manager = await self._get_lock_manager()  # takes _lock_init_lock itself; call it first
+            async with self._lock_init_lock:
+                if self._login_gate is None:
+                    self._login_gate = LoginGate(lock_manager, self._throttle_window)
+        return self._login_gate
+
+    def _current_pacing(self) -> tuple[float, Callable[[], Awaitable[Any]] | None]:
+        """Deadline and lock-renewal hook for the login in progress.
+
+        `login()` sets these for its whole body, so the wait for the login lock
+        counts toward the deadline and every lock the call stack holds is renewed
+        while the holder sleeps at the gate. Outside `login()` there is no lock
+        and the deadline starts now.
+        """
+        pacing = _login_pacing.get()
+        if pacing is None:
+            return asyncio.get_running_loop().time() + self._max_wait, None
+        locks = tuple(lock for lock in pacing.locks if lock is not None)
+        if not locks:
+            return pacing.deadline, None
+
+        async def _keepalive() -> None:
+            await self._renew_paced_locks(locks)
+
+        return pacing.deadline, _keepalive
+
+    async def _renew_paced_locks(self, locks: tuple[Any, ...]) -> None:
+        """Renew every login lock the current call stack holds. The gate's keepalive hook.
+
+        Renewing only the innermost lock is what let the outer `login:{mgmt}:{domain}`
+        row lapse while a nested system-domain login slept at the gate (see
+        `_LoginPacing`), so this walks the whole chain.
+
+        A lock we no longer hold **aborts** the paced login, as `LockOwnershipError`.
+        That lock is the only thing keeping two workers from logging into the same
+        domain at once, which is the allowance the gate exists to conserve; once it
+        is gone another worker has already taken over this login, and carrying on
+        would spend the allowance twice and end with `release_lock` operating on
+        someone else's row. Failing fast is also cheap: the caller re-enters and
+        finds the SID the other worker just cached.
+
+        Raises:
+            LockOwnershipError: The lock was stolen (another owner holds the row)
+                or lost (the row is gone) while we were waiting at the gate.
+        """
+        for lock in locks:
+            renew = getattr(lock, "renew_if_needed", None)
+            if renew is None:
+                continue
+            key = getattr(lock, "lock_key", "?")
+            try:
+                renewed = await renew(threshold=_LOCK_RENEW_THRESHOLD)
+            except LockOwnershipError:
+                log().warning(f"Login lock '{key}' was stolen while waiting at the login gate - abandoning this login")
+                raise
+            # `renew_if_needed` returns False both for "not due yet" and for
+            # "renewal failed", so ask whether it was even due before reading
+            # False as a loss. Both sides use _LOCK_RENEW_THRESHOLD.
+            if renewed is False and self._renewal_was_due(lock):
+                log().warning(
+                    f"Login lock '{key}' is gone (expired or released) while waiting at the "
+                    f"login gate - abandoning this login"
+                )
+                raise LockOwnershipError(key, getattr(lock, "owner_id", "?"))
+
+    def _sub_deadline_pacing(self, seconds: float) -> _LoginPacing:
+        """Pacing for a side quest: `min(remaining, seconds)`, on the same lock chain.
+
+        Used by the cleanup login, which must not be able to consume the whole
+        remaining budget of the login it was called to unblock. Outside a
+        `login()` there is nothing to share, so `seconds` is the whole budget.
+        """
+        # One clock read: two would let the sub-deadline land a hair past the
+        # outer one, which is the one thing this must never do.
+        now = asyncio.get_running_loop().time()
+        pacing = _login_pacing.get()
+        remaining = (pacing.deadline - now) if pacing is not None else float(self._max_wait)
+        locks = pacing.locks if pacing is not None else ()
+        return _LoginPacing(deadline=now + min(remaining, float(seconds)), locks=locks)
+
+    @staticmethod
+    def _renewal_was_due(lock: Any) -> bool:
+        """Whether `renew_if_needed` would have attempted a renewal for this lock."""
+        acquired_at = getattr(lock, "acquired_at", None)
+        ttl = getattr(lock, "ttl", None)
+        if not isinstance(acquired_at, datetime) or not isinstance(ttl, int | float):
+            return False
+        elapsed = (datetime.now(UTC).replace(tzinfo=None) - acquired_at).total_seconds()
+        return elapsed > ttl * _LOCK_RENEW_THRESHOLD
 
     @property
     def _credential_username(self) -> str | None:
@@ -241,8 +381,9 @@ class LoginCoordinator:
         """Acquire a temporary SID, run session cleanup, then logout temp SID.
 
         Called when login fails with the max-sessions error, or proactively at
-        startup to discard leftover stale sessions. Uses a direct
-        transport.login call to bypass coordinator logic and avoid recursion.
+        startup to discard leftover stale sessions. The temporary login goes
+        through `_execute_login_request` (gate, slot) but not through
+        `login()`, so it neither caches a SID nor recurses into cleanup.
 
         Args:
             mgmt_name: Management server name (for logging and cleanup).
@@ -257,31 +398,41 @@ class LoginCoordinator:
             return
 
         log().info(f"Session cleanup for '{mgmt_name}:{domain}' ({reason}): acquiring temp SID...")
-        async with self._rate_limiter.acquire(server_ip):
-            if self._auth_mode == "credential" and self._username and self._password_secret:
-                tmp_response = await self._transport.login_with_credentials(
-                    server_ip=server_ip,
-                    username=self._username,
-                    password=self._password_secret.get_secret_value(),
-                    domain=domain if domain else None,
-                    port=port,
-                    session_name="MMP-cleanup",
-                    session_description="Temporary session for stale session cleanup",
-                )
-            else:
-                tmp_response = await self._transport.login_with_apikey(
-                    server_ip=server_ip,
-                    api_key=api_key,
-                    domain=domain if domain else None,
-                    port=port,
-                    session_name="MMP-cleanup",
-                    session_description="Temporary session for stale session cleanup",
-                )
-        if not tmp_response.get("success") or not tmp_response.get("sid"):
-            log().warning(f"Could not acquire temp SID for cleanup: {tmp_response.get('message')}")
-            return
 
-        tmp_sid = str(tmp_response["sid"])
+        async def _temp_login() -> str:
+            # Through the same path as every other login: the gate in front, the
+            # target's slot around the call. This login counts against the server's
+            # allowance like any other, so it must wait its turn and report a
+            # refusal for everyone else's benefit.
+            response = await self._execute_login_request(
+                mgmt_name,
+                domain,
+                server_ip,
+                api_key,
+                port=port,
+                session_name="MMP-cleanup",
+                session_description="Temporary session for stale session cleanup",
+            )
+            sid, _uid = self._parse_login_response(response, mgmt_name, domain, server_ip, api_key)
+            return sid
+
+        # `max_retries=1` bounds non-throttle failures to one attempt, but a
+        # throttle does not increment `failures` -- it closes the gate and waits
+        # for the next window -- so without a deadline of its own this best-effort
+        # side quest would retry until the *outer* login's deadline and leave
+        # nothing for the login it exists to unblock. One window is enough for the
+        # server to answer differently; more than that is not this call's to spend.
+        sub_token = _login_pacing.set(self._sub_deadline_pacing(self._throttle_window))
+        try:
+            tmp_sid = await self._retry_with_backoff(
+                _temp_login, "Cleanup login", mds_host=await self._mds_host(mgmt_name, domain), max_retries=1
+            )
+        except Exception as exc:  # noqa: BLE001 - cleanup is best effort; the caller's login proceeds regardless
+            log().warning(f"Could not acquire temp SID for cleanup: {exc}")
+            return
+        finally:
+            _login_pacing.reset(sub_token)
+
         try:
             cleanup_result = await self._session_cleaner.cleanup_stale_sessions(
                 mgmt_name=mgmt_name,
@@ -457,31 +608,60 @@ class LoginCoordinator:
         self,
         operation: Callable[..., Any],
         operation_name: str,
+        *,
+        mds_host: str,
         max_retries: int | None = None,
         backoff: int | None = None,
     ) -> Any:
-        """Execute operation with retry logic and backoff."""
+        """Run `operation` until it returns a result, with the login gate in front of every attempt.
+
+        Two kinds of failure, two remedies. A *throttle* -- Check Point refused
+        the login for rate -- closes the gate for `mds_host` and tries again once
+        it reopens: as many times as it takes until the login's deadline, and
+        without counting against `max_retries`, because pacing is not failure.
+        Everything else is a failure: it gets the exponential ladder and is
+        limited to `max_retries` attempts. See asdk/login_gate.py.
+
+        `mds_host` is the machine the login counts against (see `_mds_host`).
+        """
         max_retries = max_retries or self._settings.login_max_retries
         backoff = backoff or self._settings.login_retry_backoff
+        gate = await self._get_login_gate()
+        deadline, keepalive = self._current_pacing()
         last_exception = None
         timeouts = 0
-        throttle_waits = 0
-        kind = "refusal"
+        failures = 0
 
-        for attempt in range(max_retries):
+        while failures < max_retries:
+            # wait_open only stops the loop if it observes a live gate row; if the
+            # row is (or looks) open -- a close() that didn't take, a window that
+            # lapsed between a close and this peek, clock skew between workers --
+            # nothing else would end this loop, and it would hammer the server at
+            # full speed instead of pacing. This is the backstop: same error,
+            # raised the same way, whichever one notices the deadline first.
+            now = asyncio.get_running_loop().time()
+            if now > deadline:
+                raise LoginGateDeadlineError(
+                    mds_host, waited=self._max_wait - (deadline - now), max_wait=self._max_wait
+                )
+            # Raises LoginGateDeadlineError past the deadline -- outside the try
+            # below on purpose, so it is never classified and never closes the gate.
+            await gate.wait_open(mds_host, deadline=deadline, max_wait=self._max_wait, keepalive=keepalive)
             try:
                 result = await operation()
                 if result is not None:
                     return result
             except Exception as e:
                 last_exception = e
-                kind, timeouts = self._classify_or_raise(e, operation_name, attempt, timeouts, throttle_waits)
-
-            if attempt < max_retries - 1:
-                span_attrs(attempt=attempt)
+                kind, timeouts = self._classify_or_raise(e, operation_name, failures, timeouts)
                 if kind == "throttle":
-                    throttle_waits += 1
-                await asyncio.sleep(self._retry_delay(kind, attempt, backoff, throttle_waits, operation_name))
+                    await gate.close(mds_host)
+                    continue  # the next wait_open sleeps the window out
+
+            failures += 1
+            if failures < max_retries:
+                span_attrs(attempt=failures)
+                await asyncio.sleep(self._retry_delay(failures - 1, backoff))
 
         if last_exception:
             # The budget is spent and the server never answered. Now -- and only
@@ -500,9 +680,7 @@ class LoginCoordinator:
             raise last_exception
         return None
 
-    def _classify_or_raise(
-        self, exc: Exception, operation_name: str, attempt: int, timeouts: int, throttle_waits: int
-    ) -> tuple[str, int]:
+    def _classify_or_raise(self, exc: Exception, operation_name: str, attempt: int, timeouts: int) -> tuple[str, int]:
         """Classify a failed attempt; raise when the sequence should end here.
 
         Returns the failure kind and the running timeout count.
@@ -513,23 +691,32 @@ class LoginCoordinator:
             log().error(f"{operation_name} failed: {exc} (Fatal error - not retrying)")
             raise exc
 
+        # A RateLimiter slot timeout is local contention, not a server refusal.
+        # It used to be raised by the single `acquire` in `_try_login_once`,
+        # *outside* the try, so it escaped `login()` unwrapped after one
+        # `rate_limit_slot_timeout` (90 s). Now that the slot is taken inside
+        # `_execute_login_request` it lands here, and retrying it would climb the
+        # ladder for up to `login_max_wait` (900 s) while holding the login lock
+        # -- fifteen minutes of waiting for a queue that is ours, not Check
+        # Point's. Fail fast instead, exactly as before; `_try_login_once` passes
+        # the type through unwrapped so consumers keep catching what they caught.
+        if isinstance(exc, LockAcquisitionError):
+            log().error(f"{operation_name} failed: {exc} (no rate-limiter slot - not retrying)")
+            raise exc
+
         kind = _login_failure_kind(exc)
         if kind == "timeout":
             timeouts += 1
 
-        if kind == "throttle" and throttle_waits >= LOGIN_THROTTLE_MAX_WAITS:  # noqa: SIM102
-            log().error(
-                f"{operation_name} still throttled after {throttle_waits} full "
-                f"{self._throttle_window}s windows - more login pressure on this "
-                f"server than Check Point's per-minute login allowance"
-            )
-            raise exc
+        if kind == "throttle":
+            log().warning(f"{operation_name} throttled by Check Point (err_too_many_requests) - closing the login gate")
+            return kind, timeouts
 
         # Backoff clears lockouts, not addresses. Once the evidence says nothing is
         # listening, hand the failure up instead of spending the rest of the budget
         # on it: `_acquire_new_sid` re-resolves the domain's active server and
         # retries against what `show-domains` now reports. Only conclusive evidence
-        # qualifies here; a timeout waits for the budget to run out (see below).
+        # qualifies here; a timeout waits for the budget to run out (see above).
         if kind == "unreachable":
             from ..core.exceptions import ServerUnreachableError
 
@@ -542,24 +729,12 @@ class LoginCoordinator:
         log().warning(f"{operation_name} attempt {attempt + 1} failed: {exc}")
         return kind, timeouts
 
-    def _retry_delay(self, kind: str, attempt: int, backoff: int, throttle_waits: int, operation_name: str) -> float:
-        """Seconds to wait before the next attempt."""
-        if kind == "throttle":
-            # A throttle lockout is not cleared by ramping up to it: every step of
-            # the ramp is shorter than the window, and each rejected attempt re-arms
-            # it. One wait longer than the window is the only thing that works.
-            # Jitter keeps concurrent callers from all coming back at the same
-            # instant and re-tripping it together.
-            delay = self._throttle_window + random.uniform(0, 5.0)
-            log().warning(
-                f"{operation_name} throttled - waiting {delay:.0f}s for the login window "
-                f"to clear ({throttle_waits}/{LOGIN_THROTTLE_MAX_WAITS})"
-            )
-            return delay
+    def _retry_delay(self, attempt: int, backoff: int) -> float:
+        """Seconds before the next attempt after a non-throttle failure.
 
-        # Exponential backoff for everything else, capped at the throttle window: a
-        # longer sleep belongs to the branch above, and a shorter cap would sit just
-        # under the one lockout we know about.
+        Exponential, capped at the throttle window. Throttles never come here:
+        their wait is the gate's, sized by when the refusal row lapses.
+        """
         return min((backoff * (1.3**attempt)) + random.uniform(0, 2.0), float(self._throttle_window))
 
     @traced
@@ -613,38 +788,47 @@ class LoginCoordinator:
         session_description: str | None = None,
         session_timeout: int | None = None,
     ) -> dict[str, Any]:
-        """Execute the actual login request to the API."""
+        """One login round trip to `server_ip`, inside that server's RateLimiter slot.
+
+        The slot covers the HTTP call only. It used to be held by the caller for
+        the whole retry ladder, which pinned one of three domain-server slots for
+        minutes while a throttled login waited (2026-09-14); pacing is the login
+        gate's job now (asdk/login_gate.py), and the slot goes back to meaning
+        what it means everywhere else -- one in-flight request.
+        """
         if self._auth_mode == "credential" and self._username and self._password_secret:
             log().trace(
                 f"Attempting credential login: mgmt='{mgmt_name}', domain='{domain}', IP={server_ip}, user={self._username}"
             )
-            return await self._transport.login_with_credentials(
+            async with self._rate_limiter.acquire(server_ip):
+                return await self._transport.login_with_credentials(
+                    server_ip=server_ip,
+                    username=self._username,
+                    password=self._password_secret.get_secret_value(),
+                    domain=domain if domain else None,
+                    port=port,
+                    session_name=session_name,
+                    session_description=session_description,
+                    session_timeout=session_timeout,
+                    timeout=self._settings.login_timeout,
+                )
+
+        masked_key = f"{api_key[:4]}...{api_key[-4:]}" if api_key and len(api_key) > 8 else "****"
+        log().trace(f"Attempting login: mgmt='{mgmt_name}', domain='{domain}', IP={server_ip}, API_KEY={masked_key}")
+        async with self._rate_limiter.acquire(server_ip):
+            return await self._transport.login_with_apikey(
                 server_ip=server_ip,
-                username=self._username,
-                password=self._password_secret.get_secret_value(),
+                api_key=api_key,
                 domain=domain if domain else None,
                 port=port,
                 session_name=session_name,
                 session_description=session_description,
                 session_timeout=session_timeout,
+                # A login is one HTTP round trip. Without this it inherited the
+                # transport's much larger default, so an unresponsive server cost
+                # 120 s per attempt across every retry (int-4, 2026-09-13).
                 timeout=self._settings.login_timeout,
             )
-
-        masked_key = f"{api_key[:4]}...{api_key[-4:]}" if api_key and len(api_key) > 8 else "****"
-        log().trace(f"Attempting login: mgmt='{mgmt_name}', domain='{domain}', IP={server_ip}, API_KEY={masked_key}")
-        return await self._transport.login_with_apikey(
-            server_ip=server_ip,
-            api_key=api_key,
-            domain=domain if domain else None,
-            port=port,
-            session_name=session_name,
-            session_description=session_description,
-            session_timeout=session_timeout,
-            # A login is one HTTP round trip. Without this it inherited the
-            # transport's much larger default, so an unresponsive server cost
-            # 120 s per attempt across every retry (int-4, 2026-09-13).
-            timeout=self._settings.login_timeout,
-        )
 
     def _raise_as_auth_error(self, exc: Exception, mgmt_name: str, domain: str) -> Never:
         """Always raises AuthenticationError wrapping exc. Never returns."""
@@ -653,6 +837,21 @@ class LoginCoordinator:
         if self._auth_mode == "credential":
             raise AuthenticationError(f"Credential authentication failed for '{mgmt_name}:{domain}': {exc}") from exc
         raise AuthenticationError(f"Login failed after {self._settings.login_max_retries} attempts: {exc}") from exc
+
+    def _raise_gate_deadline_as_auth_error(
+        self, exc: LoginGateDeadlineError, mgmt_name: str, domain: str, label: str
+    ) -> Never:
+        """Translate a gate deadline into the type every login path already surfaces failures as.
+
+        The server never refused this particular attempt; the login gave up
+        waiting for its turn at the gate. `LoginGateDeadlineError` must never
+        leave `LoginCoordinator` unwrapped (see asdk/login_gate.py) -- every
+        call site that can see one (`_try_login_once`, `create_dedicated_session`)
+        routes through here so a future call site can't forget the translation.
+        """
+        from ..core.exceptions import AuthenticationError
+
+        raise AuthenticationError(f"{label} to '{mgmt_name}:{domain}' gave up: {exc}") from exc
 
     def _parse_login_response(
         self, response: dict[str, Any], mgmt_name: str, domain: str, server_ip: str, api_key: str
@@ -749,44 +948,62 @@ class LoginCoordinator:
         session_name: str | None,
         session_description: str | None,
     ) -> tuple[str, str | None]:
-        """Acquire the rate limiter and run the retry-with-backoff sequence once.
+        """Run the retry-with-backoff sequence once; translate the outcome for `_acquire_new_sid`.
 
-        The rate limiter is held for the ENTIRE retry sequence (acquired once,
-        not re-acquired per attempt), preventing concurrent logins to the same
-        IP from compounding throttling issues.
+        Takes no RateLimiter slot itself: each attempt takes the target server's
+        slot around its own HTTP call, inside `_execute_login_request`.
         """
         from ..core.exceptions import AuthenticationError, ServerUnreachableError
 
-        async with self._rate_limiter.acquire(server_ip):
-            log().trace(f"Rate limiter acquired for '{mgmt_name}:{domain}', starting login retry sequence")
-
-            try:
-                result = await self._retry_with_backoff(
-                    lambda: self._login_operation_for(
-                        mgmt_name,
-                        domain,
-                        server_ip,
-                        api_key,
-                        force_relogin,
-                        port,
-                        session_name,
-                        session_description,
-                    ),
-                    "Login",
-                )
-                if result is None:
-                    raise AuthenticationError("Login failed: No session ID returned")
-                sid, uid = result  # type: ignore[assignment]
-                return sid, uid
-            except ServerUnreachableError as e:
-                # Must survive unwrapped: `_acquire_new_sid` decides, on this type,
-                # whether to re-resolve the domain's active server and try there.
-                e.server_ip = e.server_ip or server_ip
-                raise
-            except AuthenticationError:
-                raise
-            except Exception as e:
-                self._raise_as_auth_error(e, mgmt_name, domain)
+        try:
+            # Inside the try: a transient failure resolving the hosting member
+            # (e.g. a cache lookup error) is a login failure like any other and
+            # must come out as AuthenticationError, not propagate raw.
+            mds_host = await self._mds_host(mgmt_name, domain)
+            result = await self._retry_with_backoff(
+                lambda: self._login_operation_for(
+                    mgmt_name,
+                    domain,
+                    server_ip,
+                    api_key,
+                    force_relogin,
+                    port,
+                    session_name,
+                    session_description,
+                ),
+                "Login",
+                mds_host=mds_host,
+            )
+            if result is None:
+                raise AuthenticationError("Login failed: No session ID returned")
+            sid, uid = result  # type: ignore[assignment]
+            return sid, uid
+        except ServerUnreachableError as e:
+            # Must survive unwrapped: `_acquire_new_sid` decides, on this type,
+            # whether to re-resolve the domain's active server and try there.
+            e.server_ip = e.server_ip or server_ip
+            raise
+        except LockAcquisitionError:
+            # No free RateLimiter slot for the target within rate_limit_slot_timeout.
+            # Deliberately unwrapped: before the slot moved inside the retry ladder
+            # this was raised by `_try_login_once`'s own `acquire`, outside the try,
+            # and reached callers as itself. Keeping the type keeps that contract.
+            raise
+        except LockOwnershipError:
+            # A keepalive found one of our login locks stolen or gone
+            # (`_renew_paced_locks`). `login()` owns the translation, and its message
+            # says what actually happened; wrapping it here as "Login failed after N
+            # attempts" would blame the server for our lost lock.
+            raise
+        except LoginGateDeadlineError as e:
+            # The server never refused *this* attempt; we ran out of time
+            # waiting for our turn. Same type consumers already catch, a
+            # message that says which it was.
+            self._raise_gate_deadline_as_auth_error(e, mgmt_name, domain, "Login")
+        except AuthenticationError:
+            raise
+        except Exception as e:
+            self._raise_as_auth_error(e, mgmt_name, domain)
 
     async def _login_with_cleanup_retry(
         self,
@@ -855,8 +1072,8 @@ class LoginCoordinator:
     ) -> tuple[str, str | None]:
         """Perform actual login operation with retry logic.
 
-        Acquires the rate limiter lock ONCE and holds it through all retry attempts.
-        This prevents concurrent logins to the same IP from compounding throttling issues.
+        Delegates to `_login_with_cleanup_retry`; see `_try_login_once` for how slots
+        and pacing are handled.
 
         Args:
             mgmt_name: Management server name.
@@ -954,21 +1171,81 @@ class LoginCoordinator:
             log().warning(f"No data in response for '{mgmt_name}:{domain}', using primary IP")
             return server_config.server_ip
 
-        # show-domains returns {"objects": [...], "total": N, ...} dict
-        # Handle both dict (with "objects" key) and direct list formats
-        if isinstance(response_data, list):
-            domains_data = response_data
-        elif isinstance(response_data, dict):
-            domains_data = response_data.get("objects", [])
-        else:
-            domains_data = []
+        domains_data = self._domains_objects_from_response(response_data)
+
+        # Which member hosts each server matters to the login gate; a SmartCenter
+        # has no members and would just refuse the command.
+        mds_ips: dict[str, str] = {}
+        if server_config.is_mdm is not False:
+            mds_ips = await self._fetch_mds_ips(system_ip, system_sid, server_config.port)
 
         return await self._cache_domain_active_ip(
-            mgmt_name, domain, domains_data, server_config.server_ip, server_config.is_mdm
+            mgmt_name, domain, domains_data, server_config.server_ip, server_config.is_mdm, mds_ips=mds_ips
         )
 
+    @staticmethod
+    def _domains_objects_from_response(response_data: Any) -> list[Any]:
+        """`show-domains` returns {"objects": [...], "total": N, ...}; tolerate a bare list too."""
+        if isinstance(response_data, list):
+            return response_data
+        if isinstance(response_data, dict):
+            return response_data.get("objects", [])
+        return []
+
+    async def _fetch_mds_ips(self, system_ip: str, system_sid: str, port: int | None) -> dict[str, str]:
+        """{MDS member name: IPv4} via `show-mdss` on the system session; {} on any failure.
+
+        The login gate keys on the member that hosts a domain's active server
+        (asdk/login_gate.py). An empty map is not an error: the gate then falls
+        back to the configured host, which on a single-member MDS is the same
+        machine anyway.
+        """
+        try:
+            async with self._rate_limiter.acquire(system_ip):
+                response = await self._transport.api_call(
+                    server_ip=system_ip,
+                    sid=system_sid,
+                    command="show-mdss",
+                    payload={"details-level": "full", "limit": 500},
+                    port=port,
+                )
+        except Exception as exc:  # noqa: BLE001 - enrichment only; the login proceeds without it
+            log().debug(f"show-mdss failed on {system_ip}: {exc}; login gate will key on the configured host")
+            return {}
+        if not response.get("success"):
+            log().debug(
+                f"show-mdss refused on {system_ip}: {response.get('message')}; login gate will key on the configured host"
+            )
+            return {}
+        data = response.get("data")
+        objects = data.get("objects", []) if isinstance(data, dict) else data if isinstance(data, list) else []
+        return mds_ip_map(objects)
+
+    async def _mds_host(self, mgmt_name: str, domain: str) -> str:
+        """The machine Check Point rate-limits this login on: what the login gate keys on.
+
+        A domain login goes to a domain server hosted on some MDS member -- and
+        domains move between members on failover -- so for a domain it is the
+        member IP recorded on the domain's cache row by `_cache_domain_active_ip`.
+        The system domain, Global, a SmartCenter, or a row without that
+        information fall back to the configured host.
+        """
+        if domain:
+            row = await self._cache.get_domain(mdm_dmn=f"{mgmt_name}:{domain}")
+            mds_ip = getattr(row, "active_mds_ip", "") if row is not None else ""
+            if isinstance(mds_ip, str) and mds_ip:
+                return mds_ip
+        server = self._registry.get_server(mgmt_name)
+        return str(server.server_ip) if server else mgmt_name
+
     async def _cache_domain_active_ip(
-        self, mgmt_name: str, domain: str, domains_data: list[Any], default_ip: str, is_mdm: bool | None = None
+        self,
+        mgmt_name: str,
+        domain: str,
+        domains_data: list[Any],
+        default_ip: str,
+        is_mdm: bool | None = None,
+        mds_ips: dict[str, str] | None = None,
     ) -> str:
         """Cache the extracted active IP for the specified domain."""
         from ..cache.models import Domain
@@ -976,18 +1253,29 @@ class LoginCoordinator:
         for d in domains_data:
             if isinstance(d, dict) and d.get("name") == domain:
                 d_uid = d.get("uid", "")
-                active_ip = self._extract_active_server_ip(d) or default_ip
+                layout = extract_domain_servers(d)
+                active_ip = layout.active_ip or default_ip
+                active_mds_ip = (mds_ips or {}).get(layout.active_mds, "")
 
                 domain_record = Domain.build(
                     mgmt_name=mgmt_name,
                     domain_name=domain,
                     domain_uid=d_uid,
                     active_ip=active_ip,
+                    active_server=layout.active_server,
+                    active_mds=layout.active_mds,
+                    active_mds_ip=active_mds_ip,
+                    standby_mdss=",".join(layout.standby_mdss),
+                    standby_ips=",".join(layout.standby_ips),
+                    standby_servers=",".join(layout.standby_servers),
                     is_mdm=is_mdm if is_mdm is not None else False,
                 )
 
                 await self._cache.upsert_domain(domain_record)
-                log().info(f"Updated domain cache for '{mgmt_name}:{domain}' with active_ip={active_ip}")
+                log().info(
+                    f"Updated domain cache for '{mgmt_name}:{domain}': active_ip={active_ip} "
+                    f"on MDS {layout.active_mds or '?'} ({active_mds_ip or 'ip unknown'})"
+                )
                 return active_ip
 
         if domain == GLOBAL_DOMAIN_NAME and is_mdm is not False:
@@ -1015,25 +1303,8 @@ class LoginCoordinator:
         return default_ip
 
     def _extract_active_server_ip(self, domain_obj: dict[str, Any]) -> str:
-        """Extract active server IP from domain object.
-
-        Args:
-            domain_obj: Domain object from API response.
-
-        Returns:
-            Active server IP address or empty string.
-        """
-        servers = domain_obj.get("servers", [])
-        if not isinstance(servers, list):
-            return ""
-
-        for server in servers:
-            if isinstance(server, dict) and server.get("active") is True:
-                ipv4_address = server.get("ipv4-address", "")
-                if isinstance(ipv4_address, str) and ipv4_address:
-                    return ipv4_address
-
-        return ""
+        """Active server IP from a `show-domains` object; '' if none. See asdk/domain_servers.py."""
+        return extract_domain_servers(domain_obj).active_ip
 
     @traced
     async def login(
@@ -1068,47 +1339,84 @@ class LoginCoordinator:
         if cache_mode == "refresh":
             force = True
 
+        from ..core.exceptions import AuthenticationError
+
         domain = self._normalize_domain(mgmt_name, domain)
         span_attrs(mgmt_name=mgmt_name, domain=domain or "system", force=force)
         entry_time = datetime.now(UTC).replace(tzinfo=None)
+        loop = asyncio.get_running_loop()
+        # One deadline for the whole call, including the wait for the login lock:
+        # a second caller for the same domain is paced by the first one's pacing.
+        # A *nested* login -- `_prefetch_domain_server_ip` and
+        # `_relogin_at_resolved_ip` both call back into login() for the system
+        # domain -- inherits the outer deadline instead of starting a fresh
+        # `login_max_wait`, or one login() would span prefetch (<=900 s) plus its
+        # own lock acquire (<=900 s) for a setting documented as the total.
+        outer = _login_pacing.get()
+        pacing = outer if outer is not None else _LoginPacing(deadline=loop.time() + self._max_wait)
+        deadline = pacing.deadline
 
-        # For domains, pre-fetch domain server IP before acquiring lock
-        # to avoid deadlock where we hold domain lock but need system login
-        # Skip prefetch when explicitly requested (internal use)
-        # Use refresh_domain_ip (not force) so that session-expiry retries
-        # don't bypass the domain IP cache and trigger unnecessary system logins.
-        server_ip: str | None = None
-        if domain and not _skip_prefetch:
-            server_ip = await self._prefetch_domain_server_ip(mgmt_name, domain, force=refresh_domain_ip)
+        # Set before the prefetch, not just around _acquire_new_sid, so the
+        # nested system-domain login the prefetch may make is bounded by this
+        # call's deadline and renews this call's locks (there are none yet here;
+        # the chain grows once the lock below is held).
+        outer_token = _login_pacing.set(pacing)
+        try:
+            # For domains, pre-fetch domain server IP before acquiring lock
+            # to avoid deadlock where we hold domain lock but need system login
+            # Skip prefetch when explicitly requested (internal use)
+            # Use refresh_domain_ip (not force) so that session-expiry retries
+            # don't bypass the domain IP cache and trigger unnecessary system logins.
+            server_ip: str | None = None
+            if domain and not _skip_prefetch:
+                server_ip = await self._prefetch_domain_server_ip(mgmt_name, domain, force=refresh_domain_ip)
 
-        # Pre-lock cache check (optimization)
-        if not force:
-            cached = await self._cache.get_sid(
-                mgmt_name, domain, self._settings.session_expire_seconds, username=self._credential_username
-            )
-            if cached and cached.sid and cached.server_ip:
-                log().trace(f"Cache HIT (pre-lock): '{mgmt_name}:{domain}' (SID: [{cached.sid[:8]}...])")
-                span_attrs(sid_cache="hit-pre-lock")
-                return cached.sid, cached.server_ip
-
-        lock_key = self._get_lock_key(mgmt_name, domain)
-
-        # In-process lock for optimization
-        if lock_key not in self._in_process_locks:
-            self._in_process_locks[lock_key] = asyncio.Lock()
-
-        async with self._in_process_locks[lock_key]:
-            lock_manager = await self._get_lock_manager()
-
-            # Acquire distributed login lock with 90s TTL (accounts for throttling/retries)
-            async with lock_manager.acquire(
-                lock_key,
-                timeout=90,
-                ttl=lock_manager.DEFAULT_TTL_LOGIN,
-            ):
-                return await self._acquire_new_sid(
-                    mgmt_name, domain, force, entry_time, server_ip, session_name, session_description
+            # Pre-lock cache check (optimization)
+            if not force:
+                cached = await self._cache.get_sid(
+                    mgmt_name, domain, self._settings.session_expire_seconds, username=self._credential_username
                 )
+                if cached and cached.sid and cached.server_ip:
+                    log().trace(f"Cache HIT (pre-lock): '{mgmt_name}:{domain}' (SID: [{cached.sid[:8]}...])")
+                    span_attrs(sid_cache="hit-pre-lock")
+                    return cached.sid, cached.server_ip
+
+            lock_key = self._get_lock_key(mgmt_name, domain)
+
+            # In-process lock for optimization
+            if lock_key not in self._in_process_locks:
+                self._in_process_locks[lock_key] = asyncio.Lock()
+
+            async with self._in_process_locks[lock_key]:
+                lock_manager = await self._get_lock_manager()
+
+                # The login lock's TTL is renewed while we wait at the login gate, and a
+                # waiter's timeout is what is left of this call's budget: it must outlast
+                # our pacing, but it must not outlast the deadline it is paced by, or the
+                # prefetch above plus this wait could together double `login_max_wait`.
+                try:
+                    async with lock_manager.acquire(
+                        lock_key,
+                        timeout=max(1, int(deadline - loop.time())),
+                        ttl=lock_manager.DEFAULT_TTL_LOGIN,
+                    ) as lock_ctx:
+                        token = _login_pacing.set(pacing.nest(lock_ctx))
+                        try:
+                            return await self._acquire_new_sid(
+                                mgmt_name, domain, force, entry_time, server_ip, session_name, session_description
+                            )
+                        finally:
+                            _login_pacing.reset(token)
+                except LockOwnershipError as exc:
+                    # Either a keepalive found the lock stolen or gone (see
+                    # `_renew_paced_locks`), or `release_lock` did on the way out.
+                    # Either way this login did not complete under a lock it owned;
+                    # surface the type every login failure already surfaces as.
+                    raise AuthenticationError(
+                        f"Login to '{mgmt_name}:{domain or 'system'}' lost its login lock: {exc}"
+                    ) from exc
+        finally:
+            _login_pacing.reset(outer_token)
 
     @traced
     async def _acquire_new_sid(
@@ -1307,7 +1615,7 @@ class LoginCoordinator:
             AuthenticationError: If login fails after all retries.
         """
         span_attrs(mgmt_name=mgmt_name, domain=domain or "system")
-        from ..core.exceptions import AuthenticationError
+        from ..core.exceptions import AuthenticationError, InvalidCredentialsError
 
         server_config = self._registry.get_server(mgmt_name)
         if not server_config:
@@ -1340,17 +1648,36 @@ class LoginCoordinator:
                 session_description=session_description,
                 session_timeout=self._settings.session_timeout,
             )
-            if not (response.get("success") and response.get("sid")):
-                error_msg = response.get("message", "Unknown login error")
-                raise AuthenticationError(f"Dedicated session login failed for '{mgmt_name}:{domain}': {error_msg}")
-            return str(response["sid"]), response.get("data", {}).get("uid")
+            # Through the shared parser rather than a bespoke success check. The
+            # bespoke one built its error from `message` alone and dropped `code`,
+            # so a refusal carrying err_too_many_requests -- Check Point's message
+            # for it does not mention the code -- was classified "refusal": it
+            # never closed the gate, it consumed a retry, and it climbed the
+            # exponential ladder against a server that was actively rate-limiting
+            # it while every other worker kept hammering. The parser raises
+            # ThrottlingError for that case and InvalidCredentialsError for a
+            # rejected key, both of which the retry loop already knows what to do
+            # with. Same fix as the cleanup login (d2c38ec); this path was missed.
+            try:
+                return self._parse_login_response(response, mgmt_name, domain, server_ip, api_key)
+            except InvalidCredentialsError:
+                raise  # fatal either way; the subclass is the signal, don't bury it
+            except AuthenticationError as exc:
+                # Keep the context the bespoke message carried: which path, which server.
+                raise AuthenticationError(f"Dedicated session login failed for '{mgmt_name}:{domain}': {exc}") from exc
 
-        # Rate limiter held for the ENTIRE retry sequence (acquired once, not
-        # re-acquired per attempt), matching _try_login_once's pattern -- prevents
-        # concurrent dedicated-session logins to the same IP from compounding
-        # throttling issues.
-        async with self._rate_limiter.acquire(server_ip):
-            result = await self._retry_with_backoff(_attempt, "Dedicated session login")
+        try:
+            # Inside the try along with the retry call, for the same reason as
+            # _try_login_once: a failure resolving the hosting member is a login
+            # failure like any other, not a raw exception past this method.
+            mds_host = await self._mds_host(mgmt_name, domain)
+            # Each attempt takes the target's RateLimiter slot around its own HTTP call
+            # (inside _execute_login_request); nothing is held across the ladder.
+            result = await self._retry_with_backoff(_attempt, "Dedicated session login", mds_host=mds_host)
+        except LoginGateDeadlineError as e:
+            # Must never leave LoginCoordinator unwrapped -- see
+            # _raise_gate_deadline_as_auth_error and asdk/login_gate.py.
+            self._raise_gate_deadline_as_auth_error(e, mgmt_name, domain, "Dedicated session login")
 
         if result is None:
             raise AuthenticationError(

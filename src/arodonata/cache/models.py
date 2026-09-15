@@ -162,12 +162,20 @@ class Domain(SQLModel, table=True):
 
     mdm_dmn: str = Field(
         primary_key=True,
-        description="'active_mds:domain' or 'sms:'",
+        description="'mgmt_name:domain' ('mgmt_name:' for the system domain)",
     )
     domain_name: str = Field(index=True)
     domain_uid: str = Field(default="", max_length=255)
-    active_mds: str
+    active_mds: str  # name of the MDS member hosting the active server; mgmt_name when unknown
     active_ip: str
+    active_mds_ip: str = Field(
+        default="",
+        description=(
+            "IPv4 of the MDS member hosting the active domain server -- what Check Point "
+            "rate-limits logins on (asdk/login_gate.py). '' when unknown: SmartCenter, "
+            "show-mdss unavailable, or a row written before this column existed."
+        ),
+    )
     active_server: str
     standby_mdss: str = Field(default="")  # Comma-separated - use ServerList for type safety
     standby_ips: str = Field(default="")
@@ -188,6 +196,8 @@ class Domain(SQLModel, table=True):
         domain_uid: str = "",
         active_ip: str,
         active_server: str = "",
+        active_mds: str = "",
+        active_mds_ip: str = "",
         standby_mdss: str = "",
         standby_ips: str = "",
         standby_servers: str = "",
@@ -203,6 +213,8 @@ class Domain(SQLModel, table=True):
             domain_uid: Domain UID (default: "").
             active_ip: Active server IP address.
             active_server: Active server name (default: mgmt_name).
+            active_mds: Hosting MDS member's name (default: mgmt_name).
+            active_mds_ip: Hosting member's IPv4 (default: "" = unknown).
             standby_mdss: Comma-separated MDS standby servers.
             standby_ips: Comma-separated standby IPs.
             standby_servers: Comma-separated standby server names.
@@ -221,13 +233,16 @@ class Domain(SQLModel, table=True):
         """
         if not active_server:
             active_server = mgmt_name
+        if not active_mds:
+            active_mds = mgmt_name
 
         return cls(
             mdm_dmn=f"{mgmt_name}:{domain_name}",
             domain_name=domain_name,
             domain_uid=domain_uid,
-            active_mds=mgmt_name,
+            active_mds=active_mds,
             active_ip=active_ip,
+            active_mds_ip=active_mds_ip,
             active_server=active_server,
             standby_mdss=standby_mdss,
             standby_ips=standby_ips,

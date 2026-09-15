@@ -7,6 +7,7 @@ and dependency injection support.
 
 from .client import AMgmtClient
 from .login_coordinator import LoginCoordinator
+from .login_gate import LoginGate
 from .rate_limiter import RateLimiter
 from .server_registry import ServerConfig, ServerRegistry
 from .session_cleaner import CleanupResult, SessionCleaner
@@ -16,6 +17,7 @@ from .transport import ApiTransport, RawApiResponse
 __all__ = [
     "AMgmtClient",
     "LoginCoordinator",
+    "LoginGate",
     "RateLimiter",
     "ServerRegistry",
     "ServerConfig",

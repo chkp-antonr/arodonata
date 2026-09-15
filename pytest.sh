@@ -23,6 +23,10 @@
 #
 # Integration credentials load from .env.test + .env.secrets via conftest.
 # Integration buckets run serially and without coverage by design.
+#
+# For a run you cannot explain from the log alone, ARODONATA_TEST_TRACE=1 exports
+# OTel spans to _tmp/otel_traces/ -- per-login, per-call and per-slot durations.
+# Off by default; see the integration_tracing fixture in conftest.
 
 # No `set -e`: int-full must keep going after a failed bucket and report all
 # of them at the end. Failures are handled explicitly below.
@@ -61,7 +65,10 @@ case "$tier" in
             if ! run_bucket "$n" "$@"; then
                 failed+=("b$n")
             fi
-            if [[ "$n" != "${BUCKETS[-1]}" ]]; then
+            # ${BUCKETS[-1]} would be neater but negative subscripts need bash
+            # 4.2+, and `env bash` finds macOS's 3.2 unless a newer one happens
+            # to be earlier on PATH.
+            if [[ "$n" != "${BUCKETS[$((${#BUCKETS[@]} - 1))]}" ]]; then
                 echo "--- pausing ${BUCKET_PAUSE_SECONDS}s to clear Check Point's login window ---"
                 sleep "$BUCKET_PAUSE_SECONDS"
             fi
