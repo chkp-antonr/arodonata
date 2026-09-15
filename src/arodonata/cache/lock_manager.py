@@ -525,6 +525,61 @@ class DatabaseLockManager:
             result = await session.execute(stmt)
             return result.scalar_one_or_none() is not None
 
+    async def peek_expiry(self, lock_key: str) -> datetime | None:
+        """`expires_at` of a live row for `lock_key`; None if absent or already expired.
+
+        Read-only. For callers that use a row as a shared *marker* rather than a
+        mutual-exclusion lock (asdk/login_gate.py): they need to know when it
+        lapses so they can sleep until then instead of polling.
+        """
+        now = datetime.now(UTC).replace(tzinfo=None)
+        async with self._db_manager.session() as session:
+            stmt = select(DistributedLock.expires_at).where(
+                and_(
+                    DistributedLock.lock_key == lock_key,  # type: ignore
+                    DistributedLock.expires_at > now,  # type: ignore
+                )
+            )
+            return (await session.execute(stmt)).scalar_one_or_none()
+
+    @traced
+    async def extend_lock(self, lock_key: str, ttl: int) -> bool:
+        """Push `lock_key`'s `expires_at` out to now + ttl, whoever owns the row.
+
+        Unlike `renew_lock` this deliberately ignores ownership: it is for rows
+        used as shared markers (asdk/login_gate.py), where the fact that matters
+        is *when the row lapses*, not who wrote it. Never shortens -- a row that
+        already expires later than now + ttl is left alone. Returns False only
+        when there is no row at all.
+        """
+        span_attrs(**{"lock.key": lock_key, "lock.ttl": ttl})
+        now = datetime.now(UTC).replace(tzinfo=None)
+        new_expires_at = now + timedelta(seconds=ttl)
+
+        async with self._db_manager.session() as session:
+            update_stmt = (
+                update(DistributedLock)
+                .where(
+                    and_(
+                        DistributedLock.lock_key == lock_key,  # type: ignore
+                        DistributedLock.expires_at < new_expires_at,  # type: ignore
+                    )
+                )
+                .values(expires_at=new_expires_at)
+            )
+            result = await session.execute(update_stmt)
+            await session.commit()
+            if (getattr(result, "rowcount", 0) or 0) >= 1:
+                log().debug(f"Extended lock '{lock_key}' to +{ttl}s")
+                return True
+
+            # Nothing confirmed updated: the row may be absent, may already expire
+            # later than now + ttl, or the driver may report rowcount=-1 ("unknown")
+            # for an UPDATE that succeeded (the quirk `_try_acquire` hardens
+            # against). One SELECT settles all three.
+            stmt = select(DistributedLock.lock_key).where(DistributedLock.lock_key == lock_key)  # type: ignore
+            return (await session.execute(stmt)).scalar_one_or_none() is not None
+
     @traced
     async def renew_lock(
         self,
