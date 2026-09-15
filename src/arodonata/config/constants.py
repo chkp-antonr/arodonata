@@ -25,25 +25,26 @@ DEFAULT_API_TIMEOUT: Final[int] = 120  # seconds
 # ARODONATA_LOGIN_TIMEOUT without touching the API budget.
 DEFAULT_LOGIN_TIMEOUT: Final[int] = 120  # seconds
 
-# Check Point rate-limits logins per user per server IP over a ONE-MINUTE window.
-# How many it allows in that window is server-side configuration (3 by default);
-# with one shared API key the allowance is shared by every caller, no matter how
-# many there are. What matters here is the window, not the allowance: exceeding it
-# locks the user out for the remainder, and a rejected attempt RE-ARMS it, so the
-# only wait that reliably clears it is a single one longer than a minute. 70 s is
-# that wait with margin.
+# Check Point rate-limits logins per management server machine -- every domain
+# whose active server is hosted on a Multi-Domain Server member shares that
+# member's allowance -- over roughly a minute, to a server-configured count (3 by
+# default). Exceeding it returns err_too_many_requests in ~0.5 s. It is NOT a clean
+# N-per-60 s window: probed on 2026-09-14 (tests/integration/probe_login_throttle.py)
+# a server set to 10 allowed 10 logins in 18 s on one run and 18 in 43 s on the next,
+# and recovered in 20 s and 41-57 s respectively. Whether a refused attempt delays
+# recovery is unconfirmed (two runs, mixed evidence). This library does not model
+# the allowance; it reacts to refusals (asdk/login_gate.py), and this value is how
+# long a refusal closes the gate for, counted from the *last* refusal. 70 s covers
+# the worst recovery seen with margin.
 #
 # Note this is a *rate* limit, and is NOT what RateLimiter enforces: that caps
-# concurrency (DEFAULT_CONCURRENT_LIMIT simultaneous calls per IP). Concurrent
-# logins are allowed by the limiter and can consume the whole per-minute login
-# allowance in a few seconds -- the two limits are easy to confuse and unrelated.
+# concurrency (DEFAULT_CONCURRENT_LIMIT simultaneous calls per target IP). The two
+# are easy to confuse and unrelated.
 #
 # Tunable via ArodonataSettings.login_throttle_window, because the limit is
 # server-side configuration rather than a universal constant -- and because a
 # caller that knows it will not hit a real throttle (a test with a mocked one,
-# say) should not be made to wait out a window that does not exist. Waiting is
-# never free: a throttled login costs this much before it can even retry, so
-# any budget a caller wraps around a login has to exceed it.
+# say) should not be made to wait out a window that does not exist.
 LOGIN_THROTTLE_WINDOW_SECONDS: Final[int] = 70  # seconds
 DEFAULT_CONCURRENT_LIMIT: Final[int] = 3
 DEFAULT_LOGIN_BACKOFF: Final[int] = 5  # seconds

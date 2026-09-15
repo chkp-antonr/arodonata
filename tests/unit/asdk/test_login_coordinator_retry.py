@@ -4,13 +4,15 @@ Retry timing is neutralized by patching ``asyncio.sleep``; no real waits.
 Transport/APIClient seam is mocked; offline only.
 """
 
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import SecretStr
 
-from arodonata.asdk.login_coordinator import LOGIN_THROTTLE_MAX_WAITS, LoginCoordinator
+from arodonata.asdk.login_coordinator import LoginCoordinator, _login_pacing, _LoginPacing
+from arodonata.asdk.login_gate import LoginGateDeadlineError
 from arodonata.asdk.session_cleaner import CleanupResult, SessionCleaner
 from arodonata.config import LOGIN_THROTTLE_WINDOW_SECONDS
 from arodonata.core.exceptions import AuthenticationError, ServerUnreachableError, ThrottlingError
@@ -28,6 +30,7 @@ def _make_settings(*, auth_mode="api_key", username=None, password=None, max_ret
     settings.session_timeout = 600
     settings.login_timeout = 120
     settings.login_throttle_window = LOGIN_THROTTLE_WINDOW_SECONDS
+    settings.login_max_wait = 900
     settings.auth_mode = auth_mode
     settings.username = username
     settings.password = password
@@ -43,8 +46,39 @@ def _make_rate_limiter():
     return rl
 
 
+class FakeGate:
+    """Stand-in for LoginGate: never sleeps, records every close and wait.
+
+    After `give_up_after` refusals, the next wait raises LoginGateDeadlineError --
+    the way the real gate does when the next window would pass the login's
+    deadline. Without that, an operation that throttles forever would loop forever.
+    """
+
+    def __init__(self, give_up_after: int = 3) -> None:
+        self.closed: list[str] = []
+        self.waits: list[dict] = []
+        self.give_up_after = give_up_after
+
+    async def wait_open(self, mds_host, *, deadline, max_wait, keepalive=None):
+        self.waits.append({"mds_host": mds_host, "deadline": deadline, "max_wait": max_wait})
+        if keepalive is not None:
+            await keepalive()
+        if len(self.closed) >= self.give_up_after:
+            raise LoginGateDeadlineError(mds_host, waited=float(max_wait), max_wait=max_wait)
+
+    async def close(self, mds_host):
+        self.closed.append(mds_host)
+
+
 def _make_coordinator(
-    *, settings=None, transport=None, cache=None, session_cleaner=None, registry=None, rate_limiter=None
+    *,
+    settings=None,
+    transport=None,
+    cache=None,
+    session_cleaner=None,
+    registry=None,
+    rate_limiter=None,
+    login_gate=None,
 ):
     return LoginCoordinator(
         registry=registry or MagicMock(),
@@ -53,6 +87,7 @@ def _make_coordinator(
         cache=cache or AsyncMock(),
         settings=settings or _make_settings(),
         session_cleaner=session_cleaner,
+        login_gate=login_gate if login_gate is not None else FakeGate(),
     )
 
 
@@ -82,7 +117,7 @@ async def test_retry_stops_immediately_for_server_connection_error():
 
     with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
         with pytest.raises(ServerUnreachableError):
-            await coord._retry_with_backoff(op, "Login")
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
 
     assert attempts == 1
     sleep.assert_not_awaited()
@@ -108,7 +143,7 @@ async def test_retry_stops_immediately_when_the_socket_was_refused(error):
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
         with pytest.raises(ServerUnreachableError):
-            await coord._retry_with_backoff(op, "Login")
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
 
     assert attempts == 1
 
@@ -133,7 +168,7 @@ async def test_a_single_timeout_is_retried_at_the_same_address():
         return ("sid-1", "uid-1")
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
-        result = await coord._retry_with_backoff(op, "Login")
+        result = await coord._retry_with_backoff(op, "Login", mds_host="mds")
 
     assert result == ("sid-1", "uid-1")
     assert attempts == 2
@@ -155,7 +190,7 @@ async def test_timeouts_use_the_whole_retry_budget_before_giving_up():
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
         with pytest.raises(ServerUnreachableError):
-            await coord._retry_with_backoff(op, "Login")
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
 
     assert attempts == 4
 
@@ -173,7 +208,7 @@ async def test_a_slow_server_that_answers_on_a_later_attempt_succeeds():
         return ("sid-1", "uid-1")
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
-        result = await coord._retry_with_backoff(op, "Login")
+        result = await coord._retry_with_backoff(op, "Login", mds_host="mds")
 
     assert result == ("sid-1", "uid-1")
     assert attempts == 4
@@ -193,7 +228,7 @@ async def test_a_non_timeout_failure_after_timeouts_is_raised_as_itself():
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
         with pytest.raises(AuthenticationError) as excinfo:
-            await coord._retry_with_backoff(op, "Login")
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
 
     assert not isinstance(excinfo.value, ServerUnreachableError)
     assert attempts == 3
@@ -216,7 +251,7 @@ async def test_retry_keeps_retrying_a_transient_refusal_from_a_live_server():
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
         with pytest.raises(AuthenticationError):
-            await coord._retry_with_backoff(op, "Login")
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
 
     assert attempts == 5
 
@@ -232,7 +267,7 @@ async def test_retry_continues_full_max_for_generic_error():
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
         with pytest.raises(AuthenticationError):
-            await coord._retry_with_backoff(op, "Login")
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
 
     assert attempts == 3
 
@@ -248,7 +283,7 @@ async def test_retry_no_retry_on_auth_to_server_failed():
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
         with pytest.raises(Exception, match="Authentication to server failed"):
-            await coord._retry_with_backoff(op, "Login")
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
 
     assert attempts == 1
 
@@ -264,7 +299,7 @@ async def test_retry_no_retry_on_type_error():
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
         with pytest.raises(TypeError):
-            await coord._retry_with_backoff(op, "Login")
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
 
     assert attempts == 1
 
@@ -278,7 +313,7 @@ async def test_retry_success_returns_immediately():
         attempts += 1
         return ("sid", "uid")
 
-    result = await coord._retry_with_backoff(op, "Login")
+    result = await coord._retry_with_backoff(op, "Login", mds_host="mds")
     assert result == ("sid", "uid")
     assert attempts == 1
 
@@ -290,7 +325,7 @@ async def test_retry_returns_none_when_all_attempts_return_none():
         return None
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
-        result = await coord._retry_with_backoff(op, "Login")
+        result = await coord._retry_with_backoff(op, "Login", mds_host="mds")
     assert result is None
 
 
@@ -305,7 +340,7 @@ async def test_retry_explicit_backoff_and_max_retries_args():
 
     with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
         with pytest.raises(ValueError):
-            await coord._retry_with_backoff(op, "Login", max_retries=4, backoff=2)
+            await coord._retry_with_backoff(op, "Login", mds_host="mds", max_retries=4, backoff=2)
 
     assert attempts == 4
     assert sleep.await_count == 3  # sleeps between attempts, not after last
@@ -319,7 +354,7 @@ async def test_retry_backoff_capped_at_the_throttle_window():
 
     with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
         with pytest.raises(ValueError):
-            await coord._retry_with_backoff(op, "Login", max_retries=3, backoff=100)
+            await coord._retry_with_backoff(op, "Login", mds_host="mds", max_retries=3, backoff=100)
 
     for call in sleep.await_args_list:
         assert call.args[0] <= LOGIN_THROTTLE_WINDOW_SECONDS
@@ -330,92 +365,9 @@ async def test_retry_backoff_capped_at_the_throttle_window():
 # ---------------------------------------------------------------------------
 
 
-async def test_throttling_waits_the_whole_window_instead_of_the_ramp():
-    """The ramp never cleared a lockout: every one of its sleeps is shorter than it.
-
-    Check Point rate-limits logins per user per server IP over a one-minute
-    window (the allowance inside it is server-side configuration), and a rejected
-    attempt re-arms that window -- so N short sleeps land back inside it N times.
-    Only a single wait longer than the window gets us out.
-    """
-    coord = _make_coordinator(settings=_make_settings(max_retries=3, backoff=5))
-
-    async def op():
-        raise ThrottlingError("Login throttled: err_too_many_requests")
-
-    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
-        with pytest.raises(ThrottlingError):
-            await coord._retry_with_backoff(op, "Login")
-
-    assert sleep.await_args_list, "a throttled login must wait before retrying"
-    for call in sleep.await_args_list:
-        assert call.args[0] >= LOGIN_THROTTLE_WINDOW_SECONDS
-
-
-async def test_throttling_gives_up_after_a_few_windows_rather_than_holding_a_slot():
-    """The retry sequence holds a rate-limiter slot throughout.
-
-    Waiting out the full 8 attempts at 70 s each would pin one of three slots for
-    ~9 minutes and outlive the login lock's TTL. If three full windows have not
-    cleared it, the problem is systemic, not transient.
-    """
-    coord = _make_coordinator(settings=_make_settings(max_retries=8, backoff=5))
-    attempts = 0
-
-    async def op():
-        nonlocal attempts
-        attempts += 1
-        raise ThrottlingError("Login throttled: err_too_many_requests")
-
-    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
-        with pytest.raises(ThrottlingError):
-            await coord._retry_with_backoff(op, "Login")
-
-    assert attempts == LOGIN_THROTTLE_MAX_WAITS + 1
-    assert len(sleep.await_args_list) == LOGIN_THROTTLE_MAX_WAITS
-
-
-async def test_the_throttle_wait_honours_the_configured_window():
-    """A caller that knows no real lockout exists must not be made to wait one out.
-
-    The mocked-throttle integration test is exactly that case: its retry is served
-    from a captured SID and never reaches the server, so sitting through the full
-    70 s window bought nothing and blew the test's own budget.
-    """
-    settings = _make_settings(max_retries=2)
-    settings.login_throttle_window = 3
-    coord = _make_coordinator(settings=settings)
-
-    async def op():
-        raise ThrottlingError("Login throttled: err_too_many_requests")
-
-    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
-        with pytest.raises(ThrottlingError):
-            await coord._retry_with_backoff(op, "Login")
-
-    assert sleep.await_args_list
-    for call in sleep.await_args_list:
-        assert 3 <= call.args[0] < LOGIN_THROTTLE_WINDOW_SECONDS
-
-
-async def test_the_throttle_window_falls_back_to_the_constant_when_unset():
-    """Settings objects without the field (older configs, mocks) still behave."""
-    settings = _make_settings(max_retries=2)
-    del settings.login_throttle_window
-    coord = _make_coordinator(settings=settings)
-
-    async def op():
-        raise ThrottlingError("Login throttled: err_too_many_requests")
-
-    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
-        with pytest.raises(ThrottlingError):
-            await coord._retry_with_backoff(op, "Login")
-
-    assert sleep.await_args_list[0].args[0] >= LOGIN_THROTTLE_WINDOW_SECONDS
-
-
 async def test_a_throttle_that_clears_lets_the_login_through():
-    coord = _make_coordinator(settings=_make_settings(max_retries=8, backoff=5))
+    gate = FakeGate()
+    coord = _make_coordinator(settings=_make_settings(max_retries=8, backoff=5), login_gate=gate)
     attempts = 0
 
     async def op():
@@ -426,10 +378,140 @@ async def test_a_throttle_that_clears_lets_the_login_through():
         return ("sid-1", "uid-1")
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
-        result = await coord._retry_with_backoff(op, "Login")
+        result = await coord._retry_with_backoff(op, "Login", mds_host="mds")
 
     assert result == ("sid-1", "uid-1")
     assert attempts == 2
+    assert gate.closed == ["mds"]
+
+
+async def test_a_throttle_closes_the_gate_and_never_sleeps_on_its_own():
+    """The wait for a throttle is the gate's, sized by the row's expiry -- not a fixed 70 s.
+
+    Check Point refuses in 0.5 s; what matters is that nobody tries again before
+    the window from the *last* refusal has passed, and the gate row carries that.
+    """
+    gate = FakeGate(give_up_after=2)
+    coord = _make_coordinator(settings=_make_settings(max_retries=3, backoff=5), login_gate=gate)
+
+    async def op():
+        raise ThrottlingError("Login throttled: err_too_many_requests")
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+        with pytest.raises(LoginGateDeadlineError):
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
+
+    assert gate.closed == ["mds", "mds"]
+    assert len(gate.waits) == 3  # before attempt 1, attempt 2, and the one that gave up
+    assert sleep.await_args_list == []
+
+
+async def test_throttled_attempts_do_not_consume_the_retry_budget():
+    """Pacing is not failure: a cold 21-login start at 3/min must not exhaust 8 retries."""
+    gate = FakeGate(give_up_after=10)
+    coord = _make_coordinator(settings=_make_settings(max_retries=2), login_gate=gate)
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 5:
+            raise ThrottlingError("Login throttled: err_too_many_requests")
+        return ("sid-1", "uid-1")
+
+    result = await coord._retry_with_backoff(op, "Login", mds_host="mds")
+
+    assert result == ("sid-1", "uid-1")
+    assert attempts == 6
+    assert len(gate.closed) == 5
+
+
+async def test_non_throttle_failures_still_use_the_ladder_and_the_budget():
+    gate = FakeGate()
+    coord = _make_coordinator(settings=_make_settings(max_retries=3, backoff=5), login_gate=gate)
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        raise AuthenticationError("Login failed: Database revision is in progress")
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+        with pytest.raises(AuthenticationError):
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
+
+    assert attempts == 3
+    assert len(sleep.await_args_list) == 2
+    assert gate.closed == []
+    for call in sleep.await_args_list:
+        assert 5 <= call.args[0] <= LOGIN_THROTTLE_WINDOW_SECONDS
+
+
+async def test_the_lazily_built_gate_uses_the_configured_window():
+    settings = _make_settings()
+    settings.login_throttle_window = 3
+    coord = LoginCoordinator(
+        registry=MagicMock(),
+        transport=AsyncMock(),
+        rate_limiter=_make_rate_limiter(),
+        cache=AsyncMock(),
+        settings=settings,
+        lock_manager=MagicMock(initialize=AsyncMock()),
+    )
+
+    gate = await coord._get_login_gate()
+
+    assert gate._window == 3
+    assert await coord._get_login_gate() is gate
+
+
+async def test_the_lazily_built_gate_falls_back_to_the_constant_when_the_setting_is_absent():
+    settings = _make_settings()
+    del settings.login_throttle_window
+    coord = LoginCoordinator(
+        registry=MagicMock(),
+        transport=AsyncMock(),
+        rate_limiter=_make_rate_limiter(),
+        cache=AsyncMock(),
+        settings=settings,
+        lock_manager=MagicMock(initialize=AsyncMock()),
+    )
+
+    assert (await coord._get_login_gate())._window == LOGIN_THROTTLE_WINDOW_SECONDS
+
+
+async def test_retry_uses_the_login_pacing_deadline_and_renews_the_lock():
+    """Inside login(), the deadline is the one login() set and the lock is kept alive."""
+    gate = FakeGate()
+    coord = _make_coordinator(login_gate=gate)
+    lock = MagicMock()
+    lock.renew_if_needed = AsyncMock()
+
+    async def op():
+        return ("sid", None)
+
+    token = _login_pacing.set(_LoginPacing(deadline=12345.0, lock=lock))
+    try:
+        await coord._retry_with_backoff(op, "Login", mds_host="mds")
+    finally:
+        _login_pacing.reset(token)
+
+    assert gate.waits[0]["deadline"] == 12345.0
+    assert gate.waits[0]["max_wait"] == 900
+    lock.renew_if_needed.assert_awaited_once()
+
+
+async def test_retry_outside_login_starts_its_own_deadline():
+    gate = FakeGate()
+    coord = _make_coordinator(login_gate=gate)
+
+    async def op():
+        return ("sid", None)
+
+    before = asyncio.get_running_loop().time()
+    await coord._retry_with_backoff(op, "Login", mds_host="mds")
+
+    assert gate.waits[0]["deadline"] >= before + 900
 
 
 # ---------------------------------------------------------------------------
@@ -528,6 +610,29 @@ async def test_try_login_once_takes_no_slot_itself():
     await coord._try_login_once("m", "", "10.0.0.1", "key", False, None, None, None)
 
     rl.acquire.assert_not_called()
+
+
+async def test_try_login_once_keys_the_gate_on_the_hosting_member_not_the_target_ip():
+    """Domain logins go to domain-server IPs; the allowance they spend is the hosting member's."""
+    coord = _make_coordinator()
+    coord._mds_host = AsyncMock(return_value="10.0.0.2")
+    coord._retry_with_backoff = AsyncMock(return_value=("sid", "uid"))
+
+    await coord._try_login_once("mgmt1", "Domain2", "10.0.0.7", "key", False, None, None, None)
+
+    coord._mds_host.assert_awaited_once_with("mgmt1", "Domain2")
+    assert coord._retry_with_backoff.call_args.kwargs["mds_host"] == "10.0.0.2"
+
+
+async def test_gate_deadline_surfaces_as_authentication_error_with_the_throttle_as_cause():
+    coord = _make_coordinator()
+    coord._retry_with_backoff = AsyncMock(side_effect=LoginGateDeadlineError("10.0.0.2", 900.0, 900))
+
+    with pytest.raises(AuthenticationError, match="gave up") as excinfo:
+        await coord._try_login_once("mgmt1", "Domain2", "10.0.0.7", "key", False, None, None, None)
+
+    assert isinstance(excinfo.value.__cause__, ThrottlingError)
+    assert "login_max_wait=900s" in str(excinfo.value)
 
 
 async def test_execute_login_request_takes_the_target_slot_around_the_transport_call():

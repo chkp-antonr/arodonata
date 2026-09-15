@@ -16,6 +16,7 @@ from pydantic import SecretStr
 
 from arodonata import GLOBAL_DOMAIN_NAME
 from arodonata.asdk.login_coordinator import LoginCoordinator
+from arodonata.asdk.login_gate import LoginGateDeadlineError
 from arodonata.asdk.server_registry import ServerConfig
 from arodonata.core.exceptions import AuthenticationError, InvalidCredentialsError, ThrottlingError
 
@@ -31,6 +32,8 @@ def _make_settings(*, auth_mode="api_key", username=None, password=None):
     settings.session_expire_seconds = 3600
     settings.session_timeout = 600
     settings.login_timeout = 30
+    settings.login_throttle_window = 70
+    settings.login_max_wait = 900
     settings.auth_mode = auth_mode
     settings.username = username
     settings.password = password
@@ -58,6 +61,30 @@ def _make_lock_manager():
     return lm
 
 
+class FakeGate:
+    """Stand-in for LoginGate: never sleeps, records every close and wait.
+
+    After `give_up_after` refusals, the next wait raises LoginGateDeadlineError --
+    the way the real gate does when the next window would pass the login's
+    deadline. Without that, an operation that throttles forever would loop forever.
+    """
+
+    def __init__(self, give_up_after: int = 3) -> None:
+        self.closed: list[str] = []
+        self.waits: list[dict] = []
+        self.give_up_after = give_up_after
+
+    async def wait_open(self, mds_host, *, deadline, max_wait, keepalive=None):
+        self.waits.append({"mds_host": mds_host, "deadline": deadline, "max_wait": max_wait})
+        if keepalive is not None:
+            await keepalive()
+        if len(self.closed) >= self.give_up_after:
+            raise LoginGateDeadlineError(mds_host, waited=float(max_wait), max_wait=max_wait)
+
+    async def close(self, mds_host):
+        self.closed.append(mds_host)
+
+
 def _make_coordinator(
     *,
     settings=None,
@@ -67,6 +94,7 @@ def _make_coordinator(
     rate_limiter=None,
     lock_manager=None,
     session_cleaner=None,
+    login_gate=None,
 ):
     return LoginCoordinator(
         registry=registry or MagicMock(),
@@ -76,6 +104,7 @@ def _make_coordinator(
         settings=settings or _make_settings(),
         lock_manager=lock_manager,
         session_cleaner=session_cleaner,
+        login_gate=login_gate if login_gate is not None else FakeGate(),
     )
 
 
@@ -1158,6 +1187,45 @@ async def test_login_credential_mode_scopes_cache_by_username():
 
     # pre-lock cache lookup scoped by username
     assert cache.get_sid.await_args.kwargs["username"] == "svc"
+
+
+async def test_login_acquires_the_domain_lock_with_login_max_wait_as_timeout():
+    """A second caller for the same domain must outlast the first one's pacing."""
+    lm = _make_lock_manager()
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    coord._acquire_new_sid = AsyncMock(return_value=("sid", "10.0.0.1"))
+
+    await coord.login("mgmt1", "")
+
+    assert lm.acquire.call_args.kwargs["timeout"] == 900
+    assert lm.acquire.call_args.kwargs["ttl"] == 90
+
+
+async def test_login_sets_pacing_for_its_body_and_clears_it_after():
+    from arodonata.asdk.login_coordinator import _login_pacing
+
+    lm = _make_lock_manager()
+    lock_ctx = MagicMock()
+    lm.acquire.return_value.__aenter__ = AsyncMock(return_value=lock_ctx)
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    seen = {}
+
+    async def capture(*args, **kwargs):
+        seen["pacing"] = _login_pacing.get()
+        return ("sid", "10.0.0.1")
+
+    coord._acquire_new_sid = AsyncMock(side_effect=capture)
+
+    before = asyncio.get_running_loop().time()
+    await coord.login("mgmt1", "")
+
+    assert seen["pacing"].lock is lock_ctx
+    assert seen["pacing"].deadline >= before + 900
+    assert _login_pacing.get() is None
 
 
 # ---------------------------------------------------------------------------

@@ -94,9 +94,7 @@ async def test_close_then_wait_sleeps_until_the_row_lapses(gate: LoginGate, slep
     assert WINDOW <= sum(slept) <= WINDOW + _WAKE_JITTER_SECONDS
 
 
-async def test_sleeps_are_chunked_and_keepalive_runs_before_each_chunk(
-    gate: LoginGate, slept: list[float]
-) -> None:
+async def test_sleeps_are_chunked_and_keepalive_runs_before_each_chunk(gate: LoginGate, slept: list[float]) -> None:
     """The caller holds a 90 s login lock while it waits; renew it well inside that."""
     keepalive = AsyncMock()
     await gate.close("mds")

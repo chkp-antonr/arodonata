@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import random
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Never
 
@@ -17,6 +19,7 @@ from arlogi.otel.decorator import traced
 from ..cache.lock_manager import DatabaseLockManager
 from ..config import (
     CREDENTIAL_REJECTION_MESSAGE,
+    DEFAULT_LOGIN_MAX_WAIT,
     GLOBAL_DOMAIN_NAME,
     LOGIN_THROTTLE_WINDOW_SECONDS,
     SERVER_UNREACHABLE_MESSAGE,
@@ -26,6 +29,7 @@ from ..config import (
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
 from .domain_servers import extract_domain_servers, mds_ip_map
+from .login_gate import LoginGate, LoginGateDeadlineError
 
 if TYPE_CHECKING:
     from ..cache import CacheRepository
@@ -38,14 +42,18 @@ if TYPE_CHECKING:
 log = lazy_logger("arodonata.asdk.login_coordinator")
 
 
-# How many full throttle windows to wait out before giving up on a login. The
-# retry sequence holds a rate-limiter slot throughout, so waiting all
-# DEFAULT_LOGIN_RETRIES attempts at LOGIN_THROTTLE_WINDOW_SECONDS each would pin
-# one of three slots for ~9 minutes and outlive the login lock's TTL. If three
-# consecutive windows have not cleared the lockout, the cause is systemic -- more
-# login pressure on that IP than its per-minute allowance -- and failing says so
-# sooner.
-LOGIN_THROTTLE_MAX_WAITS = 3
+@dataclass(frozen=True)
+class _LoginPacing:
+    """What one `login()` call carries down to its attempts: when to give up, and what to keep alive."""
+
+    deadline: float  # absolute loop.time()
+    lock: Any | None  # the LockContext of login:{mgmt}:{domain}, renewed while waiting at the gate
+
+
+# Set by `login()` for the duration of its body (the same pattern as
+# lock_manager._current_lock_context). Read by `_retry_with_backoff`, which
+# otherwise -- dedicated sessions, cleanup logins -- starts a deadline of its own.
+_login_pacing: ContextVar[_LoginPacing | None] = ContextVar("_login_pacing", default=None)
 
 
 def _login_failure_kind(exc: BaseException) -> str:
@@ -89,6 +97,9 @@ class LoginCoordinator:
 
     Manages distributed locks per (mgmt_name, domain) to prevent concurrent
     login attempts across multiple workers and implements proper retry logic with backoff.
+    Logins to one management server are paced together through a `LoginGate`
+    (asdk/login_gate.py), keyed on the MDS member hosting the domain, because
+    Check Point rate-limits logins per server machine.
 
     Example:
         coordinator = LoginCoordinator(
@@ -110,6 +121,7 @@ class LoginCoordinator:
         settings: ArodonataSettings,
         lock_manager: DatabaseLockManager | None = None,
         session_cleaner: SessionCleaner | None = None,
+        login_gate: LoginGate | None = None,
     ) -> None:
         """Initialize login coordinator.
 
@@ -121,6 +133,7 @@ class LoginCoordinator:
             settings: Configuration settings.
             lock_manager: Optional DatabaseLockManager instance.
             session_cleaner: Optional SessionCleaner for max-sessions cleanup.
+            login_gate: Optional LoginGate; built lazily over the lock manager when absent.
         """
         self._registry = registry
         self._transport = transport
@@ -129,6 +142,7 @@ class LoginCoordinator:
         self._settings = settings
         self._lock_manager = lock_manager
         self._session_cleaner = session_cleaner
+        self._login_gate = login_gate
         self._in_process_locks: dict[str, asyncio.Lock] = {}  # For in-process synchronization
         self._lock_init_lock = asyncio.Lock()  # Protection for lock manager initialization
         self._keepalive_sweep_lock = asyncio.Lock()  # At most one keepalive sweep in flight
@@ -151,6 +165,34 @@ class LoginCoordinator:
         """
         window = getattr(self._settings, "login_throttle_window", LOGIN_THROTTLE_WINDOW_SECONDS)
         return window if isinstance(window, int) else LOGIN_THROTTLE_WINDOW_SECONDS
+
+    @property
+    def _max_wait(self) -> int:
+        """Total seconds one login may spend waiting out throttle windows (settings.login_max_wait)."""
+        value = getattr(self._settings, "login_max_wait", DEFAULT_LOGIN_MAX_WAIT)
+        return value if isinstance(value, int) else DEFAULT_LOGIN_MAX_WAIT
+
+    async def _get_login_gate(self) -> LoginGate:
+        """The per-MDS login gate, built over the lock manager on first use."""
+        if self._login_gate is None:
+            lock_manager = await self._get_lock_manager()  # takes _lock_init_lock itself; call it first
+            async with self._lock_init_lock:
+                if self._login_gate is None:
+                    self._login_gate = LoginGate(lock_manager, self._throttle_window)
+        return self._login_gate
+
+    def _current_pacing(self) -> tuple[float, Callable[[], Awaitable[Any]] | None]:
+        """Deadline and lock-renewal hook for the login in progress.
+
+        `login()` sets these for its whole body, so the wait for the login lock
+        counts toward the deadline and the lock is renewed while the holder sleeps
+        at the gate. Outside `login()` there is no lock and the deadline starts now.
+        """
+        pacing = _login_pacing.get()
+        if pacing is None:
+            return asyncio.get_running_loop().time() + self._max_wait, None
+        renew = getattr(pacing.lock, "renew_if_needed", None) if pacing.lock is not None else None
+        return pacing.deadline, renew
 
     @property
     def _credential_username(self) -> str | None:
@@ -458,31 +500,49 @@ class LoginCoordinator:
         self,
         operation: Callable[..., Any],
         operation_name: str,
+        *,
+        mds_host: str,
         max_retries: int | None = None,
         backoff: int | None = None,
     ) -> Any:
-        """Execute operation with retry logic and backoff."""
+        """Run `operation` until it returns a result, with the login gate in front of every attempt.
+
+        Two kinds of failure, two remedies. A *throttle* -- Check Point refused
+        the login for rate -- closes the gate for `mds_host` and tries again once
+        it reopens: as many times as it takes until the login's deadline, and
+        without counting against `max_retries`, because pacing is not failure.
+        Everything else is a failure: it gets the exponential ladder and is
+        limited to `max_retries` attempts. See asdk/login_gate.py.
+
+        `mds_host` is the machine the login counts against (see `_mds_host`).
+        """
         max_retries = max_retries or self._settings.login_max_retries
         backoff = backoff or self._settings.login_retry_backoff
+        gate = await self._get_login_gate()
+        deadline, keepalive = self._current_pacing()
         last_exception = None
         timeouts = 0
-        throttle_waits = 0
-        kind = "refusal"
+        failures = 0
 
-        for attempt in range(max_retries):
+        while failures < max_retries:
+            # Raises LoginGateDeadlineError past the deadline -- outside the try
+            # below on purpose, so it is never classified and never closes the gate.
+            await gate.wait_open(mds_host, deadline=deadline, max_wait=self._max_wait, keepalive=keepalive)
             try:
                 result = await operation()
                 if result is not None:
                     return result
             except Exception as e:
                 last_exception = e
-                kind, timeouts = self._classify_or_raise(e, operation_name, attempt, timeouts, throttle_waits)
-
-            if attempt < max_retries - 1:
-                span_attrs(attempt=attempt)
+                kind, timeouts = self._classify_or_raise(e, operation_name, failures, timeouts)
                 if kind == "throttle":
-                    throttle_waits += 1
-                await asyncio.sleep(self._retry_delay(kind, attempt, backoff, throttle_waits, operation_name))
+                    await gate.close(mds_host)
+                    continue  # the next wait_open sleeps the window out
+
+            failures += 1
+            if failures < max_retries:
+                span_attrs(attempt=failures)
+                await asyncio.sleep(self._retry_delay(failures - 1, backoff))
 
         if last_exception:
             # The budget is spent and the server never answered. Now -- and only
@@ -501,9 +561,7 @@ class LoginCoordinator:
             raise last_exception
         return None
 
-    def _classify_or_raise(
-        self, exc: Exception, operation_name: str, attempt: int, timeouts: int, throttle_waits: int
-    ) -> tuple[str, int]:
+    def _classify_or_raise(self, exc: Exception, operation_name: str, attempt: int, timeouts: int) -> tuple[str, int]:
         """Classify a failed attempt; raise when the sequence should end here.
 
         Returns the failure kind and the running timeout count.
@@ -518,19 +576,15 @@ class LoginCoordinator:
         if kind == "timeout":
             timeouts += 1
 
-        if kind == "throttle" and throttle_waits >= LOGIN_THROTTLE_MAX_WAITS:  # noqa: SIM102
-            log().error(
-                f"{operation_name} still throttled after {throttle_waits} full "
-                f"{self._throttle_window}s windows - more login pressure on this "
-                f"server than Check Point's per-minute login allowance"
-            )
-            raise exc
+        if kind == "throttle":
+            log().warning(f"{operation_name} throttled by Check Point (err_too_many_requests) - closing the login gate")
+            return kind, timeouts
 
         # Backoff clears lockouts, not addresses. Once the evidence says nothing is
         # listening, hand the failure up instead of spending the rest of the budget
         # on it: `_acquire_new_sid` re-resolves the domain's active server and
         # retries against what `show-domains` now reports. Only conclusive evidence
-        # qualifies here; a timeout waits for the budget to run out (see below).
+        # qualifies here; a timeout waits for the budget to run out (see above).
         if kind == "unreachable":
             from ..core.exceptions import ServerUnreachableError
 
@@ -543,24 +597,12 @@ class LoginCoordinator:
         log().warning(f"{operation_name} attempt {attempt + 1} failed: {exc}")
         return kind, timeouts
 
-    def _retry_delay(self, kind: str, attempt: int, backoff: int, throttle_waits: int, operation_name: str) -> float:
-        """Seconds to wait before the next attempt."""
-        if kind == "throttle":
-            # A throttle lockout is not cleared by ramping up to it: every step of
-            # the ramp is shorter than the window, and each rejected attempt re-arms
-            # it. One wait longer than the window is the only thing that works.
-            # Jitter keeps concurrent callers from all coming back at the same
-            # instant and re-tripping it together.
-            delay = self._throttle_window + random.uniform(0, 5.0)
-            log().warning(
-                f"{operation_name} throttled - waiting {delay:.0f}s for the login window "
-                f"to clear ({throttle_waits}/{LOGIN_THROTTLE_MAX_WAITS})"
-            )
-            return delay
+    def _retry_delay(self, attempt: int, backoff: int) -> float:
+        """Seconds before the next attempt after a non-throttle failure.
 
-        # Exponential backoff for everything else, capped at the throttle window: a
-        # longer sleep belongs to the branch above, and a shorter cap would sit just
-        # under the one lockout we know about.
+        Exponential, capped at the throttle window. Throttles never come here:
+        their wait is the gate's, sized by when the refusal row lapses.
+        """
         return min((backoff * (1.3**attempt)) + random.uniform(0, 2.0), float(self._throttle_window))
 
     @traced
@@ -766,6 +808,7 @@ class LoginCoordinator:
         """
         from ..core.exceptions import AuthenticationError, ServerUnreachableError
 
+        mds_host = await self._mds_host(mgmt_name, domain)
         try:
             result = await self._retry_with_backoff(
                 lambda: self._login_operation_for(
@@ -779,6 +822,7 @@ class LoginCoordinator:
                     session_description,
                 ),
                 "Login",
+                mds_host=mds_host,
             )
             if result is None:
                 raise AuthenticationError("Login failed: No session ID returned")
@@ -789,6 +833,11 @@ class LoginCoordinator:
             # whether to re-resolve the domain's active server and try there.
             e.server_ip = e.server_ip or server_ip
             raise
+        except LoginGateDeadlineError as e:
+            # The server never refused *this* attempt; we ran out of time
+            # waiting for our turn. Same type consumers already catch, a
+            # message that says which it was.
+            raise AuthenticationError(f"Login to '{mgmt_name}:{domain}' gave up: {e}") from e
         except AuthenticationError:
             raise
         except Exception as e:
@@ -1131,6 +1180,9 @@ class LoginCoordinator:
         domain = self._normalize_domain(mgmt_name, domain)
         span_attrs(mgmt_name=mgmt_name, domain=domain or "system", force=force)
         entry_time = datetime.now(UTC).replace(tzinfo=None)
+        # One deadline for the whole call, including the wait for the login lock:
+        # a second caller for the same domain is paced by the first one's pacing.
+        deadline = asyncio.get_running_loop().time() + self._max_wait
 
         # For domains, pre-fetch domain server IP before acquiring lock
         # to avoid deadlock where we hold domain lock but need system login
@@ -1160,15 +1212,20 @@ class LoginCoordinator:
         async with self._in_process_locks[lock_key]:
             lock_manager = await self._get_lock_manager()
 
-            # Acquire distributed login lock with 90s TTL (accounts for throttling/retries)
+            # The login lock's TTL is renewed while we wait at the login gate, and a
+            # waiter's timeout is the same login_max_wait, since it must outlast our pacing.
             async with lock_manager.acquire(
                 lock_key,
-                timeout=90,
+                timeout=self._max_wait,
                 ttl=lock_manager.DEFAULT_TTL_LOGIN,
-            ):
-                return await self._acquire_new_sid(
-                    mgmt_name, domain, force, entry_time, server_ip, session_name, session_description
-                )
+            ) as lock_ctx:
+                token = _login_pacing.set(_LoginPacing(deadline=deadline, lock=lock_ctx))
+                try:
+                    return await self._acquire_new_sid(
+                        mgmt_name, domain, force, entry_time, server_ip, session_name, session_description
+                    )
+                finally:
+                    _login_pacing.reset(token)
 
     @traced
     async def _acquire_new_sid(
@@ -1407,7 +1464,9 @@ class LoginCoordinator:
 
         # Each attempt takes the target's RateLimiter slot around its own HTTP call
         # (inside _execute_login_request); nothing is held across the ladder.
-        result = await self._retry_with_backoff(_attempt, "Dedicated session login")
+        result = await self._retry_with_backoff(
+            _attempt, "Dedicated session login", mds_host=await self._mds_host(mgmt_name, domain)
+        )
 
         if result is None:
             raise AuthenticationError(
