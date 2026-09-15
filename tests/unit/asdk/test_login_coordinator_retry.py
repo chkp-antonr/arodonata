@@ -14,7 +14,7 @@ from pydantic import SecretStr
 from arodonata.asdk.login_coordinator import LoginCoordinator, _login_pacing, _LoginPacing
 from arodonata.asdk.login_gate import LoginGateDeadlineError
 from arodonata.asdk.session_cleaner import CleanupResult, SessionCleaner
-from arodonata.cache.lock_manager import LockOwnershipError
+from arodonata.cache.lock_manager import LockAcquisitionError, LockOwnershipError
 from arodonata.config import CREDENTIAL_REJECTION_MESSAGE, LOGIN_THROTTLE_WINDOW_SECONDS
 from arodonata.core.exceptions import (
     AuthenticationError,
@@ -434,6 +434,43 @@ async def test_throttled_attempts_do_not_consume_the_retry_budget():
     assert result == ("sid-1", "uid-1")
     assert attempts == 6
     assert len(gate.closed) == 5
+
+
+async def test_a_rate_limiter_slot_timeout_is_not_retried():
+    """Local contention, not a server refusal: fail in ~90 s, do not climb the ladder.
+
+    The slot used to be taken by `_try_login_once`'s own `acquire`, outside the
+    try, so a saturated server failed the login after one `rate_limit_slot_timeout`
+    (90 s) with `LockAcquisitionError`. Now that the slot is taken per attempt
+    inside `_execute_login_request`, an unclassified slot timeout would be a
+    "refusal": one retry each, backoff sleeps, up to `login_max_retries` — fifteen
+    minutes of waiting for a queue that is ours, while holding the login lock.
+    """
+    gate = FakeGate()
+    coord = _make_coordinator(settings=_make_settings(max_retries=8), login_gate=gate)
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        raise LockAcquisitionError("ratelimit:10.0.0.1:slot_2", 90)
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+        with pytest.raises(LockAcquisitionError):
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
+
+    assert attempts == 1
+    assert sleep.await_args_list == []
+    assert gate.closed == []
+
+
+async def test_try_login_once_passes_a_slot_timeout_through_unwrapped():
+    """The exception type MMP catches for a saturated server must not change."""
+    coord = _make_coordinator()
+    coord._retry_with_backoff = AsyncMock(side_effect=LockAcquisitionError("ratelimit:10.0.0.1:slot_0", 90))
+
+    with pytest.raises(LockAcquisitionError):
+        await coord._try_login_once("m", "d", "10.0.0.1", "key", False, None, None, None)
 
 
 async def test_non_throttle_failures_still_use_the_ladder_and_the_budget():

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Never
 
 from arlogi.otel.decorator import traced
 
-from ..cache.lock_manager import DatabaseLockManager
+from ..cache.lock_manager import DatabaseLockManager, LockAcquisitionError, LockOwnershipError
 from ..config import (
     CREDENTIAL_REJECTION_MESSAGE,
     DEFAULT_LOGIN_MAX_WAIT,
@@ -246,8 +246,6 @@ class LoginCoordinator:
             LockOwnershipError: The lock was stolen (another owner holds the row)
                 or lost (the row is gone) while we were waiting at the gate.
         """
-        from ..cache.lock_manager import LockOwnershipError
-
         for lock in locks:
             renew = getattr(lock, "renew_if_needed", None)
             if renew is None:
@@ -693,6 +691,19 @@ class LoginCoordinator:
             log().error(f"{operation_name} failed: {exc} (Fatal error - not retrying)")
             raise exc
 
+        # A RateLimiter slot timeout is local contention, not a server refusal.
+        # It used to be raised by the single `acquire` in `_try_login_once`,
+        # *outside* the try, so it escaped `login()` unwrapped after one
+        # `rate_limit_slot_timeout` (90 s). Now that the slot is taken inside
+        # `_execute_login_request` it lands here, and retrying it would climb the
+        # ladder for up to `login_max_wait` (900 s) while holding the login lock
+        # -- fifteen minutes of waiting for a queue that is ours, not Check
+        # Point's. Fail fast instead, exactly as before; `_try_login_once` passes
+        # the type through unwrapped so consumers keep catching what they caught.
+        if isinstance(exc, LockAcquisitionError):
+            log().error(f"{operation_name} failed: {exc} (no rate-limiter slot - not retrying)")
+            raise exc
+
         kind = _login_failure_kind(exc)
         if kind == "timeout":
             timeouts += 1
@@ -971,6 +982,12 @@ class LoginCoordinator:
             # Must survive unwrapped: `_acquire_new_sid` decides, on this type,
             # whether to re-resolve the domain's active server and try there.
             e.server_ip = e.server_ip or server_ip
+            raise
+        except LockAcquisitionError:
+            # No free RateLimiter slot for the target within rate_limit_slot_timeout.
+            # Deliberately unwrapped: before the slot moved inside the retry ladder
+            # this was raised by `_try_login_once`'s own `acquire`, outside the try,
+            # and reached callers as itself. Keeping the type keeps that contract.
             raise
         except LoginGateDeadlineError as e:
             # The server never refused *this* attempt; we ran out of time
@@ -1316,7 +1333,6 @@ class LoginCoordinator:
         if cache_mode == "refresh":
             force = True
 
-        from ..cache.lock_manager import LockOwnershipError
         from ..core.exceptions import AuthenticationError
 
         domain = self._normalize_domain(mgmt_name, domain)
