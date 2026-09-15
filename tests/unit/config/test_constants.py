@@ -24,6 +24,13 @@ class TestDefaultValues:
     def test_default_login_retries(self):
         assert constants.DEFAULT_LOGIN_RETRIES == 8
 
+    def test_default_login_max_wait(self):
+        from arodonata.config import DEFAULT_LOGIN_MAX_WAIT
+
+        # 21 logins (20 domains + the system domain) at Check Point's default
+        # allowance of 3 per minute is ~8 minutes; the default must cover that.
+        assert DEFAULT_LOGIN_MAX_WAIT == 900
+
 
 class TestErrorCodeSets:
     def test_session_error_codes_contains_expected(self):

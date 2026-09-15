@@ -20,6 +20,7 @@ from .constants import (
     DEFAULT_API_TIMEOUT,
     DEFAULT_CONCURRENT_LIMIT,
     DEFAULT_LOGIN_BACKOFF,
+    DEFAULT_LOGIN_MAX_WAIT,
     DEFAULT_LOGIN_RETRIES,
     DEFAULT_LOGIN_TIMEOUT,
     DEFAULT_RATE_LIMIT_SLOT_TIMEOUT,
@@ -143,6 +144,16 @@ class ArodonataSettings(BaseSettings):
             "a throttled login (see LOGIN_THROTTLE_WINDOW_SECONDS)"
         ),
         validation_alias="ARODONATA_LOGIN_THROTTLE_WINDOW",
+    )
+    login_max_wait: int = Field(
+        default=DEFAULT_LOGIN_MAX_WAIT,
+        ge=1,
+        description=(
+            "Total seconds one login() may spend waiting out Check Point's per-MDS "
+            "login rate limit before failing; also the login-lock acquire timeout "
+            "(see DEFAULT_LOGIN_MAX_WAIT)"
+        ),
+        validation_alias="ARODONATA_LOGIN_MAX_WAIT",
     )
     login_retry_backoff: int = Field(
         default=DEFAULT_LOGIN_BACKOFF,

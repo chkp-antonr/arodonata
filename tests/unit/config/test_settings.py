@@ -233,6 +233,20 @@ class TestFieldConstraints:
         monkeypatch.setenv("ARODONATA_LOGIN_THROTTLE_WINDOW", "5")
         assert ArodonataSettings().login_throttle_window == 5
 
+    def test_login_max_wait_defaults_to_its_constant(self):
+        from arodonata.config import DEFAULT_LOGIN_MAX_WAIT
+
+        assert ArodonataSettings().login_max_wait == DEFAULT_LOGIN_MAX_WAIT == 900
+
+    def test_login_max_wait_configurable_via_env_alias(self, monkeypatch):
+        monkeypatch.setenv("ARODONATA_LOGIN_MAX_WAIT", "60")
+        assert ArodonataSettings().login_max_wait == 60
+
+    def test_login_max_wait_rejects_zero(self, monkeypatch):
+        monkeypatch.setenv("ARODONATA_LOGIN_MAX_WAIT", "0")
+        with pytest.raises(ValidationError):
+            ArodonataSettings()
+
     def test_zero_login_throttle_window_raises(self):
         with pytest.raises(ValidationError):
             ArodonataSettings(login_throttle_window=0)

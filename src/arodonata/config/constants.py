@@ -56,6 +56,15 @@ DEFAULT_LOGIN_RETRIES: Final[int] = 8
 # fail fast even though the server would have accepted a login moments later.
 DEFAULT_RATE_LIMIT_SLOT_TIMEOUT: Final[int] = 90  # seconds
 
+# Total wall-clock one login() may spend waiting out Check Point's per-MDS login
+# rate limit before giving up (asdk/login_gate.py). Also the timeout for acquiring
+# the per-domain login lock, since a second caller for the same domain has to
+# outlast the first one's pacing. Sized for a cold multi-domain collection at the
+# default allowance: 20 domains is 21 logins, and at 3 per minute that is ~8
+# minutes. A deployment with more domains per MDS raises it via
+# ARODONATA_LOGIN_MAX_WAIT; the failure message says when it was exceeded.
+DEFAULT_LOGIN_MAX_WAIT: Final[int] = 900  # seconds
+
 # Self-managed `show-task` polling (asdk/task_waiter.py). Start responsive -- most
 # publishes finish in seconds -- then back off to a ceiling, because a long revert's
 # polls hit a CPM that is already busy doing the very work we are waiting on: a
@@ -130,6 +139,7 @@ __all__ = [
     "DEFAULT_LOGIN_BACKOFF",
     "DEFAULT_LOGIN_RETRIES",
     "DEFAULT_RATE_LIMIT_SLOT_TIMEOUT",
+    "DEFAULT_LOGIN_MAX_WAIT",
     "DEFAULT_TASK_POLL_INITIAL_SECONDS",
     "DEFAULT_TASK_POLL_MAX_SECONDS",
     "DEFAULT_TASK_POLL_FAILURE_TOLERANCE",
