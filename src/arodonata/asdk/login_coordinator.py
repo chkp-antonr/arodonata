@@ -25,6 +25,7 @@ from ..config import (
 )
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
+from .domain_servers import extract_domain_servers, mds_ip_map
 
 if TYPE_CHECKING:
     from ..cache import CacheRepository
@@ -959,21 +960,81 @@ class LoginCoordinator:
             log().warning(f"No data in response for '{mgmt_name}:{domain}', using primary IP")
             return server_config.server_ip
 
-        # show-domains returns {"objects": [...], "total": N, ...} dict
-        # Handle both dict (with "objects" key) and direct list formats
-        if isinstance(response_data, list):
-            domains_data = response_data
-        elif isinstance(response_data, dict):
-            domains_data = response_data.get("objects", [])
-        else:
-            domains_data = []
+        domains_data = self._domains_objects_from_response(response_data)
+
+        # Which member hosts each server matters to the login gate; a SmartCenter
+        # has no members and would just refuse the command.
+        mds_ips: dict[str, str] = {}
+        if server_config.is_mdm is not False:
+            mds_ips = await self._fetch_mds_ips(system_ip, system_sid, server_config.port)
 
         return await self._cache_domain_active_ip(
-            mgmt_name, domain, domains_data, server_config.server_ip, server_config.is_mdm
+            mgmt_name, domain, domains_data, server_config.server_ip, server_config.is_mdm, mds_ips=mds_ips
         )
 
+    @staticmethod
+    def _domains_objects_from_response(response_data: Any) -> list[Any]:
+        """`show-domains` returns {"objects": [...], "total": N, ...}; tolerate a bare list too."""
+        if isinstance(response_data, list):
+            return response_data
+        if isinstance(response_data, dict):
+            return response_data.get("objects", [])
+        return []
+
+    async def _fetch_mds_ips(self, system_ip: str, system_sid: str, port: int | None) -> dict[str, str]:
+        """{MDS member name: IPv4} via `show-mdss` on the system session; {} on any failure.
+
+        The login gate keys on the member that hosts a domain's active server
+        (asdk/login_gate.py). An empty map is not an error: the gate then falls
+        back to the configured host, which on a single-member MDS is the same
+        machine anyway.
+        """
+        try:
+            async with self._rate_limiter.acquire(system_ip):
+                response = await self._transport.api_call(
+                    server_ip=system_ip,
+                    sid=system_sid,
+                    command="show-mdss",
+                    payload={"details-level": "full", "limit": 500},
+                    port=port,
+                )
+        except Exception as exc:  # noqa: BLE001 - enrichment only; the login proceeds without it
+            log().debug(f"show-mdss failed on {system_ip}: {exc}; login gate will key on the configured host")
+            return {}
+        if not response.get("success"):
+            log().debug(
+                f"show-mdss refused on {system_ip}: {response.get('message')}; login gate will key on the configured host"
+            )
+            return {}
+        data = response.get("data")
+        objects = data.get("objects", []) if isinstance(data, dict) else data if isinstance(data, list) else []
+        return mds_ip_map(objects)
+
+    async def _mds_host(self, mgmt_name: str, domain: str) -> str:
+        """The machine Check Point rate-limits this login on: what the login gate keys on.
+
+        A domain login goes to a domain server hosted on some MDS member -- and
+        domains move between members on failover -- so for a domain it is the
+        member IP recorded on the domain's cache row by `_cache_domain_active_ip`.
+        The system domain, Global, a SmartCenter, or a row without that
+        information fall back to the configured host.
+        """
+        if domain:
+            row = await self._cache.get_domain(mdm_dmn=f"{mgmt_name}:{domain}")
+            mds_ip = getattr(row, "active_mds_ip", "") if row is not None else ""
+            if isinstance(mds_ip, str) and mds_ip:
+                return mds_ip
+        server = self._registry.get_server(mgmt_name)
+        return str(server.server_ip) if server else mgmt_name
+
     async def _cache_domain_active_ip(
-        self, mgmt_name: str, domain: str, domains_data: list[Any], default_ip: str, is_mdm: bool | None = None
+        self,
+        mgmt_name: str,
+        domain: str,
+        domains_data: list[Any],
+        default_ip: str,
+        is_mdm: bool | None = None,
+        mds_ips: dict[str, str] | None = None,
     ) -> str:
         """Cache the extracted active IP for the specified domain."""
         from ..cache.models import Domain
@@ -981,18 +1042,29 @@ class LoginCoordinator:
         for d in domains_data:
             if isinstance(d, dict) and d.get("name") == domain:
                 d_uid = d.get("uid", "")
-                active_ip = self._extract_active_server_ip(d) or default_ip
+                layout = extract_domain_servers(d)
+                active_ip = layout.active_ip or default_ip
+                active_mds_ip = (mds_ips or {}).get(layout.active_mds, "")
 
                 domain_record = Domain.build(
                     mgmt_name=mgmt_name,
                     domain_name=domain,
                     domain_uid=d_uid,
                     active_ip=active_ip,
+                    active_server=layout.active_server,
+                    active_mds=layout.active_mds,
+                    active_mds_ip=active_mds_ip,
+                    standby_mdss=",".join(layout.standby_mdss),
+                    standby_ips=",".join(layout.standby_ips),
+                    standby_servers=",".join(layout.standby_servers),
                     is_mdm=is_mdm if is_mdm is not None else False,
                 )
 
                 await self._cache.upsert_domain(domain_record)
-                log().info(f"Updated domain cache for '{mgmt_name}:{domain}' with active_ip={active_ip}")
+                log().info(
+                    f"Updated domain cache for '{mgmt_name}:{domain}': active_ip={active_ip} "
+                    f"on MDS {layout.active_mds or '?'} ({active_mds_ip or 'ip unknown'})"
+                )
                 return active_ip
 
         if domain == GLOBAL_DOMAIN_NAME and is_mdm is not False:
@@ -1020,25 +1092,8 @@ class LoginCoordinator:
         return default_ip
 
     def _extract_active_server_ip(self, domain_obj: dict[str, Any]) -> str:
-        """Extract active server IP from domain object.
-
-        Args:
-            domain_obj: Domain object from API response.
-
-        Returns:
-            Active server IP address or empty string.
-        """
-        servers = domain_obj.get("servers", [])
-        if not isinstance(servers, list):
-            return ""
-
-        for server in servers:
-            if isinstance(server, dict) and server.get("active") is True:
-                ipv4_address = server.get("ipv4-address", "")
-                if isinstance(ipv4_address, str) and ipv4_address:
-                    return ipv4_address
-
-        return ""
+        """Active server IP from a `show-domains` object; '' if none. See asdk/domain_servers.py."""
+        return extract_domain_servers(domain_obj).active_ip
 
     @traced
     async def login(

@@ -870,6 +870,124 @@ async def test_prefetch_data_dict_without_objects_key():
     assert ip == "10.0.0.1"
 
 
+def _mds_layout_response():
+    return {
+        "success": True,
+        "data": {
+            "objects": [
+                {
+                    "name": "General",
+                    "uid": "u",
+                    "servers": [
+                        {
+                            "name": "General_srv",
+                            "ipv4-address": "10.0.0.9",
+                            "active": True,
+                            "multi-domain-server": "mds2",
+                        },
+                        {
+                            "name": "General_sby",
+                            "ipv4-address": "10.0.0.8",
+                            "active": False,
+                            "multi-domain-server": "mds1",
+                        },
+                    ],
+                }
+            ]
+        },
+    }
+
+
+def _mdss_response():
+    return {
+        "success": True,
+        "data": {
+            "objects": [{"name": "mds1", "ipv4-address": "10.0.0.1"}, {"name": "mds2", "ipv4-address": "10.0.0.2"}]
+        },
+    }
+
+
+async def test_prefetch_records_the_hosting_member_from_show_domains_and_show_mdss():
+    """Domains live on one MDS member and move on failover; the gate keys on that member's IP."""
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", port=None, is_mdm=True)
+    cache = AsyncMock()
+    cache.get_domain.return_value = None
+    transport = AsyncMock()
+    transport.api_call.side_effect = [_mds_layout_response(), _mdss_response()]
+    coord = _make_coordinator(registry=registry, cache=cache, transport=transport)
+    coord.login = AsyncMock(return_value=("sys-sid", "10.0.0.1"))
+
+    ip = await coord._prefetch_domain_server_ip("mgmt1", "General")
+
+    assert ip == "10.0.0.9"
+    assert [c.kwargs["command"] for c in transport.api_call.await_args_list] == ["show-domains", "show-mdss"]
+    saved = cache.upsert_domain.await_args.args[0]
+    assert (saved.active_mds, saved.active_mds_ip, saved.active_server) == ("mds2", "10.0.0.2", "General_srv")
+    assert (saved.standby_mdss, saved.standby_ips, saved.standby_servers) == ("mds1", "10.0.0.8", "General_sby")
+
+
+async def test_prefetch_skips_show_mdss_on_a_smartcenter():
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", port=None, is_mdm=False)
+    cache = AsyncMock()
+    cache.get_domain.return_value = None
+    transport = AsyncMock()
+    transport.api_call.return_value = _mds_layout_response()
+    coord = _make_coordinator(registry=registry, cache=cache, transport=transport)
+    coord.login = AsyncMock(return_value=("sys-sid", "10.0.0.1"))
+
+    await coord._prefetch_domain_server_ip("mgmt1", "General")
+
+    assert [c.kwargs["command"] for c in transport.api_call.await_args_list] == ["show-domains"]
+
+
+async def test_prefetch_tolerates_a_failed_show_mdss():
+    """Enrichment only: the login proceeds, and the gate falls back to the configured host."""
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", port=None, is_mdm=True)
+    cache = AsyncMock()
+    cache.get_domain.return_value = None
+    transport = AsyncMock()
+    transport.api_call.side_effect = [_mds_layout_response(), {"success": False, "message": "nope"}]
+    coord = _make_coordinator(registry=registry, cache=cache, transport=transport)
+    coord.login = AsyncMock(return_value=("sys-sid", "10.0.0.1"))
+
+    ip = await coord._prefetch_domain_server_ip("mgmt1", "General")
+
+    assert ip == "10.0.0.9"
+    saved = cache.upsert_domain.await_args.args[0]
+    assert (saved.active_mds, saved.active_mds_ip) == ("mds2", "")
+
+
+async def test_mds_host_prefers_the_domain_rows_member_ip():
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1")
+    cache = AsyncMock()
+    cache.get_domain.return_value = MagicMock(active_mds_ip="10.0.0.2")
+    coord = _make_coordinator(registry=registry, cache=cache)
+
+    assert await coord._mds_host("mgmt1", "General") == "10.0.0.2"
+    cache.get_domain.assert_awaited_once_with(mdm_dmn="mgmt1:General")
+
+
+async def test_mds_host_falls_back_to_the_configured_host():
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1")
+    cache = AsyncMock()
+    coord = _make_coordinator(registry=registry, cache=cache)
+
+    cache.get_domain.return_value = None
+    assert await coord._mds_host("mgmt1", "General") == "10.0.0.1"
+
+    cache.get_domain.return_value = MagicMock(active_mds_ip="")
+    assert await coord._mds_host("mgmt1", "General") == "10.0.0.1"
+
+    cache.get_domain.reset_mock()
+    assert await coord._mds_host("mgmt1", "") == "10.0.0.1"
+    cache.get_domain.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # _acquire_new_sid
 # ---------------------------------------------------------------------------

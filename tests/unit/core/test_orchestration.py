@@ -161,6 +161,30 @@ async def test_get_domains_converts_and_splits_standby_lists():
     assert domain.is_mdm is True
 
 
+async def test_get_domains_exposes_the_hosting_member():
+    cache = ConfiguredCache(
+        domains=[
+            CacheDomain(
+                mdm_dmn="mgmt1:dmn1",
+                domain_name="dmn1",
+                domain_uid="d-uid",
+                active_mds="mgmt1",
+                active_ip="10.0.0.1",
+                active_mds_ip="10.0.0.2",
+                active_server="mgmt1",
+                standby_ips="10.0.0.2,10.0.0.3",
+                standby_servers="s2,s3",
+                standby_mdss="mds1,mds3",
+                mgmt_name="mgmt1",
+                is_mdm=True,
+            )
+        ]
+    )
+    [domain] = await _svc(cache=cache).get_domains(mgmt_names=["mgmt1"])
+    assert domain.active_mds_ip == "10.0.0.2"
+    assert domain.standby_mdss == ["mds1", "mds3"]
+
+
 async def test_get_domains_empty_standby_lists_default_to_empty():
     cache = ConfiguredCache(
         domains=[

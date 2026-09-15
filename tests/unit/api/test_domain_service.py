@@ -306,6 +306,33 @@ async def test_mdm_domains_multiple_domains_all_upserted():
     assert cache.upsert_domain.await_count == 2
 
 
+@pytest.mark.asyncio
+async def test_mdm_domains_record_the_hosting_member():
+    domains = ApiQueryResult(
+        success=True,
+        objects=[
+            {
+                "name": "domainA",
+                "uid": "uid-a",
+                "servers": [
+                    {"name": "a_srv", "ipv4-address": "192.168.1.1", "active": True, "multi-domain-server": "mds2"}
+                ],
+            }
+        ],
+    )
+    members = ApiQueryResult(success=True, objects=[{"name": "mds2", "ipv4-address": "192.168.1.200"}])
+    api_client = AsyncMock()
+    api_client.api_query = AsyncMock(side_effect=[domains, members])
+    cache = AsyncMock()
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+
+    await service._populate_mdm_domains("mgmt1", is_mdm=True)
+
+    assert api_client.api_query.await_args_list[1].kwargs["command"] == "show-mdss"
+    saved = cache.upsert_domain.await_args_list[0].args[0]
+    assert (saved.active_mds, saved.active_mds_ip, saved.active_server) == ("mds2", "192.168.1.200", "a_srv")
+
+
 # --------------------------------------------------------------------------- #
 # _populate_mdm_domains — Global domain row
 # --------------------------------------------------------------------------- #
