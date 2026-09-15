@@ -284,8 +284,9 @@ class LoginCoordinator:
         """Acquire a temporary SID, run session cleanup, then logout temp SID.
 
         Called when login fails with the max-sessions error, or proactively at
-        startup to discard leftover stale sessions. Uses a direct
-        transport.login call to bypass coordinator logic and avoid recursion.
+        startup to discard leftover stale sessions. The temporary login goes
+        through `_execute_login_request` (gate, slot) but not through
+        `login()`, so it neither caches a SID nor recurses into cleanup.
 
         Args:
             mgmt_name: Management server name (for logging and cleanup).
@@ -300,31 +301,32 @@ class LoginCoordinator:
             return
 
         log().info(f"Session cleanup for '{mgmt_name}:{domain}' ({reason}): acquiring temp SID...")
-        async with self._rate_limiter.acquire(server_ip):
-            if self._auth_mode == "credential" and self._username and self._password_secret:
-                tmp_response = await self._transport.login_with_credentials(
-                    server_ip=server_ip,
-                    username=self._username,
-                    password=self._password_secret.get_secret_value(),
-                    domain=domain if domain else None,
-                    port=port,
-                    session_name="MMP-cleanup",
-                    session_description="Temporary session for stale session cleanup",
-                )
-            else:
-                tmp_response = await self._transport.login_with_apikey(
-                    server_ip=server_ip,
-                    api_key=api_key,
-                    domain=domain if domain else None,
-                    port=port,
-                    session_name="MMP-cleanup",
-                    session_description="Temporary session for stale session cleanup",
-                )
-        if not tmp_response.get("success") or not tmp_response.get("sid"):
-            log().warning(f"Could not acquire temp SID for cleanup: {tmp_response.get('message')}")
+
+        async def _temp_login() -> str:
+            # Through the same path as every other login: the gate in front, the
+            # target's slot around the call. This login counts against the server's
+            # allowance like any other, so it must wait its turn and report a
+            # refusal for everyone else's benefit.
+            response = await self._execute_login_request(
+                mgmt_name,
+                domain,
+                server_ip,
+                api_key,
+                port=port,
+                session_name="MMP-cleanup",
+                session_description="Temporary session for stale session cleanup",
+            )
+            sid, _uid = self._parse_login_response(response, mgmt_name, domain, server_ip, api_key)
+            return sid
+
+        try:
+            tmp_sid = await self._retry_with_backoff(
+                _temp_login, "Cleanup login", mds_host=await self._mds_host(mgmt_name, domain), max_retries=1
+            )
+        except Exception as exc:  # noqa: BLE001 - cleanup is best effort; the caller's login proceeds regardless
+            log().warning(f"Could not acquire temp SID for cleanup: {exc}")
             return
 
-        tmp_sid = str(tmp_response["sid"])
         try:
             cleanup_result = await self._session_cleaner.cleanup_stale_sessions(
                 mgmt_name=mgmt_name,

@@ -1042,8 +1042,48 @@ async def test_cleanup_uses_credentials_in_credential_mode():
         port=None,
         session_name="MMP-cleanup",
         session_description="Temporary session for stale session cleanup",
+        session_timeout=None,
+        timeout=120,
     )
     transport.login_with_apikey.assert_not_called()
+
+
+async def test_cleanup_temp_login_is_gated_and_closes_the_gate_when_refused():
+    """The temporary cleanup login is a login the server counts: it waits its turn and reports refusals."""
+    gate = FakeGate(give_up_after=1)
+    cleaner = MagicMock(spec=SessionCleaner)
+    cleaner.cleanup_stale_sessions = AsyncMock()
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", api_key=SecretStr("key"), port=None)
+    transport = AsyncMock()
+    transport.login_with_apikey.return_value = {
+        "success": False,
+        "code": "err_too_many_requests",
+        "message": "Too many requests",
+    }
+    coord = _make_coordinator(registry=registry, transport=transport, session_cleaner=cleaner, login_gate=gate)
+
+    await coord._cleanup_for_max_sessions("mgmt1", "", "10.0.0.1", "key", None)  # must not raise
+
+    assert gate.closed == ["10.0.0.1"]
+    assert gate.waits[0]["mds_host"] == "10.0.0.1"
+    cleaner.cleanup_stale_sessions.assert_not_called()
+
+
+async def test_cleanup_temp_login_makes_a_single_attempt_on_a_plain_failure():
+    gate = FakeGate()
+    cleaner = MagicMock(spec=SessionCleaner)
+    cleaner.cleanup_stale_sessions = AsyncMock()
+    transport = AsyncMock()
+    transport.login_with_apikey.return_value = {"success": False, "code": "generic_err", "message": "nope"}
+    coord = _make_coordinator(transport=transport, session_cleaner=cleaner, login_gate=gate)
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+        await coord._cleanup_for_max_sessions("mgmt1", "", "10.0.0.1", "key", None)
+
+    assert transport.login_with_apikey.await_count == 1
+    assert sleep.await_args_list == []
+    cleaner.cleanup_stale_sessions.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
