@@ -76,10 +76,14 @@ class FakeGate:
 
     async def wait_open(self, mds_host, *, deadline, max_wait, keepalive=None):
         self.waits.append({"mds_host": mds_host, "deadline": deadline, "max_wait": max_wait})
-        if keepalive is not None:
-            await keepalive()
         if len(self.closed) >= self.give_up_after:
             raise LoginGateDeadlineError(mds_host, waited=float(max_wait), max_wait=max_wait)
+        # Faithful to the real gate: `keepalive` runs before a *sleep chunk*, so
+        # only when a refusal is actually live for this host. A fake that awaited
+        # it on every wait made "the lock is renewed" pass without the gate ever
+        # having closed, which is the only situation the renewal exists for.
+        if keepalive is not None and mds_host in self.closed:
+            await keepalive()
 
     async def close(self, mds_host):
         self.closed.append(mds_host)
@@ -1189,8 +1193,14 @@ async def test_login_credential_mode_scopes_cache_by_username():
     assert cache.get_sid.await_args.kwargs["username"] == "svc"
 
 
-async def test_login_acquires_the_domain_lock_with_login_max_wait_as_timeout():
-    """A second caller for the same domain must outlast the first one's pacing."""
+async def test_login_acquires_the_domain_lock_with_the_remaining_budget_as_timeout():
+    """A second caller for the same domain must outlast the first one's pacing.
+
+    ...but no longer than this call's own deadline: a flat `login_max_wait` here
+    meant the pre-lock prefetch (up to the deadline) and this wait (a further
+    900 s) could together take roughly double what `login_max_wait` documents as
+    the total one `login()` may spend.
+    """
     lm = _make_lock_manager()
     cache = AsyncMock()
     cache.get_sid.return_value = None
@@ -1199,8 +1209,49 @@ async def test_login_acquires_the_domain_lock_with_login_max_wait_as_timeout():
 
     await coord.login("mgmt1", "")
 
-    assert lm.acquire.call_args.kwargs["timeout"] == 900
+    # Nothing has been spent yet, so the remaining budget is the whole setting.
+    assert 895 <= lm.acquire.call_args.kwargs["timeout"] <= 900
     assert lm.acquire.call_args.kwargs["ttl"] == 90
+
+
+async def test_login_clamps_the_lock_timeout_to_the_remaining_budget():
+    """Half the budget already spent means half a budget left to wait for the lock."""
+    from arodonata.asdk.login_coordinator import _login_pacing, _LoginPacing
+
+    lm = _make_lock_manager()
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    coord._acquire_new_sid = AsyncMock(return_value=("sid", "10.0.0.1"))
+
+    # An outer login() that started 800 s ago: 100 s of the 900 s budget is left.
+    deadline = asyncio.get_running_loop().time() + 100.0
+    token = _login_pacing.set(_LoginPacing(deadline=deadline))
+    try:
+        await coord.login("mgmt1", "")
+    finally:
+        _login_pacing.reset(token)
+
+    assert 95 <= lm.acquire.call_args.kwargs["timeout"] <= 100
+
+
+async def test_login_never_asks_for_a_zero_or_negative_lock_timeout():
+    """Past the deadline the acquire still gets a positive timeout, not 0 or -5."""
+    from arodonata.asdk.login_coordinator import _login_pacing, _LoginPacing
+
+    lm = _make_lock_manager()
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    coord._acquire_new_sid = AsyncMock(return_value=("sid", "10.0.0.1"))
+
+    token = _login_pacing.set(_LoginPacing(deadline=asyncio.get_running_loop().time() - 30.0))
+    try:
+        await coord.login("mgmt1", "")
+    finally:
+        _login_pacing.reset(token)
+
+    assert lm.acquire.call_args.kwargs["timeout"] == 1
 
 
 async def test_login_sets_pacing_for_its_body_and_clears_it_after():
@@ -1223,9 +1274,98 @@ async def test_login_sets_pacing_for_its_body_and_clears_it_after():
     before = asyncio.get_running_loop().time()
     await coord.login("mgmt1", "")
 
-    assert seen["pacing"].lock is lock_ctx
+    assert seen["pacing"].locks == (lock_ctx,)
     assert seen["pacing"].deadline >= before + 900
     assert _login_pacing.get() is None
+
+
+async def test_a_nested_login_inherits_the_outer_deadline():
+    """`login()` is re-entrant; the inner call must not restart the clock.
+
+    `_acquire_new_sid`, already holding `login:{mgmt}:{domain}`, reaches
+    `_relogin_at_resolved_ip` -> `_prefetch_domain_server_ip` ->
+    `login(mgmt, "")`. A fresh `now + login_max_wait` there turned a setting
+    documented as the total one `login()` may spend into roughly double it.
+    """
+    from arodonata.asdk.login_coordinator import _login_pacing, _LoginPacing
+
+    lm = _make_lock_manager()
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    seen = {}
+
+    async def capture(*args, **kwargs):
+        seen["pacing"] = _login_pacing.get()
+        return ("sid", "10.0.0.1")
+
+    coord._acquire_new_sid = AsyncMock(side_effect=capture)
+
+    outer_deadline = asyncio.get_running_loop().time() + 42.0
+    token = _login_pacing.set(_LoginPacing(deadline=outer_deadline))
+    try:
+        await coord.login("mgmt1", "")
+    finally:
+        _login_pacing.reset(token)
+
+    assert seen["pacing"].deadline == outer_deadline
+
+
+async def test_login_reports_a_lost_login_lock_as_an_authentication_error():
+    """A lock lost or stolen mid-login must not escape as a raw LockOwnershipError.
+
+    `_renew_paced_locks` aborts the paced login with that type, and
+    `release_lock` raises it on the way out of a stolen lock too. Neither is a
+    type consumers catch, and the reason a login failed should not change the
+    type they have to handle.
+    """
+    from arodonata.cache.lock_manager import LockOwnershipError
+
+    lm = _make_lock_manager()
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    coord._acquire_new_sid = AsyncMock(side_effect=LockOwnershipError("login:mgmt1:", "owner-1"))
+
+    with pytest.raises(AuthenticationError, match="lost its login lock") as excinfo:
+        await coord.login("mgmt1", "")
+
+    assert isinstance(excinfo.value.__cause__, LockOwnershipError)
+
+
+async def test_a_nested_login_extends_the_lock_chain_instead_of_replacing_it():
+    """The outer lock must stay on the chain, or nobody renews it while we wait.
+
+    A single-slot pacing let the inner login's lock replace the outer's: the
+    outer `login:{mgmt}:{domain}` row lapsed after 90 s, `_try_acquire` handed it
+    to another worker, and two concurrent logins hit the same domain -- spending
+    exactly the allowance the gate exists to conserve.
+    """
+    from arodonata.asdk.login_coordinator import _login_pacing, _LoginPacing
+
+    lm = _make_lock_manager()
+    inner_lock = MagicMock()
+    lm.acquire.return_value.__aenter__ = AsyncMock(return_value=inner_lock)
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    coord = _make_coordinator(lock_manager=lm, cache=cache)
+    seen = {}
+
+    async def capture(*args, **kwargs):
+        seen["pacing"] = _login_pacing.get()
+        return ("sid", "10.0.0.1")
+
+    coord._acquire_new_sid = AsyncMock(side_effect=capture)
+
+    outer_lock = MagicMock()
+    loop_time = asyncio.get_running_loop().time()
+    token = _login_pacing.set(_LoginPacing(deadline=loop_time + 900.0, locks=(outer_lock,)))
+    try:
+        await coord.login("mgmt1", "")
+    finally:
+        _login_pacing.reset(token)
+
+    assert seen["pacing"].locks == (outer_lock, inner_lock)
 
 
 # ---------------------------------------------------------------------------

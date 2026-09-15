@@ -44,16 +44,42 @@ log = lazy_logger("arodonata.asdk.login_coordinator")
 
 @dataclass(frozen=True)
 class _LoginPacing:
-    """What one `login()` call carries down to its attempts: when to give up, and what to keep alive."""
+    """What one `login()` call carries down to its attempts: when to give up, and what to keep alive.
 
-    deadline: float  # absolute loop.time()
-    lock: Any | None  # the LockContext of login:{mgmt}:{domain}, renewed while waiting at the gate
+    `locks` is the *chain* of login locks the current call stack holds, outermost
+    first, and not a single slot, because `login()` is re-entrant: on a silent
+    domain server `_acquire_new_sid` -- already inside `login:{mgmt}:{domain}` --
+    calls `_relogin_at_resolved_ip` -> `_prefetch_domain_server_ip` ->
+    `login(mgmt, "")`, which takes `login:{mgmt}:` as well. A single slot meant
+    the inner login's pacing replaced the outer's, so while the inner login slept
+    at the gate only the inner lock was renewed; the outer lock lapsed after its
+    90 s TTL, `_try_acquire` let another worker steal it, and a second concurrent
+    login to the same domain spent the very allowance the gate exists to
+    conserve -- after which the original owner's `release_lock` no-opped on
+    someone else's row. Every lock in the chain is renewed on every keepalive.
+    """
+
+    deadline: float  # absolute loop.time(), shared by every login in the chain
+    locks: tuple[Any, ...] = ()  # LockContexts of login:{mgmt}:{domain}, outermost first
+
+    def nest(self, lock: Any | None) -> _LoginPacing:
+        """The pacing a nested `login()` runs under: this deadline, plus `lock` on the chain."""
+        if lock is None:
+            return self
+        return _LoginPacing(deadline=self.deadline, locks=(*self.locks, lock))
 
 
 # Set by `login()` for the duration of its body (the same pattern as
 # lock_manager._current_lock_context). Read by `_retry_with_backoff`, which
 # otherwise -- dedicated sessions, cleanup logins -- starts a deadline of its own.
 _login_pacing: ContextVar[_LoginPacing | None] = ContextVar("_login_pacing", default=None)
+
+# Fraction of a login lock's TTL that must elapse before a keepalive renews it.
+# Passed explicitly to `LockContext.renew_if_needed` *and* used to tell its
+# "not due yet" False from its "lock lost" False -- the two share one number on
+# purpose, because guessing the other side's threshold is how a login ends up
+# aborted for a renewal that was never attempted.
+_LOCK_RENEW_THRESHOLD = 0.5
 
 
 def _login_failure_kind(exc: BaseException) -> str:
@@ -185,14 +211,87 @@ class LoginCoordinator:
         """Deadline and lock-renewal hook for the login in progress.
 
         `login()` sets these for its whole body, so the wait for the login lock
-        counts toward the deadline and the lock is renewed while the holder sleeps
-        at the gate. Outside `login()` there is no lock and the deadline starts now.
+        counts toward the deadline and every lock the call stack holds is renewed
+        while the holder sleeps at the gate. Outside `login()` there is no lock
+        and the deadline starts now.
         """
         pacing = _login_pacing.get()
         if pacing is None:
             return asyncio.get_running_loop().time() + self._max_wait, None
-        renew = getattr(pacing.lock, "renew_if_needed", None) if pacing.lock is not None else None
-        return pacing.deadline, renew
+        locks = tuple(lock for lock in pacing.locks if lock is not None)
+        if not locks:
+            return pacing.deadline, None
+
+        async def _keepalive() -> None:
+            await self._renew_paced_locks(locks)
+
+        return pacing.deadline, _keepalive
+
+    async def _renew_paced_locks(self, locks: tuple[Any, ...]) -> None:
+        """Renew every login lock the current call stack holds. The gate's keepalive hook.
+
+        Renewing only the innermost lock is what let the outer `login:{mgmt}:{domain}`
+        row lapse while a nested system-domain login slept at the gate (see
+        `_LoginPacing`), so this walks the whole chain.
+
+        A lock we no longer hold **aborts** the paced login, as `LockOwnershipError`.
+        That lock is the only thing keeping two workers from logging into the same
+        domain at once, which is the allowance the gate exists to conserve; once it
+        is gone another worker has already taken over this login, and carrying on
+        would spend the allowance twice and end with `release_lock` operating on
+        someone else's row. Failing fast is also cheap: the caller re-enters and
+        finds the SID the other worker just cached.
+
+        Raises:
+            LockOwnershipError: The lock was stolen (another owner holds the row)
+                or lost (the row is gone) while we were waiting at the gate.
+        """
+        from ..cache.lock_manager import LockOwnershipError
+
+        for lock in locks:
+            renew = getattr(lock, "renew_if_needed", None)
+            if renew is None:
+                continue
+            key = getattr(lock, "lock_key", "?")
+            try:
+                renewed = await renew(threshold=_LOCK_RENEW_THRESHOLD)
+            except LockOwnershipError:
+                log().warning(f"Login lock '{key}' was stolen while waiting at the login gate - abandoning this login")
+                raise
+            # `renew_if_needed` returns False both for "not due yet" and for
+            # "renewal failed", so ask whether it was even due before reading
+            # False as a loss. Both sides use _LOCK_RENEW_THRESHOLD.
+            if renewed is False and self._renewal_was_due(lock):
+                log().warning(
+                    f"Login lock '{key}' is gone (expired or released) while waiting at the "
+                    f"login gate - abandoning this login"
+                )
+                raise LockOwnershipError(key, getattr(lock, "owner_id", "?"))
+
+    def _sub_deadline_pacing(self, seconds: float) -> _LoginPacing:
+        """Pacing for a side quest: `min(remaining, seconds)`, on the same lock chain.
+
+        Used by the cleanup login, which must not be able to consume the whole
+        remaining budget of the login it was called to unblock. Outside a
+        `login()` there is nothing to share, so `seconds` is the whole budget.
+        """
+        # One clock read: two would let the sub-deadline land a hair past the
+        # outer one, which is the one thing this must never do.
+        now = asyncio.get_running_loop().time()
+        pacing = _login_pacing.get()
+        remaining = (pacing.deadline - now) if pacing is not None else float(self._max_wait)
+        locks = pacing.locks if pacing is not None else ()
+        return _LoginPacing(deadline=now + min(remaining, float(seconds)), locks=locks)
+
+    @staticmethod
+    def _renewal_was_due(lock: Any) -> bool:
+        """Whether `renew_if_needed` would have attempted a renewal for this lock."""
+        acquired_at = getattr(lock, "acquired_at", None)
+        ttl = getattr(lock, "ttl", None)
+        if not isinstance(acquired_at, datetime) or not isinstance(ttl, int | float):
+            return False
+        elapsed = (datetime.now(UTC).replace(tzinfo=None) - acquired_at).total_seconds()
+        return elapsed > ttl * _LOCK_RENEW_THRESHOLD
 
     @property
     def _credential_username(self) -> str | None:
@@ -319,6 +418,13 @@ class LoginCoordinator:
             sid, _uid = self._parse_login_response(response, mgmt_name, domain, server_ip, api_key)
             return sid
 
+        # `max_retries=1` bounds non-throttle failures to one attempt, but a
+        # throttle does not increment `failures` -- it closes the gate and waits
+        # for the next window -- so without a deadline of its own this best-effort
+        # side quest would retry until the *outer* login's deadline and leave
+        # nothing for the login it exists to unblock. One window is enough for the
+        # server to answer differently; more than that is not this call's to spend.
+        sub_token = _login_pacing.set(self._sub_deadline_pacing(self._throttle_window))
         try:
             tmp_sid = await self._retry_with_backoff(
                 _temp_login, "Cleanup login", mds_host=await self._mds_host(mgmt_name, domain), max_retries=1
@@ -326,6 +432,8 @@ class LoginCoordinator:
         except Exception as exc:  # noqa: BLE001 - cleanup is best effort; the caller's login proceeds regardless
             log().warning(f"Could not acquire temp SID for cleanup: {exc}")
             return
+        finally:
+            _login_pacing.reset(sub_token)
 
         try:
             cleanup_result = await self._session_cleaner.cleanup_stale_sessions(
@@ -1208,55 +1316,85 @@ class LoginCoordinator:
         if cache_mode == "refresh":
             force = True
 
+        from ..cache.lock_manager import LockOwnershipError
+        from ..core.exceptions import AuthenticationError
+
         domain = self._normalize_domain(mgmt_name, domain)
         span_attrs(mgmt_name=mgmt_name, domain=domain or "system", force=force)
         entry_time = datetime.now(UTC).replace(tzinfo=None)
+        loop = asyncio.get_running_loop()
         # One deadline for the whole call, including the wait for the login lock:
         # a second caller for the same domain is paced by the first one's pacing.
-        deadline = asyncio.get_running_loop().time() + self._max_wait
+        # A *nested* login -- `_prefetch_domain_server_ip` and
+        # `_relogin_at_resolved_ip` both call back into login() for the system
+        # domain -- inherits the outer deadline instead of starting a fresh
+        # `login_max_wait`, or one login() would span prefetch (<=900 s) plus its
+        # own lock acquire (<=900 s) for a setting documented as the total.
+        outer = _login_pacing.get()
+        pacing = outer if outer is not None else _LoginPacing(deadline=loop.time() + self._max_wait)
+        deadline = pacing.deadline
 
-        # For domains, pre-fetch domain server IP before acquiring lock
-        # to avoid deadlock where we hold domain lock but need system login
-        # Skip prefetch when explicitly requested (internal use)
-        # Use refresh_domain_ip (not force) so that session-expiry retries
-        # don't bypass the domain IP cache and trigger unnecessary system logins.
-        server_ip: str | None = None
-        if domain and not _skip_prefetch:
-            server_ip = await self._prefetch_domain_server_ip(mgmt_name, domain, force=refresh_domain_ip)
+        # Set before the prefetch, not just around _acquire_new_sid, so the
+        # nested system-domain login the prefetch may make is bounded by this
+        # call's deadline and renews this call's locks (there are none yet here;
+        # the chain grows once the lock below is held).
+        outer_token = _login_pacing.set(pacing)
+        try:
+            # For domains, pre-fetch domain server IP before acquiring lock
+            # to avoid deadlock where we hold domain lock but need system login
+            # Skip prefetch when explicitly requested (internal use)
+            # Use refresh_domain_ip (not force) so that session-expiry retries
+            # don't bypass the domain IP cache and trigger unnecessary system logins.
+            server_ip: str | None = None
+            if domain and not _skip_prefetch:
+                server_ip = await self._prefetch_domain_server_ip(mgmt_name, domain, force=refresh_domain_ip)
 
-        # Pre-lock cache check (optimization)
-        if not force:
-            cached = await self._cache.get_sid(
-                mgmt_name, domain, self._settings.session_expire_seconds, username=self._credential_username
-            )
-            if cached and cached.sid and cached.server_ip:
-                log().trace(f"Cache HIT (pre-lock): '{mgmt_name}:{domain}' (SID: [{cached.sid[:8]}...])")
-                span_attrs(sid_cache="hit-pre-lock")
-                return cached.sid, cached.server_ip
+            # Pre-lock cache check (optimization)
+            if not force:
+                cached = await self._cache.get_sid(
+                    mgmt_name, domain, self._settings.session_expire_seconds, username=self._credential_username
+                )
+                if cached and cached.sid and cached.server_ip:
+                    log().trace(f"Cache HIT (pre-lock): '{mgmt_name}:{domain}' (SID: [{cached.sid[:8]}...])")
+                    span_attrs(sid_cache="hit-pre-lock")
+                    return cached.sid, cached.server_ip
 
-        lock_key = self._get_lock_key(mgmt_name, domain)
+            lock_key = self._get_lock_key(mgmt_name, domain)
 
-        # In-process lock for optimization
-        if lock_key not in self._in_process_locks:
-            self._in_process_locks[lock_key] = asyncio.Lock()
+            # In-process lock for optimization
+            if lock_key not in self._in_process_locks:
+                self._in_process_locks[lock_key] = asyncio.Lock()
 
-        async with self._in_process_locks[lock_key]:
-            lock_manager = await self._get_lock_manager()
+            async with self._in_process_locks[lock_key]:
+                lock_manager = await self._get_lock_manager()
 
-            # The login lock's TTL is renewed while we wait at the login gate, and a
-            # waiter's timeout is the same login_max_wait, since it must outlast our pacing.
-            async with lock_manager.acquire(
-                lock_key,
-                timeout=self._max_wait,
-                ttl=lock_manager.DEFAULT_TTL_LOGIN,
-            ) as lock_ctx:
-                token = _login_pacing.set(_LoginPacing(deadline=deadline, lock=lock_ctx))
+                # The login lock's TTL is renewed while we wait at the login gate, and a
+                # waiter's timeout is what is left of this call's budget: it must outlast
+                # our pacing, but it must not outlast the deadline it is paced by, or the
+                # prefetch above plus this wait could together double `login_max_wait`.
                 try:
-                    return await self._acquire_new_sid(
-                        mgmt_name, domain, force, entry_time, server_ip, session_name, session_description
-                    )
-                finally:
-                    _login_pacing.reset(token)
+                    async with lock_manager.acquire(
+                        lock_key,
+                        timeout=max(1, int(deadline - loop.time())),
+                        ttl=lock_manager.DEFAULT_TTL_LOGIN,
+                    ) as lock_ctx:
+                        token = _login_pacing.set(pacing.nest(lock_ctx))
+                        try:
+                            return await self._acquire_new_sid(
+                                mgmt_name, domain, force, entry_time, server_ip, session_name, session_description
+                            )
+                        finally:
+                            _login_pacing.reset(token)
+                except LockOwnershipError as exc:
+                    # Either a keepalive found the lock stolen or gone (see
+                    # `_renew_paced_locks`), or `release_lock` did on the way out.
+                    # Either way this login did not complete under a lock it owned;
+                    # surface the type every login failure already surfaces as.
+                    raise AuthenticationError(
+                        f"Login to '{mgmt_name}:{domain or 'system'}' lost its login lock: {exc}"
+                    ) from exc
+        finally:
+            _login_pacing.reset(outer_token)
 
     @traced
     async def _acquire_new_sid(

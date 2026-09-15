@@ -5,7 +5,7 @@ Transport/APIClient seam is mocked; offline only.
 """
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,6 +14,7 @@ from pydantic import SecretStr
 from arodonata.asdk.login_coordinator import LoginCoordinator, _login_pacing, _LoginPacing
 from arodonata.asdk.login_gate import LoginGateDeadlineError
 from arodonata.asdk.session_cleaner import CleanupResult, SessionCleaner
+from arodonata.cache.lock_manager import LockOwnershipError
 from arodonata.config import CREDENTIAL_REJECTION_MESSAGE, LOGIN_THROTTLE_WINDOW_SECONDS
 from arodonata.core.exceptions import (
     AuthenticationError,
@@ -66,10 +67,14 @@ class FakeGate:
 
     async def wait_open(self, mds_host, *, deadline, max_wait, keepalive=None):
         self.waits.append({"mds_host": mds_host, "deadline": deadline, "max_wait": max_wait})
-        if keepalive is not None:
-            await keepalive()
         if len(self.closed) >= self.give_up_after:
             raise LoginGateDeadlineError(mds_host, waited=float(max_wait), max_wait=max_wait)
+        # Faithful to the real gate: `keepalive` runs before a *sleep chunk*, so
+        # only when a refusal is actually live for this host. A fake that awaited
+        # it on every wait made "the lock is renewed" pass without the gate ever
+        # having closed, which is the only situation the renewal exists for.
+        if keepalive is not None and mds_host in self.closed:
+            await keepalive()
 
     async def close(self, mds_host):
         self.closed.append(mds_host)
@@ -485,12 +490,22 @@ async def test_the_lazily_built_gate_falls_back_to_the_constant_when_the_setting
     assert (await coord._get_login_gate())._window == LOGIN_THROTTLE_WINDOW_SECONDS
 
 
-async def test_retry_uses_the_login_pacing_deadline_and_renews_the_lock():
-    """Inside login(), the deadline is the one login() set and the lock is kept alive."""
+def _lock_ctx(*, lock_key="login:mgmt1:dom", renew=None, age_seconds=60.0, ttl=90):
+    """A LockContext stand-in old enough that a renewal is due (age > ttl * 0.5)."""
+    lock = MagicMock()
+    lock.lock_key = lock_key
+    lock.owner_id = "owner-1"
+    lock.ttl = ttl
+    lock.acquired_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=age_seconds)
+    lock.renew_if_needed = AsyncMock(return_value=True) if renew is None else renew
+    return lock
+
+
+async def test_retry_uses_the_login_pacing_deadline():
+    """Inside login(), the deadline is the one login() set."""
     gate = FakeGate()
     coord = _make_coordinator(login_gate=gate)
-    lock = MagicMock()
-    lock.renew_if_needed = AsyncMock()
+    lock = _lock_ctx()
     # Real time, not an arbitrary sentinel: _retry_with_backoff now compares the
     # pacing deadline against asyncio.get_running_loop().time() itself (the
     # deadline-guard backstop), and that clock does not start at 0.
@@ -499,7 +514,7 @@ async def test_retry_uses_the_login_pacing_deadline_and_renews_the_lock():
     async def op():
         return ("sid", None)
 
-    token = _login_pacing.set(_LoginPacing(deadline=deadline, lock=lock))
+    token = _login_pacing.set(_LoginPacing(deadline=deadline, locks=(lock,)))
     try:
         await coord._retry_with_backoff(op, "Login", mds_host="mds")
     finally:
@@ -507,7 +522,116 @@ async def test_retry_uses_the_login_pacing_deadline_and_renews_the_lock():
 
     assert gate.waits[0]["deadline"] == deadline
     assert gate.waits[0]["max_wait"] == 900
-    lock.renew_if_needed.assert_awaited_once()
+    # The gate never closed, so there was no sleep to keep the lock alive through.
+    lock.renew_if_needed.assert_not_awaited()
+
+
+async def test_a_gate_wait_renews_every_lock_in_the_chain():
+    """The nested-login case: waiting at the gate must renew the *outer* lock too.
+
+    `login()` is re-entrant -- `_acquire_new_sid`, already inside
+    `login:{mgmt}:{domain}`, reaches `_prefetch_domain_server_ip` ->
+    `login(mgmt, "")`, which takes `login:{mgmt}:`. With a single-slot pacing only
+    the inner lock was renewed while the inner login slept at the gate; the outer
+    row lapsed after its 90 s TTL, another worker stole it, and a second
+    concurrent login hit the same domain.
+    """
+    gate = FakeGate(give_up_after=5)
+    coord = _make_coordinator(login_gate=gate)
+    outer = _lock_ctx(lock_key="login:mgmt1:dom")
+    inner = _lock_ctx(lock_key="login:mgmt1:")
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ThrottlingError("Login throttled: err_too_many_requests")
+        return ("sid", None)
+
+    deadline = asyncio.get_running_loop().time() + 900.0
+    token = _login_pacing.set(_LoginPacing(deadline=deadline, locks=(outer, inner)))
+    try:
+        await coord._retry_with_backoff(op, "Login", mds_host="mds")
+    finally:
+        _login_pacing.reset(token)
+
+    assert gate.closed == ["mds"]
+    outer.renew_if_needed.assert_awaited_once()
+    inner.renew_if_needed.assert_awaited_once()
+
+
+async def test_a_stolen_lock_aborts_the_paced_login():
+    """Another owner holds our login lock: stop, do not keep logging under it.
+
+    The lock is the only thing keeping two workers off the same domain login, so
+    continuing would spend the allowance the gate exists to conserve twice over
+    and end with `release_lock` operating on someone else's row.
+    """
+    gate = FakeGate(give_up_after=5)
+    coord = _make_coordinator(login_gate=gate)
+    lock = _lock_ctx(renew=AsyncMock(side_effect=LockOwnershipError("login:mgmt1:dom", "owner-1")))
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        raise ThrottlingError("Login throttled: err_too_many_requests")
+
+    deadline = asyncio.get_running_loop().time() + 900.0
+    token = _login_pacing.set(_LoginPacing(deadline=deadline, locks=(lock,)))
+    try:
+        with pytest.raises(LockOwnershipError):
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
+    finally:
+        _login_pacing.reset(token)
+
+    assert attempts == 1  # the refused attempt, then no further ones
+
+
+async def test_a_lock_that_lapsed_while_we_waited_aborts_the_paced_login(caplog):
+    """`renew_if_needed` returning False *when a renewal was due* means the row is gone."""
+    gate = FakeGate(give_up_after=5)
+    coord = _make_coordinator(login_gate=gate)
+    lock = _lock_ctx(renew=AsyncMock(return_value=False), age_seconds=60.0)
+
+    async def op():
+        raise ThrottlingError("Login throttled: err_too_many_requests")
+
+    deadline = asyncio.get_running_loop().time() + 900.0
+    token = _login_pacing.set(_LoginPacing(deadline=deadline, locks=(lock,)))
+    try:
+        with pytest.raises(LockOwnershipError):
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
+    finally:
+        _login_pacing.reset(token)
+
+    assert any("is gone" in r.message for r in caplog.records)
+
+
+async def test_a_renewal_that_was_not_due_yet_is_not_a_lost_lock():
+    """The same False means "not due yet" most of the time; that must not abort anything."""
+    gate = FakeGate(give_up_after=2)
+    coord = _make_coordinator(login_gate=gate)
+    # Young lock: elapsed is well under ttl * 0.5, so renew_if_needed declines.
+    lock = _lock_ctx(renew=AsyncMock(return_value=False), age_seconds=1.0)
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ThrottlingError("Login throttled: err_too_many_requests")
+        return ("sid", None)
+
+    deadline = asyncio.get_running_loop().time() + 900.0
+    token = _login_pacing.set(_LoginPacing(deadline=deadline, locks=(lock,)))
+    try:
+        result = await coord._retry_with_backoff(op, "Login", mds_host="mds")
+    finally:
+        _login_pacing.reset(token)
+
+    assert result == ("sid", None)
 
 
 async def test_retry_outside_login_starts_its_own_deadline():
@@ -543,7 +667,7 @@ async def test_retry_terminates_on_an_already_passed_deadline_instead_of_spinnin
         return ("sid", None)
 
     past_deadline = asyncio.get_running_loop().time() - 1.0
-    token = _login_pacing.set(_LoginPacing(deadline=past_deadline, lock=None))
+    token = _login_pacing.set(_LoginPacing(deadline=past_deadline))
     try:
         with pytest.raises(LoginGateDeadlineError):
             await coord._retry_with_backoff(op, "Login", mds_host="mds")
@@ -1112,25 +1236,116 @@ async def test_cleanup_uses_credentials_in_credential_mode():
 
 
 async def test_cleanup_temp_login_is_gated_and_closes_the_gate_when_refused():
-    """The temporary cleanup login is a login the server counts: it waits its turn and reports refusals."""
+    """The temporary cleanup login is a login the server counts: it waits its turn and reports refusals.
+
+    Three distinct addresses on purpose. The login goes to the *domain server*
+    (`10.0.0.1`), the configured management host is `10.9.9.9`, and the MDS member
+    actually hosting the domain -- the machine Check Point rate-limits, and the only
+    correct gate key -- is `10.50.50.50`. With all three equal this test could not
+    tell `_mds_host` from `server_ip` and would have passed on either.
+    """
     gate = FakeGate(give_up_after=1)
     cleaner = MagicMock(spec=SessionCleaner)
     cleaner.cleanup_stale_sessions = AsyncMock()
     registry = MagicMock()
-    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", api_key=SecretStr("key"), port=None)
+    registry.get_server.return_value = MagicMock(server_ip="10.9.9.9", api_key=SecretStr("key"), port=None)
+    cache = AsyncMock()
+    cache.get_domain.return_value = MagicMock(active_mds_ip="10.50.50.50")
     transport = AsyncMock()
     transport.login_with_apikey.return_value = {
         "success": False,
         "code": "err_too_many_requests",
         "message": "Too many requests",
     }
-    coord = _make_coordinator(registry=registry, transport=transport, session_cleaner=cleaner, login_gate=gate)
+    coord = _make_coordinator(
+        registry=registry, transport=transport, cache=cache, session_cleaner=cleaner, login_gate=gate
+    )
 
-    await coord._cleanup_for_max_sessions("mgmt1", "", "10.0.0.1", "key", None)  # must not raise
+    await coord._cleanup_for_max_sessions("mgmt1", "General", "10.0.0.1", "key", None)  # must not raise
 
-    assert gate.closed == ["10.0.0.1"]
-    assert gate.waits[0]["mds_host"] == "10.0.0.1"
+    assert gate.closed == ["10.50.50.50"]
+    assert gate.waits[0]["mds_host"] == "10.50.50.50"
+    # The login itself still went to the domain server, not to the gate key.
+    assert transport.login_with_apikey.await_args.kwargs["server_ip"] == "10.0.0.1"
     cleaner.cleanup_stale_sessions.assert_not_called()
+
+
+async def test_cleanup_temp_login_gets_a_sub_deadline_of_at_most_one_window():
+    """A best-effort side quest must not eat the budget of the login it unblocks.
+
+    `max_retries=1` bounds non-throttle failures, but a throttle does not count as
+    a failure -- it closes the gate and waits for the next window -- so in the
+    max-sessions path the cleanup login shared the *outer* login's deadline and
+    could retry until it was gone.
+    """
+    gate = FakeGate(give_up_after=10)
+    cleaner = MagicMock(spec=SessionCleaner)
+    cleaner.cleanup_stale_sessions = AsyncMock()
+    transport = AsyncMock()
+    transport.login_with_apikey.return_value = {"success": True, "sid": "tmp", "data": {}}
+    settings = _make_settings()
+    settings.login_throttle_window = 70
+    coord = _make_coordinator(transport=transport, session_cleaner=cleaner, settings=settings, login_gate=gate)
+
+    outer_deadline = asyncio.get_running_loop().time() + 900.0
+    token = _login_pacing.set(_LoginPacing(deadline=outer_deadline))
+    try:
+        await coord._cleanup_for_max_sessions("mgmt1", "", "10.0.0.1", "key", None)
+    finally:
+        _login_pacing.reset(token)
+
+    # One window, not the outer login's 900 s.
+    assert gate.waits[0]["deadline"] <= outer_deadline - 800
+    assert gate.waits[0]["deadline"] >= asyncio.get_running_loop().time() + 60
+
+
+async def test_cleanup_temp_login_never_exceeds_the_outer_deadline():
+    """When less than a window is left, the cleanup login gets only what is left."""
+    gate = FakeGate(give_up_after=10)
+    cleaner = MagicMock(spec=SessionCleaner)
+    cleaner.cleanup_stale_sessions = AsyncMock()
+    transport = AsyncMock()
+    transport.login_with_apikey.return_value = {"success": True, "sid": "tmp", "data": {}}
+    coord = _make_coordinator(transport=transport, session_cleaner=cleaner, login_gate=gate)
+
+    outer_deadline = asyncio.get_running_loop().time() + 5.0
+    token = _login_pacing.set(_LoginPacing(deadline=outer_deadline))
+    try:
+        await coord._cleanup_for_max_sessions("mgmt1", "", "10.0.0.1", "key", None)
+    finally:
+        _login_pacing.reset(token)
+
+    assert gate.waits[0]["deadline"] <= outer_deadline
+
+
+async def test_cleanup_temp_login_still_renews_the_outer_login_lock():
+    """Its own deadline, but not its own lock chain: the outer lock must stay alive."""
+    # Two refusals, so there is a wait with a live gate row in between -- which is
+    # the only moment the real gate runs `keepalive`.
+    gate = FakeGate(give_up_after=2)
+    cleaner = MagicMock(spec=SessionCleaner)
+    cleaner.cleanup_stale_sessions = AsyncMock()
+    transport = AsyncMock()
+    transport.login_with_apikey.return_value = {
+        "success": False,
+        "code": "err_too_many_requests",
+        "message": "Too many requests",
+    }
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", api_key=SecretStr("key"), port=None)
+    coord = _make_coordinator(registry=registry, transport=transport, session_cleaner=cleaner, login_gate=gate)
+    outer = _lock_ctx()
+
+    token = _login_pacing.set(
+        _LoginPacing(deadline=asyncio.get_running_loop().time() + 900.0, locks=(outer,)),
+    )
+    try:
+        await coord._cleanup_for_max_sessions("mgmt1", "", "10.0.0.1", "key", None)
+    finally:
+        _login_pacing.reset(token)
+
+    assert gate.closed == ["10.0.0.1", "10.0.0.1"]
+    outer.renew_if_needed.assert_awaited()
 
 
 async def test_cleanup_temp_login_makes_a_single_attempt_on_a_plain_failure():
