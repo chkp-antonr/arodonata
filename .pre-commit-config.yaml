@@ -7,6 +7,19 @@ repos:
       - id: commitizen
         stages: [commit-msg]
 
+  # CI's lint-and-test job runs `uv run mypy src/`, and a type error there
+  # fails the build after the push. Run the same check locally, through the
+  # project venv (uv) rather than a pinned mirror, so the version that gates
+  # the commit is the version CI uses.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (src/)
+        entry: uv run mypy src/
+        language: system
+        types: [python]
+        pass_filenames: false
+
   - repo: https://github.com/PyCQA/bandit
     rev: 1.7.5
     hooks:
