@@ -1333,6 +1333,45 @@ async def test_login_reports_a_lost_login_lock_as_an_authentication_error():
     assert isinstance(excinfo.value.__cause__, LockOwnershipError)
 
 
+async def test_a_login_whose_lock_is_stolen_at_the_gate_reports_the_lost_lock():
+    """End to end: the keepalive discovers the theft and the caller is told what happened.
+
+    Not "Login failed after 3 attempts" — the server refused once and was then
+    never asked again; what ended this login was losing the lock that made it
+    ours to run.
+    """
+    from arodonata.cache.lock_manager import LockOwnershipError
+
+    lock_ctx = MagicMock()
+    lock_ctx.lock_key = "login:mgmt1:"
+    lock_ctx.owner_id = "owner-1"
+    lock_ctx.ttl = 90
+    lock_ctx.acquired_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=60)
+    lock_ctx.renew_if_needed = AsyncMock(side_effect=LockOwnershipError("login:mgmt1:", "owner-1"))
+    lm = _make_lock_manager()
+    lm.acquire.return_value.__aenter__ = AsyncMock(return_value=lock_ctx)
+
+    cache = AsyncMock()
+    cache.get_sid.return_value = None
+    registry = MagicMock()
+    registry.get_server.return_value = ServerConfig(name="mgmt1", server_ip="10.0.0.1", api_key=SecretStr("k"))
+    transport = AsyncMock()
+    transport.login_with_apikey.return_value = {
+        "success": False,
+        "code": "err_too_many_requests",
+        "message": "Too many requests",
+    }
+    gate = FakeGate(give_up_after=5)
+    coord = _make_coordinator(lock_manager=lm, cache=cache, registry=registry, transport=transport, login_gate=gate)
+
+    with pytest.raises(AuthenticationError, match="lost its login lock"):
+        await coord.login("mgmt1", "")
+
+    # One refusal, which closed the gate; the wait that followed found the lock gone.
+    assert gate.closed == ["10.0.0.1"]
+    assert transport.login_with_apikey.await_count == 1
+
+
 async def test_a_nested_login_extends_the_lock_chain_instead_of_replacing_it():
     """The outer lock must stay on the chain, or nobody renews it while we wait.
 

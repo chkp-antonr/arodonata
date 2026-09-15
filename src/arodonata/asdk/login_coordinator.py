@@ -989,6 +989,12 @@ class LoginCoordinator:
             # this was raised by `_try_login_once`'s own `acquire`, outside the try,
             # and reached callers as itself. Keeping the type keeps that contract.
             raise
+        except LockOwnershipError:
+            # A keepalive found one of our login locks stolen or gone
+            # (`_renew_paced_locks`). `login()` owns the translation, and its message
+            # says what actually happened; wrapping it here as "Login failed after N
+            # attempts" would blame the server for our lost lock.
+            raise
         except LoginGateDeadlineError as e:
             # The server never refused *this* attempt; we ran out of time
             # waiting for our turn. Same type consumers already catch, a
