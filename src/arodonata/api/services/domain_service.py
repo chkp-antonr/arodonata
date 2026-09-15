@@ -179,14 +179,7 @@ class DomainService:
             # Which member hosts each server matters to the login gate
             # (asdk/login_gate.py). Enrichment only: a failed show-mdss leaves
             # active_mds_ip empty and the gate keys on the configured host.
-            mds_ips: dict[str, str] = {}
-            mds_response = await self._api_client.api_query(
-                mgmt_name=mgmt_name, command="show-mdss", details_level="full", cache_mode=cache_mode
-            )
-            if mds_response.success and mds_response.objects:
-                mds_ips = mds_ip_map(list(mds_response.objects))
-            else:
-                log().debug(f"show-mdss unavailable for {mgmt_name}; domain rows will not carry member IPs")
+            mds_ips = await self._fetch_mds_ips(mgmt_name, cache_mode)
 
             for obj in response.objects:
                 if not isinstance(obj, dict):
@@ -254,6 +247,27 @@ class DomainService:
         if include_global:
             return domain_names
         return [d for d in domain_names if d != GLOBAL_DOMAIN_NAME]
+
+    async def _fetch_mds_ips(self, mgmt_name: str, cache_mode: str) -> dict[str, str]:
+        """{MDS member name: IPv4} via `show-mdss`; {} on any failure.
+
+        The login gate keys on the member that hosts a domain's active server
+        (asdk/login_gate.py). Enrichment only: a failed or unsuccessful call
+        must never abort domain population, so any exception (transport
+        timeout, connection error, ...) and any unsuccessful/empty response
+        both degrade to an empty map, logged at debug.
+        """
+        try:
+            mds_response = await self._api_client.api_query(
+                mgmt_name=mgmt_name, command="show-mdss", details_level="full", cache_mode=cache_mode
+            )
+        except Exception as exc:  # noqa: BLE001 - enrichment only; domain population must proceed
+            log().debug(f"show-mdss failed for {mgmt_name}: {exc}; domain rows will not carry member IPs")
+            return {}
+        if mds_response.success and mds_response.objects:
+            return mds_ip_map(list(mds_response.objects))
+        log().debug(f"show-mdss unavailable for {mgmt_name}; domain rows will not carry member IPs")
+        return {}
 
     def _extract_active_server_ip(self, domain_obj: dict[str, Any]) -> str:
         """Active server IP from a `show-domains` object; '' if none. See asdk/domain_servers.py."""

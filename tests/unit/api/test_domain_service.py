@@ -333,6 +333,33 @@ async def test_mdm_domains_record_the_hosting_member():
     assert (saved.active_mds, saved.active_mds_ip, saved.active_server) == ("mds2", "192.168.1.200", "a_srv")
 
 
+@pytest.mark.asyncio
+async def test_mdm_domains_tolerates_a_failed_show_mdss():
+    """A show-mdss transport failure is enrichment-only: domain population must still complete."""
+    domains = ApiQueryResult(
+        success=True,
+        objects=[
+            {
+                "name": "domainA",
+                "uid": "uid-a",
+                "servers": [
+                    {"name": "a_srv", "ipv4-address": "192.168.1.1", "active": True, "multi-domain-server": "mds2"}
+                ],
+            }
+        ],
+    )
+    api_client = AsyncMock()
+    api_client.api_query = AsyncMock(side_effect=[domains, RuntimeError("boom")])
+    cache = AsyncMock()
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+
+    result = await service._populate_mdm_domains("mgmt1", is_mdm=True)
+
+    assert result == ["", "domainA"]
+    saved = cache.upsert_domain.await_args_list[0].args[0]
+    assert saved.active_mds_ip == ""
+
+
 # --------------------------------------------------------------------------- #
 # _populate_mdm_domains — Global domain row
 # --------------------------------------------------------------------------- #
