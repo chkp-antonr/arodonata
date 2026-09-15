@@ -1455,7 +1455,7 @@ class LoginCoordinator:
             AuthenticationError: If login fails after all retries.
         """
         span_attrs(mgmt_name=mgmt_name, domain=domain or "system")
-        from ..core.exceptions import AuthenticationError
+        from ..core.exceptions import AuthenticationError, InvalidCredentialsError
 
         server_config = self._registry.get_server(mgmt_name)
         if not server_config:
@@ -1488,10 +1488,25 @@ class LoginCoordinator:
                 session_description=session_description,
                 session_timeout=self._settings.session_timeout,
             )
-            if not (response.get("success") and response.get("sid")):
-                error_msg = response.get("message", "Unknown login error")
-                raise AuthenticationError(f"Dedicated session login failed for '{mgmt_name}:{domain}': {error_msg}")
-            return str(response["sid"]), response.get("data", {}).get("uid")
+            # Through the shared parser rather than a bespoke success check. The
+            # bespoke one built its error from `message` alone and dropped `code`,
+            # so a refusal carrying err_too_many_requests -- Check Point's message
+            # for it does not mention the code -- was classified "refusal": it
+            # never closed the gate, it consumed a retry, and it climbed the
+            # exponential ladder against a server that was actively rate-limiting
+            # it while every other worker kept hammering. The parser raises
+            # ThrottlingError for that case and InvalidCredentialsError for a
+            # rejected key, both of which the retry loop already knows what to do
+            # with. Same fix as the cleanup login (d2c38ec); this path was missed.
+            try:
+                return self._parse_login_response(response, mgmt_name, domain, server_ip, api_key)
+            except InvalidCredentialsError:
+                raise  # fatal either way; the subclass is the signal, don't bury it
+            except AuthenticationError as exc:
+                # Keep the context the bespoke message carried: which path, which server.
+                raise AuthenticationError(
+                    f"Dedicated session login failed for '{mgmt_name}:{domain}': {exc}"
+                ) from exc
 
         try:
             # Inside the try along with the retry call, for the same reason as

@@ -14,8 +14,13 @@ from pydantic import SecretStr
 from arodonata.asdk.login_coordinator import LoginCoordinator, _login_pacing, _LoginPacing
 from arodonata.asdk.login_gate import LoginGateDeadlineError
 from arodonata.asdk.session_cleaner import CleanupResult, SessionCleaner
-from arodonata.config import LOGIN_THROTTLE_WINDOW_SECONDS
-from arodonata.core.exceptions import AuthenticationError, ServerUnreachableError, ThrottlingError
+from arodonata.config import CREDENTIAL_REJECTION_MESSAGE, LOGIN_THROTTLE_WINDOW_SECONDS
+from arodonata.core.exceptions import (
+    AuthenticationError,
+    InvalidCredentialsError,
+    ServerUnreachableError,
+    ThrottlingError,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -909,6 +914,64 @@ async def test_create_dedicated_session_persistent_failure_raises_after_retries(
             await coord.create_dedicated_session("mgmt1", "")
 
     assert transport_login.await_count == 3
+
+
+async def test_create_dedicated_session_throttle_closes_the_gate_and_costs_no_retry():
+    """A refused dedicated-session login must publish the refusal, not burn the ladder.
+
+    `_attempt` used to build its own AuthenticationError from `message` alone and
+    drop `code`. Check Point's message for `err_too_many_requests` does not
+    contain the code, so `_login_failure_kind` saw a plain "refusal": the gate
+    was never closed (every other worker kept hammering), the attempt consumed
+    one of `login_max_retries`, and the exponential ladder ran against a server
+    that was actively rate-limiting it. This is the write path (CPCRUD,
+    `helpers/policy`, `api/client`), and absorbing "Too many requests" is the
+    documented reason the method retries at all.
+    """
+    gate = FakeGate(give_up_after=5)
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", api_key=SecretStr("key"), port=None)
+    coord = _make_coordinator(registry=registry, settings=_make_settings(max_retries=2), login_gate=gate)
+
+    attempts = 0
+
+    async def fake_login(*a, **k):
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 3:
+            # The real refusal: the code carries the meaning, the message does not.
+            return {"success": False, "code": "err_too_many_requests", "message": "Too many requests"}
+        return {"success": True, "sid": "ded-sid", "data": {"uid": "u"}}
+
+    coord._execute_login_request = AsyncMock(side_effect=fake_login)
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+        sid, ip = await coord.create_dedicated_session("mgmt1", "")
+
+    assert (sid, ip) == ("ded-sid", "10.0.0.1")
+    # Three refusals, three gate closures, and the fourth attempt still happened
+    # even though max_retries is 2 -- pacing is not failure.
+    assert gate.closed == ["10.0.0.1"] * 3
+    assert attempts == 4
+    # No backoff ladder either: the wait for a throttle is the gate's.
+    assert sleep.await_args_list == []
+
+
+async def test_create_dedicated_session_rejected_credentials_stay_invalid_credentials_error():
+    """Routing through `_parse_login_response` must keep the subclass callers switch on."""
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", api_key=SecretStr("key"), port=None)
+    coord = _make_coordinator(registry=registry, settings=_make_settings(max_retries=3))
+    coord._execute_login_request = AsyncMock(
+        return_value={"success": False, "code": "err_login_failed", "message": CREDENTIAL_REJECTION_MESSAGE}
+    )
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(InvalidCredentialsError):
+            await coord.create_dedicated_session("mgmt1", "")
+
+    # Fatal: not retried.
+    assert coord._execute_login_request.await_count == 1
 
 
 async def test_create_dedicated_session_takes_one_slot_per_attempt():
