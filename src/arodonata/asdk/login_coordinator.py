@@ -1504,9 +1504,7 @@ class LoginCoordinator:
                 raise  # fatal either way; the subclass is the signal, don't bury it
             except AuthenticationError as exc:
                 # Keep the context the bespoke message carried: which path, which server.
-                raise AuthenticationError(
-                    f"Dedicated session login failed for '{mgmt_name}:{domain}': {exc}"
-                ) from exc
+                raise AuthenticationError(f"Dedicated session login failed for '{mgmt_name}:{domain}': {exc}") from exc
 
         try:
             # Inside the try along with the retry call, for the same reason as
