@@ -229,6 +229,24 @@ def test_convert_response_success_with_no_message_or_code_falls_back_to_empty_de
     }
 
 
+def test_convert_response_to_dict_string_data_populates_message():
+    transport = ApiTransport()
+    response = _make_response(success=False, data="Service Unavailable Error", status_code="503")
+    result = transport._convert_response_to_dict(response)
+    assert result["success"] is False
+    assert result["message"] == "Service Unavailable Error"
+    assert result["code"] == "503"
+
+
+def test_convert_response_to_dict_failure_without_code_defaults_to_error():
+    transport = ApiTransport()
+    response = _make_response(success=False, data="Something broke", status_code="")
+    result = transport._convert_response_to_dict(response)
+    assert result["success"] is False
+    assert result["message"] == "Something broke"
+    assert result["code"] == "error"
+
+
 # --------------------------------------------------------------------------
 # _client - APIClient context creation/close
 # --------------------------------------------------------------------------

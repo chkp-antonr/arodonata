@@ -159,12 +159,21 @@ class ApiTransport:
                 errors_code, errors_message = self._extract_code_and_message_from_errors(response.data)
                 code = code or errors_code
                 message = message or errors_message
+        elif response.data and isinstance(response.data, str):
+            if not message:
+                message = response.data
 
         # Fallback to response attributes
         if not message:
             message = getattr(response, "message", "")
         if not code:
-            code = str(getattr(response, "status_code", ""))
+            status_code = getattr(response, "status_code", "")
+            if status_code:
+                code = str(status_code)
+            elif not response.success:
+                code = "error"
+            else:
+                code = ""
 
         return {
             "success": response.success,

@@ -469,3 +469,18 @@ async def test_acquire_is_reentrant_after_falling_back_to_another_slot(monkeypat
 
     release_holder.set()
     await holder_task
+
+
+def test_current_task_id_isolated_in_different_contexts_when_no_task(monkeypatch):
+    import contextvars
+
+    monkeypatch.setattr(asyncio, "current_task", lambda: None)
+
+    id1 = RateLimiter._current_task_id()
+    id2 = RateLimiter._current_task_id()
+    assert id1 == id2
+    assert id1 > 0
+
+    fresh_ctx = contextvars.Context()
+    id3 = fresh_ctx.run(RateLimiter._current_task_id)
+    assert id3 != id1
