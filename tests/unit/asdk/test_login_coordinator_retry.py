@@ -1261,7 +1261,7 @@ async def test_cleanup_uses_credentials_in_credential_mode():
     transport.login_with_credentials.assert_awaited_once_with(
         server_ip="10.0.0.1",
         username="svc",
-        password="pw",
+        password=secret,
         domain=None,
         port=None,
         session_name="MMP-cleanup",
