@@ -13,6 +13,7 @@ from typing import Any
 
 from arlogi.otel.decorator import traced
 from cpapi import APIClient, APIClientArgs
+from pydantic import SecretStr
 
 from ..config.constants import DEFAULT_LOGIN_TIMEOUT
 from ..logger import lazy_logger
@@ -480,7 +481,7 @@ class ApiTransport:
         self,
         server_ip: str,
         username: str,
-        password: str,
+        password: SecretStr | str,
         domain: str | None = None,
         timeout: int = DEFAULT_LOGIN_TIMEOUT,
         port: int | None = None,
@@ -493,7 +494,7 @@ class ApiTransport:
         Args:
             server_ip: Management server IP address.
             username: Username for authentication.
-            password: Password for authentication.
+            password: Password for authentication (SecretStr or str).
             domain: Optional domain name.
             timeout: Per-attempt login timeout in seconds (default:
                 DEFAULT_LOGIN_TIMEOUT). A login is one round trip; it does not
@@ -511,6 +512,7 @@ class ApiTransport:
         """
         # Hide this function from tracebacks to prevent leaking credentials
         __tracebackhide__ = True
+        secret_pw = password if isinstance(password, SecretStr) else SecretStr(password)
 
         login_payload: dict[str, Any] = {}
         if domain:
@@ -533,7 +535,7 @@ class ApiTransport:
                     asyncio.to_thread(
                         client.login,
                         username,
-                        password,
+                        secret_pw.get_secret_value(),
                         False,  # continue_last_session
                         domain,
                         False,  # read_only

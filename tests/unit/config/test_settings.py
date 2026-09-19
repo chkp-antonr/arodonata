@@ -14,7 +14,7 @@ developer's real shell environment or a stray .env file.
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from arodonata.config.settings import ArodonataSettings
 from arodonata.core.exceptions import MissingConfigurationError
@@ -52,7 +52,7 @@ class TestDefaults:
         settings = ArodonataSettings()
         assert settings.mgmt_names == ""
         assert settings.mgmt_servers == ""
-        assert settings.api_keys == ""
+        assert settings.api_keys.get_secret_value() == ""
         assert settings.username is None
         assert settings.password is None
         assert settings.mgmt_ip is None
@@ -129,6 +129,14 @@ class TestCredentialModeValidation:
         settings = ArodonataSettings(username="admin", password="secret", mgmt_ip="10.0.0.1")
         assert "secret" not in repr(settings.password)
         assert settings.password.get_secret_value() == "secret"
+
+    def test_api_keys_is_secret_str(self):
+        settings = ArodonataSettings(api_keys="key1,key2")
+        assert isinstance(settings.api_keys, SecretStr)
+        assert "key1" not in repr(settings.api_keys)
+        assert "key1" not in repr(settings)
+        assert settings.api_keys.get_secret_value() == "key1,key2"
+        assert settings.api_keys_list == ["key1", "key2"]
 
 
 class TestLogLevelValidation:

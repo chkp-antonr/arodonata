@@ -550,6 +550,26 @@ async def test_login_with_credentials_success_passes_expected_payload():
     )
 
 
+async def test_login_with_credentials_accepts_secret_str():
+    from pydantic import SecretStr
+
+    transport = ApiTransport()
+    mock_response = _make_response(success=True, data={"sid": "sid-cred"})
+    mock_client = MagicMock()
+    mock_client.login.return_value = mock_response
+
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with p1, p2, p3:
+        result = await transport.login_with_credentials(
+            "10.0.0.1", "admin", SecretStr("top-secret"), domain="dom1"
+        )
+
+    assert result["success"] is True
+    mock_client.login.assert_called_once_with(
+        "admin", "top-secret", False, "dom1", False, {"domain": "dom1"}
+    )
+
+
 async def test_login_with_credentials_passes_session_name_and_description():
     transport = ApiTransport()
     mock_response = _make_response(success=True, data={"sid": "sid-cred"})

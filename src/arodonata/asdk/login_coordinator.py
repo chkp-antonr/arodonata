@@ -804,7 +804,7 @@ class LoginCoordinator:
                 return await self._transport.login_with_credentials(
                     server_ip=server_ip,
                     username=self._username,
-                    password=self._password_secret.get_secret_value(),
+                    password=self._password_secret,
                     domain=domain if domain else None,
                     port=port,
                     session_name=session_name,
