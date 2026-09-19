@@ -578,14 +578,10 @@ async def test_login_with_credentials_accepts_secret_str():
 
     p1, p2, p3 = _patch_sdk(mock_client)
     with p1, p2, p3:
-        result = await transport.login_with_credentials(
-            "10.0.0.1", "admin", SecretStr("top-secret"), domain="dom1"
-        )
+        result = await transport.login_with_credentials("10.0.0.1", "admin", SecretStr("top-secret"), domain="dom1")
 
     assert result["success"] is True
-    mock_client.login.assert_called_once_with(
-        "admin", "top-secret", False, "dom1", False, {"domain": "dom1"}
-    )
+    mock_client.login.assert_called_once_with("admin", "top-secret", False, "dom1", False, {"domain": "dom1"})
 
 
 async def test_login_with_credentials_passes_session_name_and_description():
