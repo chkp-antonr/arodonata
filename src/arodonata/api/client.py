@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from ..cache.models import LastPublishedSession
     from ..cache.object_service import ObjectService
     from ..cpcrud.service import CPCRUDService
+    from ..services.search_service import SearchService
 
 if TYPE_CHECKING:
     from ..asdk.server_registry import ServerConfig
@@ -128,6 +129,7 @@ class ArodonataClient:
 
         self._closed = False
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._search_service_instance: SearchService | None = None
         log().trace(f"ArodonataClient initialized (auth_mode={settings.auth_mode})")
 
     def _resolve_settings(
@@ -423,6 +425,27 @@ class ArodonataClient:
             max_inc = getattr(self, "_max_incremental_changes", 500)
             self._object_service_instance = ObjectService(self._db, self, max_incremental_changes=max_inc)
         return self._object_service_instance
+
+    @property
+    def _search_service(self) -> SearchService:
+        """Lazy SearchService initialization."""
+        from ..services.search_service import SearchService
+
+        if not getattr(self, "_object_service", None):
+            from ..core.exceptions import ClientError
+
+            raise ClientError("Object service not initialized")
+
+        instance = getattr(self, "_search_service_instance", None)
+        if instance is None:
+            instance = SearchService(
+                object_service=self._object_service,
+                refresh_objects_fn=self.refresh_objects,
+            )
+            self._search_service_instance = instance
+        elif instance._object_service is not self._object_service:
+            instance._object_service = self._object_service
+        return instance
 
     @property
     def cpcrud(self) -> CPCRUDService:
@@ -898,170 +921,6 @@ class ArodonataClient:
 
         return await self._object_service.refresh_last_published_session(mgmt_name, domain_name)
 
-    async def _fetch_objects_for_search(
-        self,
-        search_type: Any,
-        cleaned: str,
-        mgmt_names: list[str] | None,
-        domain_names: list[str] | None,
-    ) -> list[Any]:
-        """Fetch objects from cache based on search type."""
-        from ..cache.object_service import SearchType
-
-        objects = []
-        if search_type == SearchType.HOST:
-            objects = await self._object_service._cache.get_objects_by_ip(
-                ip_address=cleaned,
-                mgmt_names=mgmt_names,
-                domain_names=domain_names,
-            )
-        elif search_type == SearchType.NETWORK:
-            objects = await self._object_service._cache.get_objects_by_subnet(
-                subnet=cleaned,
-                mgmt_names=mgmt_names,
-                domain_names=domain_names,
-            )
-        elif search_type == SearchType.RANGE:
-            if "-" in cleaned:
-                start_ip, end_ip = cleaned.split("-", 1)
-                objects = await self._object_service._cache.get_objects_in_ip_range(
-                    start_ip=start_ip.strip(),
-                    end_ip=end_ip.strip(),
-                    mgmt_names=mgmt_names,
-                    domain_names=domain_names,
-                )
-        elif search_type == SearchType.NAME:
-            objects = await self._object_service._cache.get_objects_by_name(
-                name=cleaned,
-                mgmt_names=mgmt_names,
-                domain_names=domain_names,
-            )
-        return objects
-
-    def _convert_group_nodes(self, nodes: list[Any]) -> list[dict[str, Any]]:
-        """Recursively convert GroupNode objects to dicts."""
-        return [
-            {
-                "uid": node.uid,
-                "name": node.name,
-                "domain": node.domain,
-                "depth": node.depth,
-                "children": self._convert_group_nodes(node.children) if node.children else [],
-            }
-            for node in nodes
-        ]
-
-    async def _resolve_search_memberships(
-        self,
-        m_name: str,
-        d_name: str,
-        domain_objects: list[Any],
-        cleaned: str,
-        search_type: Any,
-        max_depth: int,
-    ) -> SSEEvent:
-        """Resolve group memberships and return an SSEEvent for a domain."""
-        memberships_dict = None
-        if domain_objects and max_depth > 0:
-            memberships = {}
-            for obj in domain_objects:
-                obj_groups = await self._object_service._resolve_group_memberships(
-                    obj_uid=obj.uid,
-                    mgmt_name=obj.mgmt_name,
-                    domain_name=obj.domain_name,
-                    max_depth=max_depth,
-                )
-                if obj_groups:
-                    memberships[obj.uid] = obj_groups
-
-            if memberships:
-                memberships_dict = {uid: self._convert_group_nodes(nodes) for uid, nodes in memberships.items()}
-
-        return SSEEvent(
-            event_type=SSEEventType.LOG,
-            message=f"{m_name}/{d_name} ({len(domain_objects)} object(s))",
-            mgmt_name=m_name,
-            data={
-                "domain": d_name,
-                "mgmt_name": m_name,
-                "search_term": cleaned,
-                "search_type": search_type.value,
-                "objects": [obj.model_dump() for obj in domain_objects],
-                "memberships": memberships_dict,
-            },
-        )
-
-    def _parse_search_input(self, search_input: str) -> tuple[list[tuple[Any, str]], str]:
-        from ..cache.object_service import classify_input
-
-        terms = [t.strip() for t in search_input.split(",") if t.strip()]
-        classified = [(classify_input(t)) for t in terms]
-        labels = ", ".join(f"'{c}' ({st.value})" for st, c in classified)
-        return classified, labels
-
-    async def _process_search_term(
-        self,
-        search_type: Any,
-        cleaned: str,
-        mgmt_names: list[str] | None,
-        domain_names: list[str] | None,
-        max_depth: int,
-    ) -> AsyncGenerator[SSEEvent]:
-        yield SSEEvent(
-            event_type=SSEEventType.LOG,
-            message=f" > '{cleaned}' ({search_type.value})",
-        )
-
-        objects = await self._fetch_objects_for_search(search_type, cleaned, mgmt_names, domain_names)
-
-        grouped = self._group_search_objects(objects)
-
-        for m_name, domains in grouped.items():
-            yield SSEEvent(
-                event_type=SSEEventType.LOG,
-                message=f"  Searching across {len(domains)} domain(s) on {m_name}",
-                mgmt_name=m_name,
-            )
-            for d_name, domain_objects in domains.items():
-                yield await self._resolve_search_memberships(
-                    m_name, d_name, domain_objects, cleaned, search_type, max_depth
-                )
-
-    async def _handle_search_refresh(
-        self,
-        mgmt_names: list[str] | None,
-        domain_names: list[str] | None,
-        refresh: Literal["skip", "check", "force", "incremental"],
-    ) -> AsyncGenerator[SSEEvent]:
-        if refresh != "skip":
-            async for event in self.refresh_objects(
-                mgmt_names=mgmt_names,
-                domain_names=domain_names,
-                mode=refresh,
-            ):
-                # Filter out START and COMPLETE from refresh sub-task to avoid confusing frontend
-                if event.event_type == SSEEventType.COMPLETE or event.event_type == SSEEventType.RESULT:
-                    continue
-
-                if event.event_type == SSEEventType.START:
-                    # Convert sub-task START to LOG so it doesn't reset the frontend
-                    event.event_type = SSEEventType.LOG
-
-                yield event
-
-    def _group_search_objects(self, objects: list[Any]) -> dict[str, dict[str, list[Any]]]:
-        """Group objects by mgmt_name and domain_name."""
-        grouped: dict[str, dict[str, list[Any]]] = {}
-        for obj in objects:
-            m_name = obj.mgmt_name
-            d_name = obj.domain_name
-            if m_name not in grouped:
-                grouped[m_name] = {}
-            if d_name not in grouped[m_name]:
-                grouped[m_name][d_name] = []
-            grouped[m_name][d_name].append(obj)
-        return grouped
-
     @traced
     async def search_objects(
         self,
@@ -1083,32 +942,16 @@ class ArodonataClient:
         Yields:
             SSEEvent with refresh progress and domain-grouped search results.
         """
-        from ..core.exceptions import ClientError
-
-        if not self._object_service:
-            raise ClientError("Object service not initialized")
-
-        # Refresh cache first if requested
-        async for event in self._handle_search_refresh(mgmt_names, domain_names, refresh):
+        self._ensure_open()
+        search_service = self._search_service
+        async for event in search_service.search_objects(
+            search_input=search_input,
+            mgmt_names=mgmt_names,
+            domain_names=domain_names,
+            refresh=refresh,
+            max_depth=max_depth,
+        ):
             yield event
-
-        # Parse and classify search terms for the header
-        classified, labels = self._parse_search_input(search_input)
-
-        yield SSEEvent(
-            event_type=SSEEventType.START,
-            message=f"Searching for {labels}",
-        )
-
-        # Process each search term
-        for _term_idx, (search_type, cleaned) in enumerate(classified, 1):
-            async for event in self._process_search_term(search_type, cleaned, mgmt_names, domain_names, max_depth):
-                yield event
-
-        yield SSEEvent(
-            event_type=SSEEventType.COMPLETE,
-            message="Search complete",
-        )
 
     @traced
     async def refresh_objects(

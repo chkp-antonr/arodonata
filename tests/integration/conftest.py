@@ -23,6 +23,7 @@ Optional:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -317,6 +318,19 @@ def _track_cp_mutations(request: pytest.FixtureRequest):
     yield
 
 
+@pytest.fixture(autouse=True)
+async def _settle_checkpoint_before_test():
+    """Allow Check Point management server (CPM) to settle before each test.
+
+    Integration tests perform heavy operations on the live lab (logins,
+    reverts, publishes, Solr index flushes). A 15s settling pause before each
+    test prevents CPM lockouts, concurrent revert rejections, and stale diffs.
+    """
+    if os.getenv("API_MGMT"):
+        await asyncio.sleep(15)
+    yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 async def cp_baseline_snapshot(db_engine: AsyncEngine, integration_run_lock):
     """Snapshot last published revisions before any test; revert after mutations.
@@ -337,6 +351,8 @@ async def cp_baseline_snapshot(db_engine: AsyncEngine, integration_run_lock):
     settings = _make_apikey_settings(mgmt_ip, api_key)
     async with ArodonataClient(engine=db_engine, settings=settings) as client:
         _disable_startup_cleanup(client)
+        log.info("Allowing 15s for Check Point login rate limiter to settle before baseline snapshot...")
+        await asyncio.sleep(15)
         baseline = await snapshot_baseline(client, mgmt_ip)  # raises on failure
 
     path = write_baseline_file(baseline)

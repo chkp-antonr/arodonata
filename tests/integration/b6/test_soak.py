@@ -8,6 +8,7 @@ hours; the loop is the shape a production sync service runs continuously.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
@@ -73,6 +74,7 @@ async def test_publish_smartfast_revert_soak(admin_client, test_domain_a):
             if hosts:
                 incremental_adds += 1
 
+            await asyncio.sleep(5)
             # Revert to the ORIGINAL pre-test revision every cycle.
             await revert_domain_to(client, mgmt_name, test_domain_a, pre["uid"], context=f"cycle {cycle}")
 

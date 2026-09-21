@@ -75,7 +75,10 @@ class ArodonataSettings(BaseSettings):
     # Supports both: API_KEY_VARS=var_name and direct API_KEYS=value
     api_keys_raw: str = Field(default="", validation_alias="API_KEYS", exclude=True)
     api_key_vars: str = Field(default="", validation_alias="API_KEY_VARS", exclude=True)
-    api_keys: str = Field(default="", description="Comma-separated API keys (actual values)")
+    api_keys: SecretStr = Field(
+        default_factory=lambda: SecretStr(""),
+        description="Comma-separated API keys (actual values)",
+    )
 
     # Credential-based authentication (alternative to api_keys)
     username: str | None = Field(
@@ -292,7 +295,8 @@ class ArodonataSettings(BaseSettings):
         Returns:
             List of API key values.
         """
-        return self._parse_comma_separated(self.api_keys)
+        raw = self.api_keys.get_secret_value() if isinstance(self.api_keys, SecretStr) else str(self.api_keys)
+        return self._parse_comma_separated(raw)
 
     @staticmethod
     def _parse_comma_separated(value: str) -> list[str]:
@@ -303,15 +307,18 @@ class ArodonataSettings(BaseSettings):
 
     @field_validator("api_keys", mode="before")
     @classmethod
-    def resolve_api_keys(cls, v: Any, info: ValidationInfo) -> str:
+    def resolve_api_keys(cls, v: Any, info: ValidationInfo) -> SecretStr:
         """Resolve API keys with priority: explicit parameter > API_KEY_VARS > API_KEYS > default.
 
         This allows both automatic environment reading AND explicit override support,
         plus support for the API_KEY_VARS indirection pattern.
         """
+        if isinstance(v, SecretStr):
+            return v
+
         # If explicit value provided (non-empty string), use it
         if isinstance(v, str) and v.strip():
-            return v.strip()
+            return SecretStr(v.strip())
 
         # Try API_KEY_VARS indirection pattern first
         if hasattr(info, "data") and "api_key_vars" in info.data:
@@ -320,16 +327,16 @@ class ArodonataSettings(BaseSettings):
                 var_names = [var.strip() for var in api_key_vars_str.split(",") if var.strip()]
                 resolved_keys = ",".join(os.getenv(var, "") for var in var_names)
                 if resolved_keys:
-                    return resolved_keys
+                    return SecretStr(resolved_keys)
 
         # Fall back to direct API_KEYS environment variable
         if hasattr(info, "data") and "api_keys_raw" in info.data:
             env_value = info.data.get("api_keys_raw", "")
             if isinstance(env_value, str) and env_value.strip():
-                return env_value.strip()
+                return SecretStr(env_value.strip())
 
-        # Default to empty string
-        return ""
+        # Default to empty SecretStr
+        return SecretStr("")
 
     @field_validator("log_level", mode="before")
     @classmethod

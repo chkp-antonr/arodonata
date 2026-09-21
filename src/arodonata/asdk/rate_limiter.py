@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import itertools
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 
 from arlogi.otel.decorator import traced
 
@@ -19,6 +21,9 @@ from ..logger import lazy_logger
 from ..telemetry import span_attrs
 
 log = lazy_logger("arodonata.asdk.rate_limiter")
+
+_caller_id_var: ContextVar[int | None] = ContextVar("_caller_id_var", default=None)
+_caller_id_counter = itertools.count(1)
 
 
 class RateLimiter:
@@ -104,11 +109,7 @@ class RateLimiter:
         """
         # Use hash of server_ip + current task/coroutine ID for distribution
         # This ensures different operations get different slots
-        try:
-            current_task = asyncio.current_task()
-            task_id = id(current_task) if current_task else 0
-        except RuntimeError:
-            task_id = 0
+        task_id = self._current_task_id()
 
         hash_input = f"{server_ip}:{task_id}".encode()
         hash_value = int(hashlib.sha256(hash_input).hexdigest(), 16)
@@ -116,12 +117,19 @@ class RateLimiter:
 
     @staticmethod
     def _current_task_id() -> int:
-        """Identity of the running task (0 outside a task), for reentrancy bookkeeping."""
+        """Identity of the running task (unique per context outside a task), for reentrancy bookkeeping."""
         try:
             current_task = asyncio.current_task()
-            return id(current_task) if current_task else 0
+            if current_task is not None:
+                return id(current_task)
         except RuntimeError:
-            return 0
+            pass
+
+        caller_id = _caller_id_var.get()
+        if caller_id is None:
+            caller_id = next(_caller_id_counter)
+            _caller_id_var.set(caller_id)
+        return caller_id
 
     async def _try_take_slot(
         self, lock_manager: DatabaseLockManager, lock_key: str, ttl: int

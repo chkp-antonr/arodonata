@@ -6,6 +6,7 @@ publish/revert cycle); everything else manipulates the local cache.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
@@ -225,6 +226,9 @@ async def test_bulk_incremental_mode_applies_publish_without_full_reload(admin_c
     pre = await last_published_session(client, mgmt_name, test_domain_a)
     assert pre["uid"], "need a revision to revert to"
 
+    # Allow CPM to settle before capturing the baseline
+    await asyncio.sleep(15)
+
     # 1. Baseline: force-refresh the domain so a last_published_sessions
     # stamp exists for the incremental staleness probe.
     await _force_build(client, mgmt_name, test_domain_a)
@@ -255,14 +259,23 @@ async def test_bulk_incremental_mode_applies_publish_without_full_reload(admin_c
     finally:
         await client.logout_sid(sid, server_ip, mgmt_name)
 
+    # Allow Check Point server-side propagation for the newly published revision diff
+    await asyncio.sleep(10)
+
     try:
         # 3. Incremental refresh must apply it without a full reload event.
         events = []
         async for e in client.refresh_objects(mgmt_names=[mgmt_name], domain_names=[test_domain_a], mode="incremental"):
             events.append(e)
         statuses = [e.data.get("status") for e in events if e.data]
-        assert "domain_incremental" in statuses, f"expected an incremental apply, got statuses={statuses}"
-        assert "refreshing_domain" not in statuses, f"must not fall back to a full reload, got statuses={statuses}"
+        reasons = [e.data.get("reason") for e in events if e.data and e.data.get("reason")]
+        messages = [e.message for e in events if e.message]
+        assert "domain_incremental" in statuses, (
+            f"expected an incremental apply, got statuses={statuses}, reasons={reasons}, messages={messages}"
+        )
+        assert "refreshing_domain" not in statuses, (
+            f"must not fall back to a full reload, got statuses={statuses}, reasons={reasons}, messages={messages}"
+        )
 
         hosts = await client.get_hosts(
             name_filter=host_name,

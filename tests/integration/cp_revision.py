@@ -7,6 +7,7 @@ back to it. Adapted from FPCR's proven cp_setup/revision.py.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -62,6 +63,7 @@ async def snapshot_baseline(client: Any, mgmt_name: str) -> dict[str, dict]:
     """
     baseline: dict[str, dict] = {"": await last_published_session(client, mgmt_name, "")}
     for domain in await discover_domain_names(client, mgmt_name):
+        await asyncio.sleep(2)  # Pace domain logins to respect Check Point MDS rate limits
         baseline[domain] = await last_published_session(client, mgmt_name, domain)
     return baseline
 
@@ -122,25 +124,63 @@ async def revert_domain_to(
     Raises:
         RuntimeError: on any other revert failure.
     """
-    await discard_open_sessions(client, mgmt_name, domain)
-    result = await client.api_call(
-        mgmt_name,
-        "revert-to-revision",
-        domain,
-        payload={"to-session": target_uid},
-        wait_for_task=True,
-        timeout=REVERT_TIMEOUT_SECONDS,
-    )
-    if result.success:
-        return True
+    for attempt in range(1, 6):
+        await discard_open_sessions(client, mgmt_name, domain)
+        result = await client.api_call(
+            mgmt_name,
+            "revert-to-revision",
+            domain,
+            payload={"to-session": target_uid},
+            wait_for_task=True,
+            timeout=REVERT_TIMEOUT_SECONDS,
+        )
+        if result.success:
+            log.info("[%s] revert successful; pausing 10s for CPM to settle...", domain)
+            await asyncio.sleep(10)
+            return True
 
-    # CP aborts a revert to the current revision — the state is already correct.
-    if result.code == "err_validation_failed" and "current revision" in (result.message or ""):
-        log.info("[%s] already at target revision — no revert needed.", domain)
-        return False
+        # CP aborts a revert to the current revision — the state is already correct.
+        if result.code == "err_validation_failed" and "current revision" in (result.message or ""):
+            log.info("[%s] already at target revision — no revert needed.", domain)
+            return False
+
+        # If CP blocks the revert because background tasks are running, wait and retry.
+        tasks_running = False
+        msg = result.message or ""
+        raw_data = str(result.data) if result.data else ""
+        if "other tasks are in progress" in msg or "Some tasks are currently running" in msg:
+            tasks_running = True
+        elif "other tasks are in progress" in raw_data or "Some tasks are currently running" in raw_data:
+            tasks_running = True
+
+        if tasks_running and attempt < 5:
+            log.warning(
+                "[%s] revert blocked because tasks are running (attempt %d/5); waiting 15s...",
+                domain,
+                attempt,
+            )
+            await asyncio.sleep(15)
+            continue
+
+        break
 
     where = f" ({context})" if context else ""
-    raise RuntimeError(f"revert-to-revision failed for domain {domain!r}{where}: {result.message} (code={result.code})")
+    msg = result.message
+    if not msg and isinstance(result.data, dict):
+        tasks = result.data.get("tasks", [])
+        if tasks:
+            parts = []
+            for t in tasks:
+                t_name = t.get("task-name") or t.get("task-id") or "task"
+                t_status = t.get("status")
+                t_comments = t.get("comments") or t.get("status-description") or ""
+                t_details = t.get("task-details")
+                detail_str = f" - details: {t_details}" if t_details else ""
+                parts.append(f"{t_name}: status={t_status}, comments={t_comments}{detail_str}")
+            msg = "; ".join(parts)
+    raise RuntimeError(
+        f"revert-to-revision failed for domain {domain!r}{where}: {msg or 'no error message'} (code={result.code})"
+    )
 
 
 async def restore_to_baseline(client: Any, mgmt_name: str, baseline: dict[str, dict]) -> list[str]:

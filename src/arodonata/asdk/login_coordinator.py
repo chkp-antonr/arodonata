@@ -20,6 +20,8 @@ from ..cache.lock_manager import DatabaseLockManager, LockAcquisitionError, Lock
 from ..config import (
     CREDENTIAL_REJECTION_MESSAGE,
     DEFAULT_LOGIN_MAX_WAIT,
+    DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS,
+    DEFAULT_LOGIN_THROTTLE_INITIAL_SECONDS,
     GLOBAL_DOMAIN_NAME,
     LOGIN_THROTTLE_WINDOW_SECONDS,
     SERVER_UNREACHABLE_MESSAGE,
@@ -631,6 +633,7 @@ class LoginCoordinator:
         last_exception = None
         timeouts = 0
         failures = 0
+        throttles = 0
 
         while failures < max_retries:
             # wait_open only stops the loop if it observes a live gate row; if the
@@ -655,7 +658,13 @@ class LoginCoordinator:
                 last_exception = e
                 kind, timeouts = self._classify_or_raise(e, operation_name, failures, timeouts)
                 if kind == "throttle":
-                    await gate.close(mds_host)
+                    throttles += 1
+                    adaptive_window = min(
+                        DEFAULT_LOGIN_THROTTLE_INITIAL_SECONDS
+                        + (throttles - 1) * DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS,
+                        self._throttle_window,
+                    )
+                    await gate.close(mds_host, window=adaptive_window)
                     continue  # the next wait_open sleeps the window out
 
             failures += 1
@@ -687,7 +696,13 @@ class LoginCoordinator:
         """
         # Don't retry on developer errors (TypeError) or pure authentication
         # failures (wrong password/domain) to avoid long hangs and server lockouts.
-        if isinstance(exc, TypeError) or CREDENTIAL_REJECTION_MESSAGE in str(exc):
+        # Transient login errors like server initialization or database revision
+        # are surfaced as AuthenticationError and should be retried with backoff.
+        from ..core.exceptions import AuthenticationError, InvalidCredentialsError
+
+        if isinstance(exc, (TypeError, InvalidCredentialsError)) or (
+            CREDENTIAL_REJECTION_MESSAGE in str(exc) and type(exc) is not AuthenticationError
+        ):
             log().error(f"{operation_name} failed: {exc} (Fatal error - not retrying)")
             raise exc
 
@@ -804,7 +819,7 @@ class LoginCoordinator:
                 return await self._transport.login_with_credentials(
                     server_ip=server_ip,
                     username=self._username,
-                    password=self._password_secret.get_secret_value(),
+                    password=self._password_secret,
                     domain=domain if domain else None,
                     port=port,
                     session_name=session_name,
@@ -883,7 +898,7 @@ class LoginCoordinator:
         # retry, so it gets its own subclass: callers can tell it apart from a
         # transient refusal ("Database revision is in progress", server
         # restarting, ...) by type instead of by matching on message text.
-        if CREDENTIAL_REJECTION_MESSAGE in error_msg:
+        if CREDENTIAL_REJECTION_MESSAGE in error_msg and code != "generic_server_initializing":
             raise InvalidCredentialsError(f"Login failed: {error_msg}")
         raise AuthenticationError(f"Login failed: {error_msg}")
 
@@ -1236,7 +1251,7 @@ class LoginCoordinator:
             if isinstance(mds_ip, str) and mds_ip:
                 return mds_ip
         server = self._registry.get_server(mgmt_name)
-        return str(server.server_ip) if server else mgmt_name
+        return server.server_ip if server else mgmt_name
 
     async def _cache_domain_active_ip(
         self,

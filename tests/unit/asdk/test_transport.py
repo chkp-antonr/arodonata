@@ -79,6 +79,30 @@ def test_build_login_response_success_but_missing_sid_treated_as_failure():
     assert result["message"] == "no sid here"
 
 
+def test_build_login_response_extracts_from_nested_html_503():
+    html_503 = (
+        '<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">\n'
+        "<html><head>\n<title>503 Service Unavailable</title>\n</head><body>\n"
+        "<h1>Service Unavailable</h1>\n"
+        "<p>The server is temporarily unable to service your request.</p>\n"
+        "</body></html>\n"
+    )
+    response = _make_response(success=False, data={"errors": [{"message": html_503}]})
+    result = ApiTransport._build_login_response(response)
+    assert result["success"] is False
+    assert result["code"] == "503"
+    assert "503 Service Unavailable" in result["message"]
+    assert "temporarily unable to service your request" in result["message"]
+
+
+def test_build_login_response_falls_back_to_status_code_if_message_empty():
+    response = _make_response(success=False, data={}, status_code="503")
+    result = ApiTransport._build_login_response(response)
+    assert result["success"] is False
+    assert result["code"] == "503"
+    assert result["message"] == "HTTP 503"
+
+
 # --------------------------------------------------------------------------
 # _parse_code_and_message_from_error - nonstandard "code: X\nmessage: Y" parsing
 # --------------------------------------------------------------------------
@@ -150,6 +174,24 @@ def test_extract_code_and_message_stops_at_first_code_found():
     code, message = ApiTransport._extract_code_and_message_from_errors(data)
     assert code == "err_first"
     assert message == "first msg"
+
+
+# --------------------------------------------------------------------------
+# _parse_html_error - extract code and message from HTML error pages
+# --------------------------------------------------------------------------
+
+
+def test_parse_html_error_returns_empty_for_plain_text():
+    code, message = ApiTransport._parse_html_error("plain error message")
+    assert code == ""
+    assert message == ""
+
+
+def test_parse_html_error_extracts_title_and_paragraph():
+    html = "<html><head><title>502 Bad Gateway</title></head><body><p>Proxy error</p></body></html>"
+    code, message = ApiTransport._parse_html_error(html)
+    assert code == "502"
+    assert message == "502 Bad Gateway: Proxy error"
 
 
 # --------------------------------------------------------------------------
@@ -227,6 +269,24 @@ def test_convert_response_success_with_no_message_or_code_falls_back_to_empty_de
         "message": "",
         "code": "",
     }
+
+
+def test_convert_response_to_dict_string_data_populates_message():
+    transport = ApiTransport()
+    response = _make_response(success=False, data="Service Unavailable Error", status_code="503")
+    result = transport._convert_response_to_dict(response)
+    assert result["success"] is False
+    assert result["message"] == "Service Unavailable Error"
+    assert result["code"] == "503"
+
+
+def test_convert_response_to_dict_failure_without_code_defaults_to_error():
+    transport = ApiTransport()
+    response = _make_response(success=False, data="Something broke", status_code="")
+    result = transport._convert_response_to_dict(response)
+    assert result["success"] is False
+    assert result["message"] == "Something broke"
+    assert result["code"] == "error"
 
 
 # --------------------------------------------------------------------------
@@ -548,6 +608,22 @@ async def test_login_with_credentials_success_passes_expected_payload():
     mock_client.login.assert_called_once_with(
         "admin", "s3cr3t", False, "dom1", False, {"domain": "dom1", "session-timeout": 900}
     )
+
+
+async def test_login_with_credentials_accepts_secret_str():
+    from pydantic import SecretStr
+
+    transport = ApiTransport()
+    mock_response = _make_response(success=True, data={"sid": "sid-cred"})
+    mock_client = MagicMock()
+    mock_client.login.return_value = mock_response
+
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with p1, p2, p3:
+        result = await transport.login_with_credentials("10.0.0.1", "admin", SecretStr("top-secret"), domain="dom1")
+
+    assert result["success"] is True
+    mock_client.login.assert_called_once_with("admin", "top-secret", False, "dom1", False, {"domain": "dom1"})
 
 
 async def test_login_with_credentials_passes_session_name_and_description():

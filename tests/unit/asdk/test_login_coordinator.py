@@ -85,7 +85,7 @@ class FakeGate:
         if keepalive is not None and mds_host in self.closed:
             await keepalive()
 
-    async def close(self, mds_host):
+    async def close(self, mds_host, window=None):
         self.closed.append(mds_host)
 
 
@@ -382,7 +382,7 @@ async def test_execute_login_request_credential_mode_uses_credentials():
     transport.login_with_credentials.assert_awaited_once_with(
         server_ip="10.0.0.1",
         username="svc",
-        password="pw",
+        password=secret,
         domain="General",
         port=None,
         session_name=None,
