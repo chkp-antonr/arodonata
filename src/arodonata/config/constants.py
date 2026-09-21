@@ -46,6 +46,8 @@ DEFAULT_LOGIN_TIMEOUT: Final[int] = 120  # seconds
 # caller that knows it will not hit a real throttle (a test with a mocked one,
 # say) should not be made to wait out a window that does not exist.
 LOGIN_THROTTLE_WINDOW_SECONDS: Final[int] = 70  # seconds
+DEFAULT_LOGIN_THROTTLE_INITIAL_SECONDS: Final[int] = 7  # seconds
+DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS: Final[int] = 5  # seconds
 DEFAULT_CONCURRENT_LIMIT: Final[int] = 3
 DEFAULT_LOGIN_BACKOFF: Final[int] = 5  # seconds
 DEFAULT_LOGIN_RETRIES: Final[int] = 8
@@ -137,6 +139,8 @@ __all__ = [
     "DEFAULT_API_TIMEOUT",
     "DEFAULT_LOGIN_TIMEOUT",
     "LOGIN_THROTTLE_WINDOW_SECONDS",
+    "DEFAULT_LOGIN_THROTTLE_INITIAL_SECONDS",
+    "DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS",
     "DEFAULT_CONCURRENT_LIMIT",
     "DEFAULT_LOGIN_BACKOFF",
     "DEFAULT_LOGIN_RETRIES",

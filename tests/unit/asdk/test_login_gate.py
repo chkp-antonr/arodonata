@@ -161,3 +161,8 @@ async def test_refusal_during_the_wait_extends_it(gate: LoginGate, lm: FakeTtlLo
 
     # First refusal at t=0 lapses at 70; the second, at t=first chunk, lapses at chunk+70.
     assert sum(slept) >= slept[0] + WINDOW
+
+
+async def test_close_with_explicit_window_uses_that_window(gate: LoginGate, lm: FakeTtlLockManager) -> None:
+    await gate.close("mds", window=12)
+    assert lm.rows["loginthrottle:mds"] == lm.now + timedelta(seconds=12)

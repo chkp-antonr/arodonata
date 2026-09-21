@@ -28,14 +28,22 @@ from arodonata.core.exceptions import (
 # ---------------------------------------------------------------------------
 
 
-def _make_settings(*, auth_mode="api_key", username=None, password=None, max_retries=3, backoff=1):
+def _make_settings(
+    *,
+    auth_mode="api_key",
+    username=None,
+    password=None,
+    max_retries=3,
+    backoff=1,
+    throttle_window=LOGIN_THROTTLE_WINDOW_SECONDS,
+):
     settings = MagicMock()
     settings.login_max_retries = max_retries
     settings.login_retry_backoff = backoff
     settings.session_expire_seconds = 3600
     settings.session_timeout = 600
     settings.login_timeout = 120
-    settings.login_throttle_window = LOGIN_THROTTLE_WINDOW_SECONDS
+    settings.login_throttle_window = throttle_window
     settings.login_max_wait = 900
     settings.auth_mode = auth_mode
     settings.username = username
@@ -62,6 +70,7 @@ class FakeGate:
 
     def __init__(self, give_up_after: int = 3) -> None:
         self.closed: list[str] = []
+        self.closed_windows: list[int | None] = []
         self.waits: list[dict] = []
         self.give_up_after = give_up_after
 
@@ -76,8 +85,9 @@ class FakeGate:
         if keepalive is not None and mds_host in self.closed:
             await keepalive()
 
-    async def close(self, mds_host):
+    async def close(self, mds_host, window=None):
         self.closed.append(mds_host)
+        self.closed_windows.append(window)
 
 
 def _make_coordinator(
@@ -434,6 +444,31 @@ async def test_throttled_attempts_do_not_consume_the_retry_budget():
     assert result == ("sid-1", "uid-1")
     assert attempts == 6
     assert len(gate.closed) == 5
+    assert gate.closed_windows == [7, 12, 17, 22, 27]
+
+
+async def test_adaptive_throttle_window_starts_at_7_and_increments_by_5():
+    """Throttle window starts at 7s and increments by 5s per refusal, capped at max window."""
+    gate = FakeGate(give_up_after=10)
+    coord = _make_coordinator(
+        settings=_make_settings(max_retries=2, throttle_window=20),
+        login_gate=gate,
+    )
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 4:
+            raise ThrottlingError("Login throttled: err_too_many_requests")
+        return ("sid-ok", "uid-ok")
+
+    result = await coord._retry_with_backoff(op, "Login", mds_host="mds")
+
+    assert result == ("sid-ok", "uid-ok")
+    assert attempts == 5
+    # 1: 7s, 2: 12s, 3: 17s, 4: min(22, 20) = 20s
+    assert gate.closed_windows == [7, 12, 17, 20]
 
 
 async def test_a_rate_limiter_slot_timeout_is_not_retried():
@@ -1133,6 +1168,37 @@ async def test_create_dedicated_session_rejected_credentials_stay_invalid_creden
 
     # Fatal: not retried.
     assert coord._execute_login_request.await_count == 1
+
+
+async def test_generic_server_initializing_is_retried_and_not_invalid_credentials():
+    """Check Point returns 'generic_server_initializing' with message 'Authentication to server failed.'.
+    This must be treated as transient AuthenticationError and retried, not fatal InvalidCredentialsError.
+    """
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", api_key=SecretStr("key"), port=None)
+    coord = _make_coordinator(registry=registry, settings=_make_settings(max_retries=3))
+    attempts = 0
+
+    async def fake_login(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            return {
+                "success": False,
+                "code": "generic_server_initializing",
+                "message": CREDENTIAL_REJECTION_MESSAGE,
+                "data": {"code": "generic_server_initializing", "message": CREDENTIAL_REJECTION_MESSAGE},
+            }
+        return {"success": True, "sid": "sid-success-123"}
+
+    coord._execute_login_request = fake_login
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        sid, server_ip = await coord.create_dedicated_session("mgmt1", "")
+
+    assert sid == "sid-success-123"
+    assert server_ip == "10.0.0.1"
+    assert attempts == 3
 
 
 async def test_create_dedicated_session_takes_one_slot_per_attempt():

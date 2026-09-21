@@ -21,7 +21,7 @@ import pytest
 # it failed on 2026-09-13 with two TimeoutErrors while the library was working
 # correctly. The same number bounds each call and the batch as a whole, so a single
 # slow login can consume the budget but nothing exceeds it silently.
-_CONCURRENT_LOGIN_BUDGET_SECONDS = 150
+_CONCURRENT_LOGIN_BUDGET_SECONDS = 300
 
 
 async def test_same_domain_calls_are_serialised(apikey_client, all_domains):

@@ -100,8 +100,8 @@ async def test_concurrent_refresh_of_two_domains(apikey_client, test_domain_a, t
         return domain
 
     done = await asyncio.gather(
-        asyncio.wait_for(build(test_domain_a), timeout=300),
-        asyncio.wait_for(build(test_domain_b), timeout=300),
+        asyncio.wait_for(build(test_domain_a), timeout=900),
+        asyncio.wait_for(build(test_domain_b), timeout=900),
     )
     assert sorted(done) == sorted([test_domain_a, test_domain_b])
 

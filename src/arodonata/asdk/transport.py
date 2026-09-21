@@ -7,6 +7,7 @@ using asyncio.to_thread to run sync SDK operations in an async context.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -46,15 +47,10 @@ class ApiTransport:
         """Initialize API transport.
 
         Args:
-            task_waiter: Optional pre-configured waiter for long-running Check
-                Point tasks (publish, revert-to-revision, install-policy,
-                run-script). One is built with the default poll policy when
-                omitted, so existing `ApiTransport()` call sites are unchanged;
-                tests inject one with a fake clock. Stateless and shared across
-                every call this transport makes.
+            task_waiter: Optional TaskWaiter for polling async tasks. If None,
+                a default TaskWaiter will be instantiated.
         """
         self._task_waiter = task_waiter or TaskWaiter()
-        log().trace("ApiTransport initialized")
 
     @asynccontextmanager
     async def _client(self, server_ip: str, port: int | None, sid: str | None = None) -> AsyncGenerator[APIClient]:
@@ -66,8 +62,8 @@ class ApiTransport:
         finally:
             await asyncio.to_thread(client.close_connection)
 
-    @staticmethod
-    def _build_login_response(response: Any) -> RawApiResponse:
+    @classmethod
+    def _build_login_response(cls, response: Any) -> RawApiResponse:
         """Normalize a login SDK response into a standardized dict."""
         if response.success and response.data and response.data.get("sid"):
             return {
@@ -77,13 +73,69 @@ class ApiTransport:
                 "message": "",
                 "code": "",
             }
-        error_msg = response.data.get("message", "Unknown login error") if response.data else "Unknown login error"
+
+        code, message = cls._extract_data_code_and_message(response.data)
+
+        # Fallback to response attributes
+        if not message:
+            message = getattr(response, "message", "") or getattr(response, "error_message", "")
+        if not code:
+            status_code = getattr(response, "status_code", "")
+            if status_code:
+                code = str(status_code)
+
+        if not message:
+            message = f"HTTP {code}" if code else "Unknown login error"
+
         return {
             "success": False,
             "data": response.data,
-            "message": error_msg,
-            "code": response.data.get("code", "") if response.data else "",
+            "message": message,
+            "code": code,
         }
+
+    @staticmethod
+    def _parse_html_error(err_msg: str) -> tuple[str, str]:
+        """Extract HTTP status code and clean summary from an HTML error page.
+
+        Returns (code, message), or ("", "") if err_msg does not appear to be HTML.
+        """
+        lower = err_msg.lower()
+        if "<html" not in lower and "<!doctype" not in lower and "<title" not in lower and "<body" not in lower:
+            return "", ""
+
+        code = ""
+        title = ""
+        title_match = re.search(r"<title[^>]*>(.*?)</title>", err_msg, re.IGNORECASE | re.DOTALL)
+        if title_match:
+            title = re.sub(r"\s+", " ", title_match.group(1)).strip()
+            code_match = re.search(r"\b([45]\d\d)\b", title)
+            if code_match:
+                code = code_match.group(1)
+
+        # Look for <p> paragraph explanation
+        p_match = re.search(r"<p[^>]*>(.*?)</p>", err_msg, re.IGNORECASE | re.DOTALL)
+        detail = ""
+        if p_match:
+            detail = re.sub(r"<[^>]+>", " ", p_match.group(1))
+            detail = re.sub(r"\s+", " ", detail).strip()
+
+        if title and detail:
+            message = f"{title}: {detail}"
+        elif title:
+            message = title
+        elif detail:
+            message = detail
+        else:
+            stripped = re.sub(r"<[^>]+>", " ", err_msg)
+            message = re.sub(r"\s+", " ", stripped).strip()
+
+        if not code:
+            code_match = re.search(r"\b([45]\d\d)\b", message)
+            if code_match:
+                code = code_match.group(1)
+
+        return code, message
 
     @staticmethod
     def _parse_code_and_message_from_error(err_msg: str) -> tuple[str, str]:
@@ -112,6 +164,21 @@ class ApiTransport:
         return code, message
 
     @classmethod
+    def _parse_single_error_entry(cls, err: Any) -> tuple[str, str]:
+        """Extract (code, message) from a single entry in errors list."""
+        if not isinstance(err, dict) or "message" not in err:
+            return "", ""
+        err_raw = err["message"]
+        if not isinstance(err_raw, str):
+            return "", ""
+        parsed_code, parsed_message = cls._parse_code_and_message_from_error(err_raw)
+        if not parsed_message:
+            html_code, html_msg = cls._parse_html_error(err_raw)
+            parsed_message = html_msg or err_raw.strip()
+            parsed_code = parsed_code or html_code
+        return parsed_code, parsed_message
+
+    @classmethod
     def _extract_code_and_message_from_errors(cls, data: dict) -> tuple[str, str]:
         """Extract code/message from the first parseable entry in data["errors"].
 
@@ -121,22 +188,39 @@ class ApiTransport:
         Returns:
             Tuple of (code, message), either of which may be empty.
         """
-        code = ""
-        message = ""
         errors = data.get("errors")
         if not isinstance(errors, list):
-            return code, message
+            return "", ""
 
+        code = ""
+        message = ""
         for err in errors:
-            if not isinstance(err, dict) or "message" not in err:
-                continue
-            parsed_code, parsed_message = cls._parse_code_and_message_from_error(err["message"])
-            if parsed_message and not message:
-                message = parsed_message
-            if parsed_code:
-                code = parsed_code
+            entry_code, entry_msg = cls._parse_single_error_entry(err)
+            if entry_msg and not message:
+                message = entry_msg
+            if entry_code and not code:
+                code = entry_code
+            if code and message:
                 break
         return code, message
+
+    @classmethod
+    def _extract_data_code_and_message(cls, data: Any) -> tuple[str, str]:
+        """Extract (code, message) from response.data (dict, str, or other)."""
+        if isinstance(data, dict):
+            message = data.get("message", "")
+            code = data.get("code", "")
+            if not code or not message:
+                err_code, err_msg = cls._extract_code_and_message_from_errors(data)
+                code = code or err_code
+                message = message or err_msg
+            return code, message
+        if isinstance(data, str):
+            html_code, html_msg = cls._parse_html_error(data)
+            if html_msg:
+                return html_code, html_msg
+            return "", data
+        return "", ""
 
     def _convert_response_to_dict(self, response: Any) -> RawApiResponse:
         """Convert APIResponse object to standardized dictionary format.
@@ -147,33 +231,20 @@ class ApiTransport:
         Returns:
             Standardized response dictionary.
         """
-        message = ""
-        code = ""
-
-        if response.data and isinstance(response.data, dict):
-            message = response.data.get("message", "")
-            code = response.data.get("code", "")
-
-            # If code is missing but errors exist, try to extract from the first error
-            if not code:
-                errors_code, errors_message = self._extract_code_and_message_from_errors(response.data)
-                code = code or errors_code
-                message = message or errors_message
-        elif response.data and isinstance(response.data, str):
-            if not message:
-                message = response.data
+        code, message = self._extract_data_code_and_message(response.data)
 
         # Fallback to response attributes
         if not message:
-            message = getattr(response, "message", "")
+            message = getattr(response, "message", "") or getattr(response, "error_message", "")
         if not code:
             status_code = getattr(response, "status_code", "")
             if status_code:
                 code = str(status_code)
             elif not response.success:
                 code = "error"
-            else:
-                code = ""
+
+        if not message and not response.success:
+            message = f"HTTP {code}" if code and code != "error" else "Unknown error"
 
         return {
             "success": response.success,
