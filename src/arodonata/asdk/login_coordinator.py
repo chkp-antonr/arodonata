@@ -30,7 +30,12 @@ from ..config import (
 )
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
-from .domain_servers import extract_domain_servers, mds_ip_map
+from .domain_servers import (
+    GlobalDomainMdss,
+    extract_domain_servers,
+    extract_global_domain_mdss,
+    mds_ip_map,
+)
 from .login_gate import LoginGate, LoginGateDeadlineError
 
 if TYPE_CHECKING:
@@ -1191,11 +1196,23 @@ class LoginCoordinator:
         # Which member hosts each server matters to the login gate; a SmartCenter
         # has no members and would just refuse the command.
         mds_ips: dict[str, str] = {}
+        global_mdss = GlobalDomainMdss()
         if server_config.is_mdm is not False:
             mds_ips = await self._fetch_mds_ips(system_ip, system_sid, server_config.port)
+            if domain == GLOBAL_DOMAIN_NAME:
+                # Only for Global: it is absent from `show-domains`, so its active
+                # member has to come from its own object. One extra call, on the
+                # cache-miss path only.
+                global_mdss = await self._fetch_global_domain_mdss(system_ip, system_sid, server_config.port)
 
         return await self._cache_domain_active_ip(
-            mgmt_name, domain, domains_data, server_config.server_ip, server_config.is_mdm, mds_ips=mds_ips
+            mgmt_name,
+            domain,
+            domains_data,
+            server_config.server_ip,
+            server_config.is_mdm,
+            mds_ips=mds_ips,
+            global_mdss=global_mdss,
         )
 
     @staticmethod
@@ -1236,6 +1253,41 @@ class LoginCoordinator:
         objects = data.get("objects", []) if isinstance(data, dict) else data if isinstance(data, list) else []
         return mds_ip_map(objects)
 
+    async def _fetch_global_domain_mdss(self, system_ip: str, system_sid: str, port: int | None) -> GlobalDomainMdss:
+        """Which MDS member holds the writable Global domain; empty layout on any failure.
+
+        `show-domains` never lists Global, so the generic domain path cannot
+        resolve it and used to fall back to whichever MDS the caller happened to
+        be configured with. On a standby MDS that is a read-only replica: reads
+        succeed, a named session login fails with "Null Pointer exception", and
+        every write is refused with "Operation is not allowed in read only
+        mode!" - none of which names the real problem. `show-global-domain`
+        does report the members and which one is active.
+
+        An empty layout is not an error; the caller then keeps its previous
+        behaviour of using the configured MDS.
+        """
+        try:
+            async with self._rate_limiter.acquire(system_ip):
+                response = await self._transport.api_call(
+                    server_ip=system_ip,
+                    sid=system_sid,
+                    command="show-global-domain",
+                    payload={"name": GLOBAL_DOMAIN_NAME, "details-level": "full"},
+                    port=port,
+                )
+        except Exception as exc:  # noqa: BLE001 - enrichment only; the login proceeds without it
+            log().debug(f"show-global-domain failed on {system_ip}: {exc}; using the configured MDS for Global")
+            return GlobalDomainMdss()
+        if not response.get("success"):
+            log().debug(
+                f"show-global-domain refused on {system_ip}: {response.get('message')}; "
+                "using the configured MDS for Global"
+            )
+            return GlobalDomainMdss()
+        data = response.get("data")
+        return extract_global_domain_mdss(data if isinstance(data, dict) else {})
+
     async def _mds_host(self, mgmt_name: str, domain: str) -> str:
         """The machine Check Point rate-limits this login on: what the login gate keys on.
 
@@ -1261,6 +1313,7 @@ class LoginCoordinator:
         default_ip: str,
         is_mdm: bool | None = None,
         mds_ips: dict[str, str] | None = None,
+        global_mdss: GlobalDomainMdss | None = None,
     ) -> str:
         """Cache the extracted active IP for the specified domain."""
         from ..cache.models import Domain
@@ -1295,20 +1348,49 @@ class LoginCoordinator:
 
         if domain == GLOBAL_DOMAIN_NAME and is_mdm is not False:
             # The implicit Global domain is never listed by `show-domains`, so it will
-            # never be "found" in domains_data above. Cache it with the MDS's own
-            # primary IP rather than falling through to the "unknown domain" warning -
-            # a falsy active_ip would make every subsequent Global login treat this as
-            # a cache miss and re-fetch show-domains (see _prefetch_domain_server_ip).
+            # never be "found" in domains_data above. It also has no domain server of
+            # its own: it lives on the MDS members themselves, and exactly one of them
+            # holds the writable copy. Caching the *configured* MDS's IP here - which
+            # is what this branch used to do unconditionally - silently pins Global to
+            # whichever member the caller happened to be pointed at. On a standby
+            # member that copy is read-only, and the failure surfaces as
+            # "Login failed: Null Pointer exception: null" on a named session, or
+            # "Operation is not allowed in read only mode!" on a write, neither of
+            # which names the cause. So prefer the member `show-global-domain` flags
+            # active, and fall back to the configured IP only when that is unavailable.
+            #
+            # A falsy active_ip must never be cached: it would make every subsequent
+            # Global login look like a cache miss and re-fetch (see
+            # _prefetch_domain_server_ip).
+            # Not named `layout`: that belongs to the per-domain branch above and
+            # is a DomainServers, a different shape entirely.
+            global_layout = global_mdss or GlobalDomainMdss()
+            active_mds_ip = (mds_ips or {}).get(global_layout.active_mds, "")
+            active_ip = active_mds_ip or default_ip
             domain_record = Domain.build(
                 mgmt_name=mgmt_name,
                 domain_name=GLOBAL_DOMAIN_NAME,
                 domain_uid="",
-                active_ip=default_ip,
+                active_ip=active_ip,
+                active_mds=global_layout.active_mds,
+                active_mds_ip=active_mds_ip,
+                standby_mdss=",".join(global_layout.standby_mdss),
                 is_mdm=is_mdm if is_mdm is not None else True,
             )
             await self._cache.upsert_domain(domain_record)
-            log().info(f"Cached Global domain for '{mgmt_name}' with active_ip={default_ip}")
-            return default_ip
+            if active_mds_ip:
+                log().info(
+                    f"Cached Global domain for '{mgmt_name}' with active_ip={active_ip} "
+                    f"on the active MDS {global_layout.active_mds}"
+                )
+            else:
+                log().info(
+                    f"Cached Global domain for '{mgmt_name}' with active_ip={active_ip} "
+                    "(configured MDS: show-global-domain named no active member, or its "
+                    "address is unknown). If writes to Global are refused as read-only, "
+                    "this management entry points at a standby member."
+                )
+            return active_ip
 
         log().warning(
             f"Domain '{domain}' not found in API response for '{mgmt_name}', using primary IP (NOT caching unknown domain)"

@@ -73,6 +73,56 @@ def extract_domain_servers(domain_obj: dict[str, Any]) -> DomainServers:
     )
 
 
+@dataclass(frozen=True)
+class GlobalDomainMdss:
+    """Which MDS member serves the writable copy of the implicit Global domain.
+
+    Global has no domain server of its own, so `show-global-domain` reports its
+    members by MDS name with no address at all (verified on mdsNP2, R82,
+    2026-09-22):
+
+        {"name": "", "ipv4-address": "", "multi-domain-server": "mdsNP2", "active": false}
+        {                               "multi-domain-server": "mdsNP1", "active": true }
+
+    Resolve the name to an address with `mds_ip_map`. `active_mds` is empty when
+    no member is flagged active; a caller must then fall back deliberately
+    rather than be handed an arbitrary member.
+    """
+
+    active_mds: str = ""
+    standby_mdss: tuple[str, ...] = ()
+
+
+def extract_global_domain_mdss(global_domain_obj: dict[str, Any]) -> GlobalDomainMdss:
+    """Read the Global domain's active and standby MDS members.
+
+    Deliberately not `extract_domain_servers`: that one skips every entry
+    without an `ipv4-address`, which for Global is every entry, so it would
+    report an empty layout and the caller would silently keep using whichever
+    MDS it happened to be configured with. On a standby MDS that is a
+    read-only replica, and every write to Global fails - as a login error
+    rather than a permission one.
+    """
+    servers = global_domain_obj.get("servers", [])
+    if not isinstance(servers, list):
+        return GlobalDomainMdss()
+
+    active_mds = ""
+    standby_mdss: list[str] = []
+    for server in servers:
+        if not isinstance(server, dict):
+            continue
+        mds = _name_of(server.get("multi-domain-server"))
+        if not mds:
+            continue
+        if server.get("active") is True and not active_mds:
+            active_mds = mds
+        else:
+            standby_mdss.append(mds)
+
+    return GlobalDomainMdss(active_mds=active_mds, standby_mdss=tuple(standby_mdss))
+
+
 def mds_ip_map(mds_objects: list[Any]) -> dict[str, str]:
     """{member name: ipv4-address} from `show-mdss` objects; entries missing either are skipped."""
     result: dict[str, str] = {}
@@ -86,4 +136,10 @@ def mds_ip_map(mds_objects: list[Any]) -> dict[str, str]:
     return result
 
 
-__all__ = ["DomainServers", "extract_domain_servers", "mds_ip_map"]
+__all__ = [
+    "DomainServers",
+    "GlobalDomainMdss",
+    "extract_domain_servers",
+    "extract_global_domain_mdss",
+    "mds_ip_map",
+]

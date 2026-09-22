@@ -7,7 +7,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ...asdk.domain_servers import extract_domain_servers, mds_ip_map
+from ...asdk.domain_servers import (
+    GlobalDomainMdss,
+    extract_domain_servers,
+    extract_global_domain_mdss,
+    mds_ip_map,
+)
 from ...config import GLOBAL_DOMAIN_NAME
 from ...logger import lazy_logger
 
@@ -175,6 +180,7 @@ class DomainService:
         from ...cache.models import Domain
 
         global_seen = False
+        mds_ips: dict[str, str] = {}
         if response.success and response.objects:
             # Which member hosts each server matters to the login gate
             # (asdk/login_gate.py). Enrichment only: a failed show-mdss leaves
@@ -228,18 +234,32 @@ class DomainService:
         # gated on `is_mdm is True` (positively known), never on a merely
         # unknown or non-MDM status, so a SmartCenter can never get one.
         if not global_seen and is_mdm is True:
-            global_ip = server.server_ip if server else ""
-            if global_ip:
+            global_layout = (
+                await self._fetch_global_domain_mdss(mgmt_name) if response.success else GlobalDomainMdss()
+            )
+            active_mds_ip = mds_ips.get(global_layout.active_mds, "")
+            default_ip = server.server_ip if server else ""
+            active_ip = active_mds_ip or default_ip
+            if active_ip:
                 global_domain = Domain.build(
                     mgmt_name=mgmt_name,
                     domain_name=GLOBAL_DOMAIN_NAME,
                     domain_uid="",
-                    active_ip=global_ip,
+                    active_ip=active_ip,
+                    active_mds=global_layout.active_mds,
+                    active_mds_ip=active_mds_ip,
+                    standby_mdss=",".join(global_layout.standby_mdss),
                     is_mdm=True,
                 )
                 await self._cache.upsert_domain(global_domain)
                 domain_names.append(GLOBAL_DOMAIN_NAME)
-                log().debug(f"Populated domain cache: {mgmt_name}:{GLOBAL_DOMAIN_NAME} (active_ip={global_ip})")
+                if active_mds_ip:
+                    log().debug(
+                        f"Populated domain cache: {mgmt_name}:{GLOBAL_DOMAIN_NAME} "
+                        f"with active_ip={active_ip} on active MDS {global_layout.active_mds}"
+                    )
+                else:
+                    log().debug(f"Populated domain cache: {mgmt_name}:{GLOBAL_DOMAIN_NAME} (active_ip={active_ip})")
             else:
                 log().warning(f"Cannot determine active_ip for Global domain on MDM {mgmt_name}; skipping cache row")
 
@@ -247,6 +267,31 @@ class DomainService:
         if include_global:
             return domain_names
         return [d for d in domain_names if d != GLOBAL_DOMAIN_NAME]
+
+    async def _fetch_global_domain_mdss(self, mgmt_name: str) -> GlobalDomainMdss:
+        """Which MDS member holds the writable Global domain; empty layout on any failure.
+
+        `show-domains` never lists Global, so its active member has to come from
+        its own object via `show-global-domain`. Enrichment only: a failed call
+        falls back to an empty layout so domain population proceeds and uses
+        the configured MDS IP as default.
+        """
+        try:
+            response = await self._api_client.api_call(
+                mgmt_name=mgmt_name,
+                command="show-global-domain",
+                payload={"name": GLOBAL_DOMAIN_NAME, "details-level": "full"},
+            )
+        except Exception as exc:  # noqa: BLE001 - enrichment only
+            log().debug(f"show-global-domain failed for {mgmt_name}: {exc}; using configured MDS for Global")
+            return GlobalDomainMdss()
+        if not response.success:
+            log().debug(
+                f"show-global-domain refused for {mgmt_name}: {response.message}; using configured MDS for Global"
+            )
+            return GlobalDomainMdss()
+        data = response.data
+        return extract_global_domain_mdss(data if isinstance(data, dict) else {})
 
     async def _fetch_mds_ips(self, mgmt_name: str, cache_mode: str) -> dict[str, str]:
         """{MDS member name: IPv4} via `show-mdss`; {} on any failure.

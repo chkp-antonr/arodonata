@@ -15,6 +15,7 @@ import pytest
 from pydantic import SecretStr
 
 from arodonata import GLOBAL_DOMAIN_NAME
+from arodonata.asdk.domain_servers import GlobalDomainMdss
 from arodonata.asdk.login_coordinator import LoginCoordinator
 from arodonata.asdk.login_gate import LoginGateDeadlineError
 from arodonata.asdk.server_registry import ServerConfig
@@ -1468,3 +1469,144 @@ async def test_create_dedicated_session_resolves_domain_ip():
 
     assert ip == "10.0.0.9"
     coord._prefetch_domain_server_ip.assert_awaited_once_with("mgmt1", "General")
+
+
+async def test_cache_domain_active_ip_sends_global_to_the_active_mds():
+    """Global must follow its active MDS member, not the configured one.
+
+    Global has no domain server, so `show-domains` never lists it and the
+    generic path cannot resolve it. Pinning it to the configured MDS means a
+    standby member serves a read-only replica: reads work, writes are refused,
+    and a named session login dies with "Null Pointer exception". Verified on
+    mdsNP2 (R82) 2026-09-22.
+    """
+    cache = AsyncMock()
+    coord = _make_coordinator(cache=cache)
+
+    ip = await coord._cache_domain_active_ip(
+        "mgmt1",
+        GLOBAL_DOMAIN_NAME,
+        [{"name": "General", "uid": "uid-d", "servers": []}],
+        "10.0.0.1",  # the configured MDS - the standby one here
+        is_mdm=True,
+        mds_ips={"mdsA": "10.0.0.1", "mdsB": "10.9.9.9"},
+        global_mdss=GlobalDomainMdss(active_mds="mdsB", standby_mdss=("mdsA",)),
+    )
+
+    assert ip == "10.9.9.9", "must be the active member's address, not the configured one"
+    saved = cache.upsert_domain.await_args.args[0]
+    assert saved.domain_name == GLOBAL_DOMAIN_NAME
+    assert saved.active_ip == "10.9.9.9"
+    assert saved.active_mds == "mdsB"
+    assert saved.active_mds_ip == "10.9.9.9"
+    assert saved.standby_mdss == "mdsA"
+
+
+async def test_cache_domain_active_ip_keeps_the_configured_ip_when_no_active_member_is_named():
+    """An unresolvable layout must not produce a falsy active_ip.
+
+    Caching an empty address would make every later Global login look like a
+    cache miss and re-fetch, so the fallback has to be the configured MDS -
+    exactly the behaviour before the active-member lookup existed.
+    """
+    cache = AsyncMock()
+    coord = _make_coordinator(cache=cache)
+
+    ip = await coord._cache_domain_active_ip(
+        "mgmt1",
+        GLOBAL_DOMAIN_NAME,
+        [],
+        "10.0.0.1",
+        is_mdm=True,
+        mds_ips={"mdsA": "10.0.0.1"},
+        global_mdss=GlobalDomainMdss(),  # show-global-domain failed or named nobody
+    )
+
+    assert ip == "10.0.0.1"
+    assert cache.upsert_domain.await_args.args[0].active_ip == "10.0.0.1"
+
+
+async def test_cache_domain_active_ip_keeps_the_configured_ip_when_the_active_member_has_no_known_address():
+    """`show-global-domain` names the member; `show-mdss` supplies its address.
+
+    If the second half is missing the name alone cannot be connected to, so the
+    configured IP stands rather than the login being pointed at nothing.
+    """
+    cache = AsyncMock()
+    coord = _make_coordinator(cache=cache)
+
+    ip = await coord._cache_domain_active_ip(
+        "mgmt1",
+        GLOBAL_DOMAIN_NAME,
+        [],
+        "10.0.0.1",
+        is_mdm=True,
+        mds_ips={},
+        global_mdss=GlobalDomainMdss(active_mds="mdsB"),
+    )
+
+    assert ip == "10.0.0.1"
+
+
+async def test_prefetch_global_resolves_active_mds_ip():
+    """`_prefetch_domain_server_ip` must query `show-global-domain` and `show-mdss` to find the writable MDS."""
+    registry = MagicMock()
+    # 10.0.0.1 is the configured MDS (which is standby here)
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", port=None, is_mdm=True)
+    cache = AsyncMock()
+    cache.get_domain.return_value = None
+    transport = AsyncMock()
+    transport.api_call.side_effect = [
+        {"success": True, "data": {"objects": []}},  # show-domains (Global is never here)
+        _mdss_response(),  # show-mdss: mds1 -> 10.0.0.1, mds2 -> 10.0.0.2
+        {
+            "success": True,
+            "data": {
+                "servers": [
+                    {"multi-domain-server": "mds1", "active": False},
+                    {"multi-domain-server": "mds2", "active": True},
+                ]
+            },
+        },  # show-global-domain: mds2 is active
+    ]
+    coord = _make_coordinator(registry=registry, cache=cache, transport=transport)
+    coord.login = AsyncMock(return_value=("sys-sid", "10.0.0.1"))
+
+    ip = await coord._prefetch_domain_server_ip("mgmt1", GLOBAL_DOMAIN_NAME)
+
+    assert ip == "10.0.0.2", "Must resolve to active MDS IP (mds2) for read-write, not configured standby (10.0.0.1)"
+    assert [c.kwargs["command"] for c in transport.api_call.await_args_list] == [
+        "show-domains",
+        "show-mdss",
+        "show-global-domain",
+    ]
+    saved = cache.upsert_domain.await_args.args[0]
+    assert saved.domain_name == GLOBAL_DOMAIN_NAME
+    assert saved.active_ip == "10.0.0.2"
+    assert saved.active_mds == "mds2"
+    assert saved.active_mds_ip == "10.0.0.2"
+    assert saved.standby_mdss == "mds1"
+
+
+async def test_create_dedicated_session_global_resolves_active_mds_ip():
+    """`create_dedicated_session` (used for read-write / write-intensive operations) must target the active MDS IP for Global."""
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", api_key=SecretStr("key"), port=None)
+    transport = AsyncMock()
+    transport.login_with_apikey.return_value = {
+        "success": True,
+        "sid": "global-ded-sid",
+        "data": {},
+    }
+    coord = _make_coordinator(registry=registry, transport=transport)
+    coord._prefetch_domain_server_ip = AsyncMock(return_value="10.0.0.2")
+
+    sid, ip = await coord.create_dedicated_session("mgmt1", GLOBAL_DOMAIN_NAME, session_name="global-write")
+
+    assert ip == "10.0.0.2"
+    assert sid == "global-ded-sid"
+    coord._prefetch_domain_server_ip.assert_awaited_once_with("mgmt1", GLOBAL_DOMAIN_NAME)
+    assert transport.login_with_apikey.await_args.kwargs["server_ip"] == "10.0.0.2"
+    assert transport.login_with_apikey.await_args.kwargs["domain"] == GLOBAL_DOMAIN_NAME
+    assert transport.login_with_apikey.await_args.kwargs["session_name"] == "global-write"
+

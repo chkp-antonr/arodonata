@@ -451,6 +451,52 @@ async def test_mdm_domains_appends_global_even_when_no_objects():
 
 
 @pytest.mark.asyncio
+async def test_mdm_domains_resolves_global_active_mds_ip():
+    """Global domain in MDM must resolve to the active MDS IP for read-write, not the configured IP."""
+    api_client = AsyncMock()
+    # show-domains returns empty or normal domains; show-mdss returns member IPs
+    api_client.api_query = AsyncMock(
+        side_effect=[
+            ApiQueryResult(success=True, objects=[{"name": "domainA", "uid": "uid-a", "servers": []}]),  # show-domains
+            ApiQueryResult(
+                success=True,
+                objects=[{"name": "mds1", "ipv4-address": "10.0.0.1"}, {"name": "mds2", "ipv4-address": "10.0.0.2"}],
+            ),  # show-mdss
+        ]
+    )
+    # show-global-domain returns servers with active flag
+    api_client.api_call = AsyncMock(
+        return_value=ApiCallResult(
+            success=True,
+            data={
+                "servers": [
+                    {"multi-domain-server": "mds1", "active": False},
+                    {"multi-domain-server": "mds2", "active": True},
+                ]
+            },
+        )
+    )
+    cache = AsyncMock()
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+    # Configured server points to standby MDS (10.0.0.1)
+    server = make_server(is_mdm=True, server_ip="10.0.0.1")
+
+    result = await service._populate_mdm_domains("mgmt1", server, is_mdm=True, include_global=True)
+
+    assert result == ["", "domainA", GLOBAL_DOMAIN_NAME]
+    global_calls = [
+        call.args[0] for call in cache.upsert_domain.await_args_list if call.args[0].domain_name == GLOBAL_DOMAIN_NAME
+    ]
+    assert len(global_calls) == 1
+    record = global_calls[0]
+    assert record.active_ip == "10.0.0.2"
+    assert record.active_mds == "mds2"
+    assert record.active_mds_ip == "10.0.0.2"
+    assert record.standby_mdss == "mds1"
+
+
+
+@pytest.mark.asyncio
 async def test_mdm_domains_does_not_write_global_when_mdm_status_unknown():
     """Minor fix: a positively-unknown MDM status (is_mdm=None, e.g. an
     undetected server) must never get a Global row, even if the show-domains

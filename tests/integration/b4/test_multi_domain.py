@@ -118,3 +118,47 @@ async def test_domain_scoped_reads_do_not_leak(apikey_client, test_domain_a, tes
         assert objects, f"{domain} cache must not be empty after build"
         wrong = [o for o in objects if o.domain_name != domain]
         assert not wrong, f"Domain-scoped read for {domain} leaked: {wrong[:3]}"
+
+
+async def test_global_domain_resolves_active_mds_and_creates_dedicated_session(apikey_client):
+    """Global domain must resolve to its active MDS member and allow creating a dedicated session."""
+    from arodonata import GLOBAL_DOMAIN_NAME
+
+    client, mgmt_name = apikey_client
+
+    # 1. Verify show-global-domain on the real MDM
+    resp = await client.api_call(
+        mgmt_name, "show-global-domain", payload={"name": GLOBAL_DOMAIN_NAME, "details-level": "full"}
+    )
+    if not resp.success:
+        pytest.skip(f"show-global-domain not supported or refused on {mgmt_name}: {resp.message}")
+
+    # 2. Populate domain cache (tests DomainService resolution of Global)
+    domain_names = await client.populate_domain_cache(mgmt_name, include_global=True)
+    assert GLOBAL_DOMAIN_NAME in domain_names
+
+    cached = await client.cache.get_domain(f"{mgmt_name}:{GLOBAL_DOMAIN_NAME}")
+    assert cached is not None
+    assert cached.active_ip, "Global domain must have a non-empty active_ip"
+
+    # 3. Create a dedicated session on Global (used for read-write operations)
+    session_name = f"arodonata-global-{uuid.uuid4().hex[:8]}"
+    sid, server_ip = await client.create_dedicated_session(
+        mgmt_name, GLOBAL_DOMAIN_NAME, session_name=session_name
+    )
+    try:
+        assert sid, "Must receive a valid session ID"
+        assert server_ip == cached.active_ip, "Dedicated session IP must match the resolved active_ip"
+
+        # 4. Verify session is active on the server
+        check = await client.api_call_with_sid(
+            mgmt_name=mgmt_name,
+            sid=sid,
+            server_ip=server_ip,
+            command="show-session",
+            payload={"uid": sid},
+        )
+        assert check.success, f"show-session failed on {server_ip}: {check.message}"
+    finally:
+        await client.logout_sid(sid, server_ip, mgmt_name)
+
