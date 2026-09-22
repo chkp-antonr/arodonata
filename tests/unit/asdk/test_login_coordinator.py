@@ -1546,3 +1546,67 @@ async def test_cache_domain_active_ip_keeps_the_configured_ip_when_the_active_me
     )
 
     assert ip == "10.0.0.1"
+
+
+async def test_prefetch_global_resolves_active_mds_ip():
+    """`_prefetch_domain_server_ip` must query `show-global-domain` and `show-mdss` to find the writable MDS."""
+    registry = MagicMock()
+    # 10.0.0.1 is the configured MDS (which is standby here)
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", port=None, is_mdm=True)
+    cache = AsyncMock()
+    cache.get_domain.return_value = None
+    transport = AsyncMock()
+    transport.api_call.side_effect = [
+        {"success": True, "data": {"objects": []}},  # show-domains (Global is never here)
+        _mdss_response(),  # show-mdss: mds1 -> 10.0.0.1, mds2 -> 10.0.0.2
+        {
+            "success": True,
+            "data": {
+                "servers": [
+                    {"multi-domain-server": "mds1", "active": False},
+                    {"multi-domain-server": "mds2", "active": True},
+                ]
+            },
+        },  # show-global-domain: mds2 is active
+    ]
+    coord = _make_coordinator(registry=registry, cache=cache, transport=transport)
+    coord.login = AsyncMock(return_value=("sys-sid", "10.0.0.1"))
+
+    ip = await coord._prefetch_domain_server_ip("mgmt1", GLOBAL_DOMAIN_NAME)
+
+    assert ip == "10.0.0.2", "Must resolve to active MDS IP (mds2) for read-write, not configured standby (10.0.0.1)"
+    assert [c.kwargs["command"] for c in transport.api_call.await_args_list] == [
+        "show-domains",
+        "show-mdss",
+        "show-global-domain",
+    ]
+    saved = cache.upsert_domain.await_args.args[0]
+    assert saved.domain_name == GLOBAL_DOMAIN_NAME
+    assert saved.active_ip == "10.0.0.2"
+    assert saved.active_mds == "mds2"
+    assert saved.active_mds_ip == "10.0.0.2"
+    assert saved.standby_mdss == "mds1"
+
+
+async def test_create_dedicated_session_global_resolves_active_mds_ip():
+    """`create_dedicated_session` (used for read-write / write-intensive operations) must target the active MDS IP for Global."""
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", api_key=SecretStr("key"), port=None)
+    transport = AsyncMock()
+    transport.login_with_apikey.return_value = {
+        "success": True,
+        "sid": "global-ded-sid",
+        "data": {},
+    }
+    coord = _make_coordinator(registry=registry, transport=transport)
+    coord._prefetch_domain_server_ip = AsyncMock(return_value="10.0.0.2")
+
+    sid, ip = await coord.create_dedicated_session("mgmt1", GLOBAL_DOMAIN_NAME, session_name="global-write")
+
+    assert ip == "10.0.0.2"
+    assert sid == "global-ded-sid"
+    coord._prefetch_domain_server_ip.assert_awaited_once_with("mgmt1", GLOBAL_DOMAIN_NAME)
+    assert transport.login_with_apikey.await_args.kwargs["server_ip"] == "10.0.0.2"
+    assert transport.login_with_apikey.await_args.kwargs["domain"] == GLOBAL_DOMAIN_NAME
+    assert transport.login_with_apikey.await_args.kwargs["session_name"] == "global-write"
+
