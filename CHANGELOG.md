@@ -8,6 +8,12 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 via [commitizen](https://commitizen-tools.github.io/commitizen/) — do not
 hand-edit released sections, only the `[Unreleased]` section above them.
 
+## v1.10.1 (2026-09-22)
+
+### Fix
+
+- **asdk**: resolve Global domain to its active MDS member (#6)
+
 ## v1.10.0 (2026-09-21)
 
 ### Feat
