@@ -24,6 +24,18 @@ from .task_waiter import TaskStatus, TaskWaiter, extract_task_ids
 log = lazy_logger("arodonata.asdk.transport")
 
 
+def mask_secret(secret: SecretStr | str | None) -> str:
+    """Log-safe stand-in for a credential: its last four characters at most.
+
+    Enough to tell two keys apart in a log, too little to be worth stealing.
+    Short secrets (8 characters or fewer) are fully masked.
+    """
+    if secret is None:
+        return "****"
+    value = secret.get_secret_value() if isinstance(secret, SecretStr) else secret
+    return f"****{value[-4:]}" if len(value) > 8 else "****"
+
+
 # Type alias for raw API response
 RawApiResponse = dict[str, Any]
 
@@ -263,6 +275,7 @@ class ApiTransport:
         wait_for_task: bool = True,
         timeout: int = -1,
         port: int | None = None,
+        task_timeout: int = -1,
     ) -> RawApiResponse:
         """Execute API call using sync SDK in async context.
 
@@ -329,6 +342,7 @@ class ApiTransport:
                     port=port,
                     command=command,
                     timeout=timeout,
+                    task_timeout=task_timeout,
                     elapsed=asyncio.get_running_loop().time() - started,
                 )
             return result
@@ -349,6 +363,7 @@ class ApiTransport:
         command: str,
         timeout: int,
         elapsed: float,
+        task_timeout: int = -1,
     ) -> RawApiResponse:
         """Wait out any task the response announced; return the final show-task result.
 
@@ -390,7 +405,20 @@ class ApiTransport:
             )
             return last_response
 
-        remaining = timeout - elapsed if timeout > 0 else -1.0
+        # The task gets its own budget, not the leftovers of the call's. They measure
+        # different things: `timeout` bounds an HTTP round trip, `task_timeout` bounds
+        # work the server has already accepted and will finish whether we wait or not.
+        # Sharing one allowance is how a 30 s api_timeout came to cut off a publish at
+        # 29 s while the server completed it seconds later (mdsNP2, 2026-09-22) - the
+        # caller saw a failure for a change that had in fact been made.
+        #
+        # A caller that named its own `timeout` and no `task_timeout` keeps the old
+        # arithmetic: it asked for a total budget and gets one. That is what
+        # `revert_domain_to`'s 900 s has always meant.
+        if task_timeout > 0:
+            remaining = float(task_timeout)
+        else:
+            remaining = timeout - elapsed if timeout > 0 else -1.0
         statuses: list[TaskStatus] = await self._task_waiter.wait(
             show_task, task_ids, timeout=remaining, context=f"{command} on {server_ip}"
         )
@@ -473,7 +501,7 @@ class ApiTransport:
     async def login_with_apikey(
         self,
         server_ip: str,
-        api_key: str,
+        api_key: SecretStr | str,
         domain: str | None = None,
         timeout: int = DEFAULT_LOGIN_TIMEOUT,
         port: int | None = None,
@@ -485,7 +513,9 @@ class ApiTransport:
 
         Args:
             server_ip: Management server IP address.
-            api_key: API key for authentication.
+            api_key: API key for authentication. Pass a SecretStr: it is
+                unwrapped only inside the cpapi call, so no frame on the login
+                path holds the plain value for a traceback to print.
             domain: Optional domain name.
             timeout: Per-attempt login timeout in seconds (default:
                 DEFAULT_LOGIN_TIMEOUT). A login is one round trip; it does not
@@ -512,21 +542,25 @@ class ApiTransport:
             login_payload["session-timeout"] = session_timeout
 
         domain_context = f" domain={domain}" if domain else " (system domain)"
-        masked_key = f"{api_key[:4]}...{api_key[-4:]}" if api_key and len(api_key) > 8 else "****"
-        log().trace(f"LOGIN (apikey) request: {server_ip}{domain_context}, API_KEY={masked_key}")
+        secret_key = api_key if isinstance(api_key, SecretStr) else SecretStr(api_key)
+        log().trace(f"LOGIN (apikey) request: {server_ip}{domain_context}, API_KEY={mask_secret(secret_key)}")
 
         span_attrs(server_ip=server_ip, domain=domain or "system", port=port)
 
         try:
             async with self._client(server_ip, port) as client:
                 response = await asyncio.wait_for(
+                    # Unwrap inside the lambda, which runs on the worker thread: passed
+                    # as a to_thread argument the plain key would sit in asyncio's
+                    # frames too, where a long traceback prints it.
                     asyncio.to_thread(
-                        client.login_with_api_key,
-                        api_key,
-                        False,  # continue_last_session
-                        domain,
-                        False,  # read_only
-                        login_payload,
+                        lambda: client.login_with_api_key(
+                            secret_key.get_secret_value(),
+                            False,  # continue_last_session
+                            domain,
+                            False,  # read_only
+                            login_payload,
+                        )
                     ),
                     timeout=timeout if timeout > 0 else None,
                 )
@@ -612,14 +646,16 @@ class ApiTransport:
         try:
             async with self._client(server_ip, port) as client:
                 response = await asyncio.wait_for(
+                    # Unwrapped on the worker thread, as for the API key above.
                     asyncio.to_thread(
-                        client.login,
-                        username,
-                        secret_pw.get_secret_value(),
-                        False,  # continue_last_session
-                        domain,
-                        False,  # read_only
-                        login_payload,
+                        lambda: client.login(
+                            username,
+                            secret_pw.get_secret_value(),
+                            False,  # continue_last_session
+                            domain,
+                            False,  # read_only
+                            login_payload,
+                        )
                     ),
                     timeout=timeout if timeout > 0 else None,
                 )

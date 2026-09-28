@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from arodonata.core.change_processor import ChangeProcessor, ChangeType, ObjectChange
+from arodonata.core.change_processor import ChangeProcessor, ChangeType, ObjectChange, unwrap_change_entry
 from arodonata.logger import lazy_logger
 
 if TYPE_CHECKING:
@@ -160,12 +160,12 @@ class IncrementalRefresher:
         `test_bulk_incremental_mode_applies_publish_without_full_reload` exists to
         catch, and did.
 
-        The residual gap is narrow and worth naming: reverting to a revision
-        published in the same minute as the cache baseline is invisible here, and
-        falls back to the `show-changes` failure path that this check exists to
-        stop relying on. Closing it properly means diffing by `from-session`
-        rather than `from-date`, so the server itself rejects a baseline that is
-        no longer in history.
+        The residual gap -- reverting to a revision published in the same minute
+        as the cache baseline, invisible to this timestamp comparison -- is now
+        closed by `_fetch_changes` diffing by `from-session`: the server
+        refuses a baseline session that a revert removed from history (verified
+        on R82.20, 2026-09-28), and a refusal falls back to a full reload. Rows
+        without a session uid still diff by date and keep the gap.
         """
         if self._fetch_head is None:
             return  # caller opted out; the show-changes failure path still applies
@@ -184,11 +184,23 @@ class IncrementalRefresher:
     async def _fetch_changes(self, mgmt: str, domain: str, baseline: Any) -> dict:
         try:
             api_domain = "" if domain in ("SMC User", "System Data") else domain
-            response = await self._api.show_changes(
-                mgmt_name=mgmt,
-                domain=api_domain,
-                from_date=baseline.published_time.isoformat(),
-            )
+            # Diff from the baseline SESSION, not its time. The stored time comes
+            # from Check Point's minute-resolution, offset-bearing iso-8601 value,
+            # kept as naive UTC; sent as `from-date` the server reads it as its own
+            # local time, so the window opened hours early and, through the minute
+            # rounding, included the baseline session itself. `from-session` is
+            # exact and exclusive, and a baseline that a revert removed from
+            # history is refused ("generic_server_error"), which falls back below.
+            # Both verified on R82.20, 2026-09-28.
+            session_uid = getattr(baseline, "uid", "") or ""
+            if session_uid:
+                response = await self._api.show_changes(mgmt_name=mgmt, domain=api_domain, from_session=session_uid)
+            else:  # older cache rows without the session uid
+                response = await self._api.show_changes(
+                    mgmt_name=mgmt,
+                    domain=api_domain,
+                    from_date=baseline.published_time.isoformat(),
+                )
         except Exception as exc:  # noqa: BLE001 - fall back on any API failure
             raise FallbackToFull(f"show-changes failed: {exc}") from exc
 
@@ -272,6 +284,7 @@ def _entry_in_scope(obj: Any, in_scope: frozenset[str]) -> bool:
     Non-dict or type-less entries count as in-scope so they trip the
     dropped-entry guard rather than being silently skipped.
     """
+    obj = unwrap_change_entry(obj)
     if not isinstance(obj, dict):
         return True
     obj_type = obj.get("type")

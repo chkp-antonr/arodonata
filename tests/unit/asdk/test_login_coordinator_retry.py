@@ -1594,3 +1594,107 @@ async def test_run_startup_cleanup_tolerates_per_server_failure():
 
     # Must not raise
     await coord.run_startup_cleanup()
+
+
+# ---------------------------------------------------------------------------
+# The deadline error names the real cause
+# ---------------------------------------------------------------------------
+#
+# The login deadline is checked the same way whatever the attempts were doing,
+# and the error used to say "login throttled ... per-minute allowance" every
+# time. On 2026-09-28 a Domain4 login spent its 900 s on 120 s login timeouts
+# -- a hung server, not a rate limit -- and the message sent the reader looking
+# at the wrong thing. The retry loop is the only place that knows what the
+# attempts did, so it attaches the tally.
+
+
+class GateDeadlineAfterWaits(FakeGate):
+    """Gate whose deadline passes on the `nth` wait, whatever the attempts did."""
+
+    def __init__(self, nth: int) -> None:
+        super().__init__(give_up_after=10_000)
+        self.nth = nth
+
+    async def wait_open(self, mds_host, *, deadline, max_wait, keepalive=None):
+        self.waits.append({"mds_host": mds_host})
+        if len(self.waits) >= self.nth:
+            raise LoginGateDeadlineError(mds_host, waited=float(max_wait), max_wait=max_wait)
+
+
+async def _timing_out_op():
+    raise TimeoutError("Login timed out after 120s")
+
+
+async def test_deadline_spent_on_timeouts_says_timed_out_not_throttled():
+    gate = GateDeadlineAfterWaits(nth=4)
+    coord = _make_coordinator(settings=_make_settings(max_retries=8), login_gate=gate)
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(LoginGateDeadlineError) as excinfo:
+            await coord._retry_with_backoff(_timing_out_op, "Login", mds_host="mds")
+
+    err = excinfo.value
+    assert (err.throttles, err.failures, err.timeouts) == (0, 3, 3)
+    message = str(err)
+    assert "throttled" not in message
+    assert "3 attempts failed" in message and "3 timed out" in message
+    assert "Login timed out after 120s" in message
+
+
+async def test_backstop_deadline_after_timeouts_also_names_them():
+    """The loop's own deadline check (not the gate's) carries the same tally."""
+    coord = _make_coordinator(settings=_make_settings(max_retries=8), login_gate=FakeGate(give_up_after=10_000))
+    real_sleep = asyncio.sleep
+
+    async def slow_timeout():
+        await real_sleep(0.02)  # let the loop clock pass the deadline
+        raise TimeoutError("Login timed out after 120s")
+
+    token = _login_pacing.set(_LoginPacing(deadline=asyncio.get_running_loop().time() + 0.01))
+    try:
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            with pytest.raises(LoginGateDeadlineError) as excinfo:
+                await coord._retry_with_backoff(slow_timeout, "Login", mds_host="mds")
+    finally:
+        _login_pacing.reset(token)
+
+    err = excinfo.value
+    assert (err.throttles, err.failures, err.timeouts) == (0, 1, 1)
+    assert "throttled" not in str(err)
+    assert "timed out" in str(err)
+
+
+async def test_deadline_spent_on_throttles_still_blames_the_allowance():
+    gate = FakeGate(give_up_after=2)
+    coord = _make_coordinator(settings=_make_settings(max_retries=3), login_gate=gate)
+
+    async def op():
+        raise ThrottlingError("Login throttled: err_too_many_requests")
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(LoginGateDeadlineError) as excinfo:
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
+
+    err = excinfo.value
+    assert (err.throttles, err.failures) == (2, 0)
+    assert "throttled" in str(err)
+    assert "2 throttle refusals" in str(err)
+    assert "per-minute login allowance" in str(err)
+
+
+async def test_deadline_with_no_attempt_of_its_own_says_the_gate_was_closed_by_others():
+    """Another worker's refusals kept the gate shut: this login never sent a request."""
+    gate = GateDeadlineAfterWaits(nth=1)
+    coord = _make_coordinator(login_gate=gate)
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        return ("sid", None)
+
+    with pytest.raises(LoginGateDeadlineError) as excinfo:
+        await coord._retry_with_backoff(op, "Login", mds_host="mds")
+
+    assert attempts == 0
+    assert "no attempt" in str(excinfo.value)

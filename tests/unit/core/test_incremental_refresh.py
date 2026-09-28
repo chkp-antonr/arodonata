@@ -24,8 +24,9 @@ from arodonata.core.incremental_refresh import (
 
 
 class _Baseline:
-    def __init__(self, published_time=datetime(2026, 7, 1)) -> None:
+    def __init__(self, published_time=datetime(2026, 7, 1), uid="") -> None:
         self.published_time = published_time
+        self.uid = uid
 
 
 _DEFAULT_BASELINE = _Baseline()
@@ -58,7 +59,7 @@ class FakeApi:
     async def show_changes(
         self, mgmt_name, domain="", from_session=None, from_date=None, to_session=None, to_date=None
     ):
-        self.calls.append({"mgmt": mgmt_name, "domain": domain, "from_date": from_date})
+        self.calls.append({"mgmt": mgmt_name, "domain": domain, "from_date": from_date, "from_session": from_session})
         if self._error:
             raise RuntimeError("api down")
         return self._response
@@ -409,3 +410,91 @@ def test_default_scope_matches_object_service_types():
     from arodonata.cache.object_service import ObjectService
 
     assert DEFAULT_IN_SCOPE_TYPES == frozenset(ObjectService.OBJECT_TYPES)
+
+
+# ---------------------------------------------------------------------------
+# The diff window: by session, not by date (home lab, 2026-09-28)
+# ---------------------------------------------------------------------------
+#
+# The baseline time comes from Check Point's `iso-8601` publish time, which has
+# MINUTE resolution and the server's UTC offset ("18:46+0300"). It was stored as
+# naive UTC (15:46) and sent as `from-date`, which the server reads as ITS local
+# time: the window opened three hours early and included sessions long folded
+# into the cache -- plus, through the minute rounding, the baseline session
+# itself. `from-session` names the baseline exactly and is exclusive (verified
+# live: from-session=<latest> returns no sessions).
+
+
+async def test_the_diff_starts_after_the_baseline_session_not_at_a_date():
+    api = FakeApi(flat_response([]))
+    engine = make_engine(api, FakeCache(_Baseline(uid="baseline-session-uid")), FakeFetcher())
+
+    await engine.apply("m1", "d1")
+
+    assert api.calls[0]["from_session"] == "baseline-session-uid"
+    assert api.calls[0]["from_date"] is None
+
+
+async def test_a_baseline_without_a_session_uid_still_diffs_by_date():
+    """Older cache rows may lack the uid; the date window is the only option there."""
+    api = FakeApi(flat_response([]))
+    engine = make_engine(api, FakeCache(_Baseline(uid="")), FakeFetcher())
+
+    await engine.apply("m1", "d1")
+
+    assert api.calls[0]["from_session"] is None
+    assert api.calls[0]["from_date"]
+
+
+# ---------------------------------------------------------------------------
+# Modified objects arrive wrapped in "new-object" (R82.20, verified live)
+# ---------------------------------------------------------------------------
+
+
+def _task_response(operations):
+    return {
+        "success": True,
+        "data": {"tasks": [{"task-details": [{"total": 1, "to": 1, "changes": [{"operations": operations}]}]}]},
+    }
+
+
+async def test_a_modified_in_scope_object_wrapped_in_new_object_is_applied():
+    response = _task_response({"modified-objects": [{"new-object": {"uid": "u1", "type": "host", "name": "h1"}}]})
+    cache = FakeCache()
+    engine = make_engine(FakeApi(response), cache, FakeFetcher())
+
+    assert await engine.apply("m1", "d1") == 1
+    assert [o.uid for o in cache.upserted] == ["u1"]
+
+
+async def test_modified_out_of_scope_objects_wrapped_in_new_object_do_not_force_a_full_reload():
+    """A rule edit next to a host add used to trip the dropped-entry guard: the wrapper hid the type."""
+    response = _task_response(
+        {
+            "added-objects": [{"uid": "h1", "type": "host", "name": "h1"}],
+            "modified-objects": [
+                {"new-object": {"uid": "r1", "type": "access-rule", "name": "rule"}},
+                {"new-object": {"uid": "s1", "type": "access-section", "name": "section"}},
+            ],
+        }
+    )
+    cache = FakeCache()
+    engine = make_engine(FakeApi(response), cache, FakeFetcher())
+
+    assert await engine.apply("m1", "d1") == 1
+    assert [o.uid for o in cache.upserted] == ["h1"]
+
+
+async def test_the_real_r82_20_response_parses_every_in_scope_entry():
+    """Live show-changes from the home lab: a seed session (10 hosts added, rules and
+    sections) and a section-rename session. Every in-scope entry must be parsed, so
+    the dropped-entry guard stays quiet and the 10 hosts are applied."""
+    import json
+    from pathlib import Path
+
+    data = json.loads((Path(__file__).parent / "fixtures" / "show_changes_r82_20_seed_and_rename.json").read_text())
+    cache = FakeCache()
+    engine = make_engine(FakeApi({"success": True, "data": data}), cache, FakeFetcher())
+
+    assert await engine.apply("m1", "d1") == 10
+    assert len({o.uid for o in cache.upserted}) == 10

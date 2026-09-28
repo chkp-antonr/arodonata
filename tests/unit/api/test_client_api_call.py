@@ -65,6 +65,9 @@ async def test_api_call_forwards_arguments_and_wraps_result():
         payload={"name": "web1"},
         wait_for_task=False,
         timeout=55,
+        # A caller that named its own timeout meant it as the total budget, so no
+        # separate task allowance is handed down.
+        task_timeout=-1,
         cache_mode="refresh",
         session_name=None,
         session_description=None,
@@ -206,6 +209,9 @@ async def test_api_call_with_sid_forwards_and_wraps():
         payload={"p": 1},
         wait_for_task=False,
         timeout=settings.api_timeout,
+        # No caller-supplied timeout, so the server-side task gets its own budget
+        # instead of the leftovers of a round-trip allowance.
+        task_timeout=settings.task_timeout,
     )
 
 
@@ -464,8 +470,17 @@ class _FakeTransport:
         self._responses = list(responses or [])
         self.calls: list[SimpleNamespace] = []
 
-    async def api_call(self, *, server_ip, sid, command, payload, wait_for_task, timeout, port):
-        self.calls.append(SimpleNamespace(sid=sid, command=command, server_ip=server_ip, port=port))
+    async def api_call(self, *, server_ip, sid, command, payload, wait_for_task, timeout, port, task_timeout=-1):
+        self.calls.append(
+            SimpleNamespace(
+                sid=sid,
+                command=command,
+                server_ip=server_ip,
+                port=port,
+                timeout=timeout,
+                task_timeout=task_timeout,
+            )
+        )
         if self._responses:
             return self._responses.pop(0)
         return {"success": True, "data": {}}

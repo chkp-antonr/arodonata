@@ -244,11 +244,29 @@ async def test_close_cancels_pending_background_tasks():
 
     task = asyncio.create_task(_never())
     client._background_tasks.add(task)
+    client._close_grace_seconds = 0.05  # a task that never ends waits out the grace, then is cancelled
 
     await client.close()
 
     assert task.done()
     assert task.cancelled()
+
+
+async def test_close_lets_short_background_work_finish_instead_of_cancelling_it():
+    client = make_client()
+    finished = asyncio.Event()
+
+    async def _short() -> None:
+        await asyncio.sleep(0.05)
+        finished.set()
+
+    task = asyncio.create_task(_short())
+    client._background_tasks.add(task)
+
+    await client.close()
+
+    assert finished.is_set()
+    assert not task.cancelled()
 
 
 # --------------------------------------------------------------------------- #

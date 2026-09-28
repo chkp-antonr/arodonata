@@ -402,27 +402,27 @@ async def test_execute_login_request_credential_mode_uses_credentials():
 def test_parse_login_response_success_returns_sid_uid():
     coord = _make_coordinator()
     resp = {"success": True, "sid": "the-sid", "data": {"uid": "u-9"}}
-    assert coord._parse_login_response(resp, "m", "d", "ip", "key") == ("the-sid", "u-9")
+    assert coord._parse_login_response(resp, "m", "d", "ip") == ("the-sid", "u-9")
 
 
 def test_parse_login_response_throttle_raises_throttling():
     coord = _make_coordinator()
     resp = {"success": False, "code": "err_too_many_requests", "message": "slow down"}
     with pytest.raises(ThrottlingError):
-        coord._parse_login_response(resp, "m", "d", "ip", "key")
+        coord._parse_login_response(resp, "m", "d", "ip")
 
 
 def test_parse_login_response_failure_raises_auth_error():
     coord = _make_coordinator()
     resp = {"success": False, "code": "generic_err", "message": "bad key", "data": {}}
     with pytest.raises(AuthenticationError, match="bad key"):
-        coord._parse_login_response(resp, "m", "d", "ip", "key")
+        coord._parse_login_response(resp, "m", "d", "ip")
 
 
 def test_parse_login_response_failure_default_message():
     coord = _make_coordinator()
     with pytest.raises(AuthenticationError, match="Unknown login error"):
-        coord._parse_login_response({"success": False}, "m", "d", "ip", "")
+        coord._parse_login_response({"success": False}, "m", "d", "ip")
 
 
 def test_parse_login_response_credential_rejection_raises_invalid_credentials():
@@ -434,7 +434,7 @@ def test_parse_login_response_credential_rejection_raises_invalid_credentials():
     coord = _make_coordinator()
     resp = {"success": False, "code": "err_login_failed", "message": "Authentication to server failed."}
     with pytest.raises(InvalidCredentialsError, match="Authentication to server failed"):
-        coord._parse_login_response(resp, "m", "d", "ip", "key")
+        coord._parse_login_response(resp, "m", "d", "ip")
 
 
 def test_parse_login_response_transient_refusal_is_not_invalid_credentials():
@@ -450,7 +450,7 @@ def test_parse_login_response_transient_refusal_is_not_invalid_credentials():
         "message": "Unable to connect to the Server. Database revision is in progress.",
     }
     with pytest.raises(AuthenticationError) as exc_info:
-        coord._parse_login_response(resp, "m", "d", "ip", "key")
+        coord._parse_login_response(resp, "m", "d", "ip")
     assert not isinstance(exc_info.value, InvalidCredentialsError)
 
 
@@ -1610,3 +1610,60 @@ async def test_create_dedicated_session_global_resolves_active_mds_ip():
     assert transport.login_with_apikey.await_args.kwargs["domain"] == GLOBAL_DOMAIN_NAME
     assert transport.login_with_apikey.await_args.kwargs["session_name"] == "global-write"
 
+
+# ---------------------------------------------------------------------------
+# API key never travels the login path as a plain str
+# ---------------------------------------------------------------------------
+#
+# The key is stored as SecretStr (ServerConfig.api_key) but used to be unwrapped
+# at the top of the login path and passed down ~8 frames as str, and pytest's
+# long traceback prints frame arguments -- a failed login printed the key in
+# full (int-1, 2026-09-28). It must stay SecretStr until the transport.
+
+
+_SECRET_KEY = "Zq9-very-secret-api-key-value"
+
+
+async def test_execute_login_request_hands_the_transport_a_secretstr():
+    from pydantic import SecretStr
+
+    transport = AsyncMock()
+    transport.login_with_apikey.return_value = {"success": True, "sid": "s"}
+    coord = _make_coordinator(transport=transport)
+
+    await coord._execute_login_request("mgmt1", "General", "10.0.0.1", SecretStr(_SECRET_KEY))
+
+    sent = transport.login_with_apikey.await_args.kwargs["api_key"]
+    assert isinstance(sent, SecretStr)
+    assert sent.get_secret_value() == _SECRET_KEY
+
+
+def test_auth_failure_log_does_not_include_any_part_of_the_key(caplog):
+    coord = _make_coordinator()
+    response = {"success": False, "code": "err_login_failed", "message": "Authentication to server failed."}
+
+    from arodonata.core.exceptions import AuthenticationError
+
+    with caplog.at_level("ERROR"), pytest.raises(AuthenticationError):
+        coord._parse_login_response(response, "mgmt1", "General", "10.0.0.1")
+
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert _SECRET_KEY[:4] not in text
+    assert "api_key" not in text
+
+
+def test_no_login_coordinator_function_takes_the_api_key_as_plain_str():
+    """Structural guard: a new helper typed `api_key: str` would reopen the leak."""
+    import inspect
+
+    import arodonata.asdk.login_coordinator as mod
+
+    offenders = [
+        f"{name}.{meth}"
+        for name, cls in inspect.getmembers(mod, inspect.isclass)
+        if cls.__module__ == mod.__name__
+        for meth, fn in inspect.getmembers(cls, inspect.isfunction)
+        if "api_key" in inspect.signature(fn).parameters
+        and inspect.signature(fn).parameters["api_key"].annotation in ("str", str, "str | None")
+    ]
+    assert offenders == []

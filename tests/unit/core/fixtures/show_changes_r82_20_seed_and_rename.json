@@ -1,0 +1,1946 @@
+{
+ "tasks": [
+  {
+   "task-id": "abcdef01-2345-6789-8e80-c1f2b8146efa",
+   "task-name": "Show Changes",
+   "status": "succeeded",
+   "progress-percentage": 100,
+   "progress-description": "Operation Complete",
+   "suppressed": false,
+   "task-details": [
+    {
+     "limit": 10,
+     "offset": 0,
+     "from": 1,
+     "to": 2,
+     "total": 2,
+     "changes": [
+      {
+       "session": {
+        "session-uid": "354446be-2f2b-4f2f-b7b3-e10603fad414",
+        "session-name": "session-1",
+        "session-description": "",
+        "user-name": "api-user",
+        "published": true,
+        "publish-time": {
+         "posix": 1790610029841,
+         "iso-8601": "2026-09-28T18:40+0300"
+        },
+        "domain-info": {
+         "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+         "name": "Domain4",
+         "domain-type": "domain"
+        }
+       },
+       "operations": {
+        "added-objects": [
+         {
+          "uid": "33cd8338-84be-4d53-b9bf-cea9f06baed0",
+          "type": "ThreatRulebaseSection",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "e951084b-e07f-4b37-82b9-d52597fee834",
+          "name": "fpcrA1",
+          "type": "SimplifiedThreatPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "17ad5875-2030-42d5-8fc2-eb83a787830d",
+          "name": "fpcrA1",
+          "type": "ThreatPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "81af8ddf-7054-4e7d-afb8-1c8b0bc8180e",
+          "name": "hostA_6",
+          "type": "host",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "ipv4-address": "192.168.101.16",
+          "icon": "Objects/host",
+          "color": "black"
+         },
+         {
+          "uid": "25d7c8f1-2538-4130-a83f-cb5c1b071ace",
+          "type": "NatRulebase",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "efc48d29-7e70-4388-89b1-827b6ab25539",
+          "name": "fpcr_uat_FPCR_UAT_Active_4",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "c9984796-ac84-4e48-84be-ab907a3a2e21",
+          "name": "ThreatStandardSubRulebase",
+          "type": "ThreatExceptionRulebase",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "43153e5c-fe79-4039-bc9d-07ffcc2cb00f",
+          "name": "fpcrA1",
+          "type": "SdwanPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "0468d3e0-7699-4d36-893c-c39fa813640c",
+          "name": "FPCR_UAT_Decom",
+          "type": "CpmiPoliciesCollection",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Applications/policy_package",
+          "color": "black"
+         },
+         {
+          "uid": "055365a5-68d7-4acc-af3c-bf716e2005af",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "bc4eb566-9e1c-4fe3-bec7-50c6f8b9cc80",
+          "name": "FPCR_UAT_Active",
+          "type": "package",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Blades/Access",
+          "color": "black"
+         },
+         {
+          "uid": "f9c0d9c3-312f-429b-8bc8-b82d417874cb",
+          "name": "fpcrA1",
+          "type": "package",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Blades/Access",
+          "color": "black"
+         },
+         {
+          "uid": "2fbe8795-e430-4349-91f4-34c828a2f27e",
+          "name": "FPCR_UAT_Section_4",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "c259fcf1-6490-4af9-91ac-750ba53f5cb6",
+          "name": "sect_A2_1_2",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "b23f609d-a2ba-40e8-9028-e446684c058b",
+          "name": "sect_A1_1_3",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "b0117d04-3a6e-464d-9c9e-29568ae504e4",
+          "name": "fpcr_init_fpcrA2_4",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "215e6d76-f2f8-4323-a4de-88f92d8961bc",
+          "name": "fpcr_uat_FPCR_UAT_Active_1",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "e53e1384-6b84-453f-9c24-de7159b810fd",
+          "name": "hostA_7",
+          "type": "host",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "ipv4-address": "192.168.101.17",
+          "icon": "Objects/host",
+          "color": "black"
+         },
+         {
+          "uid": "145b284d-7240-461e-846d-cbfb018fe096",
+          "name": "fpcr_init_fpcrA1_2",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "aa01822e-916f-4ee3-84f3-7106dfbf6de2",
+          "name": "FPCR_UAT_Decom",
+          "type": "package",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Blades/Access",
+          "color": "black"
+         },
+         {
+          "uid": "8030efc4-d7f3-4572-b7b6-8998450aa12e",
+          "name": "fpcrA2",
+          "type": "SimplifiedThreatPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "ab21d88c-8d40-47ea-abbe-61adfdabebbb",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "f97e1159-5917-4db4-8164-55d3642c8c1b",
+          "name": "FPCR_UAT_Active Network",
+          "type": "access-layer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "2a7566bf-5337-425c-a574-71cc5a6281f6",
+          "name": "FPCR_UAT_Rules",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "a1137da7-d9bb-447c-b61d-0300c78d0672",
+          "type": "ThreatRulebaseSection",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "56073af4-d5c9-4c37-a38d-22981ee03bdf",
+          "name": "fpcrA2",
+          "type": "SdwanPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "08e79c7a-bce2-4317-b850-fa8351dc67a1",
+          "name": "FPCR_UAT_Active",
+          "type": "AccessPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "49fcbe6f-afd4-454f-9072-a7a50a7d5f4a",
+          "type": "NatRulebase",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "f1ab32dc-f159-4bba-9d94-83c9f7524c8a",
+          "name": "fpcrA1",
+          "type": "AccessPolicyContainer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "9b436cad-5c46-4674-a8af-ec166ff67c4c",
+          "name": "Cleanup",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "30fb5d9f-6f48-4749-84a8-adf6795acef1",
+          "type": "ThreatExceptionSection",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "f35c4959-12a5-4032-9042-2a9a770483aa",
+          "name": "Manual Lower Rules",
+          "type": "nat-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "dd6a0f40-4020-4205-973a-121e420e37c8",
+          "name": "FPCR_UAT_Section_3",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "35d238bb-766a-47b4-bf67-ff5975ad6635",
+          "name": "ThreatStandardSubRulebase",
+          "type": "ThreatExceptionRulebase",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "52ce3067-5f75-4719-bd5f-f9914664841e",
+          "name": "FPCR_UAT_Active",
+          "type": "AccessPolicyContainer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "e3fad039-d4dd-497b-9d4e-58aedda428fc",
+          "name": "FPCR_UAT_Section_2",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "ae1afa67-f77f-4448-81c9-43db820766f7",
+          "name": "sect_A2_1_4",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "0b7dcca5-613c-4dcc-8b1a-7228380aeca0",
+          "name": "fpcr_uat_inline_FPCR_UAT_Active_allow",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "d0de64fd-f3a3-46d5-bd13-c6a3ba9cd743",
+          "name": "fpcrA2",
+          "type": "ThreatPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "d0cf84d5-a5c5-4436-a63d-cef4c12c7d83",
+          "name": "hostA_5",
+          "type": "host",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "ipv4-address": "192.168.101.15",
+          "icon": "Objects/host",
+          "color": "black"
+         },
+         {
+          "uid": "e54c5ad3-cfd3-4227-b159-58b0922d2610",
+          "name": "ThreatStandardSubRulebase",
+          "type": "ThreatExceptionRulebase",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "5ad29c9c-2797-4e65-a977-54f249341213",
+          "name": "FPCR_UAT_Active",
+          "type": "CpmiPoliciesCollection",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "3d79a280-28a4-4e27-acbc-658e18e1da94",
+          "type": "ThreatRulebaseSection",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "7ba5900f-18a9-4446-9bbf-060292a467d5",
+          "name": "sect_A2_1_3",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "9cc74189-a30e-4597-973b-fdb890b322df",
+          "name": "fpcrA1",
+          "type": "AccessPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "67250da7-d8c9-4f0b-bae7-9f6e223062bc",
+          "name": "hostA_0",
+          "type": "host",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "ipv4-address": "192.168.104.11",
+          "icon": "Objects/host",
+          "color": "black"
+         },
+         {
+          "uid": "e7d29d05-baae-4628-bcca-38283e43ac99",
+          "name": "fpcrA1",
+          "type": "TLSInspectionPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "79cd922f-c1f5-4b17-90f7-e24bd9159dfa",
+          "name": "hostA_8",
+          "type": "host",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "ipv4-address": "192.168.101.18",
+          "icon": "Objects/host",
+          "color": "black"
+         },
+         {
+          "uid": "4f279465-2353-447e-92bf-23c8d865fa9e",
+          "name": "FPCR_UAT_Section_4",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "dbfa273a-f076-44f6-bf83-60d688745dfb",
+          "name": "FPCR_UAT_Active Inline",
+          "type": "access-layer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "ffe46f46-cf3c-4b0e-8485-e33b7cb274cd",
+          "name": "fpcr_uat_FPCR_UAT_Decom_3",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "622c6841-20ba-41f0-8e34-bc030de43e0b",
+          "name": "fpcrA2",
+          "type": "AccessPolicyContainer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "71623d85-c6a4-4cd2-9d98-ae136b878a9f",
+          "type": "NatRulebase",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "0b2a5a7f-575d-48b1-8a07-fc7b76b5f4f8",
+          "name": "FPCR_UAT_Decom",
+          "type": "SdwanPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "0c7677ab-2f2e-433b-a002-17421a73399e",
+          "name": "FPCR_UAT_Decom",
+          "type": "SimplifiedThreatPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "430b5b2e-1e8a-45dd-98c8-05c6779ca2ce",
+          "name": "fpcr_uat_FPCR_UAT_Active_2",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "872c5651-7d59-4e9f-80f0-ad9585166d36",
+          "name": "FPCR_UAT_Active Threat Prevention",
+          "type": "threat-layer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "b54a99fb-dfb8-483c-913b-94b8727fb415",
+          "type": "nat-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "aaa12ee8-a510-4cb6-b340-1f062ec51c80",
+          "name": "FPCR_UAT_Decom",
+          "type": "TLSInspectionPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "57ddafae-582f-4dc8-84cb-fb4510eb816b",
+          "name": "FPCR_UAT_Active",
+          "type": "TLSInspectionPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "99c65f78-16fb-43ae-997c-9fde132b692a",
+          "name": "FPCR_UAT_Section_3",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "99f25026-28d1-47ab-88c7-bee58f3c5352",
+          "name": "hostA_4",
+          "type": "host",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "ipv4-address": "192.168.101.14",
+          "icon": "Objects/host",
+          "color": "black"
+         },
+         {
+          "uid": "12ae839e-e04e-49c8-959c-2071520de967",
+          "type": "ThreatRulebaseSection",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "92cca403-0e3c-495a-a290-0504c0ca12ab",
+          "name": "FPCR_UAT_Decom",
+          "type": "AccessPolicyContainer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "d9fa44b7-9ecc-42ed-8bb1-df3bb5c06c69",
+          "name": "fpcr_init_fpcrA1_3",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "833cf116-1acf-4602-91b0-c0f42f2c1b07",
+          "name": "fpcr_uat_FPCR_UAT_Active_3",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "e37ca272-fe18-444d-914c-16c413d5f049",
+          "name": "FPCR_UAT_Decom",
+          "type": "AccessPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "cdf987d2-b61e-4660-8a25-5326b025e179",
+          "name": "fpcrA1",
+          "type": "CpmiPoliciesCollection",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "8fc87cbb-fb0e-463f-8785-da91934fd6de",
+          "name": "fpcr_init_fpcrA1_4",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "a30011d7-9a7f-4267-90d2-1722c3a10ead",
+          "name": "FPCR_UAT_Active",
+          "type": "NatPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Blades/NAT",
+          "color": "black"
+         },
+         {
+          "uid": "8bc42706-7371-49a7-93d5-e4ce2d6023db",
+          "name": "Cleanup",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "834447d9-97ee-45f4-bb7c-3816710782af",
+          "name": "fpcr_uat_FPCR_UAT_Decom_1",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "9f2333a5-3e7e-45ae-9ded-1bac8833ed4e",
+          "type": "NatRulebase",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "e1c3ed21-608a-4400-9b9e-e2dcb8cbdb79",
+          "name": "Cleanup rule",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "9f72dee3-1d90-441e-99f6-4e8ddf02bd54",
+          "name": "fpcr_init_fpcrA2_2",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "dadc0d75-c9e6-4a36-98cf-91dfdbad6dbd",
+          "type": "ThreatExceptionSection",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "25af7f09-b8f0-42d8-b8d4-bedd186f40e2",
+          "name": "fpcr_uat_appctl_FPCR_UAT_Active_allow",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "4ec23e3e-6bf1-45f5-93b4-8254b73e5c8f",
+          "name": "FPCR_UAT_Decom Threat Prevention",
+          "type": "threat-layer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "e401cb49-32b8-4404-90f3-79863fbb5789",
+          "name": "fpcrA2",
+          "type": "CpmiPoliciesCollection",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "18ca540e-0c50-45b2-9269-bd52394296f9",
+          "name": "fpcr_init_fpcrA2_3",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "c128977f-0320-4fc3-aff8-fcaf89628148",
+          "name": "FPCR_UAT_Decom",
+          "type": "NatPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Blades/NAT",
+          "color": "black"
+         },
+         {
+          "uid": "e60c3de2-ea00-48f4-8844-c3be5557551f",
+          "type": "nat-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "96dc3c6e-87f8-4ac5-9f0a-f3d872b1f28f",
+          "name": "Cleanup",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "6eb966e0-8dfd-49b9-b8fa-0ac48b331011",
+          "name": "Cleanup rule",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "af6f72c3-310e-40a5-a58d-72e6551b1c1a",
+          "name": "fpcrA2 Threat Prevention",
+          "type": "threat-layer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "1e8ae0f0-5ac7-4ce0-ad79-b7d329e9e868",
+          "name": "FPCR_UAT_Decom Network",
+          "type": "access-layer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "98bdb7c0-55ef-4bed-8e8b-1ee67b8769b2",
+          "name": "FPCR_UAT_Decom",
+          "type": "ThreatPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "be525429-aee6-457b-9b0a-fd5dcf312bc6",
+          "name": "fpcr_uat_FPCR_UAT_Decom_2",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "3ae3ef4a-2def-4a42-8182-e725e5e861f0",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "afbc68f4-f060-4e57-b047-94ecddfe0f32",
+          "name": "hostA_9",
+          "type": "host",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "ipv4-address": "192.168.101.19",
+          "icon": "Objects/host",
+          "color": "black"
+         },
+         {
+          "uid": "4941902b-ee26-4e57-9d2a-7bb99cff543a",
+          "name": "fpcrA2 Network",
+          "type": "access-layer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "312f05f5-27bd-47a8-b782-3d7748fcc31d",
+          "name": "FPCR_UAT_Active",
+          "type": "SdwanPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "e0236779-8113-4c16-8531-909aa248ae5e",
+          "name": "Cleanup",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "9dec0b5a-b190-476c-a760-317f42b4f9a1",
+          "name": "fpcrA2",
+          "type": "NatPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Blades/NAT",
+          "color": "black"
+         },
+         {
+          "uid": "60897346-bfd6-4364-abc1-8d77d2f2513e",
+          "type": "ThreatExceptionSection",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "f458b2ab-ddb6-44c1-80d6-4b0da5392779",
+          "name": "fpcr_init_fpcrA1_1",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "f6b0b15e-3dcc-4a36-94c2-f1d43566ce35",
+          "name": "FPCR_UAT_Rules",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "dce06d8f-8032-4664-89ce-0758a01205bb",
+          "name": "FPCR_UAT_Section_2",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "70d7954f-090c-45ca-9a94-6b14d6f2b364",
+          "name": "FPCR_UAT_Active AppControl",
+          "type": "access-layer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "3ee89381-8eec-4c9e-88d9-56c8f5d58464",
+          "name": "fpcr_uat_appctl_FPCR_UAT_Active_cleanup",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "a6c809ca-243d-4e03-b2b6-bbe1faff0d68",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "ca3b58f0-7187-4024-82ee-8a5885da4c37",
+          "name": "fpcrA2",
+          "type": "package",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Blades/Access",
+          "color": "black"
+         },
+         {
+          "uid": "a63edcad-5e65-43b3-bb92-324af09d3289",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "46697b17-99d4-4c3b-93e5-fb1829c424f3",
+          "name": "fpcr_uat_FPCR_UAT_Decom_4",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "7e2686ce-7020-46e1-a2df-a165dc42e914",
+          "name": "fpcrA1 Threat Prevention",
+          "type": "threat-layer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "eb1670dc-c29e-4bd7-a0f3-96c3e51d41df",
+          "name": "sect_A1_1_2",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "2d710fda-96ee-4b6b-8001-4f064c3faa9b",
+          "name": "fpcrA2",
+          "type": "TLSInspectionPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "17b1a086-839b-488a-abc7-cc35eeabdafe",
+          "name": "hostA_1",
+          "type": "host",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "ipv4-address": "192.168.101.11",
+          "icon": "Objects/host",
+          "color": "black"
+         },
+         {
+          "uid": "fa06363c-5de8-4289-acc5-6c970c2dda37",
+          "name": "Manual Lower Rules",
+          "type": "nat-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "53e4a73e-eb87-4dd1-bcb9-3ca18df5d7c3",
+          "name": "Cleanup rule",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "7d9b520d-9f8d-4dfd-af1f-503a1aaea07b",
+          "name": "hostA_3",
+          "type": "host",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "ipv4-address": "192.168.101.13",
+          "icon": "Objects/host",
+          "color": "black"
+         },
+         {
+          "uid": "4a90436f-eca6-4478-a993-5e549156c160",
+          "name": "ThreatStandardSubRulebase",
+          "type": "ThreatExceptionRulebase",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "d61f0c08-a63d-4817-8fd0-027e863ed5e5",
+          "name": "fpcr_init_fpcrA2_1",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "a07828d4-a13a-483f-b973-ec9bd8dc7a1f",
+          "name": "Cleanup rule",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "1b2b24c0-9026-45ef-a289-0f9811e59f26",
+          "name": "Manual Lower Rules",
+          "type": "nat-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "a1b2249c-96a6-4c3c-aaed-72979d6f7f19",
+          "name": "fpcrA2",
+          "type": "AccessPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "95b311db-17f7-438c-9725-61fc70b44f2e",
+          "name": "Manual Lower Rules",
+          "type": "nat-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "0997d04f-ef8a-4474-b348-4044c50cbec8",
+          "name": "hostA_2",
+          "type": "host",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "ipv4-address": "192.168.101.12",
+          "icon": "Objects/host",
+          "color": "black"
+         },
+         {
+          "uid": "a1253085-0bb8-423a-8d8a-950fac8a3604",
+          "name": "sect_A1_1_1",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "f08d4a94-e7dc-4ede-b401-b34843b7ea4c",
+          "type": "ThreatExceptionSection",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "63d6ffce-bcd7-4559-b31a-b9191ca64119",
+          "name": "fpcr_uat_inline_FPCR_UAT_Active_cleanup",
+          "type": "access-rule",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Objects/accessRule",
+          "color": "black"
+         },
+         {
+          "uid": "3cc7a40b-745c-4ef0-88be-89f70efbbe83",
+          "name": "fpcrA1",
+          "type": "NatPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Blades/NAT",
+          "color": "black"
+         },
+         {
+          "uid": "27dc7a6c-6d63-48be-887d-e0a06fb43b19",
+          "name": "sect_A2_1_1",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "1dd9ebeb-41be-4136-93ae-d4b2275c4d21",
+          "type": "nat-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "41d1654f-38c1-47ac-b3e4-518ded9b1697",
+          "name": "FPCR_UAT_Active",
+          "type": "SimplifiedThreatPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "36b57eae-5498-45b8-b1ee-d67d1a1c69e0",
+          "name": "FPCR_UAT_Active",
+          "type": "ThreatPolicy",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "Rulebase/policies",
+          "color": "black"
+         },
+         {
+          "uid": "a19edfdb-5c0b-4728-9ab5-e4bc829fe48f",
+          "name": "fpcrA1 Network",
+          "type": "access-layer",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "ApplicationFirewall/rulebase",
+          "color": "black"
+         },
+         {
+          "uid": "4e8d1514-26c2-4422-9805-8a99d21052e6",
+          "type": "nat-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "b1864ad2-83a5-4789-a211-1aeb99e8ac40",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         },
+         {
+          "uid": "be3f18f7-180d-4ced-99ff-0983ed80a585",
+          "name": "sect_A1_1_4",
+          "type": "access-section",
+          "domain": {
+           "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+           "name": "Domain4",
+           "domain-type": "domain"
+          },
+          "icon": "General/globalsNa",
+          "color": "black"
+         }
+        ],
+        "modified-objects": [
+         {
+          "new-object": {
+           "uid": "9f0f0442-7d0b-4dcf-b7f8-b2d44d313fa5",
+           "name": "FPCR_UAT_Active_InlineJump",
+           "type": "access-rule",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "Objects/accessRule",
+           "color": "black"
+          }
+         },
+         {
+          "new-object": {
+           "uid": "e04ce699-2dd9-4b23-b470-04c48f245cd2",
+           "type": "threat-rule",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "Objects/threatRule",
+           "color": "black"
+          }
+         },
+         {
+          "new-object": {
+           "uid": "1438e9cd-7856-4dae-9890-5f88dbc61244",
+           "type": "threat-rule",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "Objects/threatRule",
+           "color": "black"
+          }
+         },
+         {
+          "new-object": {
+           "uid": "02319e5a-4f1c-4103-897d-8dce4220eaf0",
+           "type": "threat-rule",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "Objects/threatRule",
+           "color": "black"
+          }
+         },
+         {
+          "new-object": {
+           "uid": "109c9891-5d62-492f-8929-b2e7dbc11e96",
+           "type": "threat-rule",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "Objects/threatRule",
+           "color": "black"
+          }
+         }
+        ],
+        "deleted-objects": []
+       }
+      },
+      {
+       "session": {
+        "session-uid": "9d3fc19d-ce6a-4fdc-ab98-0576892615dc",
+        "session-name": "session-2",
+        "session-description": "",
+        "user-name": "api-user",
+        "published": true,
+        "publish-time": {
+         "posix": 1790610380814,
+         "iso-8601": "2026-09-28T18:46+0300"
+        },
+        "domain-info": {
+         "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+         "name": "Domain4",
+         "domain-type": "domain"
+        }
+       },
+       "operations": {
+        "added-objects": [],
+        "modified-objects": [
+         {
+          "new-object": {
+           "uid": "27dc7a6c-6d63-48be-887d-e0a06fb43b19",
+           "name": "sect_A2_1",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          },
+          "old-object": {
+           "uid": "27dc7a6c-6d63-48be-887d-e0a06fb43b19",
+           "name": "sect_A2_1_1",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          }
+         },
+         {
+          "new-object": {
+           "uid": "eb1670dc-c29e-4bd7-a0f3-96c3e51d41df",
+           "name": "sect_A1_2",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          },
+          "old-object": {
+           "uid": "eb1670dc-c29e-4bd7-a0f3-96c3e51d41df",
+           "name": "sect_A1_1_2",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          }
+         },
+         {
+          "new-object": {
+           "uid": "f6b0b15e-3dcc-4a36-94c2-f1d43566ce35",
+           "name": "FPCR_UAT_Section_1",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          },
+          "old-object": {
+           "uid": "f6b0b15e-3dcc-4a36-94c2-f1d43566ce35",
+           "name": "FPCR_UAT_Rules",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          }
+         },
+         {
+          "new-object": {
+           "uid": "ae1afa67-f77f-4448-81c9-43db820766f7",
+           "name": "sect_A2_4",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          },
+          "old-object": {
+           "uid": "ae1afa67-f77f-4448-81c9-43db820766f7",
+           "name": "sect_A2_1_4",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          }
+         },
+         {
+          "new-object": {
+           "uid": "c259fcf1-6490-4af9-91ac-750ba53f5cb6",
+           "name": "sect_A2_2",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          },
+          "old-object": {
+           "uid": "c259fcf1-6490-4af9-91ac-750ba53f5cb6",
+           "name": "sect_A2_1_2",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          }
+         },
+         {
+          "new-object": {
+           "uid": "be3f18f7-180d-4ced-99ff-0983ed80a585",
+           "name": "sect_A1_4",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          },
+          "old-object": {
+           "uid": "be3f18f7-180d-4ced-99ff-0983ed80a585",
+           "name": "sect_A1_1_4",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          }
+         },
+         {
+          "new-object": {
+           "uid": "b23f609d-a2ba-40e8-9028-e446684c058b",
+           "name": "sect_A1_3",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          },
+          "old-object": {
+           "uid": "b23f609d-a2ba-40e8-9028-e446684c058b",
+           "name": "sect_A1_1_3",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          }
+         },
+         {
+          "new-object": {
+           "uid": "2a7566bf-5337-425c-a574-71cc5a6281f6",
+           "name": "FPCR_UAT_Section_1",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          },
+          "old-object": {
+           "uid": "2a7566bf-5337-425c-a574-71cc5a6281f6",
+           "name": "FPCR_UAT_Rules",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          }
+         },
+         {
+          "new-object": {
+           "uid": "7ba5900f-18a9-4446-9bbf-060292a467d5",
+           "name": "sect_A2_3",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          },
+          "old-object": {
+           "uid": "7ba5900f-18a9-4446-9bbf-060292a467d5",
+           "name": "sect_A2_1_3",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          }
+         },
+         {
+          "new-object": {
+           "uid": "a1253085-0bb8-423a-8d8a-950fac8a3604",
+           "name": "sect_A1_1",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          },
+          "old-object": {
+           "uid": "a1253085-0bb8-423a-8d8a-950fac8a3604",
+           "name": "sect_A1_1_1",
+           "type": "access-section",
+           "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+           },
+           "icon": "General/globalsNa",
+           "color": "black"
+          }
+         }
+        ],
+        "deleted-objects": []
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

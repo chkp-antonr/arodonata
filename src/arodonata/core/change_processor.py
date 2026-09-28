@@ -24,6 +24,22 @@ class ObjectChange:
     raw_data: dict[str, Any]
 
 
+def unwrap_change_entry(obj: Any) -> Any:
+    """The object a show-changes operations entry describes.
+
+    Added and deleted entries are the object itself. Modified entries arrive
+    wrapped -- ``{"new-object": {...}}`` (seen on R82.20), with ``"old-object"``
+    as the fallback -- and carry no uid or type at the top level. Anything
+    else is returned unchanged so the caller's own checks still apply.
+    """
+    if isinstance(obj, dict) and not obj.get("uid"):
+        for key in ("new-object", "old-object"):
+            inner = obj.get(key)
+            if isinstance(inner, dict):
+                return inner
+    return obj
+
+
 class ChangeProcessor:
     """Process show-changes API responses.
 
@@ -94,7 +110,8 @@ class ChangeProcessor:
             objects = operations.get(key)
             if not isinstance(objects, list):
                 continue
-            for obj in objects:
+            for entry in objects:
+                obj = unwrap_change_entry(entry)
                 if not isinstance(obj, dict) or not obj.get("uid"):
                     continue
                 parsed.append(

@@ -14,7 +14,6 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import create_async_engine
 
 _project_root = Path(__file__).parent.parent.parent
@@ -23,6 +22,7 @@ sys.path.insert(0, str(_project_root))
 
 from arodonata import ArodonataClient, ArodonataSettings  # noqa: E402
 from tests.integration.cp_revision import restore_to_baseline  # noqa: E402
+from tests.integration.lab_env import load_lab_env  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -32,9 +32,7 @@ async def main() -> int:
     parser.add_argument("baseline", type=Path, help="baseline-<ts>.json to restore")
     args = parser.parse_args()
 
-    for f in [_project_root / ".env.test", _project_root / ".env.secrets"]:
-        if f.exists():
-            load_dotenv(f, override=True)
+    load_lab_env(_project_root)
 
     mgmt_ip = os.environ["API_MGMT"]
     api_key = os.environ["APIKEY"]

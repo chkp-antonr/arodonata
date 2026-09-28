@@ -26,6 +26,7 @@ from .constants import (
     DEFAULT_RATE_LIMIT_SLOT_TIMEOUT,
     DEFAULT_SESSION_EXPIRE,
     DEFAULT_SESSION_TIMEOUT,
+    DEFAULT_TASK_TIMEOUT,
     LOG_LEVELS,
     LOGIN_THROTTLE_WINDOW_SECONDS,
 )
@@ -132,6 +133,16 @@ class ArodonataSettings(BaseSettings):
         ge=1,
         description="API timeout in seconds",
         validation_alias="ARODONATA_API_TIMEOUT",
+    )
+    task_timeout: int = Field(
+        default=DEFAULT_TASK_TIMEOUT,
+        ge=1,
+        description=(
+            "Seconds to wait for a server-side task (publish, install-policy, "
+            "assign-global-assignment, revert-to-revision) after the call that started "
+            "it has returned. Separate from api_timeout on purpose: see DEFAULT_TASK_TIMEOUT"
+        ),
+        validation_alias="ARODONATA_TASK_TIMEOUT",
     )
     login_timeout: int = Field(
         default=DEFAULT_LOGIN_TIMEOUT,

@@ -45,12 +45,11 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dotenv import load_dotenv
-
 _ROOT = Path(__file__).parent.parent.parent
-for _f in [_ROOT / ".env.test", _ROOT / ".env.secrets"]:
-    if _f.exists():
-        load_dotenv(_f, override=True)
+sys.path.insert(0, str(_ROOT))
+from tests.integration.lab_env import load_lab_env  # noqa: E402 - needs the repo root on sys.path
+
+load_lab_env(_ROOT)  # same files and lab profile as the suite
 
 from cpapi import APIClient, APIClientArgs  # noqa: E402 - after dotenv, like conftest
 

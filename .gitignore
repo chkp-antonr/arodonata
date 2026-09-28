@@ -45,6 +45,7 @@ graphify-out/manifest.json
 graphify-out/
 
 .internal/
+.DS_Store
 
 # Local temp
 fingerprints.txt

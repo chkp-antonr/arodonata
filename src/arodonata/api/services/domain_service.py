@@ -234,9 +234,7 @@ class DomainService:
         # gated on `is_mdm is True` (positively known), never on a merely
         # unknown or non-MDM status, so a SmartCenter can never get one.
         if not global_seen and is_mdm is True:
-            global_layout = (
-                await self._fetch_global_domain_mdss(mgmt_name) if response.success else GlobalDomainMdss()
-            )
+            global_layout = await self._fetch_global_domain_mdss(mgmt_name) if response.success else GlobalDomainMdss()
             active_mds_ip = mds_ips.get(global_layout.active_mds, "")
             default_ip = server.server_ip if server else ""
             active_ip = active_mds_ip or default_ip
