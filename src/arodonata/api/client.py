@@ -20,6 +20,7 @@ from ..cache import CacheRepository, DatabaseManager
 from ..config import ArodonataSettings
 from ..core.exceptions import MissingConfigurationError
 from ..logger import lazy_logger
+from ..utils.background_tasks import DEFAULT_CLOSE_GRACE_SECONDS, drain_background_tasks
 from .schemas import ApiCallResult, ApiQueryResult, SSEEvent, SSEEventType
 
 if TYPE_CHECKING:
@@ -129,6 +130,7 @@ class ArodonataClient:
 
         self._closed = False
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._close_grace_seconds = DEFAULT_CLOSE_GRACE_SECONDS
         self._search_service_instance: SearchService | None = None
         log().trace(f"ArodonataClient initialized (auth_mode={settings.auth_mode})")
 
@@ -371,11 +373,8 @@ class ArodonataClient:
         """
         if not self._closed:
             self._closed = True
-            if self._background_tasks:
-                pending = list(self._background_tasks)
-                for t in pending:
-                    t.cancel()
-                await asyncio.gather(*pending, return_exceptions=True)
+            # Let background work (startup cleanup) finish rather than cancel it mid-query.
+            await drain_background_tasks(set(self._background_tasks), self._close_grace_seconds)
             await self._mgmt.close()
             if self._owns_engine and self._db.engine:
                 await self._db.engine.dispose()
@@ -522,6 +521,9 @@ class ArodonataClient:
             payload=payload,
             wait_for_task=wait_for_task,
             timeout=timeout if timeout > 0 else self._settings.api_timeout,
+            # A caller that named its own timeout means it as the total budget;
+            # only the default path gets the separate, larger task allowance.
+            task_timeout=-1 if timeout > 0 else self._settings.task_timeout,
             cache_mode=cache_mode,
             session_name=session_name,
             session_description=session_description,
@@ -589,6 +591,9 @@ class ArodonataClient:
             payload=payload,
             wait_for_task=wait_for_task,
             timeout=timeout if timeout > 0 else self._settings.api_timeout,
+            # A caller that named its own timeout means it as the total budget;
+            # only the default path gets the separate, larger task allowance.
+            task_timeout=-1 if timeout > 0 else self._settings.task_timeout,
         )
 
         return ApiCallResult(

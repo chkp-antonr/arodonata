@@ -34,7 +34,14 @@ set -uo pipefail
 
 INT_ROOT=tests/integration
 BUCKETS=(1 2 3 4 5 6)
-INT_OPTS=(--override-ini=addopts= --no-cov -ra --durations=15)
+# Live logging (log_cli) at INFO: a session can spend many minutes in fixture
+# setup (readiness gate, baseline snapshot across every domain's login) while
+# pytest itself prints nothing. Streaming the log shows where it is. Quieter:
+# append --log-cli-level=WARNING; the later flag wins.
+# --tb=short: the long format prints every frame's arguments, which put a live
+# API key on screen on 2026-09-28. It also turns a failed session fixture's
+# repeated traceback from pages into lines. Pass --tb=long to override.
+INT_OPTS=(--override-ini=addopts= --no-cov -ra --durations=15 --tb=short -o log_cli=true --log-cli-level=INFO)
 
 # Gap between buckets in int-full. Every bucket opens with a burst of logins --
 # the baseline snapshot alone logs in to each domain -- and Check Point allows 3
@@ -42,6 +49,9 @@ INT_OPTS=(--override-ini=addopts= --no-cov -ra --durations=15)
 # rejected attempt. Starting the next bucket immediately walks into a window the
 # previous one just armed; this waits it out with margin (the window is ~70s,
 # see LOGIN_THROTTLE_WINDOW_SECONDS). Costs ~7 minutes across a ~2 hour run.
+
+# BUCKET_PAUSE_SECONDS=30 script -q _tmp/int-full-$(date +%Y%m%d-%H%M).log ./pytest.sh int-full
+
 BUCKET_PAUSE_SECONDS="${BUCKET_PAUSE_SECONDS:-90}"
 
 run_bucket() {  # $1 = bucket number; remaining args passed through to pytest

@@ -495,7 +495,6 @@ async def test_mdm_domains_resolves_global_active_mds_ip():
     assert record.standby_mdss == "mds1"
 
 
-
 @pytest.mark.asyncio
 async def test_mdm_domains_does_not_write_global_when_mdm_status_unknown():
     """Minor fix: a positively-unknown MDM status (is_mdm=None, e.g. an

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from ..config import FAILOVER_ERROR_CODES, SESSION_ERROR_CODES
 from ..logger import lazy_logger
+from ..utils.background_tasks import DEFAULT_CLOSE_GRACE_SECONDS, drain_background_tasks
 from .transport import RawApiResponse
 
 if TYPE_CHECKING:
@@ -53,6 +54,7 @@ class AMgmtClient:
         self._login_coordinator = login_coordinator
         self._closed = False
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._close_grace_seconds = DEFAULT_CLOSE_GRACE_SECONDS
         log().trace("AMgmtClient initialized")
 
     async def __aenter__(self) -> AMgmtClient:
@@ -67,11 +69,8 @@ class AMgmtClient:
         """Close client and clean up resources."""
         if not self._closed:
             self._closed = True
-            if self._background_tasks:
-                pending = list(self._background_tasks)
-                for t in pending:
-                    t.cancel()
-                await asyncio.gather(*pending, return_exceptions=True)
+            # Let a keepalive sweep finish rather than cancel it mid-query (see drain_background_tasks).
+            await drain_background_tasks(set(self._background_tasks), self._close_grace_seconds)
             await self._login_coordinator.close()
             log().debug("AMgmtClient closed")
 
@@ -219,6 +218,7 @@ class AMgmtClient:
         payload: dict[str, Any] | None = None,
         wait_for_task: bool = True,
         timeout: int = -1,
+        task_timeout: int = -1,
         cache_mode: str = "auto",
         session_name: str | None = None,
         session_description: str | None = None,
@@ -252,6 +252,7 @@ class AMgmtClient:
                 payload=payload,
                 wait_for_task=wait_for_task,
                 timeout=timeout,
+                task_timeout=task_timeout,
                 port=port,
             )
 
@@ -273,6 +274,7 @@ class AMgmtClient:
         payload: dict[str, Any] | None = None,
         wait_for_task: bool = True,
         timeout: int = -1,
+        task_timeout: int = -1,
     ) -> RawApiResponse:
         """Execute API call with an explicit SID (no auto-session management).
 
@@ -309,6 +311,7 @@ class AMgmtClient:
                 payload=payload,
                 wait_for_task=wait_for_task,
                 timeout=timeout,
+                task_timeout=task_timeout,
                 port=port,
             )
 

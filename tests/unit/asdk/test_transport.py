@@ -817,3 +817,162 @@ async def test_discard_session_exception_propagates():
     p1, p2, p3 = _patch_sdk(mock_client)
     with p1, p2, p3, pytest.raises(RuntimeError, match="discard failed"):
         await transport.discard_session("10.0.0.1", "test-sid", "uid-1")
+
+
+class TestTaskBudgetIsSeparateFromTheCallBudget:
+    """A server-side task must not be bounded by the HTTP call's allowance.
+
+    `publish`, `install-policy`, `assign-global-assignment` and
+    `revert-to-revision` hand back a task id in seconds and then run for
+    minutes. Charging both to one `timeout` means the poller inherits whatever
+    is left of a budget sized for a round trip.
+
+    The resulting failure is the dangerous kind rather than the loud kind: the
+    client raises while the server finishes the work anyway, so the caller
+    concludes nothing happened when everything did. Seen on mdsNP2 2026-09-22,
+    where a deployment had lowered ARODONATA_API_TIMEOUT to 30 and a publish
+    timed out at 0% after 29 s, then completed moments later.
+    """
+
+    @staticmethod
+    def _transport_with_recorded_wait(recorded: dict[str, float]):
+        from arodonata.asdk.transport import ApiTransport
+
+        class _Waiter:
+            async def wait(self, show_task, task_ids, timeout, context=""):  # noqa: ANN001
+                recorded["timeout"] = timeout
+                return []
+
+        return ApiTransport(task_waiter=_Waiter())
+
+    async def test_an_explicit_task_timeout_replaces_the_leftover_of_the_call_budget(self):
+        recorded: dict[str, float] = {}
+        transport = self._transport_with_recorded_wait(recorded)
+
+        await transport._await_tasks(
+            {"success": True, "data": {"task-id": "t1"}},
+            server_ip="10.0.0.1",
+            sid="sid",
+            port=None,
+            command="publish",
+            timeout=30,
+            elapsed=29.0,  # a round trip that nearly exhausted the call budget
+            task_timeout=900,
+        )
+
+        assert recorded["timeout"] == 900.0, "the task must get its own allowance, not the 1 s left over from the call"
+
+    async def test_without_a_task_timeout_the_old_total_budget_arithmetic_stands(self):
+        """A caller that names only `timeout` asked for a total budget and still gets one.
+
+        This is what `revert_domain_to`'s 900 s has always meant, and changing it
+        would silently multiply that caller's worst case.
+        """
+        recorded: dict[str, float] = {}
+        transport = self._transport_with_recorded_wait(recorded)
+
+        await transport._await_tasks(
+            {"success": True, "data": {"task-id": "t1"}},
+            server_ip="10.0.0.1",
+            sid="sid",
+            port=None,
+            command="publish",
+            timeout=100,
+            elapsed=40.0,
+        )
+
+        assert recorded["timeout"] == 60.0
+
+    async def test_no_budget_at_all_still_means_unbounded(self):
+        recorded: dict[str, float] = {}
+        transport = self._transport_with_recorded_wait(recorded)
+
+        await transport._await_tasks(
+            {"success": True, "data": {"task-id": "t1"}},
+            server_ip="10.0.0.1",
+            sid="sid",
+            port=None,
+            command="publish",
+            timeout=-1,
+            elapsed=5.0,
+        )
+
+        assert recorded["timeout"] == -1.0
+
+
+# --------------------------------------------------------------------------
+# API key stays a SecretStr until the cpapi call
+# --------------------------------------------------------------------------
+#
+# pytest's long traceback prints every frame's arguments, so a key passed as a
+# plain str anywhere on the login path is printed in full whenever a login
+# fails (it was, in a 2026-09-28 int-1 run). The transport is where it is
+# finally unwrapped, inline in the cpapi call, so no frame of ours holds it.
+
+_SECRET_KEY = "Zq9-very-secret-api-key-value"
+
+
+async def test_login_with_apikey_accepts_secretstr_and_sends_the_plain_value():
+    from pydantic import SecretStr
+
+    transport = ApiTransport()
+    mock_client = MagicMock()
+    mock_client.login_with_api_key.return_value = _make_response(success=True, data={"sid": "s"})
+
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with p1, p2, p3:
+        await transport.login_with_apikey("10.0.0.1", SecretStr(_SECRET_KEY))
+
+    assert mock_client.login_with_api_key.call_args.args[0] == _SECRET_KEY
+
+
+@pytest.mark.parametrize(
+    ("method_name", "sdk_attr", "args"),
+    [
+        ("login_with_apikey", "login_with_api_key", ("10.0.0.1",)),
+        ("login_with_credentials", "login", ("10.0.0.1", "svc")),
+    ],
+)
+async def test_failed_login_traceback_does_not_contain_the_secret(method_name, sdk_attr, args):
+    """Render every frame's locals, as pytest's long traceback does, and look for the secret.
+
+    The mocked cpapi method's own frames are excluded: cpapi receives the plain
+    value by necessity and is not ours to scrub. Every other frame -- ours and
+    asyncio's -- must hold only the SecretStr.
+    """
+    import traceback
+
+    from pydantic import SecretStr
+
+    transport = ApiTransport()
+    mock_client = MagicMock()
+    getattr(mock_client, sdk_attr).side_effect = RuntimeError("boom")
+
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with p1, p2, p3, pytest.raises(RuntimeError) as excinfo:
+        await getattr(transport, method_name)(*args, SecretStr(_SECRET_KEY))
+
+    stack = traceback.TracebackException.from_exception(excinfo.value, capture_locals=True).stack
+    leaking = [
+        f"{frame.filename}:{frame.lineno} {frame.name}"
+        for frame in stack
+        if "unittest/mock" not in frame.filename
+        and any(_SECRET_KEY in value for value in (frame.locals or {}).values())
+    ]
+    assert leaking == []
+
+
+async def test_apikey_login_log_lines_show_at_most_the_last_four_characters(caplog):
+    from pydantic import SecretStr
+
+    transport = ApiTransport()
+    mock_client = MagicMock()
+    mock_client.login_with_api_key.return_value = _make_response(success=True, data={"sid": "s"})
+
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with p1, p2, p3, caplog.at_level(1):
+        await transport.login_with_apikey("10.0.0.1", SecretStr(_SECRET_KEY))
+
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert _SECRET_KEY[:4] not in text
+    assert _SECRET_KEY not in text

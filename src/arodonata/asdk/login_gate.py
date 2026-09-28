@@ -54,14 +54,77 @@ class LoginGateDeadlineError(ThrottlingError):
     Internal: it never leaves LoginCoordinator unwrapped.
     """
 
-    def __init__(self, mds_host: str, waited: float, max_wait: int) -> None:
+    def __init__(
+        self,
+        mds_host: str,
+        waited: float,
+        max_wait: int,
+        *,
+        throttles: int | None = None,
+        failures: int = 0,
+        timeouts: int = 0,
+        last_error: BaseException | None = None,
+    ) -> None:
+        """
+        Args:
+            mds_host: The machine the login counts against.
+            waited: Seconds spent before giving up.
+            max_wait: The configured budget (login_max_wait).
+            throttles: Throttle refusals this login received, or None when the
+                raiser cannot know (the gate itself). The retry loop re-raises
+                with the tally via `with_attempts`, because the deadline passes
+                the same way whether the attempts were refused for rate or timed
+                out, and only the tally says which.
+            failures: Non-throttle failed attempts (timeouts included).
+            timeouts: How many of `failures` were timeouts.
+            last_error: The last attempt's exception, if any.
+        """
         self.mds_host = mds_host
         self.waited = waited
         self.max_wait = max_wait
-        super().__init__(
-            f"login throttled by {mds_host} for {waited:.0f}s (login_max_wait={max_wait}s): "
-            "Check Point's per-minute login allowance is below the login demand"
+        self.throttles = throttles
+        self.failures = failures
+        self.timeouts = timeouts
+        self.last_error = last_error
+        super().__init__(self._describe())
+
+    def with_attempts(
+        self, *, throttles: int, failures: int, timeouts: int, last_error: BaseException | None
+    ) -> LoginGateDeadlineError:
+        """The same deadline, with what this login's attempts actually ran into."""
+        return LoginGateDeadlineError(
+            self.mds_host,
+            self.waited,
+            self.max_wait,
+            throttles=throttles,
+            failures=failures,
+            timeouts=timeouts,
+            last_error=last_error,
         )
+
+    def _describe(self) -> str:
+        budget = f"{self.waited:.0f}s (login_max_wait={self.max_wait}s)"
+        allowance = "Check Point's per-minute login allowance is below the login demand"
+        if self.throttles is None:
+            return f"login throttled by {self.mds_host} for {budget}: {allowance}"
+
+        last = ""
+        if self.last_error is not None:
+            text = str(self.last_error)
+            name = type(self.last_error).__name__
+            last = f"; last error: {name}: {text}" if text else f"; last error: {name}"
+        failed = f"{self.failures} attempts failed ({self.timeouts} timed out)"
+
+        if self.throttles == 0 and self.failures == 0:
+            return (
+                f"login to {self.mds_host} waited {budget} at a login gate kept closed by other "
+                f"logins' throttle refusals; no attempt of its own was made"
+            )
+        if self.throttles == 0:
+            return f"login to {self.mds_host} gave up after {budget}, no throttle refusals: {failed}{last}"
+        if self.failures == 0:
+            return f"login throttled by {self.mds_host} for {budget}: {self.throttles} throttle refusals; {allowance}"
+        return f"login to {self.mds_host} gave up after {budget}: {self.throttles} throttle refusals and {failed}{last}"
 
 
 class LoginGate:

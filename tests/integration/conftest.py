@@ -1,7 +1,8 @@
 """Shared fixtures for real-server integration tests (FPCR lab).
 
 Loads .env.test then .env.secrets from the repo root (symlinks into
-.internal/). Missing variables skip the affected tests, so machines
+.internal/), then .env.lab.<ARODONATA_LAB> when a lab profile is selected
+(see lab_env.py). Missing variables skip the affected tests, so machines
 without lab access still run the unit suite cleanly.
 
 Bucket markers (integration + bucket_1..bucket_6) are applied automatically
@@ -17,6 +18,13 @@ Required environment variables:
     USER_admin, USER_AntonR, USER_Eng1..USER_Eng4 - credential passwords
 Optional:
     TEST_DOMAIN_A / TEST_DOMAIN_B - MDM sandbox domains for mutating tests
+    ARODONATA_TEST_DOMAINS - comma-separated domains the "every domain" tests
+        iterate (all_domains); unset = every domain on the server. The baseline
+        snapshot/revert covers only TEST_DOMAIN_A/B regardless
+    ARODONATA_TEST_SETTLE_SECONDS - pause before each test and before the
+        baseline snapshot; default 3, 0 disables
+    ARODONATA_TEST_READY_WAIT - seconds to wait for the lab API to answer before
+        the session starts (see the lab_ready fixture); default 180, 0 = one probe
     ARODONATA_TEST_TRACE - set to export OTel spans to _tmp/otel_traces/ for
         one run (see the integration_tracing fixture); off by default
 """
@@ -30,7 +38,6 @@ import re
 from pathlib import Path
 
 import pytest
-from dotenv import load_dotenv
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -41,6 +48,8 @@ from .cp_revision import (
     snapshot_baseline,
     write_baseline_file,
 )
+from .lab_env import is_test_domain, load_lab_env
+from .lab_ready import DEFAULT_READY_WAIT_SECONDS, LabNotReady, api_versions_probe, wait_until_ready
 from .run_lock import DEFAULT_LOCK_PATH, IntegrationRunLock, IntegrationRunLocked
 
 log = logging.getLogger(__name__)
@@ -49,10 +58,8 @@ log = logging.getLogger(__name__)
 # Environment
 # ---------------------------------------------------------------------------
 
-_project_root = Path(__file__).parent.parent.parent
-for _f in [_project_root / ".env.test", _project_root / ".env.secrets"]:
-    if _f.exists():
-        load_dotenv(_f, override=True)
+# .env.test, .env.secrets, then .env.lab.<ARODONATA_LAB> if a lab profile is selected.
+LAB_PROFILE = load_lab_env()
 
 
 def _require_env(name: str) -> str:
@@ -164,12 +171,50 @@ def integration_run_lock(integration_tracing):
 
 
 # ---------------------------------------------------------------------------
+# Lab readiness gate
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session", autouse=True)
+async def lab_ready(integration_run_lock) -> float | None:
+    """Refuse to start until the lab API answers; report how long it took to wake.
+
+    The lab server idles between runs and can take a minute or two to answer
+    its first request. Without this gate that shows up as every test in the
+    bucket failing the same way. The gate polls `show-api-versions` without a
+    session -- the lab refuses it, but the refusal comes from the API server
+    and proves it is up; no login, so the per-user login allowance stays
+    intact for the baseline snapshot -- for up to ARODONATA_TEST_READY_WAIT
+    seconds (default
+    DEFAULT_READY_WAIT_SECONDS, 0 = a single probe) and aborts the session
+    if the server never answers. `db_engine` depends on this so nothing
+    touches the cache DB or the lab before the server is known to be up.
+
+    Yields the seconds the server took to answer (0.0 when it answered at
+    once), or None when no lab is configured.
+    """
+    mgmt_ip = os.getenv("API_MGMT")
+    if not mgmt_ip:
+        return None
+
+    log.warning("Integration lab: %s (API_MGMT=%s)", LAB_PROFILE or "default (.env.test)", mgmt_ip)
+    budget = float(os.getenv("ARODONATA_TEST_READY_WAIT", str(DEFAULT_READY_WAIT_SECONDS)))
+    try:
+        waited = await wait_until_ready(probe=api_versions_probe(mgmt_ip), budget=budget)
+    except LabNotReady as exc:
+        pytest.exit(f"Lab server {mgmt_ip} is not answering: {exc}", returncode=4)
+    if waited >= 1:  # a first-probe answer still measures a few microseconds
+        log.warning("Lab server %s took %.0f s to answer; expect a slow setup", mgmt_ip, waited)
+    return waited
+
+
+# ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="session")
-async def db_engine(integration_run_lock) -> AsyncEngine:
+async def db_engine(integration_run_lock, lab_ready) -> AsyncEngine:
     """Session-scoped SQLite WAL engine; deletes the DB file on teardown."""
     db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///_tmp/test_cache.db")
 
@@ -279,7 +324,11 @@ def _extract_active_ip(domain_obj: dict) -> str:
 
 @pytest.fixture(scope="session")
 async def all_domains(db_engine: AsyncEngine) -> list[dict]:
-    """Session-scoped [{name, active_ip}] for all MDM domains; skips on SMS."""
+    """Session-scoped [{name, active_ip}] for the MDM's domains; skips on SMS.
+
+    Limited to ARODONATA_TEST_DOMAINS when set, so "every domain" tests stay in
+    the suite's own domains on an MDS shared with other projects.
+    """
     mgmt_ip = os.getenv("API_MGMT")
     api_key = os.getenv("APIKEY")
     if not mgmt_ip or not api_key:
@@ -296,7 +345,7 @@ async def all_domains(db_engine: AsyncEngine) -> list[dict]:
     domains = [
         {"name": d["name"], "active_ip": _extract_active_ip(d)}
         for d in objects
-        if isinstance(d, dict) and d.get("name") and _extract_active_ip(d)
+        if isinstance(d, dict) and d.get("name") and _extract_active_ip(d) and is_test_domain(d["name"])
     ]
     if not domains:
         pytest.skip("Server has no domains with active IPs — MDM tests not applicable")
@@ -318,26 +367,34 @@ def _track_cp_mutations(request: pytest.FixtureRequest):
     yield
 
 
+# Pause before each test and before the baseline snapshot. 15 s was sized for the
+# shared lab, whose CPM stalled logins for minutes at a time; on a healthy MDS the client's login gate already paces logins, and
+# the full suite spent ~20 of its ~49 minutes in these pauses. Override with
+# ARODONATA_TEST_SETTLE_SECONDS (0 disables them).
+SETTLE_SECONDS = float(os.getenv("ARODONATA_TEST_SETTLE_SECONDS", "3"))
+
+
 @pytest.fixture(autouse=True)
 async def _settle_checkpoint_before_test():
     """Allow Check Point management server (CPM) to settle before each test.
 
     Integration tests perform heavy operations on the live lab (logins,
-    reverts, publishes, Solr index flushes). A 15s settling pause before each
+    reverts, publishes, Solr index flushes). A short settling pause (SETTLE_SECONDS) before each
     test prevents CPM lockouts, concurrent revert rejections, and stale diffs.
     """
     if os.getenv("API_MGMT"):
-        await asyncio.sleep(15)
+        await asyncio.sleep(SETTLE_SECONDS)
     yield
 
 
 @pytest.fixture(scope="session", autouse=True)
 async def cp_baseline_snapshot(db_engine: AsyncEngine, integration_run_lock):
-    """Snapshot last published revisions before any test; revert after mutations.
+    """Snapshot TEST_DOMAIN_A/B's last published revisions before any test; revert them after mutations.
 
     Writes _tmp/cp_baseline/baseline-<UTC>.json (never auto-deleted — it is
     the manual-recovery handle). A snapshot failure aborts the whole
-    integration session: no safety net, no run. At teardown, if any
+    integration session via pytest.exit (return code 5): no safety net, no
+    run, and one message instead of one error per test. At teardown, if any
     cp_mutates test ran, every domain whose last published revision drifted
     from the baseline is reverted to it.
     """
@@ -348,12 +405,30 @@ async def cp_baseline_snapshot(db_engine: AsyncEngine, integration_run_lock):
         yield None
         return
 
+    # Only the domains the cp_mutates tests write to (see snapshot_baseline).
+    mutated_domains = [d for d in (os.getenv("TEST_DOMAIN_A"), os.getenv("TEST_DOMAIN_B")) if d]
+    if not mutated_domains:
+        # Every cp_mutates test needs TEST_DOMAIN_A, so none can run: nothing to protect.
+        log.warning("TEST_DOMAIN_A/B not set: mutating tests will skip, no baseline snapshot taken")
+        yield None
+        return
+
     settings = _make_apikey_settings(mgmt_ip, api_key)
     async with ArodonataClient(engine=db_engine, settings=settings) as client:
         _disable_startup_cleanup(client)
-        log.info("Allowing 15s for Check Point login rate limiter to settle before baseline snapshot...")
-        await asyncio.sleep(15)
-        baseline = await snapshot_baseline(client, mgmt_ip)  # raises on failure
+        log.info(
+            "Allowing %gs for Check Point login rate limiter to settle before baseline snapshot...", SETTLE_SECONDS
+        )
+        await asyncio.sleep(SETTLE_SECONDS)
+        try:
+            baseline = await snapshot_baseline(client, mgmt_ip, mutated_domains)
+        except Exception as exc:
+            # A session fixture's error is cached and re-raised at every test's
+            # setup: without this the run goes on to print the same traceback
+            # once per test. No baseline means no safety net, so there is
+            # nothing useful left to run; stop here with one message.
+            log.exception("Baseline snapshot failed; aborting the integration session")
+            pytest.exit(f"Baseline snapshot of {mgmt_ip} failed, no tests were run: {exc}", returncode=5)
 
     path = write_baseline_file(baseline)
     log.warning("CP baseline snapshot written: %s", path)

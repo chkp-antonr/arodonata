@@ -238,3 +238,39 @@ def test_parse_legacy_flat_shape_still_supported():
     assert len(changes) == 1
     assert changes[0].uid == "u-legacy"
     assert changes[0].change_type == ChangeType.ADD
+
+
+def test_modified_entries_wrapped_in_new_object_are_parsed():
+    """R82.20 wraps each modified object: {"new-object": {...}}; the type and uid live inside."""
+    from arodonata.core.change_processor import ChangeProcessor, ChangeType
+
+    response = {
+        "data": {
+            "tasks": [
+                {
+                    "task-details": [
+                        {
+                            "changes": [
+                                {
+                                    "operations": {
+                                        "modified-objects": [
+                                            {"new-object": {"uid": "u1", "type": "host", "name": "h1"}},
+                                            {"old-object": {"uid": "u2", "type": "network", "name": "n1"}},
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    parsed = ChangeProcessor().parse_changes(response)
+
+    assert [(c.uid, c.object_type, c.change_type) for c in parsed] == [
+        ("u1", "host", ChangeType.UPDATE),
+        ("u2", "network", ChangeType.UPDATE),
+    ]
+    assert parsed[0].raw_data == {"uid": "u1", "type": "host", "name": "h1"}

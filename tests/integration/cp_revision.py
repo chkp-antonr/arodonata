@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -47,24 +49,52 @@ async def last_published_session(client: Any, mgmt_name: str, domain: str = "") 
     }
 
 
-async def discover_domain_names(client: Any, mgmt_name: str) -> list[str]:
-    """Domain names on an MDM server; [] on an SMS."""
-    result = await client.api_call(mgmt_name, "show-domains", payload={"details-level": "standard", "limit": 200})
-    if not result.success or not result.data:
-        return []
-    return [o["name"] for o in result.data.get("objects", []) if isinstance(o, dict) and o.get("name")]
+def _label(domain: str) -> str:
+    """Human name for a domain key: the MDS level is stored as "" (older baseline files have it)."""
+    return domain or "global"
 
 
-async def snapshot_baseline(client: Any, mgmt_name: str) -> dict[str, dict]:
-    """Capture {domain: last_published_session} for global + every domain.
+async def snapshot_baseline(
+    client: Any,
+    mgmt_name: str,
+    domains: list[str],
+    *,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> dict[str, dict]:
+    """Capture {domain: last_published_session} for exactly `domains`.
 
-    Raises on any failure — the test session must abort rather than run
+    `domains` is the set the mutating tests write to -- TEST_DOMAIN_A and
+    TEST_DOMAIN_B. Nothing is discovered and the MDS level is never captured:
+    the teardown revert walks this snapshot, so anything captured here is
+    something a revert could undo, including changes the suite did not make
+    (another project's domain, a standby server added mid-run). Blanks and
+    duplicates are dropped, so an unset or repeated B costs nothing.
+
+    Raises on any failure -- the test session must abort rather than run
     without a safety net.
+
+    Each domain is one login, which may wait out Check Point's login throttle,
+    so every domain logs its position and elapsed seconds (read it live with
+    ``-o log_cli=true``): a 2026-09-27 run once spent 26 minutes here silently.
     """
-    baseline: dict[str, dict] = {"": await last_published_session(client, mgmt_name, "")}
-    for domain in await discover_domain_names(client, mgmt_name):
-        await asyncio.sleep(2)  # Pace domain logins to respect Check Point MDS rate limits
+    wanted = list(dict.fromkeys(d for d in domains if d))
+    started = time.monotonic()
+    log.info("baseline snapshot: %d domains on %s (%d logins ahead)", len(wanted), mgmt_name, len(wanted))
+    baseline: dict[str, dict] = {}
+    for position, domain in enumerate(wanted, start=1):
+        if position > 1:
+            await sleep(2)  # Pace domain logins to respect Check Point MDS rate limits
+        step_started = time.monotonic()
         baseline[domain] = await last_published_session(client, mgmt_name, domain)
+        log.info(
+            "[%s] baseline captured (%d/%d, took %.1f s): %r",
+            domain,
+            position,
+            len(wanted),
+            time.monotonic() - step_started,
+            baseline[domain]["name"],
+        )
+    log.info("baseline snapshot complete: %d domains in %.1f s", len(wanted), time.monotonic() - started)
     return baseline
 
 
@@ -190,13 +220,24 @@ async def restore_to_baseline(client: Any, mgmt_name: str, baseline: dict[str, d
     first revert failure.
     """
     reverted: list[str] = []
-    for domain, rev in baseline.items():
+    total = len(baseline)
+    for position, (domain, rev) in enumerate(baseline.items(), start=1):
         target_uid = rev.get("uid", "")
         if not target_uid:
+            log.info("[%s] (%d/%d) no baseline revision, nothing to restore", _label(domain), position, total)
             continue
         current = await last_published_session(client, mgmt_name, domain)
         if current["uid"] == target_uid:
+            log.info("[%s] (%d/%d) at baseline, no revert needed", _label(domain), position, total)
             continue
+        log.warning(
+            "[%s] (%d/%d) drifted from baseline (%r -> %r), reverting...",
+            _label(domain),
+            position,
+            total,
+            rev.get("name"),
+            current["name"],
+        )
 
         if await revert_domain_to(client, mgmt_name, domain, target_uid, context="baseline restore"):
             log.warning("[%s] reverted to baseline %r (uid=%.8s)", domain, rev.get("name"), target_uid)

@@ -26,6 +26,7 @@ from tests.integration.cp_revision import (
     REVERT_TIMEOUT_SECONDS,
     restore_to_baseline,
     revert_domain_to,
+    snapshot_baseline,
 )
 
 
@@ -50,6 +51,8 @@ class _FakeClient:
             return _Result(data={"uid": "current-uid", "name": "drifted", "publish-time": ""})
         if command == "show-sessions":
             return _Result(data={"objects": []})
+        if command == "show-domains":
+            return _Result(data={"objects": [{"name": "dom-a"}, {"name": "dom-b"}]})
         if command == "revert-to-revision":
             return self.revert_result
         return _Result()
@@ -154,3 +157,72 @@ def test_integration_tests_never_call_revert_directly():
         "call cp_revision.revert_domain_to() instead of api_call('revert-to-revision', ...) "
         f"— it carries the {REVERT_TIMEOUT_SECONDS}s timeout. Offenders: {offenders}"
     )
+
+
+# ---------------------------------------------------------------------------
+# snapshot_baseline: exactly the domains the mutating tests write to
+# ---------------------------------------------------------------------------
+#
+# Only TEST_DOMAIN_A and TEST_DOMAIN_B are ever mutated, and the teardown
+# revert walks the snapshot. Capturing anything else -- every domain on the
+# server, or the MDS level -- would let a revert undo changes the suite did not
+# make (another project's publish, a standby server the user added mid-run).
+# Each domain still gets a progress line: a login can wait out the throttle.
+
+
+async def _no_sleep(_seconds: float) -> None:
+    return None
+
+
+async def test_snapshot_captures_exactly_the_given_domains():
+    client = _FakeClient()
+
+    baseline = await snapshot_baseline(client, "mgmt", ["dom-a", "dom-b"], sleep=_no_sleep)
+
+    assert set(baseline) == {"dom-a", "dom-b"}
+    assert "show-domains" not in client.commands  # nothing is discovered: the list is the scope
+
+
+async def test_snapshot_never_captures_the_mds_level():
+    """ "" is the MDS level; reverting it would undo MDS-wide changes (domains, servers, admins)."""
+    baseline = await snapshot_baseline(_FakeClient(), "mgmt", ["dom-a"], sleep=_no_sleep)
+
+    assert "" not in baseline
+
+
+async def test_snapshot_ignores_duplicates_and_blanks():
+    """TEST_DOMAIN_A == TEST_DOMAIN_B, or an unset B, must not log in twice or capture ""."""
+    client = _FakeClient()
+
+    baseline = await snapshot_baseline(client, "mgmt", ["dom-a", "", "dom-a"], sleep=_no_sleep)
+
+    assert list(baseline) == ["dom-a"]
+    assert client.commands.count("show-last-published-session") == 1
+
+
+async def test_snapshot_logs_count_then_a_line_per_domain_then_the_total(caplog):
+    caplog.set_level("INFO", logger="tests.integration.cp_revision")
+
+    await snapshot_baseline(_FakeClient(), "mgmt", ["dom-a", "dom-b"], sleep=_no_sleep)
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert re.search(r"2 domains.*2 logins", messages[0]), messages
+    assert any(re.search(r"dom-a.*1/2.*took \d+\.\d s", m) for m in messages), messages
+    assert any(re.search(r"dom-b.*2/2.*took \d+\.\d s", m) for m in messages), messages
+    assert re.search(r"snapshot complete.*\d+\.\d s", messages[-1]), messages
+
+
+async def test_restore_to_baseline_logs_a_verdict_for_every_checked_domain(caplog):
+    """Drifted or not, each domain gets one line: silence is what made restores look hung."""
+    caplog.set_level("INFO", logger="tests.integration.cp_revision")
+    client = _FakeClient()  # answers every show-last-published-session with "current-uid"
+    baseline = {
+        "": {"uid": "baseline-uid", "name": "baseline", "publish_time": ""},  # drifted -> revert
+        "dom-a": {"uid": "current-uid", "name": "same", "publish_time": ""},  # at baseline
+    }
+
+    await restore_to_baseline(client, "mgmt", baseline)
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(re.search(r"global.*1/2.*drifted", m) for m in messages), messages
+    assert any(re.search(r"dom-a.*2/2.*at baseline", m) for m in messages), messages

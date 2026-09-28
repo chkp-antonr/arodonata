@@ -70,6 +70,7 @@ async def test_close_cancels_pending_background_tasks():
 
     task = asyncio.create_task(_never_ends())
     client._background_tasks.add(task)
+    client._close_grace_seconds = 0.05  # a task that never ends waits out the grace, then is cancelled
 
     await client.close()
 
@@ -287,6 +288,7 @@ async def test_api_call_success_on_first_attempt_no_retry():
         payload={"limit": 1, "details-level": "full"},
         wait_for_task=True,
         timeout=-1,
+        task_timeout=-1,
         port=4434,
     )
 
@@ -453,6 +455,7 @@ async def test_api_call_with_sid_bypasses_login_coordinator():
         payload={"a": 1},
         wait_for_task=True,
         timeout=-1,
+        task_timeout=-1,
         port=4434,
     )
 
@@ -474,6 +477,7 @@ async def test_api_call_with_sid_defaults_payload_and_port():
         payload={},
         wait_for_task=True,
         timeout=-1,
+        task_timeout=-1,
         port=None,
     )
 
@@ -528,3 +532,21 @@ async def test_logout_sid_without_mgmt_name_skips_registry_lookup():
 
     registry.get_server.assert_not_called()
     transport.logout.assert_awaited_once_with("10.0.0.1", "sid-1", port=None)
+
+
+async def test_close_lets_a_short_background_sweep_finish_instead_of_cancelling_it():
+    """A keepalive sweep cancelled mid-query is what made SQLAlchemy log CancelledError tracebacks."""
+    client, _, _, _, _ = _make_client()
+    finished = asyncio.Event()
+
+    async def short_sweep():
+        await asyncio.sleep(0.05)
+        finished.set()
+
+    task = asyncio.create_task(short_sweep())
+    client._background_tasks.add(task)
+
+    await client.close()
+
+    assert finished.is_set()
+    assert not task.cancelled()

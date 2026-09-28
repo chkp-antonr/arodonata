@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Never
 
 from arlogi.otel.decorator import traced
+from pydantic import SecretStr
 
 from ..cache.lock_manager import DatabaseLockManager, LockAcquisitionError, LockOwnershipError
 from ..config import (
@@ -37,6 +38,7 @@ from .domain_servers import (
     mds_ip_map,
 )
 from .login_gate import LoginGate, LoginGateDeadlineError
+from .transport import mask_secret
 
 if TYPE_CHECKING:
     from ..cache import CacheRepository
@@ -381,7 +383,7 @@ class LoginCoordinator:
         mgmt_name: str,
         domain: str,
         server_ip: str,
-        api_key: str,
+        api_key: SecretStr,
         port: int | None,
         reason: str = "max sessions reached",
     ) -> None:
@@ -420,7 +422,7 @@ class LoginCoordinator:
                 session_name="MMP-cleanup",
                 session_description="Temporary session for stale session cleanup",
             )
-            sid, _uid = self._parse_login_response(response, mgmt_name, domain, server_ip, api_key)
+            sid, _uid = self._parse_login_response(response, mgmt_name, domain, server_ip)
             return sid
 
         # `max_retries=1` bounds non-throttle failures to one attempt, but a
@@ -529,7 +531,7 @@ class LoginCoordinator:
                 name,
                 "",
                 cfg.server_ip,
-                cfg.api_key.get_secret_value(),
+                cfg.api_key,
                 cfg.port,
                 reason="startup cleanup",
             )
@@ -650,11 +652,23 @@ class LoginCoordinator:
             now = asyncio.get_running_loop().time()
             if now > deadline:
                 raise LoginGateDeadlineError(
-                    mds_host, waited=self._max_wait - (deadline - now), max_wait=self._max_wait
+                    mds_host,
+                    waited=self._max_wait - (deadline - now),
+                    max_wait=self._max_wait,
+                    throttles=throttles,
+                    failures=failures,
+                    timeouts=timeouts,
+                    last_error=last_exception,
                 )
             # Raises LoginGateDeadlineError past the deadline -- outside the try
             # below on purpose, so it is never classified and never closes the gate.
-            await gate.wait_open(mds_host, deadline=deadline, max_wait=self._max_wait, keepalive=keepalive)
+            try:
+                await gate.wait_open(mds_host, deadline=deadline, max_wait=self._max_wait, keepalive=keepalive)
+            except LoginGateDeadlineError as e:
+                # The gate knows the deadline, not what the attempts did; say that.
+                raise e.with_attempts(
+                    throttles=throttles, failures=failures, timeouts=timeouts, last_error=last_exception
+                ) from None
             try:
                 result = await operation()
                 if result is not None:
@@ -802,7 +816,7 @@ class LoginCoordinator:
         mgmt_name: str,
         domain: str,
         server_ip: str,
-        api_key: str,
+        api_key: SecretStr,
         port: int | None = None,
         session_name: str | None = None,
         session_description: str | None = None,
@@ -833,8 +847,9 @@ class LoginCoordinator:
                     timeout=self._settings.login_timeout,
                 )
 
-        masked_key = f"{api_key[:4]}...{api_key[-4:]}" if api_key and len(api_key) > 8 else "****"
-        log().trace(f"Attempting login: mgmt='{mgmt_name}', domain='{domain}', IP={server_ip}, API_KEY={masked_key}")
+        log().trace(
+            f"Attempting login: mgmt='{mgmt_name}', domain='{domain}', IP={server_ip}, API_KEY={mask_secret(api_key)}"
+        )
         async with self._rate_limiter.acquire(server_ip):
             return await self._transport.login_with_apikey(
                 server_ip=server_ip,
@@ -874,7 +889,7 @@ class LoginCoordinator:
         raise AuthenticationError(f"{label} to '{mgmt_name}:{domain}' gave up: {exc}") from exc
 
     def _parse_login_response(
-        self, response: dict[str, Any], mgmt_name: str, domain: str, server_ip: str, api_key: str
+        self, response: dict[str, Any], mgmt_name: str, domain: str, server_ip: str
     ) -> tuple[str, str | None]:
         """Parse login API response into (sid, uid) or raise."""
         if response.get("success") and response.get("sid"):
@@ -894,7 +909,6 @@ class LoginCoordinator:
             f"AUTHENTICATION FAILURE DETAILS: "
             f"mgmt='{mgmt_name}', domain='{domain}', ip={server_ip}, "
             f"error_code='{code}', error_msg='{error_msg}', "
-            f"api_key_prefix={api_key[:8] if api_key else 'None'}..., "
             f"response_data_keys={list(response.get('data', {}).keys()) if response.get('data') else 'None'}"
         )
         from ..core.exceptions import AuthenticationError, InvalidCredentialsError
@@ -924,7 +938,7 @@ class LoginCoordinator:
         mgmt_name: str,
         domain: str,
         server_ip: str,
-        api_key: str,
+        api_key: SecretStr,
         force_relogin: bool,
         port: int | None,
         session_name: str | None,
@@ -955,14 +969,14 @@ class LoginCoordinator:
             session_description=session_description,
             session_timeout=self._settings.session_timeout,
         )
-        return self._parse_login_response(response, mgmt_name, domain, server_ip, api_key)
+        return self._parse_login_response(response, mgmt_name, domain, server_ip)
 
     async def _try_login_once(
         self,
         mgmt_name: str,
         domain: str,
         server_ip: str,
-        api_key: str,
+        api_key: SecretStr,
         force_relogin: bool,
         port: int | None,
         session_name: str | None,
@@ -1030,7 +1044,7 @@ class LoginCoordinator:
         mgmt_name: str,
         domain: str,
         server_ip: str,
-        api_key: str,
+        api_key: SecretStr,
         force_relogin: bool,
         port: int | None,
         session_name: str | None,
@@ -1084,7 +1098,7 @@ class LoginCoordinator:
         mgmt_name: str,
         domain: str,
         server_ip: str,
-        api_key: str,
+        api_key: SecretStr,
         force_relogin: bool = False,
         port: int | None = None,
         session_name: str | None = None,
@@ -1545,7 +1559,7 @@ class LoginCoordinator:
 
         if server_ip is None:
             server_ip = server_config.server_ip
-        api_key = server_config.api_key.get_secret_value()
+        api_key = server_config.api_key
         port = server_config.port
 
         log().debug(
@@ -1595,7 +1609,7 @@ class LoginCoordinator:
         mgmt_name: str,
         domain: str,
         dead_ip: str,
-        api_key: str,
+        api_key: SecretStr,
         *,
         force: bool,
         port: int | None,
@@ -1725,7 +1739,7 @@ class LoginCoordinator:
         if server_ip is None:
             server_ip = server_config.server_ip
 
-        api_key = server_config.api_key.get_secret_value()
+        api_key = server_config.api_key
         port = server_config.port
 
         domain_display = domain or "system"
@@ -1756,7 +1770,7 @@ class LoginCoordinator:
             # rejected key, both of which the retry loop already knows what to do
             # with. Same fix as the cleanup login (d2c38ec); this path was missed.
             try:
-                return self._parse_login_response(response, mgmt_name, domain, server_ip, api_key)
+                return self._parse_login_response(response, mgmt_name, domain, server_ip)
             except InvalidCredentialsError:
                 raise  # fatal either way; the subclass is the signal, don't bury it
             except AuthenticationError as exc:

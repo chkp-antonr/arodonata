@@ -8,6 +8,24 @@ from typing import Final
 DEFAULT_SESSION_EXPIRE: Final[int] = 3600  # 1 hour in seconds
 DEFAULT_SESSION_TIMEOUT: Final[int] = 600  # Session timeout in seconds (default from Check Point API)
 DEFAULT_API_TIMEOUT: Final[int] = 120  # seconds
+
+# A server-side task is not an HTTP round trip and must not share its budget.
+# `publish`, `install-policy`, `assign-global-assignment` and `revert-to-revision`
+# return a task id in seconds and then run for minutes; the call that started them
+# is over long before. Charging both to DEFAULT_API_TIMEOUT means the poller
+# inherits whatever is left of an allowance sized for a round trip, so the whole
+# operation is bounded by the wrong number.
+#
+# The failure that produces is the worst kind: the client reports a timeout while
+# the server goes on to finish the task successfully, so the caller believes
+# nothing happened when in fact everything did. Observed on mdsNP2 2026-09-22 with
+# a deployment that had lowered ARODONATA_API_TIMEOUT to 30 - a publish sat at 0%
+# after 29 s, the call raised, and the change was published moments later.
+#
+# Generous on purpose. The HTTP timeout stays strict, which is what actually
+# detects a dead server; this one only bounds waiting for work the server has
+# already accepted, and cutting it short buys nothing.
+DEFAULT_TASK_TIMEOUT: Final[int] = 900  # seconds
 # A login is a single HTTP round trip (1-3 s on a healthy server), so it gets its
 # own budget rather than inheriting DEFAULT_API_TIMEOUT. Against an unresponsive
 # domain server the 2026-09-13 int-4 run burned 120 s per attempt, twice, before
