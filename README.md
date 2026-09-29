@@ -51,20 +51,60 @@ Standard Check Point API client scripts often struggle with connection overhead,
 
 Arodonata requires **Python 3.13+** and a **PostgreSQL 12+** database for caching.
 
-### Install with `uv` (Recommended)
+Choose the package extra that fits your project:
+
+* **`arodonata`**: Core library for Python automation, scripts, and applications (high-performance async client, session pooling, PostgreSQL caching, and declarative CPCRUD engine).
+* **`arodonata[mcp]`**: Core library + Model Context Protocol (MCP) server support, including the `arodonata-mcp` CLI executable and `arodonata.mcp` ASGI integration for FastAPI/Starlette.
+
+### Adding to Your Project
+
+#### With `uv` (Recommended)
 
 ```bash
-# Install the core library
-uv pip install arodonata
+# Core library
+uv add arodonata
 
-# Install with development tools
-uv pip install -e ".[dev]"
+# OR with MCP server support
+uv add "arodonata[mcp]"
 ```
 
-### Install with Standard `pip`
+#### With Standard `pip`
 
 ```bash
+# Core library
 pip install arodonata
+
+# OR with MCP server support
+pip install "arodonata[mcp]"
+```
+
+#### In `pyproject.toml`
+
+```toml
+[project]
+dependencies = [
+    # Core library for Check Point automation & caching:
+    "arodonata>=1.11.0",
+
+    # OR if you need the MCP server / embedded ASGI tools:
+    # "arodonata[mcp]>=1.11.0",
+]
+```
+
+#### In `requirements.txt`
+
+```text
+arodonata>=1.11.0
+# or
+arodonata[mcp]>=1.11.0
+```
+
+### Local Development / Contributing
+
+```bash
+git clone https://github.com/chkp-antonr/arodonata.git
+cd arodonata
+uv sync --dev
 ```
 
 ---
@@ -76,7 +116,7 @@ pip install arodonata
 Create a `.env` file containing your database cache connection details and Check Point server coordinates:
 
 ```bash
-# Database Configuration
+# Database Configuration (PostgreSQL with JSONB recommended)
 DATABASE_URL=postgresql+asyncpg://cp_user:cp_password@localhost:5432/arodonata_cache
 
 # Management Server Details (supports multiple servers)
@@ -84,14 +124,14 @@ MGMT_NAMES=primary-mgmt,backup-mgmt
 MGMT_SERVERS=192.168.10.10,192.168.10.11
 API_KEY_VARS=PRIMARY_MGMT_KEY,BACKUP_MGMT_KEY
 
-# Secrets (resolved at runtime)
+# Secrets (resolved at runtime from environment / secrets manager)
 PRIMARY_MGMT_KEY=your-primary-api-key-here
 BACKUP_MGMT_KEY=your-backup-api-key-here
 ```
 
-### 2. Write Your First Script
+### 2. Using `arodonata` in Python Projects
 
-Using `arodonata` is straightforward. The application manages the database engine lifecycle and passes the engine directly to `ArodonataClient`:
+Use `ArodonataClient` directly in your application. The calling application manages the database engine lifecycle and passes the engine into the client:
 
 ```python
 import asyncio
@@ -114,12 +154,12 @@ async def main():
     client = ArodonataClient(engine=engine, settings=settings)
 
     try:
-        # 3. Enter async context manager for session management
+        # 3. Enter async context manager for automatic session management
         async with client:
             servers = client.get_mgmt_names()
             print(f"Connected to management nodes: {servers}")
 
-            # Query hosts from the primary server
+            # Query hosts from the primary server (read from cache or live)
             if servers:
                 target_server = servers[0]
                 print(f"Retrieving hosts from {target_server}...")
@@ -144,6 +184,57 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
+
+### 3. Using `arodonata[mcp]` in Projects
+
+When installed with the `[mcp]` extra, Arodonata can expose Check Point management operations to AI assistants and LLM agents (Claude Code, Claude Desktop, Cursor, Antigravity) via the Model Context Protocol over streamable HTTP.
+
+#### Pattern A: Standalone Team Server (`arodonata-mcp`)
+
+Run a dedicated MCP server for your team:
+
+```bash
+# Install with mcp extra
+uv pip install "arodonata[mcp]"
+
+# Launch the streamable-HTTP server
+arodonata-mcp --host 0.0.0.0 --port 8765
+```
+
+The CLI loads `.env.lib` and `.env.secrets`, resolves credentials via `API_KEY_VARS`, verifies bearer tokens (`ARODONATA_MCP_TOKEN_VARS`), and provides DNS-rebinding protection.
+
+#### Pattern B: Embedded in FastAPI / ASGI Applications (`arodonata.mcp`)
+
+Embed Arodonata's MCP server into an existing FastAPI or Starlette application, and register custom application-specific tools alongside Check Point tools:
+
+```python
+from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import create_async_engine
+from arodonata import ArodonataClient, ArodonataSettings
+from arodonata.mcp import ArodonataMCPSettings, create_asgi_app, create_mcp_server
+
+# Build engine, client, and MCP settings
+engine = create_async_engine(database_url)
+client = ArodonataClient(engine=engine, settings=settings)
+mcp_settings = ArodonataMCPSettings(port=8000, path="/mcp")
+
+# Create the MCP server and add your own custom tools
+mcp_server = create_mcp_server(client, mcp_settings, name="firewall-assistant")
+
+@mcp_server.tool()
+async def acme_change_ticket(rule_uid: str) -> dict[str, str]:
+    """Look up an internal change ticket that introduced a rule."""
+    return {"rule_uid": rule_uid, "ticket": "CHG-0001"}
+
+# Create mountable ASGI app
+mcp_app = create_asgi_app(client, mcp_settings, server=mcp_server)
+
+# Mount inside your FastAPI app
+app = FastAPI(lifespan=lifespan)
+app.mount("/", mcp_app)
+```
+
+See [examples/09_mcp_embedded.py](examples/09_mcp_embedded.py) for the complete runnable example.
 
 ---
 
@@ -184,14 +275,52 @@ Arodonata employs a structured **Ports and Adapters** (Hexagonal) architecture t
 
 ## 🤖 MCP Server
 
-Arodonata can serve any MCP client (Claude Code, Claude Desktop, or your own agent) over streamable HTTP, exposing the same `show_*` tool surface as Check Point's reference MCP server, answered from Arodonata's cache.
+Arodonata can serve any MCP client (Claude Code, Claude Desktop, Cursor, Antigravity, or your own agents) over streamable HTTP, exposing the Check Point `show_*` tool surface answered directly from Arodonata's cache with automatic session handling and rate limiting.
+
+### Tool Capabilities
+
+* **Cached Queries**: `show_hosts`, `show_networks`, `show_groups`, `show_gateways_and_servers`, `show_domains`, `show_object`.
+* **Rulebases**: `show_access_rulebase`, `show_nat_rulebase`, `show_https_rulebase`, `show_threat_rulebase` with formats: `markdown` (clean table), `model_friendly`, or `raw` JSON.
+* **Native & Sync Operations**: `arodonata_init` (server & domain overview), `search_objects` (cross-domain search), `refresh_objects` (smart/incremental cache re-sync), `refresh_rulebases`, and `api_call` (read-only by default, gated write mode).
+* **Live Compatibility**: ~40 live tools mirroring `@chkp/quantum-management-mcp`.
+* **Declarative CPCRUD (Opt-In)**: `cpcrud_validate`, `cpcrud_plan`, `cpcrud_apply` (dry-run by default), `cpcrud_inverse` for reversible Policy-as-Code changes.
+
+### Running the Server
 
 ```bash
+# 1. Install with MCP support
 uv pip install "arodonata[mcp]"
+
+# 2. Launch the team server
 arodonata-mcp --host 0.0.0.0 --port 8765
 ```
 
-See [docs/mcp/index.md](docs/mcp/index.md) for configuration, authentication modes, embedding in your own FastAPI app, and the full tool list.
+### Client Setup
+
+#### Claude Code
+
+```bash
+claude mcp add --transport http arodonata http://127.0.0.1:8765/mcp --header "Authorization: Bearer ${DEMO_MCP_TOKEN}"
+```
+
+#### Claude Desktop
+
+In your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "arodonata": {
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_BEARER_TOKEN"
+      }
+    }
+  }
+}
+```
+
+For full documentation on authentication modes (`static` vs `host`), TLS deployment, embedding in your own FastAPI application, and environment variables, see [docs/mcp/index.md](docs/mcp/index.md).
 
 ---
 

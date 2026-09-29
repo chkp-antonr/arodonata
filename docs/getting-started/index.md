@@ -5,23 +5,63 @@
 - Python 3.13+
 - A PostgreSQL 12+ database for the cache layer
 
+## Package Flavors
+
+Arodonata is available in two installation configurations depending on your use case:
+
+- **`arodonata`**: Core library containing the asynchronous Check Point client, session pooling, PostgreSQL caching, and declarative CPCRUD engine. Use this when writing Python scripts, backend services, or automation pipelines.
+- **`arodonata[mcp]`**: Core library plus streamable-HTTP Model Context Protocol (MCP) server support, including the `arodonata-mcp` CLI daemon and the `arodonata.mcp` ASGI integration. Use this when connecting LLM agents (Claude Code, Claude Desktop, Cursor, Antigravity) to your firewalls or embedding MCP tools into a FastAPI application.
+
 ## Install
 
 === "uv (recommended)"
 
     ```bash
-    uv pip install arodonata
+    # Install core library
+    uv add arodonata
+
+    # OR install with MCP server support
+    uv add "arodonata[mcp]"
     ```
 
 === "pip"
 
     ```bash
+    # Install core library
     pip install arodonata
+
+    # OR install with MCP server support
+    pip install "arodonata[mcp]"
     ```
 
-For local development against a clone of this repo:
+=== "pyproject.toml"
+
+    Add to your project's `pyproject.toml`:
+
+    ```toml
+    [project]
+    dependencies = [
+        # Core library:
+        "arodonata>=1.11.0",
+
+        # OR if you need the MCP server / embedded ASGI tools:
+        # "arodonata[mcp]>=1.11.0",
+    ]
+    ```
+
+=== "requirements.txt"
+
+    ```text
+    arodonata>=1.11.0
+    # or
+    arodonata[mcp]>=1.11.0
+    ```
+
+For local development against a clone of this repository:
 
 ```bash
+git clone https://github.com/chkp-antonr/arodonata.git
+cd arodonata
 uv sync --dev
 ```
 

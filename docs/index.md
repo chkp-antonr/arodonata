@@ -30,6 +30,9 @@ cache and only pull incremental changes.
 - **[CPCRUD Engine](user-guide/cpcrud.md)**
   Declarative Policy-as-Code object and rule management with zero-mutation idempotency.
 
+- **[MCP Server](mcp/index.md)**
+  Streamable-HTTP MCP server (`arodonata-mcp`), FastAPI/Starlette embedding, and cached Check Point tool surface.
+
 - **[Examples](examples/index.md)**
   Runnable, narrated scripts covering queries, search, refresh, CPCRUD, and
   production patterns.

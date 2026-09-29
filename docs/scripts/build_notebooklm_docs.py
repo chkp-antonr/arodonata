@@ -201,6 +201,7 @@ GROUP_TITLES = {
     "config": "config — Settings & Constants",
     "core": "core — Core Domain Logic, Protocols & Exceptions",
     "cpcrud": "cpcrud — Declarative CRUD / Rule Engine",
+    "mcp": "mcp — Model Context Protocol (MCP) Server & Tools",
     "extractors": "extractors — Bulk Data Extraction",
     "helpers": "helpers — Convenience Helper Functions",
     "models": "models — Data Models",
@@ -312,6 +313,7 @@ GUIDE_SOURCES = [
     ("Architecture — CRUD Engine", "architecture/cpcrud.md"),
     ("Configuration — Overview", "configuration/index.md"),
     ("Configuration — Multi-Server Setup", "configuration/multi-server.md"),
+    ("MCP Server", "mcp/index.md"),
     ("User Guide — CRUD Operations", "user-guide/cpcrud.md"),
     ("Development — Testing", "development/testing.md"),
 ]
@@ -349,6 +351,7 @@ EXAMPLE_MD_FILES = [
     "examples/07-crud-inverse.md",
     "examples/07-session-basics.md",
     "examples/08-otel-smart-refresh.md",
+    "examples/09-mcp-embedded.md",
 ]
 
 SNIPPET_RE = re.compile(r'^--8<-- "(.+?)"\s*$', re.MULTILINE)

@@ -2,7 +2,6 @@
 
 This document is a consolidated guide to the Arodonata library: what it does, how it's built, how to configure it, and how to use its main features. It's one of three companion documents (Guide, API Reference, Examples) meant to be uploaded together to an AI document-chat tool so you can ask questions like "which function do I use to fetch a host object?" or "how do I set up multi-server config?" and get grounded answers.
 
-
 ---
 
 ## Overview
@@ -41,6 +40,9 @@ cache and only pull incremental changes.
 - **[CPCRUD Engine](user-guide/cpcrud.md)**
   Declarative Policy-as-Code object and rule management with zero-mutation idempotency.
 
+- **[MCP Server](mcp/index.md)**
+  Streamable-HTTP MCP server (`arodonata-mcp`), FastAPI/Starlette embedding, and cached Check Point tool surface.
+
 - **[Examples](examples/index.md)**
   Runnable, narrated scripts covering queries, search, refresh, CPCRUD, and
   production patterns.
@@ -60,7 +62,6 @@ cache and only pull incremental changes.
 
 See the [Changelog](CHANGELOG.md) for recent changes.
 
-
 ---
 
 ## Getting Started — Overview
@@ -74,23 +75,63 @@ See the [Changelog](CHANGELOG.md) for recent changes.
 - Python 3.13+
 - A PostgreSQL 12+ database for the cache layer
 
+## Package Flavors
+
+Arodonata is available in two installation configurations depending on your use case:
+
+- **`arodonata`**: Core library containing the asynchronous Check Point client, session pooling, PostgreSQL caching, and declarative CPCRUD engine. Use this when writing Python scripts, backend services, or automation pipelines.
+- **`arodonata[mcp]`**: Core library plus streamable-HTTP Model Context Protocol (MCP) server support, including the `arodonata-mcp` CLI daemon and the `arodonata.mcp` ASGI integration. Use this when connecting LLM agents (Claude Code, Claude Desktop, Cursor, Antigravity) to your firewalls or embedding MCP tools into a FastAPI application.
+
 ## Install
 
 === "uv (recommended)"
 
     ```bash
-    uv pip install arodonata
+    # Install core library
+    uv add arodonata
+
+    # OR install with MCP server support
+    uv add "arodonata[mcp]"
     ```
 
 === "pip"
 
     ```bash
+    # Install core library
     pip install arodonata
+
+    # OR install with MCP server support
+    pip install "arodonata[mcp]"
     ```
 
-For local development against a clone of this repo:
+=== "pyproject.toml"
+
+    Add to your project's `pyproject.toml`:
+
+    ```toml
+    [project]
+    dependencies = [
+        # Core library:
+        "arodonata>=1.11.0",
+
+        # OR if you need the MCP server / embedded ASGI tools:
+        # "arodonata[mcp]>=1.11.0",
+    ]
+    ```
+
+=== "requirements.txt"
+
+    ```text
+    arodonata>=1.11.0
+    # or
+    arodonata[mcp]>=1.11.0
+    ```
+
+For local development against a clone of this repository:
 
 ```bash
+git clone https://github.com/chkp-antonr/arodonata.git
+cd arodonata
 uv sync --dev
 ```
 
@@ -123,7 +164,6 @@ See the [Configuration Guide](../configuration/index.md) for every setting.
 Continue to [Your First Script](first-script.md) for a minimal end-to-end
 example, or jump to [Examples](../examples/index.md) for more complete
 scripts.
-
 
 ---
 
@@ -182,7 +222,6 @@ it yet on a fresh database, so the first run against an empty cache returns
 an empty list. See
 [`build_refresh_assets_cache`](../api/arodonata/api/client.md) and the
 [Examples](../examples/index.md) section for how to populate it.
-
 
 ---
 
@@ -389,7 +428,6 @@ applications should rely on:
   so callers that need to inspect or log the plan before executing it can
   split the two steps instead of calling `apply()` with a template.
 
-
 ---
 
 ## Architecture — Overview
@@ -442,7 +480,6 @@ flowchart TB
 - **[Sessions & Multi-Domain](sessions-and-mdm.md)** — login/session
   lifecycle and MDM domain resolution.
 
-
 ---
 
 ## Architecture — Ports & Adapters
@@ -485,7 +522,6 @@ Defined in `src/arodonata/adapters/`:
 Because `arodonata.core` and `arodonata.api` depend only on the port protocols,
 swapping the cache backend or mocking the management API for tests (see
 `tests/mock_api/`) never requires touching business logic.
-
 
 ---
 
@@ -552,7 +588,6 @@ cache — they never make a live API call. For lower-level, filterable access,
 `get_objects()`, `get_objects_by_type()`, `get_objects_by_ip()`, and
 `get_rulebase()` directly.
 
-
 ---
 
 ## Architecture — Sessions & Multi-Domain Management
@@ -587,7 +622,6 @@ every cache row and every helper-method result carries its owning
 (`client.get_hosts(domain_names=["Domain1"])`) without re-deriving domain
 membership themselves.
 
-
 ---
 
 ## Architecture — CRUD Engine
@@ -605,18 +639,18 @@ The **CPCRUD** (Check Point Policy-as-Code CRUD) engine is designed around a **P
 ```mermaid
 graph TD
     Client["ArodonataClient"] --> Service["CPCRUDService"]
-    
+
     subgraph "Validation & Schema Layer"
         Service --> Schema["schema.py\n(Draft7Validator)"]
     end
-    
+
     subgraph "Planning & State Resolution"
         Service --> Planner["planner.py\n(Planner)"]
         Planner --> StateReader["statereader.py\n(HybridStateReader)"]
         Planner --> RuleIdentity["rule_identity.py\n(Rule identity resolution)"]
         Planner --> Differ["differ.py\n(Field-level diffing)"]
     end
-    
+
     subgraph "Execution & Transaction Layer"
         Service --> Executor["executor.py\n(Executor)"]
         Executor --> LoginCoord["LoginCoordinator\n(Per-mgmt/domain session pool)"]
@@ -722,7 +756,6 @@ Access and NAT rules in Check Point do not always have unique global names. `rul
 1. **Rule Matching (`RuleMatch`)**: Matches rules based on rule names, rule numbers, or signature match (source, destination, service, action).
 2. **Positional Target**: `position_helper.py` converts abstract positioning options (`top`, `bottom`, `above`, `below`) into concrete Check Point API `position` structures required during rule creation or reordering.
 
-
 ---
 
 ## Configuration — Overview
@@ -822,7 +855,6 @@ variables hold the real secrets, described next in
 See [Sessions & Multi-Domain](../architecture/sessions-and-mdm.md) for how
 these settings affect login/session behavior.
 
-
 ---
 
 ## Configuration — Multi-Server Setup
@@ -870,6 +902,171 @@ optional `mgmt_names=[...]` filter to scope a query to a subset of them —
 see [Sessions & Multi-Domain](../architecture/sessions-and-mdm.md) for how
 domain resolution layers on top of this for MDM servers.
 
+---
+
+## MCP Server
+
+*(source: `docs/mcp/index.md`)*
+
+# MCP Server
+
+Arodonata can serve any MCP client over streamable HTTP, exposing the same `show_*` tools as Check Point's `@chkp/quantum-management-mcp` but answered from Arodonata's cache with automatic re-login, per-MDS login gating and rate limiting, across every configured management server and domain.
+It ships as both a standalone command (`arodonata-mcp`) for a team to point clients at, and as a library (`arodonata.mcp`) for embedding the same tool set inside your own ASGI application.
+
+## Install
+
+```bash
+uv pip install "arodonata[mcp]"
+```
+
+## Standalone server for a team
+
+`arodonata-mcp` loads `.env.lib` then `.env.secrets` (override with `--env-file`, repeatable), builds an `ArodonataClient` from the library's usual environment variables (`DATABASE_URL`, `MGMT_NAMES`, `MGMT_SERVERS`, `API_KEY_VARS`, ...), and serves it over streamable HTTP with `uvicorn`.
+It resolves API keys the same way the runnable examples do: `API_KEY_VARS` (a comma-separated list of environment variable names whose values are the actual API keys) takes priority, and a bare `API_KEYS` value is used when `API_KEY_VARS` is unset.
+
+```bash
+arodonata-mcp --host 0.0.0.0 --port 8765
+```
+
+Flags: `--env-file` (repeatable; default `.env.lib` then `.env.secrets`), `--host` (overrides `ARODONATA_MCP_HOST`), `--port` (overrides `ARODONATA_MCP_PORT`), `--ssl-certfile`, `--ssl-keyfile`, `--log-level` (one of `critical`, `error`, `warning`, `info`, `debug`; default `info`). An invalid flag or an inconsistent configuration (for example a different number of `MGMT_NAMES`, `MGMT_SERVERS` and API keys) prints one `arodonata-mcp: configuration error: ...` line and exits with status 2.
+
+The command refuses to start with `ARODONATA_MCP_AUTH_MODE=host` or `jwt` (exit code 2): `host` mode has no verifier at all and would serve every request anonymously if there is no authenticating host in front of it, and `jwt` is reserved and not implemented. See [Authentication](#authentication) below.
+
+### Configuration
+
+Every field below is read from an environment variable named `ARODONATA_MCP_<FIELD>` (case-insensitive), or passed as a constructor keyword to `ArodonataMCPSettings` when embedding.
+
+| Variable | Default | Description |
+|---|---|---|
+| `ARODONATA_MCP_HOST` | `127.0.0.1` | Bind address. |
+| `ARODONATA_MCP_PORT` | `8765` | Bind port (1-65535). |
+| `ARODONATA_MCP_PATH` | `/mcp` | Streamable HTTP path; must start with `/`. |
+| `ARODONATA_MCP_PUBLIC_URL` | `http://127.0.0.1:8765/mcp` | URL clients use; also the OAuth issuer/resource-server URL, and the basis for the default `ALLOWED_HOSTS`/`ALLOWED_ORIGINS` below. |
+| `ARODONATA_MCP_STATELESS` | `true` | Streamable HTTP stateless mode. |
+| `ARODONATA_MCP_JSON_RESPONSE` | `true` | Return plain JSON instead of SSE for tool responses. |
+| `ARODONATA_MCP_LIVE_COMPAT` | `true` | Register the live `show_*` compatibility tools (see [Tools](#tools)). |
+| `ARODONATA_MCP_CPCRUD` | `false` | Register the opt-in `cpcrud_*` tools. |
+| `ARODONATA_MCP_ALLOW_WRITE_API` | `false` | Allow `api_call` to run non-`show-*` (write) commands. |
+| `ARODONATA_MCP_AUTH_MODE` | `static` | `static` or `host`; `jwt` is reserved and rejected everywhere. See [Authentication](#authentication). |
+| `ARODONATA_MCP_TOKEN_VARS` | `""` | Comma-separated environment variable names whose values are accepted bearer tokens (`auth_mode=static`). |
+| `ARODONATA_MCP_JWT_ISSUER` | `""` | Reserved for the unimplemented `jwt` mode. |
+| `ARODONATA_MCP_JWT_AUDIENCE` | `""` | Reserved for the unimplemented `jwt` mode. |
+| `ARODONATA_MCP_JWT_JWKS_URL` | `""` | Reserved for the unimplemented `jwt` mode. |
+| `ARODONATA_MCP_DEFAULT_LIMIT` | `50` | Default page size for list tools; `0` returns everything. |
+| `ARODONATA_MCP_MAX_RESULT_CHARS` | `200000` | Truncate a tool's text result past this many characters, appending an offset/limit hint to resume. |
+| `ARODONATA_MCP_ALLOWED_HOSTS` | derived from `host`, `port` and `public_url` | Comma-separated Host header values accepted (DNS-rebinding protection); a request with an unlisted Host header gets HTTP 421. |
+| `ARODONATA_MCP_ALLOWED_ORIGINS` | derived from `host`, `port` and `public_url` | Comma-separated Origin header values accepted; a request with an unlisted Origin gets HTTP 403 (a request with no Origin header, e.g. from a non-browser client, is accepted). |
+
+### TLS
+
+Either pass `--ssl-certfile`/`--ssl-keyfile` to `arodonata-mcp`, or terminate TLS at a reverse proxy in front of it. Binding to a non-loopback address without `--ssl-certfile` logs a warning: org policy requires TLS 1.2+ for all data in transit, and bearer tokens travel in the `Authorization` header on every request.
+
+## Authentication
+
+`ARODONATA_MCP_AUTH_MODE=static` (the default) checks the request's bearer token with a constant-time comparison against the values of the environment variables named in `ARODONATA_MCP_TOKEN_VARS`, resolved the same way `API_KEY_VARS` resolves API keys — i.e. from `.env.secrets` or the process environment, never written into `.env.lib`. The variable name (not the token value) is what appears as the caller's identity in logs and as the tool call's `client_id`, so give each caller or team its own named variable.
+
+`ARODONATA_MCP_AUTH_MODE=host` disables Arodonata's own token verification entirely (`create_mcp_server` builds no `TokenVerifier`) so that an authenticating ASGI host in front of `create_asgi_app`'s mount point — your own middleware, an API gateway, a service mesh sidecar — is the sole authority. The standalone `arodonata-mcp` executable has no such host, so it refuses `auth_mode=host` at startup; this mode only makes sense when [embedding](#embedding-in-your-application).
+
+`ARODONATA_MCP_AUTH_MODE=jwt` is reserved for a future JWT-against-an-identity-provider mode and is rejected everywhere it is read — by `arodonata-mcp` at startup, and by `create_mcp_server` — because the stub verifier raises `NotImplementedError` on every call.
+
+## Embedding in your application
+
+Call `create_mcp_server` to build the `MCPServer` yourself (so you can register application-specific tools alongside the Arodonata ones) and `create_asgi_app` to turn it into a mountable Starlette app. You own the `ArodonataClient` and its database engine: open the client before serving and close it after, and dispose the engine yourself.
+
+```python title="examples/09_mcp_embedded.py"
+--8<-- "examples/09_mcp_embedded.py"
+```
+
+Identity follows the client, not the caller: one `ArodonataClient` means one Check Point identity (one set of API keys/credentials) for every MCP caller that reaches it, regardless of which bearer token or host-level identity they authenticated with. Give each Check Point identity that needs different access its own `ArodonataClient` and its own mounted app.
+
+## Tools
+
+Every tool returns plain text, not MCP structured content. That text is JSON, except for the rulebase tools with `format="markdown"` (the default, a markdown table) or `format="model_friendly"` (compact structured text); rulebase tools return JSON only for `format="raw"`. List tools return an envelope alongside the page of objects: `from`/`to`/`total` (1-based, describing that page), `source` (`"cache"` or `"live"`) and `cache_age_seconds`. A failed Management API call comes back as an error result whose text is `"<code>: <message>"`, carrying the Check Point error code and message verbatim. Validation problems such as a missing or unknown `mgmt_name` come back as error results naming the configured servers, e.g. `"unknown mgmt_name '<name>'; configured servers: <names>"` or `"mgmt_name is required; configured servers: <names>"`. An unexpected server-side exception never reaches the caller as a message or traceback: it comes back as an error result whose text is `"internal error: <ExceptionClass>"`, with the exception logged server-side instead.
+
+Cache-backed tools answer from Arodonata's local cache by default; pass `cache_mode='smart'` to re-sync stale domains first or `cache_mode='force'` for a full reload from the management server. Live tools always query the management server (through Arodonata's session cache and rate limiter) and take no `cache_mode`. Live list tools currently retrieve the full collection from the management server and page it locally, so `limit` bounds the response size but not the work done on the management server. `cpcrud_*` tools are opt-in (`ARODONATA_MCP_CPCRUD=true`); `api_call` can additionally run write commands when `ARODONATA_MCP_ALLOW_WRITE_API=true`.
+
+### Native tools
+
+| Tool | Backing | Notes |
+|---|---|---|
+| `arodonata_init` | cache | Call this first: lists configured management servers, whether each is MDS, their domains, and cache age. |
+| `search_objects` | cache | Searches cached objects across servers/domains by name, IP or pattern, following group membership; returns `results` as a list of `{mgmt_name, domain, search_term, search_type, objects, memberships}`. |
+| `refresh_objects` | live | Re-syncs the object cache from the management server(s); `mode='incremental'` pulls only changes since the last publish. |
+| `refresh_rulebases` | live | Re-syncs cached access, NAT, HTTPS and threat rulebases. |
+| `api_call` | live | Runs any Management API command through Arodonata's session handling; only `show-*` commands unless writes are enabled. |
+
+### Cached tools
+
+| Tool | Backing | Notes |
+|---|---|---|
+| `show_hosts` | cache | `filter` matches the object name (wildcards allowed). |
+| `show_networks` | cache | `filter` matches the subnet in CIDR notation (e.g. `10.0.0.0/24`). |
+| `show_groups` | cache | `filter` matches the group name; includes member UIDs. |
+| `show_gateways_and_servers` | cache | Gateways, clusters, cluster members and management servers; no `domain` parameter (gateways live in the asset cache, not the per-domain object cache) and always reports `cache_age_seconds: null`. |
+| `show_domains` | cache | Domains of a Multi-Domain server; `include_global` adds the synthetic Global domain. Always reports `cache_age_seconds: null` (the domain cache keeps no timestamp). |
+| `show_object` | cache | Any object by UID. |
+
+### Rulebase tools
+
+| Tool | Backing | Notes |
+|---|---|---|
+| `show_access_rulebase` | cache/live | Addressed by `name` or `uid` (plus `package`). |
+| `show_nat_rulebase` | cache/live | Addressed by `package` only — NAT has no `name`/`uid`. |
+| `show_https_rulebase` | cache/live | Addressed by `name` or `uid` (plus `package`). |
+| `show_threat_rulebase` | cache/live | Addressed by `name` or `uid` (plus `package`). |
+
+All four are cache-backed by default and switch to a live query when any of `filter`, `filter_settings`, `show_hits`, `hits_settings`, `use_object_dictionary`, `show_as_ranges`, `show_expiration_settings` or `order` is given (`order` is a list of objects, e.g. `[{"ASC": "name"}]`, as the Management API expects). `format` selects `raw` (API shape), `markdown` (default; a table with full, non-truncated cell values) or `model_friendly` (compact structured text). On the cache path a layer given only by `uid` is resolved to its name through the object cache; if the uid is not cached the call fails with a message asking for `name` or a live-only parameter. `cache_age_seconds` (and the footer's age) is the age of that rulebase type's cache, not the object cache's.
+
+### Live compatibility tools
+
+Generated from the same manifest as the reference server's tool list, one tool per `show-*` Management API command not covered above: `show_objects`, `show_access_layers`, `show_packages`, `show_mdss`, `show_simple_gateways`, `show_simple_clusters`, `show_cluster_members`, `show_lsm_gateways`, `show_lsm_clusters`, `show_unused_objects`, `show_services_tcp`, `show_services_udp`, `show_services_icmp`, `show_service_groups`, `show_application_sites`, `show_application_site_groups`, `show_application_site_categories`, `show_wildcards`, `show_security_zones`, `show_tags`, `show_address_ranges`, `show_multicast_address_ranges`, `show_dynamic_objects`, `show_dns_domains`, `show_time_groups`, `show_access_point_names`, `show_vpn_communities_star`, `show_vpn_communities_meshed`, `show_vpn_communities_remote_access`, `show_access_layer`, `show_access_section`, `show_nat_section`, `show_access_rule`, `show_vpn_community_star`, `show_vpn_community_meshed`, `show_vpn_community_remote_access`, `show_simple_gateway`, `show_simple_cluster`, `show_cluster_member`, `show_lsm_gateway`, `show_lsm_cluster`, `where_used`. All of these are live; disable the whole set with `ARODONATA_MCP_LIVE_COMPAT=false`.
+
+### CPCRUD tools (opt-in, `ARODONATA_MCP_CPCRUD=true`)
+
+| Tool | Backing | Notes |
+|---|---|---|
+| `cpcrud_validate` | none | Validates a template (a YAML/JSON string or an object) against the schema; no network I/O. A string is always parsed as YAML/JSON content, never treated as a file path on the server. |
+| `cpcrud_plan` | cache | Computes the idempotent change plan without touching the management server's policy. |
+| `cpcrud_apply` | live | Applies a plan or template; `dry_run=true` (default) executes nothing. |
+| `cpcrud_inverse` | none | Builds the compensating template that undoes a plan. |
+
+### Prompts
+
+| Prompt | Purpose |
+|---|---|
+| `show_gateways_prompt` | Guide showing installed policies per gateway. |
+| `show_policies_prompt` | Guide walking packages → layers → rulebases. |
+| `show_rule_prompt` | Guide finding one rule by reference. |
+| `topology_visualization_prompt` | Guide producing an SVG topology diagram for a gateway. |
+| `source_to_destination_prompt` | Guide determining possible paths between two endpoints. |
+
+## Differences from the reference server
+
+- Multi-server: every tool takes an optional `mgmt_name` (required only when more than one server is configured), unlike the reference server's one-host-per-process model.
+- List envelopes carry `source` (`"cache"` or `"live"`) and `cache_age_seconds` alongside the objects, so a client can tell whether an answer came from the cache and how stale it is.
+- Cache-backed tools (including the cache path of the `show_*_rulebase` tools) take `cache_mode`: `cache` reads the cache as-is, `smart` re-syncs stale domains first, `smart-fast` re-syncs incrementally, `force` does a full reload. Omit it for the server default. Live tools and `api_call` do not take `cache_mode`.
+- Rulebase tools support `format` values `raw`, `markdown` and `model_friendly`; unlike the reference server's fixed-width padded table, cells always carry full, non-truncated values.
+- `find_zero_hits_rules` and `simulate_packet` from the reference server are not ported in this version.
+- HTTP only: no stdio transport.
+
+## Client configuration
+
+Claude Code:
+
+```bash
+claude mcp add --transport http arodonata https://mcp.example.com/mcp --header "Authorization: Bearer ${ARODONATA_TOKEN}"
+```
+
+Claude Desktop (custom connector), as a JSON entry under the connector's settings:
+
+```json
+{
+  "url": "https://mcp.example.com/mcp",
+  "headers": {
+    "Authorization": "Bearer ${ARODONATA_TOKEN}"
+  }
+}
+```
 
 ---
 
@@ -1125,7 +1322,6 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-
 ---
 
 ## Development — Testing
@@ -1161,19 +1357,36 @@ the `-m "not integration"` marker expression.
 ## Integration suite
 
 ```bash
-./pytest.sh int-fast     # ~3 min
-./pytest.sh int-medium   # ~5 min  (fast + medium)
-./pytest.sh int-full     # ~25 min (everything)
+./pytest.sh int-1        # one bucket
+./pytest.sh int-7        # ...
+./pytest.sh int-full     # all seven, back-to-back (~60 min for b1..b6 measured 2026-09-12)
 ```
 
-Tests live in `tests/integration/{fast,medium,full}/`; tier markers are
-applied automatically from the directory path, and runs are cumulative.
+Tests live in `tests/integration/b1`..`b7`; the `bucket_N` marker is applied
+automatically from the directory path. Buckets are sized for roughly equal
+wall-clock time (~10–15 min each), **not** by topic, and each runs as its own
+pytest session — its own run lock, baseline snapshot and restore — so they are
+independent and can be run in any order or alone. `int-full` runs the seven
+sessions back-to-back rather than one long session with a single restore at
+the end.
 
-| Tier | Contents |
+| Bucket | Contents |
 |---|---|
-| `fast` | Logins for every configured identity (API key + credential users), auth failures, SID lifecycle incl. stale-SID recovery, throttling, rate limiting, concurrent admins, live session naming |
-| `medium` | Cache-first reads and search, single-domain cache builds and check-mode partial refresh, rulebase reads, first mutating tests: create→publish→verify→revert cycles |
-| `full` | Cache-mode matrix (cache/smart/smart-fast/force) incl. live fallback triggers, multi-domain isolation, whole-server rebuilds with asset relationship phases, cross-user publish/discard/revert matrix, bounded soak |
+| `b1` | Logins for every configured identity (API key + credential users), auth failures, SID lifecycle incl. stale-SID recovery, rate limiting, concurrent admins, live session naming, cache-first reads and search, rulebase reads. Mutates nothing. |
+| `b2` | Live CPCRUD create/update/delete with real publishes, single-domain cache builds and check-mode partial refresh |
+| `b3` | create→publish→verify→revert cycles, plus throttling (deliberately drives the server into `err_too_many_requests`; sorts last within the bucket) |
+| `b4` | Cache-mode matrix (cache/smart/smart-fast/force) incl. live fallback triggers, multi-domain isolation |
+| `b5` | Whole-server rebuilds with asset relationship phases, cross-user/cross-domain publish/discard/revert matrix |
+| `b6` | Bounded soak: repeated publish → smart-fast → revert cycles |
+| `b7` | MCP server tools over a real client: init, cache-backed lists, live single-object and list tools, the live rulebase path, search, and the `api_call` write gate. Mutates nothing. The one topical bucket: MCP tests live here together rather than being spread for balance. |
+
+Every bucket run prints its 15 slowest tests (`--durations=15`). The
+assignment is an estimate — publishes, `revert-to-revision` and whole-server
+rebuilds dominate, not test count — so when the numbers say a bucket is
+lopsided, rebalance with a `git mv`; the marker follows the directory.
+
+Only one integration run at a time: see [Contributing](../../CONTRIBUTING.md)
+for the run lock and the reasons behind it.
 
 ### Configuration
 
