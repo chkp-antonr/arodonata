@@ -15,6 +15,7 @@ site.
 | `07_crud_inverse.py` | Plan → apply → inverse → apply compensating-template round-trip |
 | `07_session_basics.py` | Raw session management: baseline, publish, revert |
 | `08_otel_smart_refresh.py` | Same as `04`, but with OTel tracing + a per-span timing breakdown |
+| `09_mcp_embedded.py` | Serving Arodonata as an MCP endpoint inside a FastAPI application |
 
 ## Setup
 
@@ -23,4 +24,7 @@ uv sync --dev
 cp .env.example .env  # then fill in DATABASE_URL, MGMT_NAMES, MGMT_SERVERS, API_KEY_VARS
 uv run examples/04_smart_refresh.py   # populate the cache first
 uv run examples/01_basic_queries.py
+
+# To run the embedded MCP example (requires arodonata[mcp] or uv sync --dev):
+uv run examples/09_mcp_embedded.py
 ```
