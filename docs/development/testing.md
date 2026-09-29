@@ -28,15 +28,15 @@ the `-m "not integration"` marker expression.
 
 ```bash
 ./pytest.sh int-1        # one bucket
-./pytest.sh int-6        # ...
-./pytest.sh int-full     # all six, back-to-back (~60 min measured 2026-09-12)
+./pytest.sh int-7        # ...
+./pytest.sh int-full     # all seven, back-to-back (~60 min for b1..b6 measured 2026-09-12)
 ```
 
-Tests live in `tests/integration/b1`..`b6`; the `bucket_N` marker is applied
+Tests live in `tests/integration/b1`..`b7`; the `bucket_N` marker is applied
 automatically from the directory path. Buckets are sized for roughly equal
 wall-clock time (~10–15 min each), **not** by topic, and each runs as its own
 pytest session — its own run lock, baseline snapshot and restore — so they are
-independent and can be run in any order or alone. `int-full` runs the six
+independent and can be run in any order or alone. `int-full` runs the seven
 sessions back-to-back rather than one long session with a single restore at
 the end.
 
@@ -48,6 +48,7 @@ the end.
 | `b4` | Cache-mode matrix (cache/smart/smart-fast/force) incl. live fallback triggers, multi-domain isolation |
 | `b5` | Whole-server rebuilds with asset relationship phases, cross-user/cross-domain publish/discard/revert matrix |
 | `b6` | Bounded soak: repeated publish → smart-fast → revert cycles |
+| `b7` | MCP server tools over a real client: init, cache-backed lists, live single-object and list tools, the live rulebase path, search, and the `api_call` write gate. Mutates nothing. The one topical bucket: MCP tests live here together rather than being spread for balance. |
 
 Every bucket run prints its 15 slowest tests (`--durations=15`). The
 assignment is an estimate — publishes, `revert-to-revision` and whole-server

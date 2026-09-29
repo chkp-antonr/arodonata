@@ -21,14 +21,28 @@
   // ========================
   "python.testing.unittestEnabled": false,
   "python.testing.pytestEnabled": true,
-  "python.testing.envFile": "${workspaceFolder}/.env.test",
+  // There is no "python.testing.envFile" setting (VS Code flagged it as
+  // unknown and ignored it). Test runs get python.envFile (.env) above; the
+  // integration conftest loads .env.test, .env.secrets and the lab profile
+  // itself (tests/integration/lab_env.py). ARODONATA_TEST_SETTLE_SECONDS in
+  // .env shortens the per-test pause for IDE runs only.
+  //
   // Clear addopts from pyproject.toml so the IDE collects ALL tests.
   // Without this, addopts="-m not integration" silently deselects all 26 items.
   // Bare `uv run pytest` still uses addopts (unit-only, with coverage).
+  // No --no-cov: a plain Run collects no coverage anyway (addopts, which holds
+  // --cov, is cleared), and "Run with Coverage" then really shows coverage.
+  // --tb=short, live log: same as pytest.sh's integration options. The long
+  // traceback format prints every frame's arguments (a live API key once, in
+  // cpapi's frames), and a slow fixture setup is only readable as a live log.
   "python.testing.pytestArgs": [
     "tests",
     "--override-ini=addopts=",
-    "--no-cov"
+    "--tb=short",
+    "--durations=15",
+    "-o",
+    "log_cli=true",
+    "--log-cli-level=INFO"
   ],
   "evenBetterToml.schema.enabled": false,
   "evenBetterToml.schema.associations": {

@@ -119,6 +119,7 @@ markers = [
     "bucket_4: integration bucket 4 — auto-applied from tests/integration/b4/",
     "bucket_5: integration bucket 5 — auto-applied from tests/integration/b5/",
     "bucket_6: integration bucket 6 — auto-applied from tests/integration/b6/",
+    "bucket_7: integration bucket 7 — auto-applied from tests/integration/b7/",
     "cp_mutates: mutates CP state; triggers baseline revert at session end",
 ]
 filterwarnings = [
