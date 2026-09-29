@@ -8,14 +8,31 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 
 from ..config import GLOBAL_DOMAIN_NAME
 from ..logger import lazy_logger
 from .database import DatabaseManager
-from .models import Asset, CPObject, Domain, LastPublishedSession, SIDCache
+from .models import (
+    Asset,
+    CPObject,
+    Domain,
+    LastPublishedSession,
+    RulebaseAccess,
+    RulebaseHTTPS,
+    RulebaseNAT,
+    RulebaseThreat,
+    SIDCache,
+)
 
 log = lazy_logger("arodonata.cache.repository")
+
+_RULEBASE_MODELS: dict[str, type] = {
+    "access": RulebaseAccess,
+    "nat": RulebaseNAT,
+    "https": RulebaseHTTPS,
+    "threat": RulebaseThreat,
+}
 
 
 def _sid_key(mgmt_name: str, domain: str, username: str | None = None) -> str:
@@ -895,6 +912,51 @@ class CacheRepository:
             result = await session.execute(stmt)
             res_list = list(result.scalars().all())
             return res_list
+
+    async def get_objects_last_update(
+        self,
+        mgmt_names: list[str] | None = None,
+        domain_names: list[str] | None = None,
+    ) -> datetime | None:
+        """Most recent ``update_time`` among cached objects in scope, or ``None`` when the scope is empty."""
+        async with self._db.session() as session:
+            stmt: Any = select(func.max(CPObject.update_time))
+            if mgmt_names:
+                stmt = stmt.where(CPObject.mgmt_name.in_(mgmt_names))  # type: ignore[attr-defined]
+            if domain_names:
+                stmt = stmt.where(CPObject.domain_name.in_(domain_names))  # type: ignore[attr-defined]
+            result = await session.execute(stmt)
+            value = result.scalar_one_or_none()
+            return value if isinstance(value, datetime) else None
+
+    async def get_rulebase_last_update(
+        self,
+        rulebase_type: str,
+        mgmt_names: list[str] | None = None,
+        domain_names: list[str] | None = None,
+    ) -> datetime | None:
+        """Most recent ``update_time`` among cached rules of one rulebase type in scope, or ``None`` when empty.
+
+        Args:
+            rulebase_type: One of ``"access"``, ``"nat"``, ``"https"``, ``"threat"``.
+            mgmt_names: Optional management server names to filter.
+            domain_names: Optional domain names to filter.
+
+        Raises:
+            ValueError: If ``rulebase_type`` is not one of the supported types.
+        """
+        model = _RULEBASE_MODELS.get(rulebase_type)
+        if model is None:
+            raise ValueError(f"unknown rulebase_type '{rulebase_type}'; expected one of: {', '.join(_RULEBASE_MODELS)}")
+        async with self._db.session() as session:
+            stmt: Any = select(func.max(model.update_time))  # type: ignore[attr-defined]
+            if mgmt_names:
+                stmt = stmt.where(model.mgmt_name.in_(mgmt_names))  # type: ignore[attr-defined]
+            if domain_names:
+                stmt = stmt.where(model.domain_name.in_(domain_names))  # type: ignore[attr-defined]
+            result = await session.execute(stmt)
+            value = result.scalar_one_or_none()
+            return value if isinstance(value, datetime) else None
 
     async def get_objects_by_type(
         self,
