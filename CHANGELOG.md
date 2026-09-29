@@ -8,6 +8,13 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 via [commitizen](https://commitizen-tools.github.io/commitizen/) — do not
 hand-edit released sections, only the `[Unreleased]` section above them.
 
+## v1.11.0 (2026-09-29)
+
+### Feat
+
+- **mcp**: serve Arodonata as a streamable-HTTP MCP server
+- task timeout budget, lab tooling, and login and incremental-refresh fixes (#7)
+
 ## v1.10.1 (2026-09-22)
 
 ### Fix

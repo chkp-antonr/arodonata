@@ -5,7 +5,7 @@ Loads .env.test then .env.secrets from the repo root (symlinks into
 (see lab_env.py). Missing variables skip the affected tests, so machines
 without lab access still run the unit suite cleanly.
 
-Bucket markers (integration + bucket_1..bucket_6) are applied automatically
+Bucket markers (integration + bucket_1..bucket_7) are applied automatically
 from the directory path (tests/integration/b1..b6) — tests never declare
 them. Buckets are sized for roughly equal wall-clock time; each is run as its
 own pytest session by pytest.sh, so each gets its own baseline snapshot and

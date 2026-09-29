@@ -30,8 +30,8 @@ The suite has two layers:
   enforced at ≥85% (`--cov-fail-under`); core logic is held near 100%.
 - **Integration tests** (`tests/integration/`) — run against a real
   Check Point management server and are excluded from default runs. They
-  are split into six buckets (`tests/integration/b1`..`b6`) sized for
-  roughly equal wall-clock time, not by topic. Each bucket runs as its own
+  are split into seven buckets (`tests/integration/b1`..`b7`). `b1`..`b6` are sized for
+  roughly equal wall-clock time, not by topic; `b7` is a topical bucket for the MCP server. Each bucket runs as its own
   pytest session — its own run lock, baseline snapshot, and restore — so
   buckets are independent and can be run in any order or on their own:
 
@@ -42,7 +42,8 @@ The suite has two layers:
 ./pytest.sh int-4        # cache-mode matrix, multi-domain
 ./pytest.sh int-5        # whole-server rebuilds, cross-user/domain publish matrix
 ./pytest.sh int-6        # soak: repeated publish -> smart-fast -> revert cycles
-./pytest.sh int-full     # all six, back-to-back sessions; ~60 min total measured 2026-09-12
+./pytest.sh int-7        # MCP server tools (read-only)
+./pytest.sh int-full     # all seven, back-to-back sessions; ~60 min for b1..b6 measured 2026-09-12
 ```
 
 Every bucket run prints its 15 slowest tests (`--durations=15`). The bucket

@@ -1,0 +1,70 @@
+"""Tool names of @chkp/quantum-management-mcp (packages/management/src/index.ts, cloned 2026-09-27)."""
+
+REFERENCE_TOOLS: frozenset[str] = frozenset(
+    {
+        "management__init",
+        "show_access_rulebase",
+        "show_hosts",
+        "show_access_rule",
+        "show_access_layer",
+        "show_access_layers",
+        "show_packages",
+        "show_nat_rulebase",
+        "show_access_section",
+        "show_nat_section",
+        "show_vpn_community_star",
+        "show_vpn_communities_star",
+        "show_vpn_community_meshed",
+        "show_vpn_communities_meshed",
+        "show_vpn_community_remote_access",
+        "show_vpn_communities_remote_access",
+        "show_domains",
+        "show_mdss",
+        "management__show_gateways_and_servers",
+        "show_simple_gateway",
+        "show_simple_gateways",
+        "show_lsm_clusters",
+        "show_cluster_member",
+        "show_cluster_members",
+        "show_lsm_gateway",
+        "show_simple_clusters",
+        "show_simple_cluster",
+        "show_lsm_gateways",
+        "show_lsm_cluster",
+        "show_groups",
+        "show_unused_objects",
+        "where_used",
+        "show_services_tcp",
+        "show_application_sites",
+        "show_application_site_groups",
+        "show_services_udp",
+        "show_wildcards",
+        "show_security_zones",
+        "show_tags",
+        "show_address_ranges",
+        "show_application_site_categories",
+        "show_dynamic_objects",
+        "show_services_icmp",
+        "show_service_groups",
+        "show_multicast_address_ranges",
+        "show_dns_domains",
+        "show_time_groups",
+        "show_access_point_names",
+        "management__show_objects",
+        "management__show_object",
+        "find_zero_hits_rules",
+        "simulate_packet",
+        "show_networks",
+    }
+)
+
+# Reference name -> Arodonata name where they differ.
+RENAMED: dict[str, str] = {
+    "management__init": "arodonata_init",
+    "management__show_gateways_and_servers": "show_gateways_and_servers",
+    "management__show_object": "show_object",
+    "management__show_objects": "show_objects",
+}
+
+# Composite reference tools intentionally not ported in v1 (each needs its own design; tracked in the spec's follow-ups).
+EXCLUDED: frozenset[str] = frozenset({"find_zero_hits_rules", "simulate_packet"})

@@ -1,6 +1,6 @@
 [project]
 name = "arodonata"
-version = "1.10.1"
+version = "1.11.0"
 description = "Comprehensive Python library for Check Point management and monitoring operations with async support, automatic session management, and intelligent caching. v2"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -47,6 +47,10 @@ dependencies = [
 
 [project.optional-dependencies]
 otel = ["arlogi[otel]>=0.611.0"]
+mcp = ["mcp>=2.2,<3"]
+
+[project.scripts]
+arodonata-mcp = "arodonata.mcp.__main__:main"
 
 [dependency-groups]
 dev = [
@@ -115,6 +119,7 @@ markers = [
     "bucket_4: integration bucket 4 — auto-applied from tests/integration/b4/",
     "bucket_5: integration bucket 5 — auto-applied from tests/integration/b5/",
     "bucket_6: integration bucket 6 — auto-applied from tests/integration/b6/",
+    "bucket_7: integration bucket 7 — auto-applied from tests/integration/b7/",
     "cp_mutates: mutates CP state; triggers baseline revert at session end",
 ]
 filterwarnings = [
@@ -173,7 +178,7 @@ reportMissingImports = "warning"
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "1.10.1"
+version = "1.11.0"
 version_files = [
     "pyproject.toml:^version",
     "src/arodonata/__init__.py:__version__",

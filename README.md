@@ -43,6 +43,7 @@ Standard Check Point API client scripts often struggle with connection overhead,
 | **Multi-Domain (MDM)** | Native domain resolution and context propagation | Operates across complex tenant environments seamlessly |
 | **Rate Limiting** | Active per-server request gating and database locks | Prevents overloading firewalls during large-scale tasks |
 | **SSE Event Streams** | Live Server-Sent Events for background refresh tasks | Real-time monitoring of sync status and progress bars |
+| **MCP Server** | Streamable-HTTP MCP endpoint with the Check Point show_* tool surface | Lets Claude and other MCP clients query policy through the cache |
 
 ---
 
@@ -181,6 +182,19 @@ Arodonata employs a structured **Ports and Adapters** (Hexagonal) architecture t
 
 ---
 
+## 🤖 MCP Server
+
+Arodonata can serve any MCP client (Claude Code, Claude Desktop, or your own agent) over streamable HTTP, exposing the same `show_*` tool surface as Check Point's reference MCP server, answered from Arodonata's cache.
+
+```bash
+uv pip install "arodonata[mcp]"
+arodonata-mcp --host 0.0.0.0 --port 8765
+```
+
+See [docs/mcp/index.md](docs/mcp/index.md) for configuration, authentication modes, embedding in your own FastAPI app, and the full tool list.
+
+---
+
 ## 📖 Documentation
 
 Complete, searchable documentation is built with MkDocs and served locally or via static hosting:
@@ -188,6 +202,7 @@ Complete, searchable documentation is built with MkDocs and served locally or vi
 * **[Getting Started](docs/getting-started/index.md)** – Installation, environment variables, and a minimal first script.
 * **[Core Architecture](docs/architecture/index.md)** – Ports and adapters, caching/sync, sessions, and multi-domain resolution.
 * **[Configuration Guide](docs/configuration/index.md)** – Every `ArodonataSettings` field and multi-server setup.
+* **[MCP Server](docs/mcp/index.md)** – Standalone and embedded streamable-HTTP MCP server, authentication, and the tool list.
 * **[API Reference](docs/api/)** – Generated reference for every public class and function in `arodonata`.
 * **[Examples](docs/examples/index.md)** – Runnable, narrated scripts covering queries, search, refresh, and rulebases.
 

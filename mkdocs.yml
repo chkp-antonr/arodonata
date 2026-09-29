@@ -116,6 +116,7 @@ nav:
       - User Guide: user-guide/cpcrud.md
       - Configuration: configuration/index.md
       - Multi-Server Setup: configuration/multi-server.md
+      - MCP Server: mcp/index.md
   - Architecture:
       - architecture/index.md
       - architecture/cpcrud.md
@@ -134,6 +135,7 @@ nav:
       - examples/07-crud-inverse.md
       - examples/07-session-basics.md
       - examples/08-otel-smart-refresh.md
+      - examples/09-mcp-embedded.md
   - Project:
       - Testing: development/testing.md
       - Changelog: CHANGELOG.md

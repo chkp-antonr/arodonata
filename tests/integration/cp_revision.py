@@ -135,6 +135,7 @@ async def revert_domain_to(
     target_uid: str,
     *,
     context: str = "",
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> bool:
     """Discard open sessions, then revert `domain` to `target_uid`.
 
@@ -146,6 +147,8 @@ async def revert_domain_to(
     Args:
         context: Free text added to the failure message (e.g. "cycle 3"),
             so a failure names which revert died.
+        sleep: How to wait for CPM to settle (10 s after a revert, 15 s while
+            running tasks block one). Injected so unit tests do not wait.
 
     Returns:
         True when a revert happened, False when CP reports the domain is
@@ -165,8 +168,8 @@ async def revert_domain_to(
             timeout=REVERT_TIMEOUT_SECONDS,
         )
         if result.success:
-            log.info("[%s] revert successful; pausing 10s for CPM to settle...", domain)
-            await asyncio.sleep(10)
+            log.info("[%s] revert successful; pausing 10s for CPM to settle...", _label(domain))
+            await sleep(10)
             return True
 
         # CP aborts a revert to the current revision — the state is already correct.
@@ -189,7 +192,7 @@ async def revert_domain_to(
                 domain,
                 attempt,
             )
-            await asyncio.sleep(15)
+            await sleep(15)
             continue
 
         break
@@ -213,7 +216,13 @@ async def revert_domain_to(
     )
 
 
-async def restore_to_baseline(client: Any, mgmt_name: str, baseline: dict[str, dict]) -> list[str]:
+async def restore_to_baseline(
+    client: Any,
+    mgmt_name: str,
+    baseline: dict[str, dict],
+    *,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> list[str]:
     """Revert every domain whose last published revision drifted from baseline.
 
     Returns the list of reverted domain names ("" = global). Raises on the
@@ -239,7 +248,7 @@ async def restore_to_baseline(client: Any, mgmt_name: str, baseline: dict[str, d
             current["name"],
         )
 
-        if await revert_domain_to(client, mgmt_name, domain, target_uid, context="baseline restore"):
+        if await revert_domain_to(client, mgmt_name, domain, target_uid, context="baseline restore", sleep=sleep):
             log.warning("[%s] reverted to baseline %r (uid=%.8s)", domain, rev.get("name"), target_uid)
             reverted.append(domain)
     return reverted
