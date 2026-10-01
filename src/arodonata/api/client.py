@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from ..asdk import AMgmtClient, ApiTransport, LoginCoordinator, RateLimiter, ServerRegistry
 from ..cache import CacheRepository, DatabaseManager
 from ..config import ArodonataSettings
+from ..config.constants import TASK_QUERY_COMMANDS, TASK_QUERY_MAX_PAGE_SIZE, TASK_QUERY_PAGE_SIZE
 from ..core.exceptions import MissingConfigurationError
 from ..logger import lazy_logger
 from ..utils.background_tasks import DEFAULT_CLOSE_GRACE_SECONDS, drain_background_tasks
@@ -679,6 +680,10 @@ class ArodonataClient:
             Validated API query result.
         """
         self._ensure_open()
+        if command in TASK_QUERY_COMMANDS:
+            return await self._task_query(
+                mgmt_name, command, domain, details_level, payload, TASK_QUERY_COMMANDS[command], cache_mode
+            )
         response = await self._mgmt.api_query(
             mgmt_name=mgmt_name,
             command=command,
@@ -729,6 +734,58 @@ class ArodonataClient:
             print(f"\n[Validation Failed] Full API response for '{command}':")
             print(json.dumps(response, indent=4, default=str))
             raise
+
+    async def _task_query(
+        self,
+        mgmt_name: str,
+        command: str,
+        domain: str,
+        details_level: Literal["uid", "standard", "full"],
+        payload: dict[str, Any] | None,
+        item_key: str,
+        cache_mode: str,
+    ) -> ApiQueryResult:
+        """Page a task-based query command (see TASK_QUERY_COMMANDS) to the end.
+
+        Each page goes through `api_call`, so arodonata's TaskWaiter awaits the
+        task under the configured budgets. The caller's `limit` is the page size
+        and `offset` the starting point, as with cpapi's api_query. A failed page
+        fails the whole query -- never a silently partial result.
+        """
+        base = dict(payload or {})
+        page_size = min(int(base.pop("limit", TASK_QUERY_PAGE_SIZE)), TASK_QUERY_MAX_PAGE_SIZE)
+        offset = int(base.pop("offset", 0))
+        items: list[dict[str, Any]] = []
+        while True:
+            response = await self._mgmt.api_call(
+                mgmt_name=mgmt_name,
+                command=command,
+                domain=domain,
+                details_level=details_level,
+                payload={**base, "limit": page_size, "offset": offset},
+                cache_mode=cache_mode,
+            )
+            if not response.get("success", False):
+                data = response.get("data")
+                return ApiQueryResult(
+                    success=False,
+                    data=data if isinstance(data, dict) else None,
+                    message=f"{command} page at offset {offset}: {response.get('message', '')}",
+                    code=response.get("code", ""),
+                )
+            page, to, total = _task_page(response.get("data"), item_key)
+            items.extend(page)
+            if not page or to >= total:
+                break
+            if to <= offset:
+                return ApiQueryResult(
+                    success=False,
+                    message=f"{command} paging did not advance at offset {offset} (to={to}, total={total})",
+                )
+            offset = to
+        return ApiQueryResult(
+            success=True, data={item_key: items, "total": len(items)}, objects=items, total=len(items)
+        )
 
     @traced
     async def collect_gateways_and_servers(
@@ -1408,6 +1465,22 @@ class ArodonataClient:
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
         )
+
+
+def _task_page(data: Any, item_key: str) -> tuple[list[dict[str, Any]], int, int]:
+    """(items, to, total) of one page of a task-based query.
+
+    The finished show-task answer nests the page under `tasks[].task-details[]`;
+    older servers answer flat, with the paging fields at the top level.
+    """
+    if not isinstance(data, dict):
+        return [], 0, 0
+    details = [d for t in data.get("tasks") or [] for d in t.get("task-details") or [] if isinstance(d, dict)]
+    pages = details or [data]
+    items = [item for d in pages for item in d.get(item_key) or []]
+    to = max((int(d.get("to") or 0) for d in pages), default=0)
+    total = max((int(d.get("total") or 0) for d in pages), default=0)
+    return items, to, total
 
 
 __all__ = ["ArodonataClient"]

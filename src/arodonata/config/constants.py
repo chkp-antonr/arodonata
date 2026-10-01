@@ -97,6 +97,14 @@ DEFAULT_TASK_POLL_MAX_SECONDS: Final[float] = 10.0
 # A single dropped poll during a heavy revert says nothing about the task itself.
 DEFAULT_TASK_POLL_FAILURE_TOLERANCE: Final[int] = 5
 
+# Query commands that answer with a task. The finished `show-task` response nests
+# the paging fields (from/to/total) and the items under `tasks[].task-details[]`,
+# where cpapi's api_query never looks -- it returns page one and stops. Command ->
+# the item key inside task-details. ArodonataClient.api_query pages these itself.
+TASK_QUERY_COMMANDS: Final[dict[str, str]] = {"show-changes": "changes"}
+TASK_QUERY_PAGE_SIZE: Final[int] = 50  # cpapi's api_query page size
+TASK_QUERY_MAX_PAGE_SIZE: Final[int] = 500  # show-changes `limit` accepts 1-500
+
 # Session error codes that trigger relogin
 SESSION_ERROR_CODES: Final[frozenset[str]] = frozenset(
     {
@@ -152,6 +160,9 @@ LOG_LEVELS: Final[frozenset[str]] = frozenset(
 )
 
 __all__ = [
+    "TASK_QUERY_COMMANDS",
+    "TASK_QUERY_PAGE_SIZE",
+    "TASK_QUERY_MAX_PAGE_SIZE",
     "DEFAULT_SESSION_EXPIRE",
     "DEFAULT_SESSION_TIMEOUT",
     "DEFAULT_API_TIMEOUT",
