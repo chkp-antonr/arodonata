@@ -193,3 +193,60 @@ async def test_delete_rulebase_by_layer(repo):
     assert deleted == 1
     remaining = await repo.get_rulebase(RulebaseAccess)
     assert {r.uid for r in remaining} == {"a1"}
+
+
+async def test_replace_rulebase_type_swaps_domain_rows_only(repo):
+    await repo.upsert_rulebases(
+        [
+            make_access("old", rule_number=1, mgmt="m1", domain="d1", layer="A"),
+            make_access("other", rule_number=1, mgmt="m1", domain="d2", layer="A"),
+        ]
+    )
+    new = make_access("new", rule_number=1, mgmt="m1", domain="d1", layer="B")
+    n = await repo.replace_domain_rulebase_type(RulebaseAccess, "m1", "d1", [new, new])  # PK duplicate deduped
+    assert n == 1
+    assert [r.uid for r in await repo.get_rulebase(RulebaseAccess, ["m1"], ["d1"])] == ["new"]
+    assert [r.uid for r in await repo.get_rulebase(RulebaseAccess, ["m1"], ["d2"])] == ["other"]
+
+
+async def test_replace_rulebase_type_commit_failure_keeps_old_rows(repo, monkeypatch):
+    await repo.upsert_rulebases([make_access("old", rule_number=1, mgmt="m1", domain="d1")])
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    async def _boom(self, *args, **kwargs):
+        raise RuntimeError("simulated commit failure")
+
+    monkeypatch.setattr(AsyncSession, "commit", _boom)
+    with pytest.raises(RuntimeError, match="simulated commit failure"):
+        await repo.replace_domain_rulebase_type(
+            RulebaseAccess, "m1", "d1", [make_access("new", rule_number=1, mgmt="m1", domain="d1")]
+        )
+    monkeypatch.undo()
+    assert [r.uid for r in await repo.get_rulebase(RulebaseAccess, ["m1"], ["d1"])] == ["old"]
+
+
+async def test_replace_rulebase_type_uses_one_session(repo, monkeypatch):
+    real = repo._db.session
+    opened = []
+
+    def spy():
+        opened.append(1)
+        return real()
+
+    monkeypatch.setattr(repo._db, "session", spy)
+    await repo.replace_domain_rulebase_type(
+        RulebaseAccess, "m1", "d1", [make_access("new", rule_number=1, mgmt="m1", domain="d1")]
+    )
+    assert opened == [1]
+
+
+async def test_get_rulebase_orders_by_layer_then_rule_number(repo):
+    await repo.upsert_rulebases(
+        [
+            make_access("b1", rule_number=1, layer="B"),
+            make_access("a2", rule_number=2, layer="A"),
+            make_access("b2", rule_number=2, layer="B"),
+            make_access("a1", rule_number=1, layer="A"),
+        ]
+    )
+    assert [r.uid for r in await repo.get_rulebase(RulebaseAccess)] == ["a1", "a2", "b1", "b2"]

@@ -92,6 +92,7 @@ def _rule_from_raw(raw: dict[str, Any], lookup: dict[str, str], number: str, dep
 
 
 def rows_from_live(response: dict[str, Any]) -> list[RuleRow]:
+    """Rows of one live layer. Inline layers are named through the dictionary but not expanded (only one layer is fetched)."""
     lookup = {
         str(o.get("uid")): str(o.get("name", o.get("uid")))
         for o in response.get("objects-dictionary", [])
@@ -107,9 +108,6 @@ def rows_from_live(response: dict[str, Any]) -> list[RuleRow]:
                 continue
             number = f"{prefix}{item.get('rule-number', len(rows) + 1)}"
             rows.append(_rule_from_raw(item, lookup, number, depth, section))
-            inline_rules = item.get("inline-layer-rulebase")
-            if isinstance(inline_rules, list):
-                walk(inline_rules, section, f"{number}.", depth + 1)
 
     walk(response.get("rulebase", []), "", "", 0)
     return rows

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 
-from arodonata.api.schemas import ApiQueryResult
+from arodonata.api.schemas import ApiCallResult, ApiQueryResult
 from arodonata.core.cache_mode import CacheMode
+from tests.unit.rulebase.fakes import load_fixture, page_by_rule_offset
 
 from .fake_client import FakeArodonataClient, rule
 from .helpers import cache_mode_enum, call_tool, make_server, payload, text, tool_input_schema
@@ -59,10 +61,10 @@ async def test_cache_path_raw_format_returns_envelope_with_rulebase_key():
     assert out["rulebase"][0]["name"] == "allow web" and out["total"] == 2 and out["source"] == "cache"
 
 
-async def test_live_only_parameter_switches_to_api_query():
+async def test_live_only_parameter_switches_to_api_call():
     fake = _fake()
-    fake.responses["api_query"] = ApiQueryResult(
-        success=True, data={"name": "Network", "rulebase": [], "objects-dictionary": []}, objects=[], total=0
+    fake.responses["api_call"] = ApiCallResult(
+        success=True, data={"name": "Network", "rulebase": [], "objects-dictionary": [], "from": 0, "to": 0, "total": 0}
     )
     await call_tool(
         make_server(fake),
@@ -70,14 +72,16 @@ async def test_live_only_parameter_switches_to_api_query():
         {"name": "Network", "show_hits": True, "hits_settings": {"from_date": "2026-01-01"}},
     )
     name, kw = fake.calls[0]
-    assert name == "api_query" and kw["command"] == "show-access-rulebase" and kw["container_key"] == "rulebase"
+    assert name == "api_call" and kw["command"] == "show-access-rulebase"
     assert kw["payload"] == {
         "name": "Network",
         "show-hits": True,
         "hits-settings": {"from-date": "2026-01-01"},
         "use-object-dictionary": True,
+        "details-level": "full",
+        "limit": 100,
+        "offset": 0,
     }
-    assert kw["details_level"] == "full"
 
 
 async def test_nat_requires_package_and_uses_get_nat_rules():
@@ -122,16 +126,16 @@ async def test_raw_format_cache_path_makes_exactly_one_getter_call():
 
 async def test_live_path_access_rulebase_includes_package_in_payload():
     fake = _fake()
-    fake.responses["api_query"] = ApiQueryResult(
-        success=True, data={"name": "Network", "rulebase": [], "objects-dictionary": []}, objects=[], total=0
+    fake.responses["api_call"] = ApiCallResult(
+        success=True, data={"name": "Network", "rulebase": [], "objects-dictionary": [], "from": 0, "to": 0, "total": 0}
     )
     await call_tool(
         make_server(fake),
         "show_access_rulebase",
         {"name": "Network", "package": "Standard", "show_hits": True},
     )
-    _, kw = fake.calls[0]
-    assert kw["payload"]["package"] == "Standard"
+    name, kw = fake.calls[0]
+    assert name == "api_call" and kw["payload"]["package"] == "Standard"
 
 
 async def test_cache_path_reports_rulebase_cache_age_for_the_right_type():
@@ -179,11 +183,11 @@ async def test_uid_only_on_cache_path_not_found_is_a_tool_failure():
 
 async def test_uid_on_live_path_is_sent_unchanged():
     fake = _fake()
-    fake.responses["api_query"] = ApiQueryResult(
-        success=True, data={"name": "Network", "rulebase": [], "objects-dictionary": []}, objects=[], total=0
+    fake.responses["api_call"] = ApiCallResult(
+        success=True, data={"name": "Network", "rulebase": [], "objects-dictionary": [], "from": 0, "to": 0, "total": 0}
     )
     await call_tool(make_server(fake), "show_access_rulebase", {"uid": "layer-uid-1", "show_hits": True})
-    assert [c[0] for c in fake.calls] == ["api_query"] and fake.calls[0][1]["payload"]["uid"] == "layer-uid-1"
+    assert [c[0] for c in fake.calls] == ["api_call"] and fake.calls[0][1]["payload"]["uid"] == "layer-uid-1"
 
 
 @pytest.mark.parametrize(("tool", "spec"), _RULEBASE_TOOLS.items())
@@ -213,12 +217,80 @@ async def test_rulebase_schema_publishes_read_cache_vocabulary(tool):
 
 async def test_rulebase_live_path_ignores_read_cache_mode_and_uses_session_default():
     fake = _fake()
-    fake.responses["api_query"] = ApiQueryResult(
-        success=True, data={"name": "Network", "rulebase": [], "objects-dictionary": []}, objects=[], total=0
+    fake.responses["api_call"] = ApiCallResult(
+        success=True, data={"name": "Network", "rulebase": [], "objects-dictionary": [], "from": 0, "to": 0, "total": 0}
     )
     res = await call_tool(
         make_server(fake), "show_access_rulebase", {"name": "Network", "show_hits": True, "cache_mode": "force"}
     )
     assert res.is_error is False, text(res)
     name, kw = fake.calls[0]
-    assert name == "api_query" and kw["cache_mode"] == "auto"
+    assert name == "api_call" and kw["cache_mode"] == "auto"
+
+
+NETWORK = load_fixture("domain_layer_fpcr_uat_active_network.json")
+
+
+def _serve_network(payload):
+    return ApiCallResult(
+        success=True, data=page_by_rule_offset(NETWORK, payload.get("limit"), payload.get("offset", 0))
+    )
+
+
+async def test_live_rulebase_keeps_objects_dictionary():
+    fake = _fake()
+    fake.responses["api_call"] = _serve_network
+    # What today's api_query path receives: include_container_key=False turns data into the bare rule list.
+    fake.responses["api_query"] = ApiQueryResult(
+        success=True, data=NETWORK["rulebase"], objects=NETWORK["rulebase"], total=6
+    )
+    res = await call_tool(make_server(fake), "show_access_rulebase", {"name": NETWORK["name"], "show_hits": True})
+    body = text(res)
+    assert "hostA_8" in body and "Accept" in body and "FPCR_UAT_Active Inline" in body
+    assert "79cd922f" not in body  # rule 1's source uid is resolved
+    assert not any(name == "api_query" for name, _ in fake.calls)
+
+
+async def test_live_rulebase_raw_format_includes_objects_dictionary():
+    fake = _fake()
+    fake.responses["api_call"] = _serve_network
+    res = await call_tool(
+        make_server(fake), "show_access_rulebase", {"name": NETWORK["name"], "show_hits": True, "format": "raw"}
+    )
+    body = json.loads(text(res))
+    assert any(o.get("name") == "hostA_8" for o in body["objects-dictionary"])
+    assert isinstance(body["rulebase"], list)
+    assert body["source"] == "live"
+    # The envelope total counts rendered rows, not rules.
+    assert body["total"] == 6
+
+
+async def test_live_rulebase_api_call_payloads_default_and_explicit_limit():
+    payloads, bodies = [], []
+    for args in ({}, {"limit": 2, "offset": 1}):
+        fake = _fake()
+        fake.responses["api_call"] = _serve_network
+        res = await call_tool(
+            make_server(fake), "show_access_rulebase", {"name": NETWORK["name"], "show_hits": True, **args}
+        )
+        payloads.append([kw["payload"] for name, kw in fake.calls if name == "api_call"])
+        bodies.append(text(res))
+    expected = [
+        {
+            "name": NETWORK["name"],
+            "show-hits": True,
+            "use-object-dictionary": True,
+            "details-level": "full",
+            "limit": 100,
+            "offset": 0,
+        }
+    ]
+    assert payloads[0] == expected and payloads[1] == expected
+    assert "rows 1-6 of 6" in bodies[0] and "rows 2-3 of 6" in bodies[1]
+
+
+async def test_live_rulebase_fetch_error_is_tool_failure():
+    fake = _fake()
+    fake.responses["api_call"] = ApiCallResult(success=False, code="generic_err_object_not_found", message="no layer")
+    res = await call_tool(make_server(fake), "show_access_rulebase", {"name": "Nope", "show_hits": True})
+    assert res.is_error is True and text(res) == "generic_err_object_not_found: no layer"

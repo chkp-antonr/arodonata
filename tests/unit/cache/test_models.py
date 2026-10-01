@@ -396,7 +396,7 @@ def test_rulebase_access_creation_and_repr() -> None:
         layer_name="Network",
         mgmt_name="mgmt1",
     )
-    assert rule.action == "accept"
+    assert rule.action == "Accept"
     assert rule.track == ""
     assert rule.raw_data is None
     text = repr(rule)

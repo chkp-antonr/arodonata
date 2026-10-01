@@ -5,10 +5,12 @@ Other modules MUST NOT access PostgreSQL directly.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, func, or_, select, update
+from sqlmodel import SQLModel
 
 from ..config import GLOBAL_DOMAIN_NAME
 from ..logger import lazy_logger
@@ -1184,9 +1186,9 @@ class CacheRepository:
                     if hasattr(model_class, key):
                         stmt = stmt.where(getattr(model_class, key) == value)
 
-            # Order by rule_number for consistent results
+            # Layer first, then in-layer position, so rules of different layers never interleave
             if hasattr(model_class, "rule_number"):
-                stmt = stmt.order_by(model_class.rule_number)
+                stmt = stmt.order_by(model_class.layer_name, model_class.rule_number)  # type: ignore[attr-defined]
 
             result = await session.execute(stmt)
             return list(result.scalars().all())
@@ -1270,6 +1272,37 @@ class CacheRepository:
             if hasattr(result, "rowcount"):
                 return result.rowcount  # type: ignore[attr-defined]
             return 0
+
+    async def replace_domain_rulebase_type(
+        self,
+        model_class: type[SQLModel],
+        mgmt_name: str,
+        domain_name: str,
+        rows: Sequence[SQLModel],
+    ) -> int:
+        """Atomically replace every cached rule of one rulebase type for a domain.
+
+        Delete + bulk insert run in ONE session and commit, like ``replace_domain_objects``: readers never see a
+        partial type, and a failure rolls back to the previous rows. Rules deleted in CP, emptied layers and
+        deleted layers disappear because the delete covers the whole type. Input is deduped by primary key.
+
+        Returns:
+            Number of rows inserted.
+        """
+        deduped = list({row.id: row for row in rows}.values())  # type: ignore[attr-defined]
+        async with self._db.session() as session:
+            stmt = delete(model_class).where(
+                model_class.mgmt_name == mgmt_name,  # type: ignore[attr-defined]
+                model_class.domain_name == domain_name,  # type: ignore[attr-defined]
+            )
+            result = await session.execute(stmt)
+            deleted = getattr(result, "rowcount", 0) or 0
+            session.add_all(deduped)
+            await session.commit()
+            log().debug(
+                f"Replaced {model_class.__name__} rows for {mgmt_name}/{domain_name}: -{deleted} +{len(deduped)}"
+            )
+            return len(deduped)
 
 
 __all__ = ["CacheRepository"]

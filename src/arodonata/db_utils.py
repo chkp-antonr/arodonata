@@ -6,11 +6,12 @@ with automatic recovery on schema changes.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Column, Dialect, Table, text
+from sqlalchemy import Column, Dialect, String, Table, Text, text
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import SQLModel
@@ -337,6 +338,56 @@ def _create_missing_indexes(sync_conn: Any, table: Table, table_name: str) -> No
         logger.info(f"Auto-migrated: created index '{index.name}' on '{table_name}'")
 
 
+def _varchar_length(col_type: Any) -> int | None:
+    """The declared length of a bounded VARCHAR (SQLModel's ``AutoString`` included), else None.
+
+    ``TEXT`` and unbounded strings give None, so they are never "widened" into a VARCHAR.
+    """
+    impl = getattr(col_type, "impl_instance", col_type)
+    if not isinstance(impl, String) or isinstance(impl, Text):
+        return None
+    length = getattr(impl, "length", None)
+    return length if isinstance(length, int) else None
+
+
+def _varchar_widenings(live_columns: Sequence[Mapping[str, Any]], table: Table, dialect_name: str) -> list[str]:
+    """``ALTER COLUMN ... TYPE VARCHAR(n)`` for each model VARCHAR(n) whose live column is a shorter VARCHAR(m).
+
+    PostgreSQL only: SQLite does not enforce VARCHAR lengths. Never narrows, never changes the type family.
+    Pure (no connection), so it is testable without a PostgreSQL server.
+    """
+    if dialect_name != "postgresql":
+        return []
+    live = {str(col["name"]): col["type"] for col in live_columns}
+    statements: list[str] = []
+    for col in table.columns:
+        wanted = _varchar_length(col.type)
+        if wanted is None or col.name not in live:
+            continue
+        current = _varchar_length(live[col.name])
+        if current is not None and current < wanted:
+            statements.append(f"ALTER TABLE {table.name} ALTER COLUMN {col.name} TYPE VARCHAR({wanted})")
+    return statements
+
+
+def _widen_varchar_columns(sync_conn: Any, table: Table, table_name: str) -> None:
+    """Widen live VARCHAR columns the model now declares longer (``_add_missing_columns`` never alters types).
+
+    Each ``ALTER`` runs in its own savepoint, like ``_add_missing_columns``. A concurrent worker widening the same
+    column issues the same idempotent statement, so any error here is real and re-raised.
+    """
+    inspector = sa_inspect(sync_conn)
+    for ddl in _varchar_widenings(inspector.get_columns(table_name), table, sync_conn.dialect.name):
+        savepoint = sync_conn.begin_nested()
+        try:
+            sync_conn.execute(text(ddl))
+        except Exception:
+            savepoint.rollback()
+            raise
+        savepoint.commit()
+        logger.info(f"Auto-migrated: {ddl}")
+
+
 async def ensure_missing_columns(
     engine_or_conn: Any,
     table_class: type[SQLModel] | Table,
@@ -360,6 +411,7 @@ async def ensure_missing_columns(
         if not inspector.has_table(table_name):
             return
         _add_missing_columns(sync_conn, table, table_name, model_columns)
+        _widen_varchar_columns(sync_conn, table, table_name)
         _warn_orphaned_columns(sync_conn, table_name, model_columns)
         _create_missing_indexes(sync_conn, table, table_name)
 

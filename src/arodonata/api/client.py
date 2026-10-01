@@ -1075,6 +1075,7 @@ class ArodonataClient:
         mgmt_names: list[str] | None = None,
         domain_names: list[str] | None = None,
         mode: Literal["skip", "check", "force"] = "force",
+        include_global: bool = False,
     ) -> AsyncGenerator[SSEEvent]:
         """Refresh rulebase cache from API.
 
@@ -1082,6 +1083,7 @@ class ArodonataClient:
             mgmt_names: Optional management server filter.
             domain_names: Optional domain filter.
             mode: Refresh mode - "skip", "check", or "force".
+            include_global: When False (default), the synthetic "Global" domain is excluded, as in `refresh_objects`.
 
         Yields:
             SSEEvent with progress updates.
@@ -1098,12 +1100,21 @@ class ArodonataClient:
             mgmt_names=mgmt_names,
             domain_names=domain_names,
             mode=mode,
+            include_global=include_global,
         ):
             count = progress.get("count", 0)
             total_count += count
 
+            status = progress.get("status")
+            if status in ("domain_failed", "error"):
+                event_type = SSEEventType.ERROR
+            elif status == "warning":
+                event_type = SSEEventType.WARNING
+            else:
+                event_type = SSEEventType.LOG
+
             yield SSEEvent(
-                event_type=SSEEventType.LOG,
+                event_type=event_type,
                 data=progress,
                 message=progress.get("message", ""),
             )
@@ -1380,7 +1391,7 @@ class ArodonataClient:
         """Get NAT rules from cache.
 
         Args:
-            layer_name: Optional layer name filter (e.g., "NAT").
+            layer_name: Optional policy package name filter; NAT rules are keyed by package, e.g. layer_name="Standard".
             mgmt_names: Optional list of management server names to filter.
             domain_names: Optional list of domain names to filter.
             enabled_only: If True, only return enabled rules.

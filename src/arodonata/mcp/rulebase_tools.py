@@ -7,13 +7,13 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import Field
 
+from ..rulebase.pager import RulebaseFetchError, fetch_full_rulebase
 from ._sdk import MCPServer
 from .common import (
     ReadCacheMode,
     ToolFailure,
     add_guarded_tool,
     dump_json,
-    ensure_success,
     list_envelope,
     resolve_mgmt_name,
     to_api_payload,
@@ -98,21 +98,16 @@ async def _live_rulebase(
     limit: int,
     opts: ToolOptions,
 ) -> tuple[list[RuleRow], str, int | None, Any]:
-    """Run the live ``api_query`` path. Returns ``(rows, source, age, raw_result_or_none)``.
+    """Run the live path: page the layer completely with the shared pager, then build rows.
 
-    ``raw_result_or_none`` is the already-truncated JSON text to return immediately when ``format == "raw"``,
-    ``None`` otherwise (the caller then renders markdown/model_friendly from ``rows``).
+    The tool's ``limit``/``offset`` never reach CP: they slice the rendered rows (``_slice``), so footer totals
+    always describe the whole layer. Returns ``(rows, source, age, raw_result_or_none)``; ``raw_result_or_none``
+    is the already-truncated JSON text to return immediately when ``format == "raw"``, ``None`` otherwise.
     """
-    query = await client.api_query(
-        mgmt,
-        command,
-        domain=domain or "",
-        details_level="full",
-        payload=payload,
-        container_key="rulebase",
-    )
-    ensure_success(query, command)
-    data = query.data if isinstance(query.data, dict) else {"rulebase": query.objects}
+    try:
+        data = await fetch_full_rulebase(client, mgmt, domain or "", command, {**payload, "details-level": "full"})
+    except RulebaseFetchError as exc:
+        raise ToolFailure(f"{exc.code or 'error'}: {exc.message or command + ' failed'}") from exc
     rows = rows_from_live(data)
     if format == "raw":
         env = list_envelope(

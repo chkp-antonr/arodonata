@@ -42,7 +42,8 @@ async def main() -> None:
             for rule in access_rules[:5]:
                 print(f"  #{rule.rule_number}: {rule.name}")
 
-            nat_rules = await client.get_nat_rules()
+            # NAT is cached per policy package: layer_name is the package name, not "NAT".
+            nat_rules = await client.get_nat_rules(layer_name=os.getenv("NAT_PACKAGE") or None)
             print(f"\nNAT rules: {len(nat_rules)}")
             for nat_rule in nat_rules[:5]:
                 print(f"  #{nat_rule.rule_number}: {nat_rule.name}")

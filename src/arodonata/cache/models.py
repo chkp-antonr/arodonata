@@ -443,11 +443,20 @@ class RulebaseAccess(SQLModel, table=True):
     layer_name: str = Field(index=True, max_length=255)
     mgmt_name: str = Field(index=True, max_length=64)
     domain_name: str = Field(index=True, max_length=255, default="")
-    sources: str = Field(default="", description="Comma-separated source UIDs")
-    destinations: str = Field(default="", description="Comma-separated destination UIDs")
-    services: str = Field(default="", description="Comma-separated service UIDs")
-    action: str = Field(default="accept", max_length=32)
-    track: str = Field(default="", max_length=32)
+    sources: str = Field(
+        default="",
+        description="Comma-separated source names (uid when unresolved); a name containing a comma is split wrongly on read",
+    )
+    destinations: str = Field(
+        default="",
+        description="Comma-separated destination names (uid when unresolved); a name containing a comma is split wrongly on read",
+    )
+    services: str = Field(
+        default="",
+        description="Comma-separated service names (uid when unresolved); a name containing a comma is split wrongly on read",
+    )
+    action: str = Field(default="Accept", max_length=64, description="Action name (Accept, Drop, Inner Layer...)")
+    track: str = Field(default="", max_length=64, description="Track type name (Log, None...)")
     update_time: datetime = Field(
         default_factory=lambda: datetime.now(UTC).replace(tzinfo=None),
         index=True,
@@ -516,9 +525,15 @@ class RulebaseHTTPS(SQLModel, table=True):
     layer_name: str = Field(index=True, max_length=255)
     mgmt_name: str = Field(index=True, max_length=64)
     domain_name: str = Field(index=True, max_length=255, default="")
-    sources: str = Field(default="", description="Comma-separated source UIDs")
-    destinations: str = Field(default="", description="Comma-separated destination UIDs")
-    track: str = Field(default="", max_length=32)
+    sources: str = Field(
+        default="",
+        description="Comma-separated source names (uid when unresolved); a name containing a comma is split wrongly on read",
+    )
+    destinations: str = Field(
+        default="",
+        description="Comma-separated destination names (uid when unresolved); a name containing a comma is split wrongly on read",
+    )
+    track: str = Field(default="", max_length=64, description="Track type name (Log, None...)")
     update_time: datetime = Field(
         default_factory=lambda: datetime.now(UTC).replace(tzinfo=None),
         index=True,
@@ -550,8 +565,11 @@ class RulebaseThreat(SQLModel, table=True):
     layer_name: str = Field(index=True, max_length=255)
     mgmt_name: str = Field(index=True, max_length=64)
     domain_name: str = Field(index=True, max_length=255, default="")
-    track: str = Field(default="", max_length=32)
-    protections: str = Field(default="", description="Comma-separated protection names")
+    track: str = Field(default="", max_length=64, description="Track type name (Log, None...)")
+    protections: str = Field(
+        default="",
+        description="Comma-separated protection names (uid when unresolved); a name containing a comma is split wrongly on read",
+    )
     update_time: datetime = Field(
         default_factory=lambda: datetime.now(UTC).replace(tzinfo=None),
         index=True,
