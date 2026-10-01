@@ -157,7 +157,13 @@ class FakeRulebaseClient:
         self.query_calls: list[dict[str, Any]] = []
 
     def add_layer(self, command: str, layer: dict[str, Any], key: str | None = None) -> None:
-        self.layers[(command, key or layer["name"])] = layer
+        """Serve ``layer`` under ``key`` (NAT packages), else under both its name and its uid."""
+        if key:
+            self.layers[(command, key)] = layer
+            return
+        self.layers[(command, layer["name"])] = layer
+        if layer.get("uid"):
+            self.layers[(command, layer["uid"])] = layer
 
     async def api_call(
         self,
@@ -171,9 +177,11 @@ class FakeRulebaseClient:
         body = dict(payload or {})
         self.calls.append((command, body))
         key = str(body.get("uid") or body.get("name") or body.get("package") or "")
-        if (command, key) in self.call_failures:
-            return self.call_failures[(command, key)]
         layer = self.layers.get((command, key))
+        names = {key, *(str(layer[k]) for k in ("name", "uid") if layer and layer.get(k))}
+        for name in names:
+            if (command, name) in self.call_failures:
+                return self.call_failures[(command, name)]
         if layer is None:
             return ApiCallResult(success=False, code="generic_err_object_not_found", message=f"{key} not found")
         return ApiCallResult(success=True, data=self.page(layer, body.get("limit"), int(body.get("offset", 0))))

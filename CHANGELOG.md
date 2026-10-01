@@ -17,6 +17,7 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 - NAT is cached for every policy package with `nat-policy`, keyed by package name: `show_nat_rulebase(package=...)` from cache works; `get_nat_rules(layer_name='NAT')` now returns nothing, pass the package name.
 - Rules, emptied layers and layers deleted in Check Point disappear after the next refresh; a failing layer keeps that rulebase type's old rows and emits an ERROR event.
 - `sources`, `destinations`, `services`, `action`, `track`, NAT fields and threat protections hold Check Point names (uid when unresolved); `action` values change from lowercase keywords or uids to names such as `Accept`. `action`/`track` widen to 64 characters (migrated on PostgreSQL at startup).
+- Layers are read by uid: after a Global assignment a domain's listing includes the Global domain's layers, whose names can repeat the domain's (for example `Network`, `IPS`); both are cached, and `get_*_rules(layer_name=...)` returns the rules of every layer with that name (layer uids arrive in phase 2).
 - The rulebase refresh no longer writes partial objects into the object cache.
 - Rules from different layers are no longer interleaved when no layer filter is given.
 - The MCP live rulebase path pages fully and resolves names; `limit`/`offset` still slice rendered rows.

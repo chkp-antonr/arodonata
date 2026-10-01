@@ -327,15 +327,8 @@ async def test_emptied_layer_is_cleared(repo):
     service = domain4(repo, client)
     await collect(service.refresh_access_rulebases("m1", "Domain4"))
     assert len(await cached(repo)) == 2
-    client.layers[(ACCESS, INLINE)] = {
-        "uid": "dbfa273a",
-        "name": INLINE,
-        "rulebase": [],
-        "objects-dictionary": [],
-        "from": 0,
-        "to": 0,
-        "total": 0,
-    }
+    uid = client.listings["show-access-layers"][0]["uid"]
+    client.add_layer(ACCESS, make_layer(uid, INLINE, 0))
     events = await collect(service.refresh_access_rulebases("m1", "Domain4"))
     assert await cached(repo) == []
     assert events[-1]["count"] == 0
@@ -429,8 +422,34 @@ async def test_https_and_threat_use_the_same_flow(repo, method, listing, command
     assert events[-1]["count"] == 3
     assert client.calls[0] == (
         command,
-        {"name": "X layer", "details-level": "full", "use-object-dictionary": True, "limit": 100, "offset": 0},
+        {"uid": "X", "details-level": "full", "use-object-dictionary": True, "limit": 100, "offset": 0},
     )
+
+
+async def test_layers_with_duplicate_names_are_fetched_by_uid(repo):
+    client = FakeRulebaseClient()
+    client.add_layer(ACCESS, make_layer("g-net", "Network", 2))
+    client.add_layer(ACCESS, make_layer("d-net", "Network", 3))
+    client.listings["show-access-layers"] = [
+        {"uid": "g-net", "name": "Network", "domain": {"name": "Global", "domain-type": "global domain"}},
+        {"uid": "d-net", "name": "Network", "domain": {"name": "Domain4", "domain-type": "domain"}},
+    ]
+    events = await collect(domain4(repo, client).refresh_access_rulebases("m1", "Domain4"))
+    rows = await cached(repo)
+    assert len(rows) == 5 and {r.layer_name for r in rows} == {"Network"}
+    assert len({r.id for r in rows}) == 5
+    assert events[-1]["count"] == 5
+    payloads = [p for cmd, p in client.calls if cmd == ACCESS]
+    assert payloads and all("uid" in p and "name" not in p for p in payloads)
+
+
+async def test_listing_entry_without_uid_is_fetched_by_name(repo):
+    client = FakeRulebaseClient()
+    client.add_layer(ACCESS, make_layer("big", "Big", 2))
+    client.listings["show-access-layers"] = [{"name": "Big"}]
+    await collect(domain4(repo, client).refresh_access_rulebases("m1", "Domain4"))
+    assert len(await cached(repo)) == 2
+    assert client.calls[0][1]["name"] == "Big" and "uid" not in client.calls[0][1]
 
 
 # ---- 1.5 NAT refresh per package with nat-policy -------------------------------------------------------

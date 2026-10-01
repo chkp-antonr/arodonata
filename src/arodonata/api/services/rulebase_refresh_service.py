@@ -39,10 +39,11 @@ class _TypeSpec:
     list_details_level: str
     rulebase_command: str
     target: str  # what one listing entry is: "layer" | "package"
-    target_param: str  # payload key the entry's name goes into: "name" | "package"
+    target_param: str  # payload key the entry's name goes into when read by name: "name" | "package"
     model_class: type[SQLModel]
     requires_flag: str | None = None  # entries without this flag set are not read (NAT: nat-policy)
     name_from_response: bool = True  # layer_name = the response's top-level name; NAT: the package name
+    fetch_by_uid: bool = False  # read an entry by its uid when it has one (layer names can repeat); NAT: by package
 
 
 _ACCESS = _TypeSpec(
@@ -55,6 +56,7 @@ _ACCESS = _TypeSpec(
     "layer",
     "name",
     RulebaseAccess,
+    fetch_by_uid=True,
 )
 _HTTPS = _TypeSpec(
     "https",
@@ -66,6 +68,7 @@ _HTTPS = _TypeSpec(
     "layer",
     "name",
     RulebaseHTTPS,
+    fetch_by_uid=True,
 )
 _THREAT = _TypeSpec(
     "threat",
@@ -77,6 +80,7 @@ _THREAT = _TypeSpec(
     "layer",
     "name",
     RulebaseThreat,
+    fetch_by_uid=True,
 )
 _NAT = _TypeSpec(
     "nat",
@@ -287,13 +291,17 @@ class RulebaseRefreshService:
                 if spec.requires_flag and not entry.get(spec.requires_flag):
                     continue
                 yield {"message": f"Fetching {spec.label} rules for {spec.target}: {entry_name}"}
+                # After a Global assignment the listing also holds the Global domain's layers, whose names can repeat
+                # the domain's; a uid is unambiguous where a name is not.
+                entry_uid = entry.get("uid")
+                target = {"uid": entry_uid} if spec.fetch_by_uid and entry_uid else {spec.target_param: entry_name}
                 try:
                     data = await fetch_full_rulebase(
                         self._client,
                         mgmt_name,
                         domain,
                         spec.rulebase_command,
-                        {spec.target_param: entry_name, "details-level": "full", "use-object-dictionary": True},
+                        {**target, "details-level": "full", "use-object-dictionary": True},
                     )
                 except RulebaseFetchError as exc:
                     yield self._type_failed(spec, scope, f"{spec.target} {entry_name}: {exc}")
