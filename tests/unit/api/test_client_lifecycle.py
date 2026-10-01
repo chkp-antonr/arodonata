@@ -489,6 +489,46 @@ async def test_refresh_rulebases_wraps_service_progress():
     assert events[-1].data["total_results"] == 5
 
 
+@pytest.mark.asyncio
+async def test_refresh_rulebases_forwards_include_global():
+    client = make_client()
+    client._rulebase_refresh = MagicMock()
+    client._rulebase_refresh.refresh_all = MagicMock(return_value=_agen([]))
+
+    _ = [e async for e in client.refresh_rulebases(mgmt_names=["m1"], domain_names=["Global"], include_global=True)]
+
+    client._rulebase_refresh.refresh_all.assert_called_once_with(
+        mgmt_names=["m1"], domain_names=["Global"], mode="force", include_global=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_refresh_rulebases_maps_domain_failed_to_error():
+    client = make_client()
+    client._rulebase_refresh = MagicMock()
+    client._rulebase_refresh.refresh_all = MagicMock(
+        return_value=_agen(
+            [
+                {"message": "fetching"},
+                {"message": "type failed", "status": "domain_failed", "error": "boom"},
+                {"message": "Error: kaboom", "status": "error"},
+                {"message": "listing failed", "status": "warning"},
+                {"message": "saved", "count": 3},
+            ]
+        )
+    )
+
+    events = [e async for e in client.refresh_rulebases()]
+
+    by_message = {e.message: e.event_type for e in events}
+    assert by_message["fetching"] == SSEEventType.LOG
+    assert by_message["type failed"] == SSEEventType.ERROR
+    assert by_message["Error: kaboom"] == SSEEventType.ERROR
+    assert by_message["listing failed"] == SSEEventType.WARNING
+    assert by_message["saved"] == SSEEventType.LOG
+    assert events[-1].data["total_results"] == 3
+
+
 # --------------------------------------------------------------------------- #
 # refresh wrapper delegations to AssetRefreshService / ObjectService
 # --------------------------------------------------------------------------- #

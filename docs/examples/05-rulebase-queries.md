@@ -13,3 +13,5 @@ Run it:
 ```bash
 uv run examples/05_rulebase_queries.py
 ```
+
+NAT rules are cached per policy package, so filter them with `layer_name="<package name>"` (not `"NAT"`); the example script reads the package name from the `NAT_PACKAGE` environment variable (unset returns all NAT rules). Rule `action` values are Check Point names such as `"Accept"` and `"Drop"`.

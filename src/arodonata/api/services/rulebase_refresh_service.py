@@ -1,8 +1,9 @@
-"""Rulebase population and refresh service."""
+"""Rulebase population and refresh service: per domain and type, every layer is read completely, then the type's rows are replaced in one transaction."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from sqlmodel import SQLModel
@@ -17,6 +18,7 @@ from ...extractors.rulebases import (
     ThreatRuleExtractor,
 )
 from ...logger import lazy_logger
+from ...rulebase.pager import RulebaseFetchError, fetch_full_rulebase
 
 if TYPE_CHECKING:
     from ...cache import CacheRepository
@@ -24,6 +26,76 @@ if TYPE_CHECKING:
     from ..client import ArodonataClient
 
 log = lazy_logger("arodonata.api.services.rulebase_refresh_service")
+
+
+@dataclass(frozen=True)
+class _TypeSpec:
+    """How one rulebase type is listed and read."""
+
+    rulebase_type: str  # "access" | "nat" | "https" | "threat"
+    label: str  # for messages
+    list_command: str
+    container_key: str
+    list_details_level: str
+    rulebase_command: str
+    target: str  # what one listing entry is: "layer" | "package"
+    target_param: str  # payload key the entry's name goes into when read by name: "name" | "package"
+    model_class: type[SQLModel]
+    requires_flag: str | None = None  # entries without this flag set are not read (NAT: nat-policy)
+    name_from_response: bool = True  # layer_name = the response's top-level name; NAT: the package name
+    fetch_by_uid: bool = False  # read an entry by its uid when it has one (layer names can repeat); NAT: by package
+
+
+_ACCESS = _TypeSpec(
+    "access",
+    "access",
+    "show-access-layers",
+    "access-layers",
+    "standard",
+    "show-access-rulebase",
+    "layer",
+    "name",
+    RulebaseAccess,
+    fetch_by_uid=True,
+)
+_HTTPS = _TypeSpec(
+    "https",
+    "HTTPS",
+    "show-https-layers",
+    "https-layers",
+    "standard",
+    "show-https-rulebase",
+    "layer",
+    "name",
+    RulebaseHTTPS,
+    fetch_by_uid=True,
+)
+_THREAT = _TypeSpec(
+    "threat",
+    "Threat",
+    "show-threat-layers",
+    "threat-layers",
+    "standard",
+    "show-threat-rulebase",
+    "layer",
+    "name",
+    RulebaseThreat,
+    fetch_by_uid=True,
+)
+_NAT = _TypeSpec(
+    "nat",
+    "NAT",
+    "show-packages",
+    "packages",
+    "full",
+    "show-nat-rulebase",
+    "package",
+    "package",
+    RulebaseNAT,
+    requires_flag="nat-policy",
+    name_from_response=False,
+)
+_SPECS = {spec.rulebase_type: spec for spec in (_ACCESS, _NAT, _HTTPS, _THREAT)}
 
 
 class RulebaseRefreshService:
@@ -53,10 +125,12 @@ class RulebaseRefreshService:
         self._domain_list_refresh = DomainListRefreshTracker(ttl_seconds=domain_list_refresh_ttl, clock=clock)
 
         # Initialize extractors
-        self._access_extractor = AccessRuleExtractor()
-        self._nat_extractor = NATRuleExtractor()
-        self._https_extractor = HTTPSRuleExtractor()
-        self._threat_extractor = ThreatRuleExtractor()
+        self._extractors: dict[str, Any] = {
+            "access": AccessRuleExtractor(),
+            "nat": NATRuleExtractor(),
+            "https": HTTPSRuleExtractor(),
+            "threat": ThreatRuleExtractor(),
+        }
 
     def _extract_rules_recursive(
         self,
@@ -90,7 +164,8 @@ class RulebaseRefreshService:
             item_type = item.get("type")
 
             # If it's a section, recurse
-            if item_type == "access-section" or "rulebase" in item:
+            # Sections (access-section, nat-section, ...) hold their rules in a nested rulebase
+            if str(item_type).endswith("-section") or "rulebase" in item:
                 section_rules = item.get("rulebase", [])
                 extracted.extend(
                     self._extract_rules_recursive(
@@ -112,10 +187,9 @@ class RulebaseRefreshService:
             expected_type = rule_type_map.get(type(extractor))
 
             if item_type == expected_type:
-                rule_dict = extractor.extract(item, context)
+                rule_dict = {**extractor.extract(item, context), "layer_name": layer_name}
 
                 # Build ID: mgmt:domain:layer:uid
-                # For NAT, layer_name is usually "NAT"
                 rule_id = f"{mgmt_name}:{domain}:{layer_name}:{rule_dict['uid']}"
                 rule_model = model_class(id=rule_id, **rule_dict)
                 extracted.append(rule_model)
@@ -132,126 +206,121 @@ class RulebaseRefreshService:
             Layer name if valid, None otherwise.
         """
         if not isinstance(layer, dict):
-            log().warning(f"Skipping non-dict layer object: {type(layer)} - {layer}")
+            log().warning(f"Invalid listing entry: {type(layer)} - {layer}")
             return None
         layer_name = layer.get("name")
         if not layer_name:
-            log().warning("Skipping layer with no name")
+            log().warning("Invalid listing entry: no name")
             return None
         return layer_name
 
-    async def _fetch_layer_rulebase(
+    def _rows_from_layer_response(
         self,
-        mgmt_name: str,
-        domain: str,
-        layer_name: str,
-        command: str,
-        payload: dict[str, Any],
-    ) -> tuple[bool, Any]:
-        """Fetch rulebase for a specific layer.
-
-        Args:
-            mgmt_name: Management server name.
-            domain: Domain name.
-            layer_name: Layer name.
-            command: API command to execute.
-            payload: Request payload.
-
-        Returns:
-            Tuple of (success, rulebase_data).
-        """
-        try:
-            rb_res = await self._client.api_call(
-                mgmt_name=mgmt_name,
-                domain=domain,
-                command=command,
-                payload=payload,
-            )
-            if rb_res.success and rb_res.data:
-                return True, rb_res.data
-            return False, None
-        except Exception as api_err:
-            log().warning(f"API call failed for layer {layer_name}: {api_err}")
-            return False, None
-
-    async def _save_referenced_objects(
-        self,
-        objects_list: list[dict[str, Any]],
-        mgmt_name: str,
-        domain: str,
-        layer_name: str,
-    ) -> None:
-        """Save referenced objects from rulebase response to cache.
-
-        Args:
-            objects_list: List of object data from API.
-            mgmt_name: Management server name.
-            domain: Domain name.
-            layer_name: Layer name for logging.
-        """
-        if not objects_list:
-            return
-
-        objs_to_save = []
-        obj_service = self._client._object_service
-        for obj_data in objects_list:
-            cp_obj = obj_service._api_object_to_cpobject(obj_data, mgmt_name, domain)
-            if cp_obj:
-                objs_to_save.append(cp_obj)
-
-        if objs_to_save:
-            await self._cache.upsert_objects(objs_to_save)
-            log().debug(f"Saved {len(objs_to_save)} referenced objects for {layer_name}")
-
-    async def _process_layer_rules(
-        self,
-        mgmt_name: str,
-        domain: str,
-        layer_name: str,
         data: dict[str, Any],
-        extractor: Any,
-        model_class: type,
-        context: ExtractionContext,
-    ) -> int:
-        """Extract and save rules for a layer.
+        rulebase_type: str,
+        mgmt_name: str,
+        domain: str,
+        *,
+        layer_name: str,
+    ) -> list[SQLModel]:
+        """Rule rows of one fully fetched layer, references resolved through its ``objects-dictionary``.
 
         Args:
+            data: A complete ``show-*-rulebase`` response (``fetch_full_rulebase``).
+            rulebase_type: "access", "nat", "https" or "threat".
             mgmt_name: Management server name.
             domain: Domain name.
-            layer_name: Layer name.
-            data: Rulebase response data.
-            extractor: Rule extractor instance.
-            model_class: Rulebase model class.
-            context: Extraction context.
-
-        Returns:
-            Number of rules processed.
+            layer_name: The response's own top-level ``name`` (NAT: the package name).
         """
-        # Populate objects map from response
-        objects_list = data.get("objects", [])
-        context.objects_map = {obj["uid"]: obj["name"] for obj in objects_list if "uid" in obj and "name" in obj}
-
-        # Save referenced objects
-        await self._save_referenced_objects(objects_list, mgmt_name, domain, layer_name)
-
-        # Extract rules
-        rules_data = data.get("rulebase", [])
-        extracted_rules = self._extract_rules_recursive(
-            rules_data=rules_data,
-            extractor=extractor,
-            context=context,
-            model_class=model_class,
+        objects_map = {
+            str(obj["uid"]): str(obj["name"])
+            for obj in data.get("objects-dictionary", [])
+            if isinstance(obj, dict) and "uid" in obj and "name" in obj
+        }
+        return self._extract_rules_recursive(
+            rules_data=data.get("rulebase", []),
+            extractor=self._extractors[rulebase_type],
+            context=ExtractionContext(mgmt_name=mgmt_name, domain_name=domain, objects_map=objects_map),
+            model_class=_SPECS[rulebase_type].model_class,
             mgmt_name=mgmt_name,
             domain=domain,
             layer_name=layer_name,
         )
 
-        if not extracted_rules:
-            return 0
+    @staticmethod
+    def _type_failed(spec: _TypeSpec, scope: dict[str, str], error: str) -> dict[str, Any]:
+        message = (
+            f"{spec.label} rulebase refresh failed for {scope['mgmt_name']}:{scope['domain_name']}: {error}; "
+            "cached rows kept"
+        )
+        log().warning(message)
+        return {"message": message, "status": "domain_failed", "error": error, **scope}
 
-        # Clear existing and save new
-        await self._cache.delete_rulebase(model_class, mgmt_name, domain, layer_name)
-        return await self._cache.upsert_rulebases(extracted_rules)
+    async def _refresh_type(self, spec: _TypeSpec, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]:
+        """Read every layer (NAT: every package with a NAT policy) of one type completely, then replace that type's
+        rows for the domain in one transaction.
+
+        Any per-layer failure (fetch error, invalid listing entry, extraction error) aborts the type with no
+        replace, so the old rows stay and a ``domain_failed`` event is yielded: skipping a layer under a whole-type
+        replace would silently drop its rows. A failed listing keeps the old rows and yields ``warning``.
+        """
+        scope = {"mgmt_name": mgmt_name, "domain_name": domain, "rulebase_type": spec.rulebase_type}
+        try:
+            listing = await self._client.api_query(
+                mgmt_name=mgmt_name,
+                domain=domain,
+                command=spec.list_command,
+                details_level=spec.list_details_level,  # type: ignore[arg-type]
+                container_key=spec.container_key,
+            )
+            if not listing.success:
+                message = (
+                    f"{spec.list_command} failed for {mgmt_name}:{domain}: {listing.message}; "
+                    f"cached {spec.label} rules kept"
+                )
+                log().warning(message)
+                yield {"message": message, "status": "warning", **scope}
+                return
+
+            rows: list[SQLModel] = []
+            for entry in listing.objects:
+                entry_name = self._validate_and_get_layer_name(entry)
+                if not entry_name:
+                    yield self._type_failed(spec, scope, f"invalid {spec.target} listing entry: {entry!r}")
+                    return
+                if spec.requires_flag and not entry.get(spec.requires_flag):
+                    continue
+                yield {"message": f"Fetching {spec.label} rules for {spec.target}: {entry_name}"}
+                # After a Global assignment the listing also holds the Global domain's layers, whose names can repeat
+                # the domain's; a uid is unambiguous where a name is not.
+                entry_uid = entry.get("uid")
+                target = {"uid": entry_uid} if spec.fetch_by_uid and entry_uid else {spec.target_param: entry_name}
+                try:
+                    data = await fetch_full_rulebase(
+                        self._client,
+                        mgmt_name,
+                        domain,
+                        spec.rulebase_command,
+                        {**target, "details-level": "full", "use-object-dictionary": True},
+                    )
+                except RulebaseFetchError as exc:
+                    yield self._type_failed(spec, scope, f"{spec.target} {entry_name}: {exc}")
+                    return
+                layer_name = str(data.get("name") or entry_name) if spec.name_from_response else entry_name
+                try:
+                    rows += self._rows_from_layer_response(
+                        data, spec.rulebase_type, mgmt_name, domain, layer_name=layer_name
+                    )
+                except (AttributeError, TypeError, KeyError, ValueError) as exc:
+                    yield self._type_failed(spec, scope, f"{spec.target} {entry_name}: {exc}")
+                    return
+
+            count = await self._cache.replace_domain_rulebase_type(spec.model_class, mgmt_name, domain, rows)
+            log().debug(f"Saved {count} {spec.label} rules for {mgmt_name}:{domain}")
+            yield {"message": f"Saved {count} {spec.label} rules for {mgmt_name}:{domain}", "count": count, **scope}
+        except Exception as e:
+            log().exception(f"Error refreshing {spec.label} rules for {mgmt_name}:{domain}: {e}")
+            yield {"message": f"Error: {e}", "status": "error", **scope}
 
     async def refresh_all(
         self,
@@ -353,285 +422,24 @@ class RulebaseRefreshService:
         self._domain_list_refresh.mark_checked(mgmt_name)
 
     async def refresh_access_rulebases(self, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]:
-        """Refresh all access control rulebases for a domain."""
-        try:
-            # 1. Get all layers
-            layers_res = await self._client.api_query(
-                mgmt_name=mgmt_name,
-                domain=domain,
-                command="show-access-layers",
-                details_level="standard",
-            )
-
-            if not layers_res.success:
-                log().warning(f"Failed to get access layers for {mgmt_name}:{domain}: {layers_res.message}")
-                return
-
-            log().debug(f"Found {len(layers_res.objects)} access layers for {mgmt_name}:{domain}")
-
-            # Pre-initialize extraction context to avoid repeated imports
-            context = ExtractionContext(mgmt_name=mgmt_name, domain_name=domain)
-
-            for layer in layers_res.objects:
-                layer_name = self._validate_and_get_layer_name(layer)
-                if not layer_name:
-                    continue
-
-                yield {"message": f"Fetching access rules for layer: {layer_name}"}
-
-                # 2. Get rulebase for this layer
-                success, data = await self._fetch_layer_rulebase(
-                    mgmt_name=mgmt_name,
-                    domain=domain,
-                    layer_name=layer_name,
-                    command="show-access-rulebase",
-                    payload={"name": layer_name, "details-level": "full"},
-                )
-
-                if not success or not data:
-                    continue
-
-                # 3. Extract and save rules
-                try:
-                    processed = await self._process_layer_rules(
-                        mgmt_name=mgmt_name,
-                        domain=domain,
-                        layer_name=layer_name,
-                        data=data,
-                        extractor=self._access_extractor,
-                        model_class=RulebaseAccess,
-                        context=context,
-                    )
-
-                    if processed:
-                        log().debug(f"Saved {processed} access rules for {layer_name}")
-                        yield {
-                            "message": f"Saved {processed} access rules for {layer_name}",
-                            "count": processed,
-                        }
-                    else:
-                        log().debug(f"No rules found in layer {layer_name}")
-                except (AttributeError, TypeError) as data_err:
-                    log().warning(
-                        f"Error accessing rulebase data for {layer_name}: {data_err}. Data type: {type(data)}"
-                    )
-                    continue
-
-        except Exception as e:
-            import traceback
-
-            log().error(f"Error refreshing access rules for {mgmt_name}:{domain}: {e}\n{traceback.format_exc()}")
-            yield {"message": f"Error: {e}", "status": "error"}
+        """Refresh every access layer of a domain (atomic for the access type)."""
+        async for event in self._refresh_type(_ACCESS, mgmt_name, domain):
+            yield event
 
     async def refresh_nat_rulebases(self, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]:
-        """Refresh NAT rulebase for a domain."""
-        try:
-            # NAT is simpler, usually just one rulebase per domain
-            yield {"message": "Fetching NAT rulebase"}
-
-            rb_res = await self._client.api_call(
-                mgmt_name=mgmt_name,
-                domain=domain,
-                command="show-nat-rulebase",
-                payload={"package": "Standard", "details-level": "full"},  # CheckPoint default package
-            )
-
-            # If "Standard" fails, try with policy-package? No, usually show-nat-rulebase without package
-            # returns for current context.
-            if not rb_res.success:
-                rb_res = await self._client.api_call(
-                    mgmt_name=mgmt_name,
-                    domain=domain,
-                    command="show-nat-rulebase",
-                    payload={"details-level": "full"},
-                )
-
-            if not rb_res.success or not rb_res.data:
-                return
-
-            data = rb_res.data
-            if not data:
-                return
-
-            # Populate objects map from response and SAVE to cache
-            objects_list = data.get("objects", [])
-            context = ExtractionContext(
-                mgmt_name=mgmt_name,
-                domain_name=domain,
-                objects_map={obj["uid"]: obj["name"] for obj in objects_list if "uid" in obj and "name" in obj},
-            )
-
-            if objects_list:
-                objs_to_save = []
-                obj_service = self._client._object_service
-                for obj_data in objects_list:
-                    cp_obj = obj_service._api_object_to_cpobject(obj_data, mgmt_name, domain)
-                    if cp_obj:
-                        objs_to_save.append(cp_obj)
-                if objs_to_save:
-                    await self._cache.upsert_objects(objs_to_save)
-                    log().debug(f"Saved {len(objs_to_save)} referenced objects for NAT")
-
-            rules_data = data.get("rulebase", [])
-
-            extracted_rules = self._extract_rules_recursive(
-                rules_data=rules_data,
-                extractor=self._nat_extractor,
-                context=context,
-                model_class=RulebaseNAT,
-                mgmt_name=mgmt_name,
-                domain=domain,
-                layer_name="NAT",
-            )
-
-            if extracted_rules:
-                await self._cache.delete_rulebase(RulebaseNAT, mgmt_name, domain, "NAT")
-                processed = await self._cache.upsert_rulebases(extracted_rules)
-                log().debug(f"Saved {processed} NAT rules for {mgmt_name}:{domain}")
-                yield {
-                    "message": f"Saved {processed} NAT rules",
-                    "count": processed,
-                }
-            else:
-                log().debug(f"No NAT rules found for {mgmt_name}:{domain}")
-
-        except Exception as e:
-            log().error(f"Error refreshing NAT rules for {mgmt_name}:{domain}: {e}")
-            yield {"message": f"Error: {e}", "status": "error"}
+        """Refresh the NAT rulebase of every package with ``nat-policy`` (rows keyed by package name)."""
+        async for event in self._refresh_type(_NAT, mgmt_name, domain):
+            yield event
 
     async def refresh_https_rulebases(self, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]:
-        """Refresh HTTPS inspection rulebases for a domain."""
-        try:
-            # Get HTTPS layers
-            layers_res = await self._client.api_query(
-                mgmt_name=mgmt_name,
-                domain=domain,
-                command="show-https-layers",
-                details_level="standard",
-            )
-
-            if not layers_res.success:
-                log().warning(f"Failed to get HTTPS layers for {mgmt_name}:{domain}: {layers_res.message}")
-                return
-
-            log().debug(f"Found {len(layers_res.objects)} HTTPS layers for {mgmt_name}:{domain}")
-
-            # Pre-initialize extraction context to avoid repeated imports
-            context = ExtractionContext(mgmt_name=mgmt_name, domain_name=domain)
-
-            for layer in layers_res.objects:
-                layer_name = self._validate_and_get_layer_name(layer)
-                if not layer_name:
-                    continue
-
-                yield {"message": f"Fetching HTTPS rules for layer: {layer_name}"}
-
-                # Get rulebase for this layer
-                success, data = await self._fetch_layer_rulebase(
-                    mgmt_name=mgmt_name,
-                    domain=domain,
-                    layer_name=layer_name,
-                    command="show-https-rulebase",
-                    payload={"name": layer_name, "details-level": "full", "use-object-dictionary": True},
-                )
-
-                if not success or not data:
-                    continue
-
-                # Extract and save rules
-                try:
-                    processed = await self._process_layer_rules(
-                        mgmt_name=mgmt_name,
-                        domain=domain,
-                        layer_name=layer_name,
-                        data=data,
-                        extractor=self._https_extractor,
-                        model_class=RulebaseHTTPS,
-                        context=context,
-                    )
-
-                    if processed:
-                        log().debug(f"Saved {processed} HTTPS rules for {layer_name}")
-                        yield {
-                            "message": f"Saved {processed} HTTPS rules for {layer_name}",
-                            "count": processed,
-                        }
-                except (AttributeError, TypeError) as data_err:
-                    log().warning(
-                        f"Error accessing HTTPS rulebase data for {layer_name}: {data_err}. Data type: {type(data)}"
-                    )
-                    continue
-
-        except Exception as e:
-            log().error(f"Error refreshing HTTPS rules for {mgmt_name}:{domain}: {e}")
-            yield {"message": f"Error: {e}", "status": "error"}
+        """Refresh every HTTPS inspection layer of a domain (atomic for the HTTPS type)."""
+        async for event in self._refresh_type(_HTTPS, mgmt_name, domain):
+            yield event
 
     async def refresh_threat_rulebases(self, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]:
-        """Refresh threat prevention rulebases for a domain."""
-        try:
-            # Get Threat layers
-            layers_res = await self._client.api_query(
-                mgmt_name=mgmt_name,
-                domain=domain,
-                command="show-threat-layers",
-                details_level="standard",
-            )
-
-            if not layers_res.success:
-                log().warning(f"Failed to get Threat layers for {mgmt_name}:{domain}: {layers_res.message}")
-                return
-
-            log().debug(f"Found {len(layers_res.objects)} Threat layers for {mgmt_name}:{domain}")
-
-            # Pre-initialize extraction context to avoid repeated imports
-            context = ExtractionContext(mgmt_name=mgmt_name, domain_name=domain)
-
-            for layer in layers_res.objects:
-                layer_name = self._validate_and_get_layer_name(layer)
-                if not layer_name:
-                    continue
-
-                yield {"message": f"Fetching Threat rules for layer: {layer_name}"}
-
-                # Get rulebase for this layer
-                success, data = await self._fetch_layer_rulebase(
-                    mgmt_name=mgmt_name,
-                    domain=domain,
-                    layer_name=layer_name,
-                    command="show-threat-rulebase",
-                    payload={"name": layer_name, "details-level": "full", "use-object-dictionary": True},
-                )
-
-                if not success or not data:
-                    continue
-
-                # Extract and save rules
-                try:
-                    processed = await self._process_layer_rules(
-                        mgmt_name=mgmt_name,
-                        domain=domain,
-                        layer_name=layer_name,
-                        data=data,
-                        extractor=self._threat_extractor,
-                        model_class=RulebaseThreat,
-                        context=context,
-                    )
-
-                    if processed:
-                        log().debug(f"Saved {processed} Threat rules for {layer_name}")
-                        yield {
-                            "message": f"Saved {processed} Threat rules for {layer_name}",
-                            "count": processed,
-                        }
-                except (AttributeError, TypeError) as data_err:
-                    log().warning(
-                        f"Error accessing Threat rulebase data for {layer_name}: {data_err}. Data type: {type(data)}"
-                    )
-                    continue
-
-        except Exception as e:
-            log().error(f"Error refreshing Threat rules for {mgmt_name}:{domain}: {e}")
-            yield {"message": f"Error: {e}", "status": "error"}
+        """Refresh every threat prevention layer of a domain (atomic for the threat type)."""
+        async for event in self._refresh_type(_THREAT, mgmt_name, domain):
+            yield event
 
 
 __all__ = ["RulebaseRefreshService"]

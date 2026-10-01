@@ -381,6 +381,8 @@ class FakeArodonataClient:
             session_name=session_name,
             session_description=session_description,
         )
+        if callable(r):
+            r = r(payload or {})
         return r or ApiCallResult(success=True, data={"uid": "u1", "name": "obj"})
 
     async def api_query(
@@ -448,5 +450,12 @@ class FakeArodonataClient:
         mgmt_names: list[str] | None = None,
         domain_names: list[str] | None = None,
         mode: Literal["skip", "check", "force"] = "force",
+        include_global: bool = False,
     ):
-        return self._stream("refresh_rulebases", mgmt_names=mgmt_names, domain_names=domain_names, mode=mode)
+        return self._stream(
+            "refresh_rulebases",
+            mgmt_names=mgmt_names,
+            domain_names=domain_names,
+            mode=mode,
+            include_global=include_global,
+        )

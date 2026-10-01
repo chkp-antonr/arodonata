@@ -15,6 +15,15 @@ async def _refresh_rulebases(client, mgmt_name: str, domain: str) -> list:
     return [e async for e in client.refresh_rulebases(mgmt_names=[mgmt_name], domain_names=[domain], mode="force")]
 
 
+def _errors_by_type(events: list) -> dict[str, list[str]]:
+    """ERROR event messages grouped by rulebase type, so a failing type (e.g. threat via the shared IPS layer) stands out."""
+    grouped: dict[str, list[str]] = {}
+    for e in events:
+        if e.event_type == SSEEventType.ERROR:
+            grouped.setdefault(str((e.data or {}).get("rulebase_type", "?")), []).append(e.message)
+    return grouped
+
+
 async def test_refresh_rulebases_single_domain(apikey_client, test_domain_a):
     """Rulebase refresh scoped to TEST_DOMAIN_A completes without errors."""
     client, mgmt_name = apikey_client
@@ -22,8 +31,8 @@ async def test_refresh_rulebases_single_domain(apikey_client, test_domain_a):
     events = await _refresh_rulebases(client, mgmt_name, test_domain_a)
     assert events[0].event_type == SSEEventType.START
     assert events[-1].event_type == SSEEventType.COMPLETE, events[-1].message
-    errors = [e for e in events if e.event_type == SSEEventType.ERROR]
-    assert not errors, f"Rulebase refresh errors: {[e.message for e in errors]}"
+    errors = _errors_by_type(events)
+    assert not errors, f"Rulebase refresh errors by type: {errors}"
 
 
 async def test_get_access_rules_from_cache(apikey_client, test_domain_a):
@@ -42,27 +51,36 @@ async def test_get_access_rules_from_cache(apikey_client, test_domain_a):
     assert rule.action, "Cached rules must carry an action"
 
 
-async def test_layer_name_not_persisted_src_bug(apikey_client, test_domain_a):
-    """SRC BUG (pinned): cached access rules have an empty layer_name.
-
-    RulebaseRefreshService knows the layer name (it embeds it in the row id
-    'mgmt:domain:layer:uid') but never injects it into the extracted rule
-    dict; the extractor only reads raw_data['layer'], which CP's
-    show-access-rulebase rules don't carry as a named field. Consequence:
-    the get_access_rules(layer_name=...) filter can never match. When the
-    service is fixed to backfill rule_dict['layer_name'], flip this test to
-    assert rules DO carry their layer name.
-    """
+async def test_layer_name_persisted(apikey_client, test_domain_a):
+    """Cached access rules carry the name of the layer they were read from (rulebase cache v2, phase 1)."""
     client, mgmt_name = apikey_client
-
+    await _refresh_rulebases(client, mgmt_name, test_domain_a)
     rules = await client.get_access_rules(mgmt_names=[mgmt_name], domain_names=[test_domain_a], cache_mode="cache")
     if not rules:
         pytest.skip(f"{test_domain_a} has no access rules")
+    assert all(r.layer_name for r in rules)
+    for layer in {r.layer_name for r in rules}:
+        by_layer = await client.get_access_rules(
+            layer_name=layer, mgmt_names=[mgmt_name], domain_names=[test_domain_a], cache_mode="cache"
+        )
+        assert by_layer and {r.layer_name for r in by_layer} == {layer}
 
-    assert all(r.layer_name == "" for r in rules), (
-        "layer_name is now populated — the src bug was fixed; update this test "
-        "and test_get_access_rules_from_cache to assert non-empty layer names"
+
+async def test_domain4_network_layer_has_six_named_rules(apikey_client, test_domain_a):
+    """Home-lab Domain4: FPCR_UAT_Active Network is cached completely with action names; NAT keyed by package."""
+    if test_domain_a != "Domain4":
+        pytest.skip("asserts the home-lab Domain4 shape")
+    client, mgmt_name = apikey_client
+    events = await _refresh_rulebases(client, mgmt_name, test_domain_a)
+    assert not _errors_by_type(events), _errors_by_type(events)
+    rules = await client.get_access_rules(
+        layer_name="FPCR_UAT_Active Network", mgmt_names=[mgmt_name], domain_names=[test_domain_a], cache_mode="cache"
     )
+    assert [r.rule_number for r in rules] == [1, 2, 3, 4, 5, 6]
+    assert [r.action for r in rules] == ["Accept", "Inner Layer", "Accept", "Accept", "Accept", "Drop"]
+    nat = await client.get_nat_rules(mgmt_names=[mgmt_name], domain_names=[test_domain_a], cache_mode="cache")
+    assert all(r.layer_name != "NAT" for r in nat)
+    assert any(r.layer_name == "FPCR_UAT_Active" for r in nat), "NAT rules of package FPCR_UAT_Active not cached"
 
 
 async def test_enabled_only_filter(apikey_client, test_domain_a):

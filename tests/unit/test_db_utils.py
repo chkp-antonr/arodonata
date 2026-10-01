@@ -10,13 +10,16 @@ from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import Column, Index, Integer, MetaData, Table, text
+from sqlalchemy import TEXT, VARCHAR, Column, Index, Integer, MetaData, Table, text
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.types import NullType
 from sqlmodel import Field, SQLModel
 
-from arodonata.db_utils import ensure_missing_columns, safe_init_table
+from arodonata import db_utils
+from arodonata.cache.models import RulebaseAccess, RulebaseHTTPS
+from arodonata.db_utils import _varchar_widenings, ensure_missing_columns, safe_init_table
 
 
 class _Widget(SQLModel, table=True):
@@ -385,3 +388,51 @@ async def test_safe_init_table_accepts_connection():
         assert result is True
     finally:
         await engine.dispose()
+
+
+def _live_columns_like_model(table, **overrides):
+    """Inspector-shaped column dicts matching ``table``, with selected column types overridden."""
+    cols = []
+    for col in table.columns:
+        length = getattr(col.type, "length", None)
+        live_type = overrides.get(col.name, VARCHAR(length) if length else col.type)
+        cols.append({"name": col.name, "type": live_type})
+    return cols
+
+
+def test_action_and_track_are_64_wide():
+    table = RulebaseAccess.__table__
+    assert table.c.action.type.length == 64 and table.c.track.type.length == 64
+    assert RulebaseHTTPS.__table__.c.track.type.length == 64
+
+
+def test_varchar_widening_ddl_for_postgresql():
+    table = RulebaseAccess.__table__
+    live = _live_columns_like_model(table, action=VARCHAR(32), track=VARCHAR(32))
+    assert _varchar_widenings(live, table, "postgresql") == [
+        "ALTER TABLE rulebase_access ALTER COLUMN action TYPE VARCHAR(64)",
+        "ALTER TABLE rulebase_access ALTER COLUMN track TYPE VARCHAR(64)",
+    ]
+
+
+def test_varchar_widening_never_narrows():
+    table = RulebaseAccess.__table__
+    live = _live_columns_like_model(table, action=VARCHAR(128), track=TEXT())
+    assert _varchar_widenings(live, table, "postgresql") == []
+
+
+def test_varchar_widening_skipped_on_sqlite():
+    table = RulebaseAccess.__table__
+    live = _live_columns_like_model(table, action=VARCHAR(32))
+    assert _varchar_widenings(live, table, "sqlite") == []
+
+
+async def test_ensure_missing_columns_runs_widening_step(monkeypatch):
+    seen = []
+    monkeypatch.setattr(db_utils, "_widen_varchar_columns", lambda conn, table, name: seen.append(name))
+    engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    async with engine.begin() as conn:
+        await conn.run_sync(RulebaseAccess.__table__.create)
+    await db_utils.ensure_missing_columns(engine, RulebaseAccess)
+    await engine.dispose()
+    assert seen == ["rulebase_access"]

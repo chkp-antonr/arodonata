@@ -139,3 +139,36 @@ async def test_api_call_gate_and_pagination(apikey_client):
         )
         assert out["source"] == "live" and out["total"] == len(out["objects"])
         assert all(set(o) >= {"uid", "name"} for o in out["objects"])
+
+
+async def test_cached_rulebase_path_renders_rows(apikey_client, test_domain_a):
+    """The cache path of show_access_rulebase renders rows on real data (it rendered an empty table before)."""
+    client, mgmt_name = apikey_client
+    async for _ in client.refresh_rulebases(mgmt_names=[mgmt_name], domain_names=[test_domain_a], mode="force"):
+        pass
+    rules = await client.get_access_rules(mgmt_names=[mgmt_name], domain_names=[test_domain_a], cache_mode="cache")
+    if not rules:
+        pytest.skip(f"{test_domain_a} has no access rules")
+    async with _mcp(apikey_client) as (mcp, _, _):
+        res = await mcp.call_tool(
+            "show_access_rulebase",
+            {"mgmt_name": mgmt_name, "domain": test_domain_a, "name": rules[0].layer_name, "cache_mode": "cache"},
+        )
+    body = _text(res)
+    assert res.is_error is False, body
+    assert int(body.rsplit(" of ", 1)[1].split()[0]) > 0, body
+
+
+async def test_live_rulebase_filter_pages_consistently(apikey_client, test_domain_a):
+    """A filtered live read goes through the pager; its from/to continuity check must hold for filtered results."""
+    if test_domain_a != "Domain4":
+        pytest.skip("uses the home-lab Domain4 layer")
+    _, mgmt_name = apikey_client
+    async with _mcp(apikey_client) as (mcp, _, _):
+        res = await mcp.call_tool(
+            "show_access_rulebase",
+            {"mgmt_name": mgmt_name, "domain": test_domain_a, "name": "FPCR_UAT_Active Network", "filter": "Cleanup"},
+        )
+    body = _text(res)
+    assert res.is_error is False, body
+    assert "Source: live" in body and "Cleanup rule" in body, body

@@ -48,6 +48,20 @@ log line-by-line instead of blocking until completion.
 
 The same engine backs the `smart-fast` cache mode used by read helpers.
 
+## Rulebase refresh
+
+Per domain and rulebase type, `refresh_rulebases` reads every layer completely (pages of 100, with `from`/`to` continuity checked) and then replaces that type's rows in one transaction, so a layer is cached completely or not at all.
+
+If listing the layers fails, a warning event is emitted and the type's existing rows are kept. If a single layer fails, an ERROR event is emitted and the type's existing rows are kept. Rules, emptied layers and layers deleted in Check Point disappear on the next successful refresh.
+
+Layers are fetched by uid, because after a Global assignment a domain's listing also contains the Global domain's layers, whose names can repeat the domain's (for example `Network`); same-named layers are all cached under that name.
+
+NAT is cached per policy package that has `nat-policy`, and the rule's `layer_name` holds the package name. Names in `sources`, `destinations`, `services`, `action`, `track` and NAT fields come from each response's `objects-dictionary` (the uid is kept when a name cannot be resolved).
+
+`sources`, `destinations` and `services` are stored as comma-joined names, so a name that itself contains a comma splits when the rule is read back. The exact values remain in `raw_data` together with the layer's objects-dictionary.
+
+Refresh is not session-aware yet; session-aware rulebase refresh comes in a later phase.
+
 ## Reading from the cache
 
 Helper methods on `ArodonataClient` (`get_hosts`, `get_networks`, `get_groups`,

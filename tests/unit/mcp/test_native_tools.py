@@ -81,7 +81,21 @@ async def test_refresh_rulebases_default_mode_force():
     fake = FakeArodonataClient()
     fake.responses["refresh_rulebases"] = _events(SSEEvent(event_type=SSEEventType.COMPLETE, data={"total_results": 3}))
     payload(await call_tool(make_server(fake), "refresh_rulebases", {}))
-    assert fake.calls[0] == ("refresh_rulebases", {"mgmt_names": None, "domain_names": None, "mode": "force"})
+    assert fake.calls[0] == (
+        "refresh_rulebases",
+        {"mgmt_names": None, "domain_names": None, "mode": "force", "include_global": False},
+    )
+
+
+async def test_refresh_rulebases_forwards_include_global():
+    fake = FakeArodonataClient()
+    fake.responses["refresh_rulebases"] = _events(
+        SSEEvent(event_type=SSEEventType.ERROR, message="access refresh failed", data={"status": "domain_failed"}),
+        SSEEvent(event_type=SSEEventType.COMPLETE, data={"total_results": 0}),
+    )
+    out = payload(await call_tool(make_server(fake), "refresh_rulebases", {"include_global": True}))
+    assert fake.calls[0][1]["include_global"] is True
+    assert out["errors"] == ["access refresh failed"]
 
 
 async def test_api_call_rejects_write_commands_by_default():

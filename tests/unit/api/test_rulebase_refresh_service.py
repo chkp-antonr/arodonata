@@ -1,9 +1,6 @@
 """Unit tests for RulebaseRefreshService.
 
-Covers layer discovery, access/NAT/HTTPS/threat rulebase collection and
-persistence (including nested-section recursion), referenced-object saving,
-per-domain scoping via refresh_all, and error paths. The ArodonataClient and
-CacheRepository seams are mocked; no network or database is touched.
+Fixture-driven: recorded Domain4 layers served by a paging fake into a real in-memory SQLite repository for the refresh flows; refresh_all domain-list tests keep their mocks.
 """
 
 from __future__ import annotations
@@ -12,12 +9,19 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import StaticPool
+from sqlmodel import SQLModel
 
 from arodonata.api.schemas import ApiCallResult, ApiQueryResult
 from arodonata.api.services.rulebase_refresh_service import RulebaseRefreshService
-from arodonata.cache.models import RulebaseAccess, RulebaseNAT
+from arodonata.cache import models as _models  # noqa: F401  (registers tables)
+from arodonata.cache.database import DatabaseManager
+from arodonata.cache.models import RulebaseAccess, RulebaseHTTPS, RulebaseNAT, RulebaseThreat
+from arodonata.cache.repository import CacheRepository
 from arodonata.extractors.base import ExtractionContext
-from arodonata.extractors.rulebases import AccessRuleExtractor, NATRuleExtractor
+from arodonata.extractors.rulebases import AccessRuleExtractor
+from tests.unit.rulebase.fakes import FakeRulebaseClient, load_fixture, make_layer
 
 
 class FakeClock:
@@ -35,12 +39,8 @@ class FakeClock:
 
 def make_service(**kwargs):
     client = MagicMock()
-    client._object_service = MagicMock()
-    client._object_service._api_object_to_cpobject = MagicMock(return_value=None)
     cache = AsyncMock()
-    cache.delete_rulebase = AsyncMock(return_value=0)
-    cache.upsert_rulebases = AsyncMock(side_effect=lambda rules, **_: len(rules))
-    cache.upsert_objects = AsyncMock(return_value=0)
+    cache.replace_domain_rulebase_type = AsyncMock(side_effect=lambda model, m, d, rows: len(rows))
     service = RulebaseRefreshService(client=client, cache=cache, **kwargs)
     return service, client, cache
 
@@ -74,7 +74,6 @@ def access_rule(uid="uid-1", rule_number=1, name="Rule 1", extra=None):
         "service": [],
         "action": {"accept": True},
         "track": {"type": "Log"},
-        "layer": {"name": "Network"},
     }
     if extra:
         rule.update(extra)
@@ -125,6 +124,7 @@ def test_extract_rules_recursive_extracts_flat_rules():
     )
 
     assert [r.uid for r in extracted] == ["r1", "r2"]
+    assert all(r.layer_name == "Network" for r in extracted)
     assert extracted[0].id == "mgmt1::Network:r1"
     assert isinstance(extracted[0], RulebaseAccess)
 
@@ -187,450 +187,314 @@ def test_extract_rules_recursive_skips_unmatched_type_for_extractor():
     assert extracted == []
 
 
-def test_extract_rules_recursive_builds_nat_rule_id_with_nat_layer():
-    service, _, _ = make_service()
-    context = ExtractionContext(mgmt_name="mgmt1", domain_name="dom1")
-    nat_rule = {
-        "type": "nat-rule",
-        "uid": "n1",
-        "rule-number": 1,
-        "name": "NAT 1",
-        "enabled": True,
-        "original-source": "any",
-        "original-destination": "any",
-        "original-service": "any",
-        "translated-source": "original",
-        "translated-destination": "original",
-        "translated-service": "original",
-        "layer": "NAT",
-    }
-    extracted = service._extract_rules_recursive(
-        [nat_rule], NATRuleExtractor(), context, RulebaseNAT, "mgmt1", "dom1", "NAT"
-    )
-    assert len(extracted) == 1
-    assert extracted[0].id == "mgmt1:dom1:NAT:n1"
-
-
-# --------------------------------------------------------------------------- #
-# _fetch_layer_rulebase
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-async def test_fetch_layer_rulebase_success():
-    service, client, _ = make_service()
-    client.api_call = AsyncMock(return_value=ApiCallResult(success=True, data={"rulebase": []}))
-
-    success, data = await service._fetch_layer_rulebase("mgmt1", "", "Network", "show-access-rulebase", {})
-
-    assert success is True
-    assert data == {"rulebase": []}
-
-
-@pytest.mark.asyncio
-async def test_fetch_layer_rulebase_returns_false_on_unsuccessful_response():
-    service, client, _ = make_service()
-    client.api_call = AsyncMock(return_value=ApiCallResult(success=False))
-
-    success, data = await service._fetch_layer_rulebase("mgmt1", "", "Network", "show-access-rulebase", {})
-
-    assert (success, data) == (False, None)
-
-
-@pytest.mark.asyncio
-async def test_fetch_layer_rulebase_returns_false_when_data_missing():
-    service, client, _ = make_service()
-    client.api_call = AsyncMock(return_value=ApiCallResult(success=True, data=None))
-
-    success, data = await service._fetch_layer_rulebase("mgmt1", "", "Network", "show-access-rulebase", {})
-
-    assert (success, data) == (False, None)
-
-
-@pytest.mark.asyncio
-async def test_fetch_layer_rulebase_catches_exception():
-    service, client, _ = make_service()
-    client.api_call = AsyncMock(side_effect=RuntimeError("boom"))
-
-    success, data = await service._fetch_layer_rulebase("mgmt1", "", "Network", "show-access-rulebase", {})
-
-    assert (success, data) == (False, None)
-
-
-# --------------------------------------------------------------------------- #
-# _save_referenced_objects
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-async def test_save_referenced_objects_noop_on_empty_list():
-    service, client, cache = make_service()
-
-    await service._save_referenced_objects([], "mgmt1", "", "Network")
-
-    cache.upsert_objects.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_save_referenced_objects_converts_and_upserts():
-    service, client, cache = make_service()
-    cp_obj_sentinel = object()
-    client._object_service._api_object_to_cpobject = MagicMock(side_effect=[cp_obj_sentinel, None])
-
-    await service._save_referenced_objects(
-        [{"uid": "o1", "name": "obj1"}, {"uid": "o2", "name": "obj2"}], "mgmt1", "", "Network"
-    )
-
-    cache.upsert_objects.assert_awaited_once_with([cp_obj_sentinel])
-
-
-# --------------------------------------------------------------------------- #
-# _process_layer_rules
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-async def test_process_layer_rules_returns_zero_when_no_rules_found():
-    service, client, cache = make_service()
-    context = ExtractionContext(mgmt_name="mgmt1", domain_name="")
-    data = {"objects": [], "rulebase": []}
-
-    processed = await service._process_layer_rules(
-        "mgmt1", "", "Network", data, service._access_extractor, RulebaseAccess, context
-    )
-
-    assert processed == 0
-    cache.delete_rulebase.assert_not_awaited()
-    cache.upsert_rulebases.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_process_layer_rules_saves_rules_and_clears_old_ones():
-    service, client, cache = make_service()
-    context = ExtractionContext(mgmt_name="mgmt1", domain_name="")
-    data = {
-        "objects": [{"uid": "o1", "name": "obj1"}],
-        "rulebase": [access_rule(uid="r1")],
-    }
-
-    processed = await service._process_layer_rules(
-        "mgmt1", "", "Network", data, service._access_extractor, RulebaseAccess, context
-    )
-
-    assert processed == 1
-    cache.delete_rulebase.assert_awaited_once_with(RulebaseAccess, "mgmt1", "", "Network")
-    cache.upsert_rulebases.assert_awaited_once()
-    assert context.objects_map == {"o1": "obj1"}
-
-
-# --------------------------------------------------------------------------- #
-# refresh_access_rulebases
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-async def test_refresh_access_rulebases_full_success_flow():
-    service, client, cache = make_service()
-    client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=[{"name": "Network"}]))
-    client.api_call = AsyncMock(
-        return_value=ApiCallResult(success=True, data={"objects": [], "rulebase": [access_rule(uid="r1")]})
-    )
-
-    events = await collect(service.refresh_access_rulebases("mgmt1", ""))
-
-    messages = [e["message"] for e in events]
-    assert any("Fetching access rules for layer: Network" in m for m in messages)
-    assert any("Saved 1 access rules for Network" in m for m in messages)
-    cache.upsert_rulebases.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_refresh_access_rulebases_layers_query_failure_yields_nothing():
-    service, client, _ = make_service()
-    client.api_query = AsyncMock(return_value=ApiQueryResult(success=False, message="no access"))
-
-    events = await collect(service.refresh_access_rulebases("mgmt1", ""))
-
-    assert events == []
-
-
-@pytest.mark.asyncio
-async def test_refresh_access_rulebases_skips_invalid_layer():
-    service, client, cache = make_service()
-    client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=[{"uid": "no-name"}]))
-    client.api_call = AsyncMock()
-
-    events = await collect(service.refresh_access_rulebases("mgmt1", ""))
-
-    assert events == []
-    client.api_call.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_refresh_access_rulebases_no_rules_in_layer_yields_only_fetching_message():
-    service, client, cache = make_service()
-    client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=[{"name": "Empty"}]))
-    client.api_call = AsyncMock(return_value=ApiCallResult(success=True, data={"objects": [], "rulebase": []}))
-
-    events = await collect(service.refresh_access_rulebases("mgmt1", ""))
-
-    messages = [e["message"] for e in events]
-    assert messages == ["Fetching access rules for layer: Empty"]
-
-
-@pytest.mark.asyncio
-async def test_refresh_access_rulebases_fetch_failure_is_skipped():
-    service, client, cache = make_service()
-    client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=[{"name": "Network"}]))
-    client.api_call = AsyncMock(return_value=ApiCallResult(success=False))
-
-    events = await collect(service.refresh_access_rulebases("mgmt1", ""))
-
-    messages = [e["message"] for e in events]
-    assert messages == ["Fetching access rules for layer: Network"]
-    cache.upsert_rulebases.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_refresh_access_rulebases_process_layer_type_error_is_caught_and_continues():
-    service, client, cache = make_service()
-    client.api_query = AsyncMock(
-        return_value=ApiQueryResult(success=True, objects=[{"name": "Network"}, {"name": "Second"}])
-    )
-    client.api_call = AsyncMock(return_value=ApiCallResult(success=True, data={"objects": [], "rulebase": []}))
-    service._process_layer_rules = AsyncMock(side_effect=TypeError("bad data"))
-
-    events = await collect(service.refresh_access_rulebases("mgmt1", ""))
-
-    messages = [e["message"] for e in events]
-    assert messages == [
-        "Fetching access rules for layer: Network",
-        "Fetching access rules for layer: Second",
+NETWORK = "FPCR_UAT_Active Network"
+INLINE = "FPCR_UAT_Active Inline"
+ACCESS = "show-access-rulebase"
+
+
+@pytest.fixture
+async def repo():
+    engine = create_async_engine("sqlite+aiosqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    yield CacheRepository(DatabaseManager(engine))
+    await engine.dispose()
+
+
+def lab_client(*layer_fixtures: str) -> FakeRulebaseClient:
+    """Domain4-shaped fake: an access listing of the given recorded layers, each served by name."""
+    client = FakeRulebaseClient()
+    for name in layer_fixtures:
+        layer = load_fixture(name)
+        client.add_layer(ACCESS, layer)
+        client.listings.setdefault("show-access-layers", []).append({"uid": layer["uid"], "name": layer["name"]})
+    return client
+
+
+def domain4(repo, client) -> RulebaseRefreshService:
+    return RulebaseRefreshService(client=client, cache=repo)  # type: ignore[arg-type]
+
+
+async def cached(repo, model=RulebaseAccess, layer=None):
+    filters = {"layer_name": layer} if layer else None
+    return await repo.get_rulebase(model, ["m1"], ["Domain4"], filters)
+
+
+# ---- 1.2 complete layer listings -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("method", "command", "key"),
+    [
+        ("refresh_access_rulebases", "show-access-layers", "access-layers"),
+        ("refresh_https_rulebases", "show-https-layers", "https-layers"),
+        ("refresh_threat_rulebases", "show-threat-layers", "threat-layers"),
+    ],
+)
+async def test_layer_listing_passes_container_key(repo, method, command, key):
+    client = FakeRulebaseClient()
+    await collect(getattr(domain4(repo, client), method)("m1", "Domain4"))
+    assert client.query_calls == [
+        {"mgmt_name": "m1", "command": command, "domain": "Domain4", "details_level": "standard", "container_key": key}
     ]
 
 
-@pytest.mark.asyncio
-async def test_refresh_access_rulebases_generic_exception_yields_error_event():
-    service, client, _ = make_service()
-    client.api_query = AsyncMock(side_effect=RuntimeError("kaboom"))
-
-    events = await collect(service.refresh_access_rulebases("mgmt1", ""))
-
-    assert len(events) == 1
-    assert events[0]["status"] == "error"
-    assert "kaboom" in events[0]["message"]
+async def test_layer_listing_60_layers_two_pages(repo):
+    client = FakeRulebaseClient()
+    for i in range(60):
+        layer = make_layer(f"L{i:02}", f"Layer {i:02}", 1)
+        client.add_layer(ACCESS, layer)
+        client.listings.setdefault("show-access-layers", []).append({"uid": layer["uid"], "name": layer["name"]})
+    await collect(domain4(repo, client).refresh_access_rulebases("m1", "Domain4"))
+    assert len({r.layer_name for r in await cached(repo)}) == 60
 
 
-# --------------------------------------------------------------------------- #
-# refresh_nat_rulebases
-# --------------------------------------------------------------------------- #
+# ---- 1.3 names from objects-dictionary -----------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_refresh_nat_rulebases_success_with_standard_package():
-    service, client, cache = make_service()
-    nat_rule = {
-        "type": "nat-rule",
-        "uid": "n1",
-        "rule-number": 1,
-        "name": "NAT rule",
-        "enabled": True,
-        "layer": "NAT",
-    }
-    client.api_call = AsyncMock(
-        return_value=ApiCallResult(
-            success=True, data={"objects": [{"uid": "o1", "name": "obj1"}], "rulebase": [nat_rule]}
-        )
+async def test_process_layer_uses_objects_dictionary_key(repo):
+    client = lab_client("domain_layer_fpcr_uat_active_network.json")
+    await collect(domain4(repo, client).refresh_access_rulebases("m1", "Domain4"))
+    rules = {r.rule_number: r for r in await cached(repo)}
+    assert (rules[1].sources, rules[1].destinations, rules[1].services) == ("hostA_8", "hostA_0", "https")
+
+
+async def test_action_and_track_resolved_to_names(repo):
+    client = lab_client("domain_layer_fpcr_uat_active_network.json")
+    await collect(domain4(repo, client).refresh_access_rulebases("m1", "Domain4"))
+    rules = {r.rule_number: r for r in await cached(repo)}
+    assert (rules[1].action, rules[1].track) == ("Accept", "Log")
+    assert (rules[2].action, rules[2].track) == ("Inner Layer", "None")
+    assert (rules[6].action, rules[6].track) == ("Drop", "None")
+
+
+async def test_refresh_does_not_upsert_objects(repo, monkeypatch):
+    spy = AsyncMock()
+    monkeypatch.setattr(repo, "upsert_objects", spy)
+    client = lab_client("domain_layer_fpcr_uat_active_network.json")
+    await collect(domain4(repo, client).refresh_access_rulebases("m1", "Domain4"))
+    spy.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        "domain_layer_fpcr_uat_active_network.json",
+        "inline_layer_fpcr_uat_active_inline.json",
+        "global_layer_no_package.json",
+        "global_layer_with_package.json",
+    ],
+)
+async def test_extracted_values_fit_column_lengths(repo, fixture):
+    """Every string bound for a length-limited column fits (SQLite ignores VARCHAR(n); PostgreSQL does not)."""
+    data = load_fixture(fixture)
+    rows = domain4(repo, FakeRulebaseClient())._rows_from_layer_response(
+        data, "access", "m1", "Domain4", layer_name=data["name"]
+    )
+    assert rows
+    for row in rows:
+        for col in type(row).__table__.columns:
+            length = getattr(col.type, "length", None)
+            value = getattr(row, col.name)
+            if isinstance(length, int) and isinstance(value, str):
+                assert len(value) <= length, f"{fixture}: {col.name}={value!r} exceeds {length}"
+
+
+# ---- 1.4 layer_name from the response; atomic per-type replace -----------------------------------------
+
+
+async def test_extracted_rules_carry_layer_name_from_response(repo):
+    data = load_fixture("domain_layer_fpcr_uat_active_network.json")
+    assert all("layer" not in r for section in data["rulebase"] for r in section["rulebase"])  # CP sends no layer key
+    client = lab_client("domain_layer_fpcr_uat_active_network.json")
+    await collect(domain4(repo, client).refresh_access_rulebases("m1", "Domain4"))
+    rows = await cached(repo, layer=NETWORK)
+    assert len(rows) == 6 and {r.layer_name for r in rows} == {NETWORK}
+    assert rows[0].id == f"m1:Domain4:{NETWORK}:{rows[0].uid}"
+
+
+async def test_rule_deleted_in_cp_is_removed_from_cache(repo):
+    client = lab_client("domain_layer_fpcr_uat_active_network.json")
+    service = domain4(repo, client)
+    await collect(service.refresh_access_rulebases("m1", "Domain4"))
+    client.layers[(ACCESS, NETWORK)]["rulebase"][-1]["rulebase"] = []  # Cleanup rule deleted in CP
+    await collect(service.refresh_access_rulebases("m1", "Domain4"))
+    assert [r.rule_number for r in await cached(repo)] == [1, 2, 3, 4, 5]
+
+
+async def test_emptied_layer_is_cleared(repo):
+    client = lab_client("inline_layer_fpcr_uat_active_inline.json")
+    service = domain4(repo, client)
+    await collect(service.refresh_access_rulebases("m1", "Domain4"))
+    assert len(await cached(repo)) == 2
+    uid = client.listings["show-access-layers"][0]["uid"]
+    client.add_layer(ACCESS, make_layer(uid, INLINE, 0))
+    events = await collect(service.refresh_access_rulebases("m1", "Domain4"))
+    assert await cached(repo) == []
+    assert events[-1]["count"] == 0
+
+
+async def test_layer_deleted_in_cp_is_removed(repo):
+    client = lab_client("domain_layer_fpcr_uat_active_network.json", "inline_layer_fpcr_uat_active_inline.json")
+    service = domain4(repo, client)
+    await collect(service.refresh_access_rulebases("m1", "Domain4"))
+    client.listings["show-access-layers"] = [{"name": NETWORK}]  # inline layer deleted in CP
+    await collect(service.refresh_access_rulebases("m1", "Domain4"))
+    assert {r.layer_name for r in await cached(repo)} == {NETWORK}
+
+
+async def _seeded(repo):
+    client = lab_client("domain_layer_fpcr_uat_active_network.json", "inline_layer_fpcr_uat_active_inline.json")
+    service = domain4(repo, client)
+    await collect(service.refresh_access_rulebases("m1", "Domain4"))
+    before = sorted(r.id for r in await cached(repo))
+    assert len(before) == 8
+    return client, service, before
+
+
+async def test_layer_fetch_failure_keeps_type_rows_and_yields_domain_failed(repo):
+    client, service, before = await _seeded(repo)
+    client.call_failures[(ACCESS, INLINE)] = ApiCallResult(success=False, code="generic_error", message="boom")
+    events = await collect(service.refresh_access_rulebases("m1", "Domain4"))
+    assert sorted(r.id for r in await cached(repo)) == before
+    failed = [e for e in events if e.get("status") == "domain_failed"]
+    assert len(failed) == 1 and failed[0]["rulebase_type"] == "access" and "boom" in failed[0]["error"]
+
+
+async def test_invalid_listing_entry_keeps_type_rows(repo):
+    client, service, before = await _seeded(repo)
+    client.listings["show-access-layers"].append({"uid": "no-name"})
+    events = await collect(service.refresh_access_rulebases("m1", "Domain4"))
+    assert sorted(r.id for r in await cached(repo)) == before
+    assert [e["status"] for e in events if "status" in e] == ["domain_failed"]
+
+
+async def test_extraction_error_keeps_type_rows(repo, monkeypatch):
+    client, service, before = await _seeded(repo)
+
+    def boom(raw, context):
+        raise TypeError("bad rule shape")
+
+    monkeypatch.setattr(service._extractors["access"], "extract", boom)
+    events = await collect(service.refresh_access_rulebases("m1", "Domain4"))
+    assert sorted(r.id for r in await cached(repo)) == before
+    assert [e["status"] for e in events if "status" in e] == ["domain_failed"]
+
+
+async def test_listing_failure_keeps_rows_and_yields_warning(repo):
+    client, service, before = await _seeded(repo)
+    client.query_failures["show-access-layers"] = ApiQueryResult(success=False, message="no access")
+    events = await collect(service.refresh_access_rulebases("m1", "Domain4"))
+    assert sorted(r.id for r in await cached(repo)) == before
+    assert [e["status"] for e in events] == ["warning"]
+
+
+async def test_unexpected_exception_keeps_rows_and_yields_error(repo):
+    client, service, before = await _seeded(repo)
+    client.api_call = AsyncMock(side_effect=RuntimeError("kaboom"))  # type: ignore[method-assign]
+    events = await collect(service.refresh_access_rulebases("m1", "Domain4"))
+    assert sorted(r.id for r in await cached(repo)) == before
+    assert events[-1]["status"] == "error" and "kaboom" in events[-1]["message"]
+
+
+async def test_layer_with_120_rules_is_cached_completely(repo):
+    client = FakeRulebaseClient()
+    client.add_layer(ACCESS, make_layer("BIG", "Big", 120, rules_per_section=40))
+    client.listings["show-access-layers"] = [{"uid": "BIG", "name": "Big"}]
+    await collect(domain4(repo, client).refresh_access_rulebases("m1", "Domain4"))
+    assert [r.rule_number for r in await cached(repo)] == list(range(1, 121))
+
+
+@pytest.mark.parametrize(
+    ("method", "listing", "command", "rule_type", "model"),
+    [
+        ("refresh_https_rulebases", "show-https-layers", "show-https-rulebase", "https-rule", RulebaseHTTPS),
+        ("refresh_threat_rulebases", "show-threat-layers", "show-threat-rulebase", "threat-rule", RulebaseThreat),
+    ],
+)
+async def test_https_and_threat_use_the_same_flow(repo, method, listing, command, rule_type, model):
+    client = FakeRulebaseClient()
+    client.add_layer(command, make_layer("X", "X layer", 3, rule_type=rule_type))
+    client.listings[listing] = [{"uid": "X", "name": "X layer"}]
+    events = await collect(getattr(domain4(repo, client), method)("m1", "Domain4"))
+    rows = await cached(repo, model=model)
+    assert [r.rule_number for r in rows] == [1, 2, 3] and {r.layer_name for r in rows} == {"X layer"}
+    assert events[-1]["count"] == 3
+    assert client.calls[0] == (
+        command,
+        {"uid": "X", "details-level": "full", "use-object-dictionary": True, "limit": 100, "offset": 0},
     )
 
-    events = await collect(service.refresh_nat_rulebases("mgmt1", ""))
 
-    messages = [e["message"] for e in events]
-    assert "Fetching NAT rulebase" in messages
-    assert any("Saved 1 NAT rules" in m for m in messages)
-    cache.upsert_rulebases.assert_awaited_once()
-    cache.delete_rulebase.assert_awaited_once_with(RulebaseNAT, "mgmt1", "", "NAT")
-    client.api_call.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_refresh_nat_rulebases_falls_back_without_package_on_first_failure():
-    service, client, cache = make_service()
-    nat_rule = {"type": "nat-rule", "uid": "n1", "rule-number": 1, "name": "NAT rule", "enabled": True}
-    responses = [
-        ApiCallResult(success=False),
-        ApiCallResult(success=True, data={"objects": [], "rulebase": [nat_rule]}),
+async def test_layers_with_duplicate_names_are_fetched_by_uid(repo):
+    client = FakeRulebaseClient()
+    client.add_layer(ACCESS, make_layer("g-net", "Network", 2))
+    client.add_layer(ACCESS, make_layer("d-net", "Network", 3))
+    client.listings["show-access-layers"] = [
+        {"uid": "g-net", "name": "Network", "domain": {"name": "Global", "domain-type": "global domain"}},
+        {"uid": "d-net", "name": "Network", "domain": {"name": "Domain4", "domain-type": "domain"}},
     ]
-    client.api_call = AsyncMock(side_effect=responses)
-
-    events = await collect(service.refresh_nat_rulebases("mgmt1", ""))
-
-    assert client.api_call.await_count == 2
-    second_call_kwargs = client.api_call.await_args_list[1].kwargs
-    assert "package" not in second_call_kwargs["payload"]
-    messages = [e["message"] for e in events]
-    assert any("Saved 1 NAT rules" in m for m in messages)
+    events = await collect(domain4(repo, client).refresh_access_rulebases("m1", "Domain4"))
+    rows = await cached(repo)
+    assert len(rows) == 5 and {r.layer_name for r in rows} == {"Network"}
+    assert len({r.id for r in rows}) == 5
+    assert events[-1]["count"] == 5
+    payloads = [p for cmd, p in client.calls if cmd == ACCESS]
+    assert payloads and all("uid" in p and "name" not in p for p in payloads)
 
 
-@pytest.mark.asyncio
-async def test_refresh_nat_rulebases_both_calls_fail_yields_only_fetching_message():
-    service, client, _ = make_service()
-    client.api_call = AsyncMock(return_value=ApiCallResult(success=False))
-
-    events = await collect(service.refresh_nat_rulebases("mgmt1", ""))
-
-    messages = [e["message"] for e in events]
-    assert messages == ["Fetching NAT rulebase"]
+async def test_listing_entry_without_uid_is_fetched_by_name(repo):
+    client = FakeRulebaseClient()
+    client.add_layer(ACCESS, make_layer("big", "Big", 2))
+    client.listings["show-access-layers"] = [{"name": "Big"}]
+    await collect(domain4(repo, client).refresh_access_rulebases("m1", "Domain4"))
+    assert len(await cached(repo)) == 2
+    assert client.calls[0][1]["name"] == "Big" and "uid" not in client.calls[0][1]
 
 
-@pytest.mark.asyncio
-async def test_refresh_nat_rulebases_no_rules_found_yields_only_fetching_message():
-    service, client, cache = make_service()
-    client.api_call = AsyncMock(return_value=ApiCallResult(success=True, data={"objects": [], "rulebase": []}))
-
-    events = await collect(service.refresh_nat_rulebases("mgmt1", ""))
-
-    messages = [e["message"] for e in events]
-    assert messages == ["Fetching NAT rulebase"]
-    cache.upsert_rulebases.assert_not_awaited()
+# ---- 1.5 NAT refresh per package with nat-policy -------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_refresh_nat_rulebases_generic_exception_yields_error_event():
-    service, client, _ = make_service()
-    client.api_call = AsyncMock(side_effect=RuntimeError("nat-boom"))
-
-    events = await collect(service.refresh_nat_rulebases("mgmt1", ""))
-
-    assert events[-1]["status"] == "error"
-    assert "nat-boom" in events[-1]["message"]
+NAT = "show-nat-rulebase"
 
 
-# --------------------------------------------------------------------------- #
-# refresh_https_rulebases
-# --------------------------------------------------------------------------- #
+def nat_client() -> FakeRulebaseClient:
+    client = FakeRulebaseClient()
+    client.listings["show-packages"] = [
+        {"uid": "p1", "name": "FPCR_UAT_Active", "nat-policy": True},
+        {"uid": "p2", "name": "Standard", "nat-policy": True},
+        {"uid": "p3", "name": "NoNat", "nat-policy": False},
+    ]
+    for package, n in (("FPCR_UAT_Active", 2), ("Standard", 1)):
+        client.add_layer(NAT, make_layer(f"nat-{package}", f"{package} NAT", n, rule_type="nat-rule"), key=package)
+    return client
 
 
-@pytest.mark.asyncio
-async def test_refresh_https_rulebases_success_flow():
-    service, client, cache = make_service()
-    https_rule = {
-        "type": "https-rule",
-        "uid": "h1",
-        "rule-number": 1,
-        "name": "Inspect",
-        "enabled": True,
-        "source": [],
-        "destination": [],
-        "track": {"type": "Inspect"},
-        "layer": {"name": "CVD"},
-    }
-    client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=[{"name": "CVD"}]))
-    client.api_call = AsyncMock(
-        return_value=ApiCallResult(success=True, data={"objects": [], "rulebase": [https_rule]})
-    )
-
-    events = await collect(service.refresh_https_rulebases("mgmt1", ""))
-
-    messages = [e["message"] for e in events]
-    assert any("Saved 1 HTTPS rules for CVD" in m for m in messages)
+async def test_nat_fetched_for_each_package_with_nat_policy(repo):
+    client = nat_client()
+    await collect(domain4(repo, client).refresh_nat_rulebases("m1", "Domain4"))
+    assert client.query_calls[0]["command"] == "show-packages"
+    assert client.query_calls[0]["container_key"] == "packages" and client.query_calls[0]["details_level"] == "full"
+    assert [(cmd, p["package"]) for cmd, p in client.calls] == [(NAT, "FPCR_UAT_Active"), (NAT, "Standard")]
+    assert all(p["details-level"] == "full" and p["use-object-dictionary"] is True for _, p in client.calls)
 
 
-@pytest.mark.asyncio
-async def test_refresh_https_rulebases_layers_failure_yields_nothing():
-    service, client, _ = make_service()
-    client.api_query = AsyncMock(return_value=ApiQueryResult(success=False))
-
-    events = await collect(service.refresh_https_rulebases("mgmt1", ""))
-
-    assert events == []
+async def test_nat_rows_keyed_by_package(repo):
+    await collect(domain4(repo, nat_client()).refresh_nat_rulebases("m1", "Domain4"))
+    rows = await cached(repo, model=RulebaseNAT, layer="FPCR_UAT_Active")
+    assert [r.rule_number for r in rows] == [1, 2]
+    assert rows[0].id == f"m1:Domain4:FPCR_UAT_Active:{rows[0].uid}"
+    assert await cached(repo, model=RulebaseNAT, layer="NAT") == []
 
 
-@pytest.mark.asyncio
-async def test_refresh_https_rulebases_type_error_is_caught_and_continues():
-    service, client, _ = make_service()
-    client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=[{"name": "CVD"}]))
-    client.api_call = AsyncMock(return_value=ApiCallResult(success=True, data={"objects": [], "rulebase": []}))
-    service._process_layer_rules = AsyncMock(side_effect=AttributeError("bad"))
-
-    events = await collect(service.refresh_https_rulebases("mgmt1", ""))
-
-    messages = [e["message"] for e in events]
-    assert messages == ["Fetching HTTPS rules for layer: CVD"]
-
-
-@pytest.mark.asyncio
-async def test_refresh_https_rulebases_generic_exception_yields_error_event():
-    service, client, _ = make_service()
-    client.api_query = AsyncMock(side_effect=RuntimeError("https-boom"))
-
-    events = await collect(service.refresh_https_rulebases("mgmt1", ""))
-
-    assert events[-1]["status"] == "error"
-    assert "https-boom" in events[-1]["message"]
-
-
-# --------------------------------------------------------------------------- #
-# refresh_threat_rulebases
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-async def test_refresh_threat_rulebases_success_flow():
-    service, client, cache = make_service()
-    threat_rule = {
-        "type": "threat-rule",
-        "uid": "t1",
-        "rule-number": 1,
-        "name": "Block",
-        "enabled": True,
-        "track": {"type": "Alert"},
-        "protections": [{"name": "SQLi"}],
-        "layer": {"name": "Threat"},
-    }
-    client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=[{"name": "Threat"}]))
-    client.api_call = AsyncMock(
-        return_value=ApiCallResult(success=True, data={"objects": [], "rulebase": [threat_rule]})
-    )
-
-    events = await collect(service.refresh_threat_rulebases("mgmt1", ""))
-
-    messages = [e["message"] for e in events]
-    assert any("Saved 1 Threat rules for Threat" in m for m in messages)
-
-
-@pytest.mark.asyncio
-async def test_refresh_threat_rulebases_layers_failure_yields_nothing():
-    service, client, _ = make_service()
-    client.api_query = AsyncMock(return_value=ApiQueryResult(success=False))
-
-    events = await collect(service.refresh_threat_rulebases("mgmt1", ""))
-
-    assert events == []
-
-
-@pytest.mark.asyncio
-async def test_refresh_threat_rulebases_type_error_is_caught_and_continues():
-    service, client, _ = make_service()
-    client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=[{"name": "Threat"}]))
-    client.api_call = AsyncMock(return_value=ApiCallResult(success=True, data={"objects": [], "rulebase": []}))
-    service._process_layer_rules = AsyncMock(side_effect=TypeError("bad"))
-
-    events = await collect(service.refresh_threat_rulebases("mgmt1", ""))
-
-    messages = [e["message"] for e in events]
-    assert messages == ["Fetching Threat rules for layer: Threat"]
-
-
-@pytest.mark.asyncio
-async def test_refresh_threat_rulebases_generic_exception_yields_error_event():
-    service, client, _ = make_service()
-    client.api_query = AsyncMock(side_effect=RuntimeError("threat-boom"))
-
-    events = await collect(service.refresh_threat_rulebases("mgmt1", ""))
-
-    assert events[-1]["status"] == "error"
-    assert "threat-boom" in events[-1]["message"]
+async def test_nat_package_listing_failure_keeps_rows_and_yields_warning(repo):
+    client = nat_client()
+    service = domain4(repo, client)
+    await collect(service.refresh_nat_rulebases("m1", "Domain4"))
+    client.query_failures["show-packages"] = ApiQueryResult(success=False, message="denied")
+    events = await collect(service.refresh_nat_rulebases("m1", "Domain4"))
+    assert [e["status"] for e in events] == ["warning"]
+    assert len(await cached(repo, model=RulebaseNAT)) == 3
 
 
 # --------------------------------------------------------------------------- #

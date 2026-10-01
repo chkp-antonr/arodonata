@@ -8,6 +8,28 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 via [commitizen](https://commitizen-tools.github.io/commitizen/) — do not
 hand-edit released sections, only the `[Unreleased]` section above them.
 
+## [Unreleased]
+
+### Fixed (rulebase cache v2, phase 1)
+
+- Rulebase refresh pages every layer completely (layers with more than 50 rules) and lists every layer (domains with more than 50 layers); a layer is cached completely or not at all.
+- Cached rules carry the real layer name, so `get_*_rules(layer_name=...)` and the cache path of `show_*_rulebase(name=...)` return rules on real data.
+- NAT is cached for every policy package with `nat-policy`, keyed by package name: `show_nat_rulebase(package=...)` from cache works; `get_nat_rules(layer_name='NAT')` now returns nothing, pass the package name.
+- Rules, emptied layers and layers deleted in Check Point disappear after the next refresh; a failing layer keeps that rulebase type's old rows and emits an ERROR event.
+- `sources`, `destinations`, `services`, `action`, `track`, NAT fields and threat protections hold Check Point names (uid when unresolved); `action` values change from lowercase keywords or uids to names such as `Accept`. `action`/`track` widen to 64 characters (migrated on PostgreSQL at startup).
+- Layers are read by uid: after a Global assignment a domain's listing includes the Global domain's layers, whose names can repeat the domain's (for example `Network`, `IPS`); both are cached, and `get_*_rules(layer_name=...)` returns the rules of every layer with that name (layer uids arrive in phase 2).
+- The rulebase refresh no longer writes partial objects into the object cache.
+- Rules from different layers are no longer interleaved when no layer filter is given.
+- The MCP live rulebase path pages fully and resolves names; `limit`/`offset` still slice rendered rows.
+- A layer that keeps failing blocks cache updates for every layer of that rulebase type in that domain (its old rows are kept and an ERROR event is emitted on each refresh) until it reads successfully.
+- Progress events: one "Saved N <type> rules" event per rulebase type and domain (was one per layer); failures carry status domain_failed (ERROR) or warning (WARNING).
+- Startup auto-migration now also widens VARCHAR columns that a model declares longer (PostgreSQL only), for every table registered in SQLModel's metadata, including those of applications using the library.
+- MCP live rulebase path: format="raw" now includes the merged objects-dictionary, and errors read "<code>: <message>".
+
+### Added
+
+- `include_global` on `ArodonataClient.refresh_rulebases` and the MCP `refresh_rulebases` tool; rulebase failures are ERROR events (MCP `errors` list) and listing failures WARNING events.
+
 ## v1.11.0 (2026-09-29)
 
 ### Feat

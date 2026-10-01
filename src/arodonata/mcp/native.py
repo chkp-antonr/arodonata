@@ -189,11 +189,15 @@ def register_native_tools(server: MCPServer, client: ArodonataClient, opts: Tool
         mgmt_names: list[str] | None = None,
         domain_names: list[str] | None = None,
         mode: Literal["skip", "check", "force"] = "force",
+        include_global: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Re-sync cached access, NAT, HTTPS and threat rulebases. Long-running; progress is reported."""
         _, complete, warnings, errors = await drain_events(
-            client.refresh_rulebases(mgmt_names=mgmt_names, domain_names=domain_names, mode=mode), ctx
+            client.refresh_rulebases(
+                mgmt_names=mgmt_names, domain_names=domain_names, mode=mode, include_global=include_global
+            ),
+            ctx,
         )
         return {"summary": complete, "warnings": warnings, "errors": errors}
 

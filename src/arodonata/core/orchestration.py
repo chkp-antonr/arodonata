@@ -438,7 +438,7 @@ class CacheOrchestrationService:
         """Get NAT rules from cache.
 
         Args:
-            layer_name: Optional layer name filter (e.g., "NAT").
+            layer_name: Optional policy package name filter; NAT rules are keyed by package, e.g. layer_name="Standard".
             mgmt_names: Optional list of management server names to filter.
             domain_names: Optional list of domain names to filter.
             enabled_only: If True, only return enabled rules.

@@ -82,7 +82,7 @@ Cache-backed tools answer from Arodonata's local cache by default; pass `cache_m
 | `arodonata_init` | cache | Call this first: lists configured management servers, whether each is MDS, their domains, and cache age. |
 | `search_objects` | cache | Searches cached objects across servers/domains by name, IP or pattern, following group membership; returns `results` as a list of `{mgmt_name, domain, search_term, search_type, objects, memberships}`. |
 | `refresh_objects` | live | Re-syncs the object cache from the management server(s); `mode='incremental'` pulls only changes since the last publish. |
-| `refresh_rulebases` | live | Re-syncs cached access, NAT, HTTPS and threat rulebases. |
+| `refresh_rulebases` | live | Re-syncs cached access, NAT, HTTPS and threat rulebases; accepts `include_global`, and failures land in `errors`. |
 | `api_call` | live | Runs any Management API command through Arodonata's session handling; only `show-*` commands unless writes are enabled. |
 
 ### Cached tools
@@ -105,7 +105,7 @@ Cache-backed tools answer from Arodonata's local cache by default; pass `cache_m
 | `show_https_rulebase` | cache/live | Addressed by `name` or `uid` (plus `package`). |
 | `show_threat_rulebase` | cache/live | Addressed by `name` or `uid` (plus `package`). |
 
-All four are cache-backed by default and switch to a live query when any of `filter`, `filter_settings`, `show_hits`, `hits_settings`, `use_object_dictionary`, `show_as_ranges`, `show_expiration_settings` or `order` is given (`order` is a list of objects, e.g. `[{"ASC": "name"}]`, as the Management API expects). `format` selects `raw` (API shape), `markdown` (default; a table with full, non-truncated cell values) or `model_friendly` (compact structured text). On the cache path a layer given only by `uid` is resolved to its name through the object cache; if the uid is not cached the call fails with a message asking for `name` or a live-only parameter. `cache_age_seconds` (and the footer's age) is the age of that rulebase type's cache, not the object cache's.
+All four are cache-backed by default and switch to a live query when any of `filter`, `filter_settings`, `show_hits`, `hits_settings`, `use_object_dictionary`, `show_as_ranges`, `show_expiration_settings` or `order` is given (`order` is a list of objects, e.g. `[{"ASC": "name"}]`, as the Management API expects). `format` selects `raw` (API shape), `markdown` (default; a table with full, non-truncated cell values) or `model_friendly` (compact structured text). On the cache path a layer given only by `uid` is resolved to its name through the object cache; if the uid is not cached the call fails with a message asking for `name` or a live-only parameter. `cache_age_seconds` (and the footer's age) is the age of that rulebase type's cache, not the object cache's. The live path reads the whole layer and `limit`/`offset` slice the rendered rows. On the cache path NAT is addressed by package name.
 
 ### Live compatibility tools
 

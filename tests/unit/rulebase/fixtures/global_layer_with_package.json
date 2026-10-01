@@ -1,0 +1,199 @@
+{
+  "uid": "6ce00050-12ea-4cf6-b612-330b55de7acc",
+  "name": "arod-global-pkg Network",
+  "from": 1,
+  "to": 3,
+  "total": 3,
+  "rulebase": [
+    {
+      "uid": "2f00fa8d-dd4d-402f-92b1-7321344e6a4f",
+      "name": "arod-glb-ping",
+      "type": "access-rule",
+      "rule-number": 1,
+      "domain": {
+        "uid": "1e294ce0-367a-11e3-aa6e-0800200c9a66",
+        "name": "Global",
+        "domain-type": "global domain"
+      },
+      "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+      "track": {
+        "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+      },
+      "source": [
+        "97aeb369-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "source-negate": false,
+      "destination": [
+        "97aeb369-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "destination-negate": false,
+      "service": [
+        "97aeb40a-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "service-negate": false,
+      "enabled": true,
+      "comments": ""
+    },
+    {
+      "uid": "b11ecb3c-ab91-4e67-b990-4edee9d64e4e",
+      "name": "Parent rule for Domain's policy",
+      "type": "access-rule",
+      "rule-number": 2,
+      "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+      },
+      "inline-layer": "f97e1159-5917-4db4-8164-55d3642c8c1b",
+      "action": "ea28da66-c5ed-11e2-bc66-aa5c6188709b",
+      "track": {
+        "type": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9"
+      },
+      "source": [
+        "97aeb36a-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "source-negate": false,
+      "destination": [
+        "97aeb36a-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "destination-negate": false,
+      "service": [
+        "97aeb36a-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "service-negate": false,
+      "enabled": true,
+      "comments": ""
+    },
+    {
+      "uid": "f806bc0e-cc6b-4b31-945e-0753feeec185",
+      "name": "arod-glb-post",
+      "type": "access-rule",
+      "rule-number": 3,
+      "domain": {
+        "uid": "1e294ce0-367a-11e3-aa6e-0800200c9a66",
+        "name": "Global",
+        "domain-type": "global domain"
+      },
+      "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+      "track": {
+        "type": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9"
+      },
+      "source": [
+        "97aeb369-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "source-negate": false,
+      "destination": [
+        "97aeb369-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "destination-negate": false,
+      "service": [
+        "97aeb406-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "service-negate": false,
+      "enabled": true,
+      "comments": ""
+    }
+  ],
+  "objects-dictionary": [
+    {
+      "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+      "name": "Accept",
+      "type": "RulebaseAction",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+      "name": "Any",
+      "type": "CpmiAnyObject",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "97aeb406-9aea-11d5-bd16-0090272ccb30",
+      "name": "echo-reply",
+      "type": "service-icmp",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "97aeb40a-9aea-11d5-bd16-0090272ccb30",
+      "name": "echo-request",
+      "type": "service-icmp",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "f97e1159-5917-4db4-8164-55d3642c8c1b",
+      "name": "FPCR_UAT_Active Network",
+      "type": "access-layer",
+      "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+      }
+    },
+    {
+      "uid": "ea28da66-c5ed-11e2-bc66-aa5c6188709b",
+      "name": "Inner Layer",
+      "type": "Global",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "598ead32-aa42-4615-90ed-f51a5928d41d",
+      "name": "Log",
+      "type": "Track",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+      "name": "None",
+      "type": "CpmiAnyObject",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+      "name": "None",
+      "type": "Track",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+      "name": "Policy Targets",
+      "type": "Global",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    }
+  ]
+}

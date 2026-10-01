@@ -384,6 +384,31 @@ async def test_get_access_rules_converts_and_splits():
     assert cache.get_rulebase_calls[0]["enabled_only"] is True
 
 
+async def test_name_with_comma_is_split_on_read():
+    """Documented limitation: sources/destinations/services are comma-joined names, so a name with a comma splits.
+
+    Exact values stay in raw_data plus the layer's objects-dictionary.
+    """
+    rule = RulebaseAccess(
+        id="mgmt1:dmn1:Network:r1",
+        uid="r1",
+        rule_number=1,
+        name="r",
+        enabled=True,
+        layer_name="Network",
+        mgmt_name="mgmt1",
+        domain_name="dmn1",
+        sources="Branch, Paris,hostA",
+        destinations="",
+        services="",
+        action="Accept",
+        track="Log",
+        raw_data={"source": ["u-branch", "u-host"]},
+    )
+    [ar] = await _svc(cache=ConfiguredCache(rulebase=[rule])).get_access_rules()
+    assert ar.sources == ["Branch", " Paris", "hostA"]
+
+
 async def test_get_nat_rules_converts():
     rule = RulebaseNAT(
         id="mgmt1:dmn1:NAT:r1",
