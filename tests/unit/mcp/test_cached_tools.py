@@ -158,6 +158,26 @@ async def test_show_domains_include_global_and_no_domain_param():
     )
 
 
+async def test_show_domains_records_without_raw_data_are_not_empty():
+    """The domains cache table stores no API payload, so real Domain models carry an empty raw_data."""
+    fake = FakeArodonataClient()
+    fake.responses["get_domains"] = [
+        Domain(
+            uid="d4",
+            name="Domain4",
+            active_mds="mdsH5b",
+            active_ip="192.0.2.5",
+            active_server="mdsH5b",
+            mgmt_name="mgmt1",
+            is_mdm=True,
+        )
+    ]
+    standard = payload(await call_tool(make_server(fake), "show_domains", {}))["objects"][0]
+    assert standard == {"uid": "d4", "name": "Domain4", "type": "domain"}
+    full = payload(await call_tool(make_server(fake), "show_domains", {"details_level": "full"}))["objects"][0]
+    assert full["active_mds"] == "mdsH5b" and full["active_ip"] == "192.0.2.5" and full["is_mdm"] is True
+
+
 async def test_show_object_found_and_not_found():
     fake = FakeArodonataClient()
     fake.responses["get_object_by_uid"] = host("h1", "10.0.0.1")

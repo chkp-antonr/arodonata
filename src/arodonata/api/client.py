@@ -136,6 +136,13 @@ class ArodonataClient:
         self._closed = False
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._close_grace_seconds = DEFAULT_CLOSE_GRACE_SECONDS
+        # get_domains refreshes only the domain list (show-domains) at most once per TTL, and warms an empty object
+        # cache in the background at most once per mgmt server per client.
+        from ..core.domain_list_refresh import DomainListRefreshTracker
+
+        self._domain_list_refresh = DomainListRefreshTracker()
+        self._object_warm_up_started: set[str] = set()
+        self._warm_up_tasks: set[asyncio.Task[None]] = set()
         self._search_service_instance: SearchService | None = None
         log().trace(f"ArodonataClient initialized (auth_mode={settings.auth_mode})")
 
@@ -386,7 +393,12 @@ class ArodonataClient:
         """
         if not self._closed:
             self._closed = True
-            # Let background work (startup cleanup) finish rather than cancel it mid-query.
+            # An object-cache warm-up can run for hours: cancel it at once (each domain's objects are replaced
+            # atomically, so a cancelled warm-up leaves whole domains) instead of letting it fail domain by domain on
+            # the closed client during the grace period.
+            for task in self._warm_up_tasks:
+                task.cancel()
+            # Let other background work (startup cleanup) finish rather than cancel it mid-query.
             await drain_background_tasks(set(self._background_tasks), self._close_grace_seconds)
             await self._mgmt.close()
             if self._owns_engine and self._db.engine:
@@ -1357,10 +1369,17 @@ class ArodonataClient:
     ) -> list[Domain]:
         """Get domains from cache as Pydantic models.
 
+        Only the domain list itself is refreshed (one ``show-domains`` per management server), never the domains'
+        objects: ``cache`` reads the table as is; ``smart``/``smart-fast`` re-read the list when the table is empty
+        or the domain-list TTL has passed; ``force`` re-reads it now. Without ``mgmt_names`` every cached server is
+        read and the first configured server's list is refreshed. When a server's object cache is still empty and
+        ``warm_object_cache_on_first_use`` is on (the default), its objects start loading in the background; the call
+        returns without waiting for them.
+
         Args:
             mgmt_names: Optional list of management server names to filter.
-            cache_mode: Optional per-call cache refresh mode override.
-            cache_ttl: Optional per-call cache freshness TTL override.
+            cache_mode: Optional per-call cache refresh mode override (for the domain list).
+            cache_ttl: Accepted for signature compatibility; the domain list uses its own TTL.
             include_global: When False (default), the synthetic "Global" domain
                 is excluded so existing callers see today's behavior.
 
@@ -1372,12 +1391,76 @@ class ArodonataClient:
             for domain in domains:
                 print(f"{domain.name}: {domain.active_ip}")
         """
+        from ..core.cache_mode import CacheMode
+        from ..core.cache_policy import CachePolicy
+
         self._ensure_open()
-        return await self._orchestration.get_domains(
-            mgmt_names=mgmt_names,
-            cache_mode=cache_mode,
-            cache_ttl=cache_ttl,
-            include_global=include_global,
+        mode = CachePolicy.resolve(cache_mode, cache_ttl, self._refresh_coordinator.default_policy).mode
+        if mode != CacheMode.CACHE:
+            targets = list(mgmt_names) if mgmt_names else self.get_mgmt_names()[:1]
+            for mgmt in targets:
+                await self._refresh_domain_list(mgmt, force=mode == CacheMode.FORCE)
+                await self._maybe_warm_object_cache(mgmt)
+        return await self._orchestration.get_domains(mgmt_names=mgmt_names, include_global=include_global)
+
+    async def _refresh_domain_list(self, mgmt_name: str, *, force: bool) -> None:
+        """Re-read one server's domain list unless it is cached and fresh.
+
+        A failure keeps the cached list; with a cached list the next attempt waits for the TTL (no login retry on every
+        call while the server is down), with an empty table the next call retries.
+        """
+        if not force and not self._domain_list_refresh.is_stale(mgmt_name):
+            if await self._cache.get_domains(mgmt_names=[mgmt_name]):
+                return
+        try:
+            await self._domain_service.populate_domain_cache(mgmt_name)
+        except Exception as exc:
+            log().warning(f"Domain list refresh for {mgmt_name} failed ({type(exc).__name__}); cached list used")
+            if await self._cache.get_domains(mgmt_names=[mgmt_name]):
+                self._domain_list_refresh.mark_checked(mgmt_name)
+            return
+        self._domain_list_refresh.mark_checked(mgmt_name)
+
+    async def _maybe_warm_object_cache(self, mgmt_name: str) -> None:
+        """First use: load an empty object cache in the background, once per server per client.
+
+        Skipped while the server's domain table is empty (a failed list refresh would warm only the system domain); the
+        guard is taken before the first await so concurrent first calls start one warm-up.
+        """
+        if not self._settings.warm_object_cache_on_first_use or mgmt_name in self._object_warm_up_started:
+            return
+        self._object_warm_up_started.add(mgmt_name)
+        try:
+            if await self._cache.get_objects_last_update(mgmt_names=[mgmt_name]) is not None:
+                return  # objects already cached: no warm-up, and no need to probe again on this client
+            if not await self._cache.get_domains(mgmt_names=[mgmt_name]):
+                self._object_warm_up_started.discard(mgmt_name)  # no domain list yet: a later call may warm up
+                return
+        except BaseException:
+            self._object_warm_up_started.discard(mgmt_name)
+            raise
+        log().info(f"Object cache of {mgmt_name} is empty; loading every domain's objects in the background")
+        task = asyncio.create_task(self._warm_object_cache(mgmt_name))
+        self._warm_up_tasks.add(task)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._warm_up_tasks.discard)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _warm_object_cache(self, mgmt_name: str) -> None:
+        from ..core.cache_mode import CacheMode
+        from ..core.cache_policy import CachePolicy, RefreshScope
+
+        # Always a smart load, whatever the client's default mode (a "cache" default would make it a no-op).
+        policy = CachePolicy(mode=CacheMode.SMART, ttl=self._refresh_coordinator.default_policy.ttl)
+        try:
+            outcome = await self._refresh_coordinator.ensure(RefreshScope(mgmt_names=[mgmt_name]), policy)
+        except Exception as exc:
+            log().warning(f"Background object cache warm-up of {mgmt_name} failed: {type(exc).__name__}")
+            return
+        refreshed = len(getattr(outcome, "refreshed_domains", []) or [])
+        failed = len(getattr(outcome, "failed_domains", []) or [])
+        log().info(
+            f"Background object cache warm-up of {mgmt_name} finished: {refreshed} domains refreshed, {failed} failed"
         )
 
     @traced

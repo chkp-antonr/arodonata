@@ -98,11 +98,10 @@ def test_explicit_per_call_ttl_overrides_default():
 async def test_get_domains_delegates_to_orchestration():
     client = make_client()
     client._orchestration.get_domains = AsyncMock(return_value=["d"])
-    result = await client.get_domains(mgmt_names=["mgmt1"])
+    result = await client.get_domains(mgmt_names=["mgmt1"], cache_mode="cache")
     assert result == ["d"]
-    client._orchestration.get_domains.assert_awaited_once_with(
-        mgmt_names=["mgmt1"], cache_mode=None, cache_ttl=None, include_global=False
-    )
+    # The orchestration read is pure: the domain-list refresh happens in the client (test_client_domain_list.py)
+    client._orchestration.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], include_global=False)
 
 
 @pytest.mark.asyncio

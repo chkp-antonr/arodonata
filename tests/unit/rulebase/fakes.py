@@ -262,7 +262,9 @@ class FakeRulebaseClient:
     def get_mgmt_names(self) -> list[str]:
         return ["m1"]
 
-    async def get_domains(self, mgmt_names: list[str] | None = None, include_global: bool = False) -> list[Any]:
+    async def get_domains(
+        self, mgmt_names: list[str] | None = None, cache_mode: str | None = None, include_global: bool = False
+    ) -> list[Any]:
         return [SimpleNamespace(name=d) for d in self.domains]
 
 

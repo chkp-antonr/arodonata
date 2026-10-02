@@ -24,6 +24,7 @@ isn't special in this regard, it's just one field among many.
 | `api_timeout` | `int` | see `constants.py` | Per-request API timeout in seconds. |
 | `login_retry_backoff` | `int` | see `constants.py` | Backoff (seconds) between login retries. |
 | `login_max_retries` | `int` | see `constants.py` | Maximum login retry attempts. |
+| `warm_object_cache_on_first_use` | `bool` | `True` | When `get_domains` finds a management server's object cache empty, load every domain's objects in the background (`get_domains` returns the domain list at once). Settable via `ARODONATA_WARM_OBJECT_CACHE_ON_FIRST_USE`; set `false` where a full background load (hours on a large MDS) is unwanted. |
 | `log_level` | `str` | `"INFO"` | Also settable via the `ARODONATA_LOG_LEVEL` environment variable. |
 | `cpcrud_on_name_conflict` | `str` | `"update"` | Name conflict policy: `'update'` \| `'error'`. Settable via `ARODONATA_CPCRUD_ON_NAME_CONFLICT`. |
 | `cpcrud_on_ip_conflict` | `str` | `"reuse"` | IP conflict policy: `'reuse'` \| `'error'` \| `'create_new'`. Settable via `ARODONATA_CPCRUD_ON_IP_CONFLICT`. |
