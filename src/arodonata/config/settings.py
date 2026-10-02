@@ -181,6 +181,14 @@ class ArodonataSettings(BaseSettings):
         description="Maximum login retry attempts",
         validation_alias="ARODONATA_LOGIN_RETRIES",
     )
+    warm_object_cache_on_first_use: bool = Field(
+        default=True,
+        description=(
+            "When get_domains finds a management server's object cache empty, start loading every domain's "
+            "objects in the background (get_domains itself returns the domain list at once)"
+        ),
+        validation_alias="ARODONATA_WARM_OBJECT_CACHE_ON_FIRST_USE",
+    )
 
     # Logging - supports ARODONATA_LOG_LEVEL env var
     log_level: str = Field(

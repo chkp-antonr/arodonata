@@ -62,11 +62,8 @@ Hierarchical numbers (`1`, `2`, `2.1`, `2.2.1`, section ranges `2.1-2.2`, `2.3`,
 
 ## Reading from the cache
 
-Helper methods on `ArodonataClient` (`get_hosts`, `get_networks`, `get_groups`,
-`get_domains`, `get_gateways`, `get_access_rules`, ...) always read from the
-cache — they never make a live API call. For lower-level, filterable access,
-[`CacheRepository`](../api/arodonata/cache/repository.md) exposes
-`get_objects()`, `get_objects_by_type()`, `get_objects_by_ip()`, and
-`get_rulebase()` directly.
+Helper methods on `ArodonataClient` (`get_hosts`, `get_networks`, `get_groups`, `get_gateways`, `get_access_rules`, ...) always read from the cache — they never make a live API call (`get_domains` may re-read the domain list, see below). For lower-level, filterable access, [`CacheRepository`](../api/arodonata/cache/repository.md) exposes `get_objects()`, `get_objects_by_type()`, `get_objects_by_ip()`, and `get_rulebase()` directly.
+
+`get_domains` refreshes only the domain list (one `show-domains` per management server), never the domains' objects: `cache_mode='cache'` reads the table as is, `smart`/`smart-fast` re-read the list when the table is empty or the domain-list TTL (one hour) has passed, and `force` re-reads it now. Without `mgmt_names` it reads every cached server and refreshes the first configured server's list. On first use, when a server's object cache is still empty, `get_domains` returns the list at once and starts loading every domain's objects in the background (once per server per client; `warm_object_cache_on_first_use`, on by default). Smart and smart-fast object reads of a domain being warmed wait for that domain's refresh instead of starting a second one (explicit `refresh_objects` or `search_objects(refresh='force')` calls are not coordinated and can reload the same domain in parallel; each domain is replaced atomically either way). `close()` cancels a running warm-up at once.
 
 The rulebase facade (`get_policy_packages`, `get_package_rulebase`, `get_layer_rulebase`, `locate_rules`) reads the `rulebase_*` snapshots through `CachedRulebaseSource`, after refreshing the domain session-aware per `cache_mode`. A domain is ready when it has a sync state at the current cache format; a domain whose refreshes only ever failed is not ready, and the not-ready error names the last refresh error. A domain whose last refresh failed is served from its last good snapshot, with `status` and `last_error` set. Numbers reflect the snapshot's published session (`snapshot_session_uid`, published at `snapshot_published_at`), not necessarily an older session a caller is asking about.

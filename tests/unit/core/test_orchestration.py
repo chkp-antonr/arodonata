@@ -211,6 +211,15 @@ async def test_get_domains_include_global_reaches_cache_layer():
     assert cache.get_domains_calls == [{"mgmt_names": ["mgmt1"], "include_global": True}]
 
 
+async def test_get_domains_never_refreshes_the_object_cache():
+    """Listing domains must not ensure (refresh) every domain's objects; the client refreshes only the list."""
+    coordinator = MagicMock()
+    coordinator.ensure = AsyncMock(return_value=RefreshOutcome(mode_used=CacheMode.SMART))
+    coordinator.default_policy = CachePolicy(mode=CacheMode.SMART, ttl=300)
+    await _svc(coordinator=coordinator).get_domains(mgmt_names=["mgmt1"], cache_mode="force", cache_ttl=0)
+    coordinator.ensure.assert_not_awaited()  # still accepted for compatibility, never acted on
+
+
 async def test_get_domains_include_global_defaults_to_false():
     cache = ConfiguredCache(domains=[])
     await _svc(cache=cache).get_domains(mgmt_names=["mgmt1"])

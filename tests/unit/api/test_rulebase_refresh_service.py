@@ -335,7 +335,7 @@ async def test_refresh_all_uses_client_mgmt_names_and_domains_by_default():
     events = await collect(service.refresh_all())
 
     client.get_mgmt_names.assert_called_once_with()
-    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], include_global=False)
+    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], cache_mode="cache", include_global=False)
     assert events == []
     assert calls == [("mgmt1", "domainA", True)]
 
@@ -352,7 +352,7 @@ async def test_refresh_all_includes_global_when_requested():
 
     events = await collect(service.refresh_all(include_global=True))
 
-    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], include_global=True)
+    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], cache_mode="cache", include_global=True)
     assert events == []
     assert calls == [("mgmt1", "Global", True)]
 
@@ -371,7 +371,7 @@ async def test_refresh_all_respects_explicit_mgmt_and_domain_filters():
     events = await collect(service.refresh_all(mgmt_names=["mgmt1"], domain_names=["domainB"]))
 
     client.get_mgmt_names.assert_not_called()
-    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], include_global=False)
+    client.get_domains.assert_awaited_once_with(mgmt_names=["mgmt1"], cache_mode="cache", include_global=False)
     assert events == []
     assert calls == [("mgmt1", "domainB", True)]
 

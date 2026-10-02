@@ -151,20 +151,21 @@ class CacheOrchestrationService:
         cache_ttl: int | None = None,
         include_global: bool = False,
     ) -> list["Domain"]:
-        """Get domains from cache.
+        """Get domains from cache (a pure read).
+
+        It never refreshes the object cache: listing domains must not load every domain's objects. The client
+        refreshes the domain list itself (``ArodonataClient.get_domains``).
 
         Args:
             mgmt_names: Optional list of management server names to filter.
-            cache_mode: Optional per-call cache refresh mode override.
-            cache_ttl: Optional per-call cache freshness TTL override.
+            cache_mode: Accepted for compatibility and ignored (this is a pure read).
+            cache_ttl: Accepted for compatibility and ignored.
             include_global: When False (default), the synthetic "Global" domain
                 is excluded so existing callers see today's behavior.
 
         Returns:
             List of Domain Pydantic models.
         """
-        await self._ensure(mgmt_names, None, cache_mode, cache_ttl)
-
         from arodonata.models import Domain
 
         cache_domains = await self._cache.get_domains(mgmt_names=mgmt_names, include_global=include_global)

@@ -130,7 +130,8 @@ def register_native_tools(server: MCPServer, client: ArodonataClient, opts: Tool
     async def arodonata_init() -> dict[str, Any]:
         """Call this first. Lists configured management servers, whether each is Multi-Domain (MDS), their domains, and how old the object cache is. Use the returned mgmt_name and domain values in other tools."""
         mgmt_names = client.get_mgmt_names()
-        domains = await client.get_domains(include_global=False)
+        # every server explicitly: get_domains without mgmt refreshes only the first configured server's list
+        domains = await client.get_domains(mgmt_names=mgmt_names, include_global=False)
         servers = []
         for mgmt in mgmt_names:
             mine = [d for d in domains if d.mgmt_name == mgmt]

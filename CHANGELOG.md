@@ -10,6 +10,19 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 
 ## [Unreleased]
 
+### Fixed
+
+- `get_domains` no longer refreshes every domain's objects before listing domains (on a large MDS this took minutes to hours and hit Check Point's login rate limit): it refreshes only the domain list (`show-domains`); `RulebaseRefreshService.refresh_all` no longer triggers an object refresh either
+- MCP `show_domains` returned an empty record per domain; records are now built from the cached domain fields
+
+### Changed
+
+- `get_domains` without `mgmt_names` still reads every cached server but refreshes only the first configured server's domain list (before, a cold call loaded every server); MCP `arodonata_init` passes all configured servers explicitly. `CacheOrchestrationService.get_domains` is a pure read and ignores its `cache_mode`/`cache_ttl` arguments
+
+### Added
+
+- First-use warm-up: when `get_domains` finds a server's object cache empty it returns the domain list at once and loads the objects in the background (`warm_object_cache_on_first_use`, `ARODONATA_WARM_OBJECT_CACHE_ON_FIRST_USE`, default on)
+
 ### Added (change report)
 
 - `arodonata.reports.changes`: evidence of Check Point policy sessions — `SessionScope`/`RangeScope` inputs across management servers and domains, `ArodonataClient.collect_change_report` / `build_change_report`, `render_change_report` to HTML (self-contained, `report` extra), JSON (`ChangeReport`, re-renderable) and markdown; SmartConsole rule numbers from the rulebase cache, or live through an app-owned session (`OwnedSession`) for unpublished sessions

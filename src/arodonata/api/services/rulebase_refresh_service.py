@@ -253,7 +253,10 @@ class RulebaseRefreshService:
             await self._ensure_domain_list_fresh(m_name, mode)
 
             # Get domains for this mgmt
-            domains = await self._client.get_domains(mgmt_names=[m_name], include_global=include_global)
+            # The domain list was just re-fetched above as needed; read it from the cache only.
+            domains = await self._client.get_domains(
+                mgmt_names=[m_name], cache_mode="cache", include_global=include_global
+            )
             target_domains = [d.name for d in domains]
             if domain_names:
                 target_domains = [d for d in target_domains if d in domain_names]

@@ -31,7 +31,8 @@ async def test_init_reports_servers_domains_and_cache_age():
     assert "mgmt_name" in out["guidance"]
     assert fake.calls[0] == (
         "get_domains",
-        {"mgmt_names": None, "cache_mode": None, "cache_ttl": None, "include_global": False},
+        # every configured server explicitly: get_domains without mgmt refreshes only the first server's list
+        {"mgmt_names": ["mgmt1", "mgmt2"], "cache_mode": None, "cache_ttl": None, "include_global": False},
     )
 
 

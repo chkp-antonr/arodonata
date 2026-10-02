@@ -40,6 +40,16 @@ async def _envelope(
     )
 
 
+def _domain_record(domain: Any) -> dict[str, Any]:
+    """The cached domains table stores no API payload (raw_data is empty), so build the record from its fields.
+
+    The record keeps the model's field names (``active_ip``, ``is_mdm``, ...), not Check Point's kebab-case keys.
+    """
+    if domain.raw_data:
+        return dict(domain.raw_data)
+    return {"type": "domain", **domain.model_dump(exclude={"raw_data"})}
+
+
 def register_cached_tools(server: MCPServer, client: ArodonataClient, opts: ToolOptions) -> list[str]:
     names: list[str] = []
 
@@ -127,7 +137,7 @@ def register_cached_tools(server: MCPServer, client: ArodonataClient, opts: Tool
         # list was last synced, so there is no meaningful cache_age_seconds to report here.
         mgmt = resolve_mgmt_name(client, mgmt_name)
         models = await client.get_domains(mgmt_names=[mgmt], cache_mode=cache_mode, include_global=include_global)
-        objects = [project(m.raw_data, details_level) for m in models]
+        objects = [project(_domain_record(m), details_level) for m in models]
         return list_envelope(
             objects, offset=offset, limit=limit, total=len(models), source="cache", cache_age_seconds=None
         )
