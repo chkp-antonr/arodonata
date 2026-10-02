@@ -3,9 +3,10 @@
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from arodonata.cache.models import CPObject, Domain, LastPublishedSession
+    from arodonata.cache.models import CPObject, Domain, LastPublishedSession, RulebaseSyncState
     from arodonata.cache.repository import CacheRepository
     from arodonata.models.domains import Gateway
+    from arodonata.rulebase.model import DomainRulebaseSnapshot
 
 
 class PostgresCacheAdapter:
@@ -143,3 +144,19 @@ class PostgresCacheAdapter:
             domain_names=domain_names,
             filters=filters if filters else None,
         )
+
+    async def get_rulebase_sync_state(self, mgmt_name: str, domain_name: str) -> "RulebaseSyncState | None":
+        """The domain's rulebase sync state, or None before its first rulebase refresh."""
+        return await self._repo.get_rulebase_sync_state(mgmt_name, domain_name)
+
+    async def load_domain_rulebase_snapshot(self, mgmt_name: str, domain_name: str) -> "DomainRulebaseSnapshot | None":
+        """The domain's cached rulebase snapshot, or None when it has no sync state."""
+        return await self._repo.load_domain_rulebase_snapshot(mgmt_name, domain_name)
+
+    async def find_rulebase_layers(self, mgmt_name: str, layer: str, rulebase_type: str) -> list[tuple[str, str]]:
+        """(domain_name, layer_uid) of cached layers of that type matching ``layer`` by uid or name."""
+        return await self._repo.find_rulebase_layers(mgmt_name, layer, rulebase_type)
+
+    async def find_rulebase_packages(self, mgmt_name: str, package: str) -> list[tuple[str, str]]:
+        """(domain_name, package_uid) of cached packages matching ``package`` by name or uid."""
+        return await self._repo.find_rulebase_packages(mgmt_name, package)

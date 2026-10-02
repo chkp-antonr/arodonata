@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Collection
 from typing import TYPE_CHECKING, Any, Literal
 
 from arlogi.otel.decorator import set_trace_modules, traced
@@ -35,8 +35,11 @@ if TYPE_CHECKING:
 
 if TYPE_CHECKING:
     from ..cache import CPObject
+    from ..core.cache_mode import CacheMode
     from ..models.domains import Domain, Gateway, Group, Host, Network
     from ..models.rulebases import AccessRule, HTTPSRule, NATRule, ThreatRule
+    from ..rulebase.model import PackageLayout, RulebaseType
+    from ..rulebase.source import CachedRulebaseSource, LayerRulebase, PackageRulebase, RuleLocations
 
 log = lazy_logger("arodonata.api.client")
 
@@ -1144,6 +1147,148 @@ class ArodonataClient:
 
         yield SSEEvent(
             event_type=SSEEventType.COMPLETE, message="Rulebase refresh complete", data={"total_results": total_count}
+        )
+
+    @property
+    def _rulebase_source(self) -> CachedRulebaseSource:
+        """Lazy CachedRulebaseSource over the cache adapter (reads only; never calls the API)."""
+        if not hasattr(self, "_rulebase_source_instance"):
+            from ..rulebase.source import CachedRulebaseSource
+
+            self._rulebase_source_instance = CachedRulebaseSource(self._cache_adapter)
+        return self._rulebase_source_instance
+
+    def _rulebase_mgmt(self, mgmt_name: str | None) -> str:
+        """The named server, or the first configured one: a call without a server is a single-server app."""
+        if mgmt_name:
+            return mgmt_name
+        names = self.get_mgmt_names()
+        if not names:
+            raise ValueError("no management server is configured")
+        return names[0]
+
+    async def _ensure_rulebase_domain(
+        self, mgmt: str, domain: str, cache_mode: CacheMode | str | None, cache_ttl: int | None
+    ) -> None:
+        from ..core.cache_policy import CachePolicy, RefreshScope
+
+        policy = CachePolicy.resolve(cache_mode, cache_ttl, self._rulebase_coordinator.default_policy)
+        await self._rulebase_coordinator.ensure(RefreshScope(mgmt_names=[mgmt], domain_names=[domain]), policy)
+
+    async def _resolve_rulebase_domain(
+        self, mgmt: str, domain: str | None, name: str, candidates: Callable[[], Awaitable[list[tuple[str, str]]]]
+    ) -> str:
+        """The domain a domainless call reads: the one cached domain holding ``name``; else the only cached domain
+        (an SMS: ``SMC User``). Several holders → AmbiguousLayerName; none on an MDS → RulebaseCacheNotReady."""
+        from ..rulebase.source import AmbiguousLayerName, RulebaseCacheNotReady
+
+        if domain:
+            return domain
+        found = await candidates()
+        domains = sorted({d for d, _ in found})
+        if len(domains) == 1:
+            return domains[0]
+        if domains:
+            raise AmbiguousLayerName(name, tuple(found))
+        cached = await self._cache_adapter.get_domains(mgmt_names=[mgmt])
+        if len(cached) == 1:
+            return cached[0].domain_name
+        raise RulebaseCacheNotReady(
+            f"{name!r} is not in any cached domain of {mgmt}; pass domain and run refresh_rulebases for it"
+        )
+
+    @traced
+    async def get_policy_packages(
+        self,
+        mgmt_name: str | None,
+        domain_name: str,
+        cache_mode: CacheMode | str | None = None,
+        cache_ttl: int | None = None,
+    ) -> list[PackageLayout]:
+        """Policy packages of a domain with their ordered layers per rulebase type (from the rulebase cache)."""
+        self._ensure_open()
+        if not domain_name:
+            raise ValueError("domain_name is required")
+        mgmt = self._rulebase_mgmt(mgmt_name)
+        await self._ensure_rulebase_domain(mgmt, domain_name, cache_mode, cache_ttl)
+        return await self._rulebase_source.packages(mgmt, domain_name)
+
+    @traced
+    async def get_package_rulebase(
+        self,
+        mgmt_name: str | None,
+        domain_name: str | None,
+        package: str,
+        rulebase_type: RulebaseType = "access",
+        cache_mode: CacheMode | str | None = None,
+        cache_ttl: int | None = None,
+    ) -> PackageRulebase:
+        """A package's rulebase numbered exactly like SmartConsole (global layer, parent rule, ``2.x``, ``2.2.1``).
+
+        ``domain_name`` None/'' resolves to the one cached domain holding the package (``SMC User`` on an SMS).
+        Numbers reflect the cached snapshot's session (``snapshot_session_uid``).
+        """
+        self._ensure_open()
+        mgmt = self._rulebase_mgmt(mgmt_name)
+        domain = await self._resolve_rulebase_domain(
+            mgmt, domain_name, package, lambda: self._rulebase_source.find_package_domains(mgmt, package)
+        )
+        await self._ensure_rulebase_domain(mgmt, domain, cache_mode, cache_ttl)
+        return await self._rulebase_source.package_rulebase(mgmt, domain, package, rulebase_type)
+
+    @traced
+    async def get_layer_rulebase(
+        self,
+        mgmt_name: str | None,
+        domain_name: str | None,
+        layer: str,
+        rulebase_type: RulebaseType = "access",
+        cache_mode: CacheMode | str | None = None,
+        cache_ttl: int | None = None,
+    ) -> LayerRulebase:
+        """One layer (uid, or unique name) numbered without package context: layer-relative numbers, sections,
+        place-holders, inline layers expanded. ``domain_name`` None/'' resolves like ``get_package_rulebase``."""
+        self._ensure_open()
+        mgmt = self._rulebase_mgmt(mgmt_name)
+        domain = await self._resolve_rulebase_domain(
+            mgmt, domain_name, layer, lambda: self._rulebase_source.find_layer_domains(mgmt, layer, rulebase_type)
+        )
+        await self._ensure_rulebase_domain(mgmt, domain, cache_mode, cache_ttl)
+        return await self._rulebase_source.layer_rulebase(mgmt, domain, layer, rulebase_type)
+
+    @traced
+    async def locate_rules(
+        self,
+        mgmt_name: str | None,
+        domain_name: str,
+        rule_uids: Collection[str] = (),
+        rulebase_type: RulebaseType | None = None,
+        *,
+        layer_uids: Collection[str] = (),
+        cache_mode: CacheMode | str | None = None,
+        cache_ttl: int | None = None,
+    ) -> RuleLocations:
+        """Every SmartConsole position of each rule uid, and every numbering prefix of each layer uid (``""`` for an
+        ordered layer, ``"2."``/``"2.2."`` for nested ones), across the domain's packages; ``[]`` for unknown uids.
+
+        The result carries the snapshot's session uid, publish time, refresh time and sync status, so a caller can
+        tell which published state the numbers describe (a deleted or unpublished rule is numbered as a layer's
+        prefix plus its show-changes position).
+
+        Raises:
+            ValueError: No ``domain_name``.
+            TypeError: ``rule_uids`` or ``layer_uids`` is a bare ``str`` (pass a list of uids).
+        """
+        from ..rulebase.source import check_uid_collections
+
+        self._ensure_open()
+        if not domain_name:
+            raise ValueError("domain_name is required")
+        check_uid_collections(rule_uids=rule_uids, layer_uids=layer_uids)
+        mgmt = self._rulebase_mgmt(mgmt_name)
+        await self._ensure_rulebase_domain(mgmt, domain_name, cache_mode, cache_ttl)
+        return await self._rulebase_source.locate_rules(
+            mgmt, domain_name, rule_uids, rulebase_type, layer_uids=layer_uids
         )
 
     # ==================== V2: Typed Helper Methods ====================

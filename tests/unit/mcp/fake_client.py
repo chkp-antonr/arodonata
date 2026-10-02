@@ -11,6 +11,8 @@ from arodonata.api.schemas import ApiCallResult, ApiQueryResult, SSEEvent, SSEEv
 from arodonata.core.cache_mode import CacheMode
 from arodonata.cpcrud.models import ApplyReport, IpConflictPolicy, NameConflictPolicy, Plan
 from arodonata.models import AccessRule, Domain, Gateway, Group, Host, Network
+from arodonata.rulebase.model import DomainRulebaseSnapshot, LayerSnapshot, OrderedLayer, PackageLayout, RuleItem
+from arodonata.rulebase.source import layer_rulebase_from_snapshot, package_rulebase_from_snapshot
 
 
 def host(name: str, ip: str, mgmt: str = "mgmt1", domain: str = "General") -> Host:
@@ -60,25 +62,96 @@ def rule(number: int, name: str, layer: str = "Network", enabled: bool = True, i
     )
 
 
+DICT = (
+    {"uid": "any", "name": "Any", "type": "CpmiAnyObject"},
+    {"uid": "acc", "name": "Accept", "type": "RulebaseAction"},
+    {"uid": "drop", "name": "Drop", "type": "RulebaseAction"},
+    {"uid": "log", "name": "Log", "type": "Track"},
+    {"uid": "inner-uid", "name": "Inner", "type": "access-layer"},
+)
+
+
+def _item(uid: str, n: int, name: str, rule_type: str, *, enabled: bool = True, inline: str | None = None) -> RuleItem:
+    raw: dict[str, Any] = {
+        "uid": uid,
+        "name": name,
+        "type": rule_type,
+        "rule-number": n,
+        "enabled": enabled,
+        "source": ["any"],
+        "destination": ["any"],
+        "service": ["any"],
+        "action": "acc" if enabled else "drop",
+        "track": {"type": "log"},
+    }
+    if inline:
+        raw["inline-layer"] = inline
+    return RuleItem(
+        uid=uid,
+        name=name,
+        kind="rule",
+        rule_number=n,
+        enabled=enabled,
+        section_uid=None,
+        inline_layer_uid=inline,
+        domain_type="domain",
+        auto_generated=False,
+        raw=raw,
+    )
+
+
+def _layer(rulebase_type: str, uid: str, name: str, items: list[RuleItem]) -> LayerSnapshot:
+    return LayerSnapshot(rulebase_type, uid, name, "domain", len(items), (), tuple(items), DICT)  # type: ignore[arg-type]
+
+
+def mcp_snapshot(domain: str = "General") -> DomainRulebaseSnapshot:
+    """Access 'Network' (rule 1 → inline 'Inner', rule 2 disabled), 'Inner' (1 rule), HTTPS 'Default Layer',
+    threat 'Standard Threat Prevention', and package 'Standard' with all four types (NAT keyed by the package)."""
+    layers = (
+        _layer(
+            "access",
+            "net-uid",
+            "Network",
+            [
+                _item("r1", 1, "allow web", "access-rule", inline="inner-uid"),
+                _item("r2", 2, "deny all", "access-rule", enabled=False),
+            ],
+        ),
+        _layer("access", "inner-uid", "Inner", [_item("i1", 1, "inner", "access-rule")]),
+        _layer("https", "https-uid", "Default Layer", [_item("h1", 1, "https 1", "https-rule")]),
+        _layer("threat", "tp-uid", "Standard Threat Prevention", [_item("t1", 1, "tp 1", "threat-rule")]),
+        _layer("nat", "nat-uid", "Standard", [_item("n1", 1, "nat 1", "nat-rule")]),
+    )
+    package = PackageLayout(
+        "pkg-uid",
+        "Standard",
+        (
+            OrderedLayer("access", 0, "", "net-uid", "Network", "domain"),
+            OrderedLayer("https", 0, "inbound", "https-uid", "Default Layer", "domain"),
+            OrderedLayer("nat", 0, "", "nat-uid", "Standard", ""),
+            OrderedLayer("threat", 0, "", "tp-uid", "Standard Threat Prevention", "domain"),
+        ),
+    )
+    return DomainRulebaseSnapshot(
+        "mgmt1",
+        domain,
+        "sess-1",
+        datetime(2026, 10, 1, 6, 53),
+        datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=600),
+        (package,),
+        layers,
+    )
+
+
 class _FakeCache:
     def __init__(self) -> None:
         now = datetime.now(UTC).replace(tzinfo=None)
         self.last_update = now - timedelta(seconds=90)
-        self.rulebase_last_update = now - timedelta(seconds=600)
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     async def get_objects_last_update(self, mgmt_names=None, domain_names=None):
         self.calls.append(("get_objects_last_update", {"mgmt_names": mgmt_names, "domain_names": domain_names}))
         return self.last_update
-
-    async def get_rulebase_last_update(self, rulebase_type: str, mgmt_names=None, domain_names=None):
-        self.calls.append(
-            (
-                "get_rulebase_last_update",
-                {"rulebase_type": rulebase_type, "mgmt_names": mgmt_names, "domain_names": domain_names},
-            )
-        )
-        return self.rulebase_last_update
 
 
 class FakeCPCRUD:
@@ -149,6 +222,9 @@ class FakeArodonataClient:
         self.responses: dict[str, Any] = {}
         self.cache = _FakeCache()
         self.cpcrud = FakeCPCRUD()
+        self.snapshot = mcp_snapshot()
+        self.status = "ok"
+        self.last_error: str | None = None
 
     def _rec(self, name: str, **kwargs: Any) -> Any:
         self.calls.append((name, kwargs))
@@ -164,6 +240,16 @@ class FakeArodonataClient:
         if isinstance(response, dict):
             return response.get(kwargs.get("layer_name"), [])
         return response or []
+
+    def _rec_facade(self, name: str, build: Any, **kwargs: Any) -> Any:
+        """Record the call; a canned response (an exception is raised, a callable is called) wins over ``build()``."""
+        self.calls.append((name, kwargs))
+        response = self.responses.get(name)
+        if isinstance(response, BaseException):
+            raise response
+        if callable(response):
+            return response(**kwargs)
+        return response if response is not None else build()
 
     @staticmethod
     def _check_read_cache_mode(cache_mode: str | None) -> None:
@@ -350,6 +436,52 @@ class FakeArodonataClient:
             mgmt_names=mgmt_names,
             domain_names=domain_names,
             enabled_only=enabled_only,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+
+    async def get_layer_rulebase(
+        self,
+        mgmt_name: str | None,
+        domain_name: str | None,
+        layer: str,
+        rulebase_type: str = "access",
+        cache_mode: str | None = None,
+        cache_ttl: int | None = None,
+    ) -> Any:
+        self._check_read_cache_mode(cache_mode)
+        return self._rec_facade(
+            "get_layer_rulebase",
+            lambda: layer_rulebase_from_snapshot(
+                self.snapshot, layer, rulebase_type, status=self.status, last_error=self.last_error
+            ),
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            layer=layer,
+            rulebase_type=rulebase_type,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+
+    async def get_package_rulebase(
+        self,
+        mgmt_name: str | None,
+        domain_name: str | None,
+        package: str,
+        rulebase_type: str = "access",
+        cache_mode: str | None = None,
+        cache_ttl: int | None = None,
+    ) -> Any:
+        self._check_read_cache_mode(cache_mode)
+        return self._rec_facade(
+            "get_package_rulebase",
+            lambda: package_rulebase_from_snapshot(
+                self.snapshot, package, rulebase_type, status=self.status, last_error=self.last_error
+            ),
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            package=package,
+            rulebase_type=rulebase_type,
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
         )

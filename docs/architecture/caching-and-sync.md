@@ -68,3 +68,5 @@ cache — they never make a live API call. For lower-level, filterable access,
 [`CacheRepository`](../api/arodonata/cache/repository.md) exposes
 `get_objects()`, `get_objects_by_type()`, `get_objects_by_ip()`, and
 `get_rulebase()` directly.
+
+The rulebase facade (`get_policy_packages`, `get_package_rulebase`, `get_layer_rulebase`, `locate_rules`) reads the `rulebase_*` snapshots through `CachedRulebaseSource`, after refreshing the domain session-aware per `cache_mode`. A domain is ready when it has a sync state at the current cache format; a domain whose refreshes only ever failed is not ready, and the not-ready error names the last refresh error. A domain whose last refresh failed is served from its last good snapshot, with `status` and `last_error` set. Numbers reflect the snapshot's published session (`snapshot_session_uid`, published at `snapshot_published_at`), not necessarily an older session a caller is asking about.

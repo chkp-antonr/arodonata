@@ -297,3 +297,19 @@ def test_adapter_has_no_private_model_map():
     from arodonata.adapters.cache import postgres_adapter
 
     assert "model_map = {" not in _inspect.getsource(postgres_adapter)
+
+
+@pytest.mark.parametrize(
+    ("method", "args"),
+    [
+        ("get_rulebase_sync_state", ("m1", "d1")),
+        ("load_domain_rulebase_snapshot", ("m1", "d1")),
+        ("find_rulebase_layers", ("m1", "Network", "access")),
+        ("find_rulebase_packages", ("m1", "Standard")),
+    ],
+)
+async def test_rulebase_reads_delegate_to_repository(method, args):
+    repo = AsyncMock()
+    getattr(repo, method).return_value = "sentinel"
+    assert await getattr(PostgresCacheAdapter(repo), method)(*args) == "sentinel"
+    getattr(repo, method).assert_awaited_once_with(*args)

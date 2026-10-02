@@ -149,14 +149,34 @@ async def test_cached_rulebase_path_renders_rows(apikey_client, test_domain_a):
     rules = await client.get_access_rules(mgmt_names=[mgmt_name], domain_names=[test_domain_a], cache_mode="cache")
     if not rules:
         pytest.skip(f"{test_domain_a} has no access rules")
+    layer_name = "FPCR_UAT_Active Network" if test_domain_a == "Domain4" else rules[0].layer_name
     async with _mcp(apikey_client) as (mcp, _, _):
         res = await mcp.call_tool(
             "show_access_rulebase",
-            {"mgmt_name": mgmt_name, "domain": test_domain_a, "name": rules[0].layer_name, "cache_mode": "cache"},
+            {"mgmt_name": mgmt_name, "domain": test_domain_a, "name": layer_name, "cache_mode": "cache"},
         )
     body = _text(res)
     assert res.is_error is False, body
     assert int(body.rsplit(" of ", 1)[1].split()[0]) > 0, body
+
+
+async def test_cached_rulebase_numbering_and_nat_by_package(apikey_client, test_domain_a):
+    """Cached MCP rulebase reads on Domain4: SmartConsole numbers by layer name and by package, and NAT by package."""
+    if test_domain_a != "Domain4":
+        pytest.skip("asserts the home-lab Domain4 shape")
+    client, mgmt_name = apikey_client
+    async for _ in client.refresh_rulebases(mgmt_names=[mgmt_name], domain_names=[test_domain_a], mode="force"):
+        pass
+    base = {"mgmt_name": mgmt_name, "domain": test_domain_a, "cache_mode": "cache", "limit": 0}
+    async with _mcp(apikey_client) as (mcp, _, _):
+        access = await mcp.call_tool("show_access_rulebase", {**base, "name": "FPCR_UAT_Active Network"})
+        package = await mcp.call_tool("show_access_rulebase", {**base, "package": "FPCR_UAT_Active"})
+        nat = await mcp.call_tool("show_nat_rulebase", {**base, "package": "FPCR_UAT_Active"})
+    for res in (access, package, nat):
+        assert res.is_error is False, _text(res)
+    assert "| 2.1 |" in _text(access) and "**Section: FPCR_UAT_Section_4** (1-2)" in _text(access)
+    assert "| 2.2.1 |" in _text(package) and "Domain Layer" in _text(package)
+    assert int(_text(nat).rsplit(" of ", 1)[1].split()[0]) > 0
 
 
 async def test_live_rulebase_filter_pages_consistently(apikey_client, test_domain_a):

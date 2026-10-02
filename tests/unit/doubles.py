@@ -13,7 +13,8 @@ and updated to match the current protocol definitions in
 from typing import Any, Literal
 
 from arodonata.api.schemas import ApiQueryResult
-from arodonata.cache.models import CPObject, Domain, LastPublishedSession
+from arodonata.cache.models import CPObject, Domain, LastPublishedSession, RulebaseSyncState
+from arodonata.rulebase.model import DomainRulebaseSnapshot
 
 
 class FakeCache:
@@ -67,6 +68,18 @@ class FakeCache:
         domain_name: str,
     ) -> LastPublishedSession | None:
         return None
+
+    async def get_rulebase_sync_state(self, mgmt_name: str, domain_name: str) -> RulebaseSyncState | None:
+        return None
+
+    async def load_domain_rulebase_snapshot(self, mgmt_name: str, domain_name: str) -> DomainRulebaseSnapshot | None:
+        return None
+
+    async def find_rulebase_layers(self, mgmt_name: str, layer: str, rulebase_type: str) -> list[tuple[str, str]]:
+        return []
+
+    async def find_rulebase_packages(self, mgmt_name: str, package: str) -> list[tuple[str, str]]:
+        return []
 
     async def get_rulebase(
         self,

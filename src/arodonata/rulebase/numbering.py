@@ -53,6 +53,7 @@ def number_layer(
     prefix: str = "",
     depth: int = 0,
     ordered_layer: OrderedLayer | None = None,
+    expand_inline: bool = True,
     _path: frozenset[str] = frozenset(),
 ) -> list[NumberedEntry]:
     """Number one layer and, recursively, its inline layers and (with ``ordered_layer`` link context) the domain
@@ -60,6 +61,7 @@ def number_layer(
 
     The cycle guard holds only the layers on the current descent path, so a layer shared by two parents is expanded
     under both and only a true cycle stops. A layer missing from ``layers`` is logged and yields no entries.
+    ``expand_inline=False`` names inline layers (``inline_layer_uid``) without descending (a single fetched layer).
     """
     layer = layers.get(layer_uid)
     if layer is None:
@@ -95,8 +97,10 @@ def number_layer(
                 )
             )
 
-    for item in layer.items:
-        emit_sections(item.rule_number)
+    # rules_before counts items seen in the walk, so compare against the walk position, not rule_number: a filtered
+    # (sparse) read has gaps in its rule numbers. For a complete layer the two agree.
+    for index, item in enumerate(layer.items):
+        emit_sections(index + 1)
         number = f"{prefix}{item.rule_number}"
         enclosing = sections_by_uid.get(item.section_uid) if item.section_uid else None
 
@@ -143,15 +147,29 @@ def number_layer(
                 )
             )
             out.extend(
-                number_layer(ordered_layer.domain_layer_uid, layers, prefix=f"{number}.", depth=depth + 1, _path=path)
+                number_layer(
+                    ordered_layer.domain_layer_uid,
+                    layers,
+                    prefix=f"{number}.",
+                    depth=depth + 1,
+                    expand_inline=expand_inline,
+                    _path=path,
+                )
             )
         elif item.kind == "place-holder":
             out.append(entry("place-holder", item.uid, item.name, None))
         else:
             out.append(entry("rule", item.uid, item.name, item.inline_layer_uid))
-            if item.inline_layer_uid:
+            if item.inline_layer_uid and expand_inline:
                 out.extend(
-                    number_layer(item.inline_layer_uid, layers, prefix=f"{number}.", depth=depth + 1, _path=path)
+                    number_layer(
+                        item.inline_layer_uid,
+                        layers,
+                        prefix=f"{number}.",
+                        depth=depth + 1,
+                        expand_inline=expand_inline,
+                        _path=path,
+                    )
                 )
     emit_sections(float("inf"))
     return out

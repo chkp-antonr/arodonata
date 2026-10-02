@@ -1,4 +1,4 @@
-"""Turn cached or live rulebases into rows, then into markdown or compact structured text.
+"""Turn numbered rulebase entries (cache or live) into rows, then into markdown or compact structured text.
 
 Ported in spirit from the reference server's rulebase parser. The reference's padded fixed-width table is intentionally
 not reproduced (decision 2026-09-27): cells always carry full values.
@@ -6,9 +6,17 @@ not reproduced (decision 2026-09-27): cells always carry full values.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from ..rulebase.model import OrderedLayer, RulebaseType, RuleItem
+from ..rulebase.numbering import NumberedEntry, number_layer
+from ..rulebase.parse import parse_layer_response
+from .projection import project
+
+if TYPE_CHECKING:
+    from ..rulebase.source import PackageRulebase
 
 
 @dataclass
@@ -27,6 +35,8 @@ class RuleRow:
     depth: int = 0
     negate: dict[str, bool] = field(default_factory=dict)
     extra: dict[str, str] = field(default_factory=dict)
+    kind: str = "rule"  # rule | place-holder | parent-rule | section | layer
+    section_range: str = ""
 
 
 def _names(values: Any, lookup: dict[str, str]) -> list[str]:
@@ -91,103 +101,180 @@ def _rule_from_raw(raw: dict[str, Any], lookup: dict[str, str], number: str, dep
     )
 
 
-def rows_from_live(response: dict[str, Any]) -> list[RuleRow]:
-    """Rows of one live layer. Inline layers are named through the dictionary but not expanded (only one layer is fetched)."""
-    lookup = {
-        str(o.get("uid")): str(o.get("name", o.get("uid")))
-        for o in response.get("objects-dictionary", [])
-        if isinstance(o, dict)
-    }
-    rows: list[RuleRow] = []
-
-    def walk(items: Sequence[dict[str, Any]], section: str, prefix: str, depth: int) -> None:
-        for item in items:
-            kind = str(item.get("type", ""))
-            if kind.endswith("-section"):
-                walk(item.get("rulebase", []), str(item.get("name") or section), prefix, depth)
-                continue
-            number = f"{prefix}{item.get('rule-number', len(rows) + 1)}"
-            rows.append(_rule_from_raw(item, lookup, number, depth, section))
-
-    walk(response.get("rulebase", []), "", "", 0)
-    return rows
+def _lookup(dictionary: Sequence[Mapping[str, str]]) -> dict[str, str]:
+    return {str(o["uid"]): str(o.get("name") or o["uid"]) for o in dictionary if o.get("uid")}
 
 
-def _as_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(v) for v in value]
-    return [str(value)]
+def _header(kind: str, name: str, depth: int, section_range: str = "") -> RuleRow:
+    return RuleRow(
+        number="",
+        name=name,
+        enabled=True,
+        sources=[],
+        destinations=[],
+        services=[],
+        action="",
+        track="",
+        depth=depth,
+        kind=kind,
+        section_range=section_range,
+    )
 
 
-def _endpoints_from_model(model: Any) -> tuple[list[str], list[str], list[str]]:
-    """``AccessRule``/``HTTPSRule`` carry ``sources``/``destinations``/``services`` lists directly.
-
-    ``NATRule`` has no such lists: it carries singular ``original_source``/``original_destination``/
-    ``original_service`` strings instead, used here as the source/destination/service columns.
-    """
-    sources = getattr(model, "sources", None)
-    if sources is None and hasattr(model, "original_source"):
-        sources = _as_list(model.original_source)
-    destinations = getattr(model, "destinations", None)
-    if destinations is None and hasattr(model, "original_destination"):
-        destinations = _as_list(model.original_destination)
-    services = getattr(model, "services", None)
-    if services is None and hasattr(model, "original_service"):
-        services = _as_list(model.original_service)
-    return list(sources or []), list(destinations or []), list(services or [])
+def layer_header(name: str) -> RuleRow:
+    """The header row printed before an ordered layer when a package view shows several."""
+    return _header("layer", name, 0)
 
 
-def _extra_from_model(model: Any) -> dict[str, str]:
-    """``NATRule``'s ``translated_*`` fields and ``ThreatRule``'s ``protections`` have no row column, so they land here."""
-    extra: dict[str, str] = {}
-    if hasattr(model, "translated_source"):
-        extra["translated_source"] = str(model.translated_source)
-        extra["translated_destination"] = str(model.translated_destination)
-        extra["translated_service"] = str(model.translated_service)
-    if hasattr(model, "protections"):
-        extra["protections"] = ", ".join(model.protections)
-    return extra
-
-
-def rows_from_cached(
-    rules: Sequence[Any], inline_lookup: Callable[[str], Sequence[Any]] | None = None
+def rows_from_entries(
+    entries: Sequence[NumberedEntry],
+    layer_names: Mapping[str, str],
+    layer_dictionaries: Mapping[str, Sequence[Mapping[str, str]]],
 ) -> list[RuleRow]:
-    """Build rows from cached rule models (``AccessRule``, ``NATRule``, ``HTTPSRule`` or ``ThreatRule``)."""
-
+    """Rows of numbered entries; references resolve through the dictionary of the layer that holds each entry."""
+    lookups: dict[str, dict[str, str]] = {}
     rows: list[RuleRow] = []
-
-    def add(model: Any, prefix: str, depth: int, seen: frozenset[str]) -> None:
-        raw = model.raw_data if isinstance(model.raw_data, dict) else {}
-        number = f"{prefix}{model.rule_number}"
-        sources, destinations, services = _endpoints_from_model(model)
-        row = RuleRow(
-            number=number,
-            name=model.name,
-            enabled=model.enabled,
-            sources=sources,
-            destinations=destinations,
-            services=services,
-            action=str(getattr(model, "action", "") or ""),
-            track=str(getattr(model, "track", "") or ""),
-            section=str(raw.get("section", "") or ""),
-            comments=str(raw.get("comments") or ""),
-            depth=depth,
-            negate={k: True for k in ("source", "destination", "service") if raw.get(f"{k}-negate")},
-            extra=_extra_from_model(model),
-        )
-        inline = raw.get("inline-layer")
-        if isinstance(inline, dict):
-            row.inline_layer = str(inline.get("name", ""))
+    for entry in entries:
+        if entry.kind == "section":
+            rows.append(_header("section", entry.name, entry.depth, entry.range))
+            continue
+        lookup = lookups.setdefault(entry.layer_uid, _lookup(layer_dictionaries.get(entry.layer_uid, ())))
+        inline_uid = entry.inline_layer_uid or ""
+        inline_name = (layer_names.get(inline_uid) or lookup.get(inline_uid, "")) if inline_uid else ""
+        if entry.kind == "parent-rule":
+            rows.append(
+                RuleRow(
+                    number=entry.number,
+                    name=entry.name,
+                    enabled=True,
+                    sources=[],
+                    destinations=[],
+                    services=[],
+                    action="Domain Layer",
+                    track="",
+                    section=entry.section_name or "",
+                    inline_layer=inline_name or inline_uid,
+                    depth=entry.depth,
+                    kind="parent-rule",
+                )
+            )
+            continue
+        raw = entry.item.raw if isinstance(entry.item, RuleItem) else {}
+        row = _rule_from_raw(raw, lookup, entry.number, entry.depth, entry.section_name or "")
+        row.kind = entry.kind
+        # Keep the rule's own inline-layer name (a live dict) unless the snapshot or dictionary resolves the uid.
+        row.inline_layer = inline_name or row.inline_layer or inline_uid
         rows.append(row)
-        if row.inline_layer and inline_lookup and row.inline_layer not in seen:
-            for child in inline_lookup(row.inline_layer):
-                add(child, f"{number}.", depth + 1, seen | {row.inline_layer})
-
-    for model in rules:
-        add(model, "", 0, frozenset())
     return rows
+
+
+def drop_disabled(entries: Sequence[NumberedEntry]) -> list[NumberedEntry]:
+    """Remove disabled rules and their inline subtree (deeper entries that follow); numbers are unchanged."""
+    kept: list[NumberedEntry] = []
+    skip_deeper_than: int | None = None
+    for entry in entries:
+        if skip_deeper_than is not None and entry.depth > skip_deeper_than:
+            continue
+        skip_deeper_than = None
+        if entry.kind == "rule" and isinstance(entry.item, RuleItem) and not entry.item.enabled:
+            skip_deeper_than = entry.depth
+            continue
+        kept.append(entry)
+    return kept
+
+
+OrderedEntries = tuple[OrderedLayer, tuple[NumberedEntry, ...]]
+
+
+def package_layers(
+    result: PackageRulebase, layer: str | None = None, *, enabled_only: bool = False
+) -> list[OrderedEntries]:
+    """The package's ordered layers, or only the one whose uid or name is ``layer``; ``enabled_only`` applies
+    ``drop_disabled`` to each.
+
+    Raises:
+        LookupError: ``layer`` is not an ordered layer of the package (the message lists the package's layers).
+    """
+    chosen = list(result.layers)
+    if layer is not None:
+        chosen = [(o, es) for o, es in chosen if layer in (o.layer_uid, o.layer_name)]
+        if not chosen:
+            names = ", ".join(o.layer_name for o, _ in result.layers) or "none"
+            raise LookupError(
+                f"{layer!r} is not a {result.rulebase_type} ordered layer of package {result.package_name}; "
+                f"its layers: {names}"
+            )
+    return [(o, tuple(drop_disabled(es))) for o, es in chosen] if enabled_only else chosen
+
+
+def _announced(layers: Sequence[OrderedEntries]) -> Iterator[tuple[OrderedLayer | None, tuple[NumberedEntry, ...]]]:
+    """Each ordered layer's entries, with the layer to announce first: only when the view shows several."""
+    several = len(layers) > 1
+    for ordered, entries in layers:
+        yield (ordered if several else None), entries
+
+
+def rows_from_package(result: PackageRulebase, layers: Sequence[OrderedEntries] | None = None) -> list[RuleRow]:
+    """Rows of a package's ordered layers (default: all of them; pass ``package_layers(...)`` to narrow or filter),
+    with a ``layer`` header row before each when there are several."""
+    rows: list[RuleRow] = []
+    for ordered, entries in _announced(result.layers if layers is None else layers):
+        if ordered is not None:
+            rows.append(layer_header(ordered.layer_name))
+        rows += rows_from_entries(entries, result.layer_names, result.layer_dictionaries)
+    return rows
+
+
+def raw_entries(entries: Sequence[NumberedEntry], details_level: str) -> list[dict[str, Any]]:
+    """``format='raw'`` entries: rules/place-holders as projected raw items plus number/depth/layer; sections and parent
+    rules as small records."""
+    out: list[dict[str, Any]] = []
+    for e in entries:
+        if e.kind == "section":
+            raw_type = e.item.raw.get("type", "section") if e.item is not None else "section"
+            out.append({"type": raw_type, "uid": e.uid, "name": e.name, "range": e.range, "depth": e.depth})
+        elif e.kind == "parent-rule":
+            out.append(
+                {
+                    "type": "parent-rule",
+                    "uid": e.uid,
+                    "name": e.name,
+                    "number": e.number,
+                    "depth": e.depth,
+                    "layer": e.layer_name,
+                    "inline-layer": e.inline_layer_uid,
+                }
+            )
+        else:
+            raw = e.item.raw if isinstance(e.item, RuleItem) else {}
+            out.append({**project(raw, details_level), "number": e.number, "depth": e.depth, "layer": e.layer_name})
+    return out
+
+
+def raw_package_entries(layers: Sequence[OrderedEntries], details_level: str) -> list[dict[str, Any]]:
+    """``format='raw'`` entries of a package view, with an ``ordered-layer`` record before each layer when there are
+    several (the same rule as the header rows of ``rows_from_package``)."""
+    out: list[dict[str, Any]] = []
+    for ordered, entries in _announced(layers):
+        if ordered is not None:
+            out.append(
+                {
+                    "type": "ordered-layer",
+                    "uid": ordered.layer_uid,
+                    "name": ordered.layer_name,
+                    "position": ordered.position,
+                }
+            )
+        out += raw_entries(entries, details_level)
+    return out
+
+
+def rows_from_live(response: dict[str, Any], rulebase_type: RulebaseType = "access") -> list[RuleRow]:
+    """Rows of one live layer, numbered with sections; inline layers are named, not expanded (one layer fetched)."""
+    data = {**response, "uid": response.get("uid") or response.get("name") or "live-layer"}
+    layer = parse_layer_response(data, rulebase_type)
+    entries = number_layer(layer.layer_uid, {layer.layer_uid: layer}, expand_inline=False)
+    return rows_from_entries(entries, {layer.layer_uid: layer.layer_name}, {layer.layer_uid: layer.objects_dictionary})
 
 
 def _cell(values: list[str], negated: bool) -> str:
@@ -204,15 +291,20 @@ def render_markdown(rows: Sequence[RuleRow], title: str) -> str:
         "| # | Name | Source | Destination | Service | Action | Track | Enabled |",
         "|---|---|---|---|---|---|---|---|",
     ]
-    section = None
     for r in rows:
-        if r.section and r.section != section and r.depth == 0:
-            section = r.section
-            lines.append(f"| | **Section: {section}** | | | | | | |")
         indent = "↳ " * r.depth
+        if r.kind == "layer":
+            lines.append(f"| | **Layer: {r.name}** | | | | | | |")
+            continue
+        if r.kind == "section":
+            rng = f" ({r.section_range})" if r.section_range else ""
+            lines.append(f"| | {indent}**Section: {r.name}**{rng} | | | | | | |")
+            continue
         name = r.name or "(unnamed)"
+        if r.kind == "place-holder":
+            name += " *(place-holder)*"
         if r.inline_layer:
-            name += f" → inline layer *{r.inline_layer}*"
+            name += f" → {'domain' if r.kind == 'parent-rule' else 'inline'} layer *{r.inline_layer}*"
         row = [
             r.number,
             indent + name,
@@ -234,16 +326,22 @@ def render_markdown(rows: Sequence[RuleRow], title: str) -> str:
 
 
 def render_model_friendly(rows: Sequence[RuleRow], title: str) -> str:
-    lines = [f"Rulebase: {title}", f"Rules: {len(rows)}", ""]
+    rule_rows = [r for r in rows if r.kind not in ("section", "layer")]
+    lines = [f"Rulebase: {title}", f"Rules: {len(rule_rows)}", ""]
     if not rows:
         lines.append("No rules.")
         return "\n".join(lines)
     for r in rows:
         pad = "  " * r.depth
+        if r.kind == "layer":
+            lines += [f"LAYER: {r.name}", ""]
+            continue
+        if r.kind == "section":
+            lines += [f"{pad}SECTION: {r.name}" + (f" ({r.section_range})" if r.section_range else ""), ""]
+            continue
+        label = {"place-holder": "PLACE-HOLDER", "parent-rule": "PARENT RULE"}.get(r.kind, "RULE")
         flag = "" if r.enabled else " [DISABLED]"
-        lines.append(f"{pad}RULE {r.number}: {r.name or '(unnamed)'}{flag}")
-        if r.section and r.depth == 0:
-            lines.append(f"{pad}  Section: {r.section}")
+        lines.append(f"{pad}{label} {r.number}: {r.name or '(unnamed)'}{flag}")
 
         def lst(label: str, values: list[str], key: str, pad: str = pad, r: RuleRow = r) -> str:
             joined = ", ".join(values) if values else "-"
@@ -258,7 +356,7 @@ def render_model_friendly(rows: Sequence[RuleRow], title: str) -> str:
         for k, v in r.extra.items():
             lines.append(f"{pad}  {k}: {v}")
         if r.inline_layer:
-            lines.append(f"{pad}  Inline layer: {r.inline_layer}")
+            lines.append(f"{pad}  {'Domain' if r.kind == 'parent-rule' else 'Inline'} layer: {r.inline_layer}")
         if r.comments:
             lines.append(f"{pad}  Comments: {r.comments}")
         lines.append("")

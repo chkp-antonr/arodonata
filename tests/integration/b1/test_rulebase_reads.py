@@ -124,3 +124,22 @@ async def test_domain4_snapshot_numbers_match_smartconsole(apikey_client, test_d
     state = await client.cache.get_rulebase_sync_state(mgmt_name, test_domain_a)
     head = await last_published_session(client, mgmt_name, test_domain_a)
     assert (state.status, state.session_uid) == ("ok", head["uid"])
+
+
+async def test_domain4_facade_package_rulebase_and_locate(apikey_client, test_domain_a):
+    """Facade on real data: get_package_rulebase equals SmartConsole; locate_rules finds the inline rule at 2.2.1."""
+    if test_domain_a != "Domain4":
+        pytest.skip("asserts the home-lab Domain4 shape")
+    client, mgmt_name = apikey_client
+    await _refresh_rulebases(client, mgmt_name, test_domain_a)
+    result = await client.get_package_rulebase(
+        mgmt_name, test_domain_a, "FPCR_UAT_Active", "access", cache_mode="cache"
+    )
+    assert summarize(result.layers[0][1]) == FPCR_UAT_ACTIVE_ACCESS and result.status == "ok"
+    allow = next(e.uid for e in result.layers[0][1] if e.name == "fpcr_uat_inline_FPCR_UAT_Active_allow")
+    domain_layer = next(e.inline_layer_uid for e in result.layers[0][1] if e.kind == "parent-rule")
+    located = await client.locate_rules(
+        mgmt_name, test_domain_a, [allow], layer_uids=[domain_layer], cache_mode="cache"
+    )
+    assert [p.number for p in located.rules[allow] if p.package_name == "FPCR_UAT_Active"] == ["2.2.1"]
+    assert [p.prefix for p in located.layers[domain_layer] if p.package_name == "FPCR_UAT_Active"] == ["2."]
