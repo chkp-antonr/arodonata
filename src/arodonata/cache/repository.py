@@ -606,7 +606,7 @@ class CacheRepository:
         Args:
             mgmt_name: Optional single management server filter (deprecated, use mgmt_names).
             mgmt_names: Optional list of management server names to filter.
-            include_global: When False (default), the synthetic "Global" domain
+            include_global: When False (default), the "Global" domain
                 row is excluded so existing callers see today's behavior.
 
         Returns:

@@ -34,6 +34,11 @@ class ArodonataMCPSettings(BaseSettings):
     jwt_jwks_url: str = Field(default="")
     default_limit: int = Field(default=50, ge=0)
     max_result_chars: int = Field(default=200_000, ge=1000)
+    shutdown_timeout: int = Field(
+        default=5,
+        ge=0,
+        description="Seconds Ctrl+C waits for open client connections and for SDK calls stuck in network I/O",
+    )
     allowed_hosts: str = Field(
         default="",
         description="Comma-separated Host header values accepted (DNS-rebinding protection); default derives from host, port and public_url",

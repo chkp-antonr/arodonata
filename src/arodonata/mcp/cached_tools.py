@@ -145,7 +145,7 @@ def register_cached_tools(server: MCPServer, client: ArodonataClient, opts: Tool
     _add(
         show_domains,
         "show_domains",
-        "List domains of a Multi-Domain server. include_global adds the synthetic Global domain.",
+        "List domains of a Multi-Domain server. include_global adds the Global domain (not listed by show-domains; read with show-global-domain).",
     )
 
     async def show_object(

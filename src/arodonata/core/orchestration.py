@@ -160,7 +160,7 @@ class CacheOrchestrationService:
             mgmt_names: Optional list of management server names to filter.
             cache_mode: Accepted for compatibility and ignored (this is a pure read).
             cache_ttl: Accepted for compatibility and ignored.
-            include_global: When False (default), the synthetic "Global" domain
+            include_global: When False (default), the "Global" domain
                 is excluded so existing callers see today's behavior.
 
         Returns:

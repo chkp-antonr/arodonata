@@ -1502,6 +1502,38 @@ async def test_cache_domain_active_ip_sends_global_to_the_active_mds():
     assert saved.standby_mdss == "mdsA"
 
 
+async def test_cache_domain_active_ip_caches_the_global_uid():
+    """The Global row carries the UID `show-global-domain` returned, not an empty placeholder."""
+    cache = AsyncMock()
+    coord = _make_coordinator(cache=cache)
+
+    await coord._cache_domain_active_ip(
+        "mgmt1",
+        GLOBAL_DOMAIN_NAME,
+        [],
+        "10.0.0.1",
+        is_mdm=True,
+        mds_ips={"mdsA": "10.0.0.1"},
+        global_mdss=GlobalDomainMdss(uid="global-uid", active_mds="mdsA"),
+    )
+
+    assert cache.upsert_domain.await_args.args[0].domain_uid == "global-uid"
+
+
+async def test_cache_domain_active_ip_keeps_the_cached_global_uid_when_the_lookup_named_none():
+    """A failed `show-global-domain` must not wipe a known UID: the upsert replaces the whole row."""
+    cache = AsyncMock()
+    cache.get_domain = AsyncMock(return_value=MagicMock(domain_uid="global-uid"))
+    coord = _make_coordinator(cache=cache)
+
+    await coord._cache_domain_active_ip(
+        "mgmt1", GLOBAL_DOMAIN_NAME, [], "10.0.0.1", is_mdm=True, mds_ips={}, global_mdss=GlobalDomainMdss()
+    )
+
+    assert cache.upsert_domain.await_args.args[0].domain_uid == "global-uid"
+    cache.get_domain.assert_awaited_with(mdm_dmn=f"mgmt1:{GLOBAL_DOMAIN_NAME}")
+
+
 async def test_cache_domain_active_ip_keeps_the_configured_ip_when_no_active_member_is_named():
     """An unresolvable layout must not produce a falsy active_ip.
 

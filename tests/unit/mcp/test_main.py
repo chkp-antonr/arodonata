@@ -182,3 +182,113 @@ def test_value_error_during_server_run_is_not_reported_as_configuration_error(mo
     monkeypatch.setitem(main.__globals__, "serve", boom)
     with pytest.raises(ValueError, match="runtime failure"):
         main([])
+
+
+def test_shutdown_timeout_defaults_to_5_and_the_cli_overrides_it(monkeypatch):
+    monkeypatch.delenv("ARODONATA_MCP_SHUTDOWN_TIMEOUT", raising=False)
+    assert parse_args([]).shutdown_timeout is None
+    mcp_settings, _ = build_settings(parse_args([]))
+    assert mcp_settings.shutdown_timeout == 5
+    mcp_settings, _ = build_settings(parse_args(["--shutdown-timeout", "2"]))
+    assert mcp_settings.shutdown_timeout == 2
+
+
+def _fake_server_stack(monkeypatch, tmp_path, server_serve):
+    """Run the real ``main``/``serve`` with the client, MCP app and uvicorn server replaced by fakes.
+
+    ``server_serve(config)`` stands in for ``uvicorn.Server(config).serve()``; nothing touches the network.
+    """
+    import uvicorn
+
+    import arodonata.api.client as client_module
+    import arodonata.mcp.app as app_module
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def close(self):
+            return None
+
+    class FakeServer:
+        def __init__(self, config):
+            self.config = config
+
+        async def serve(self):
+            await server_serve(self.config)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    monkeypatch.setattr(client_module, "ArodonataClient", FakeClient)
+    monkeypatch.setattr(app_module, "create_mcp_server", lambda client, settings: object())
+    monkeypatch.setattr(app_module, "create_asgi_app", lambda client, settings, server: object())
+    monkeypatch.setattr(uvicorn, "Server", FakeServer)
+
+
+def test_uvicorn_gets_the_shutdown_timeout_so_an_open_client_connection_cannot_block_ctrl_c(monkeypatch, tmp_path):
+    """Claude Code keeps its connection open; without a graceful-shutdown timeout uvicorn waits for it forever."""
+    seen = {}
+
+    async def record(config):
+        seen["timeout"] = config.timeout_graceful_shutdown
+
+    _fake_server_stack(monkeypatch, tmp_path, record)
+    assert main(["--shutdown-timeout", "3"]) == 0
+    assert seen["timeout"] == 3
+
+
+def test_a_thread_stuck_in_network_io_does_not_hold_up_exit(monkeypatch, tmp_path):
+    """cpapi connects without a socket timeout; a blocked worker thread must not keep the process alive.
+
+    Without the fix asyncio.run joins the pool for up to 300 s and the interpreter then joins it without limit.
+    """
+    import threading
+    import time
+
+    import pytest
+
+    release = threading.Event()
+    threading.Timer(3, release.set).start()  # a safety net: the stuck thread always ends eventually
+
+    async def leave_a_blocked_thread(_config):
+        import asyncio
+
+        asyncio.get_running_loop().run_in_executor(None, release.wait)
+        await asyncio.sleep(0.1)  # the worker has picked the call up
+
+    class Exited(Exception):
+        pass
+
+    def fake_exit(code):
+        raise Exited(code)
+
+    _fake_server_stack(monkeypatch, tmp_path, leave_a_blocked_thread)
+    monkeypatch.setitem(main.__globals__, "_hard_exit", fake_exit)
+    started = time.monotonic()
+    try:
+        with pytest.raises(Exited) as exited:
+            main(["--shutdown-timeout", "0"])
+        assert exited.value.args == (0,)
+        assert time.monotonic() - started < 2
+    finally:
+        release.set()
+
+
+def test_a_clean_shutdown_returns_normally_without_a_hard_exit(monkeypatch, tmp_path):
+    async def quick_call(_config):
+        import asyncio
+
+        await asyncio.to_thread(lambda: None)
+
+    def fail_exit(code):
+        raise AssertionError(f"hard exit {code} with no blocked thread")
+
+    _fake_server_stack(monkeypatch, tmp_path, quick_call)
+    monkeypatch.setitem(main.__globals__, "_hard_exit", fail_exit)
+    assert main(["--shutdown-timeout", "1"]) == 0

@@ -118,3 +118,24 @@ class TestGlobalDomainMdss:
         assert extract_global_domain_mdss({}) == GlobalDomainMdss()
         assert extract_global_domain_mdss({"servers": "nope"}) == GlobalDomainMdss()
         assert extract_global_domain_mdss({"servers": ["nope", {"active": True}]}) == GlobalDomainMdss()
+
+
+class TestGlobalDomainUid:
+    """`show-global-domain` returns the Global domain object itself, `uid` included.
+
+    Its schema (Management API reference, `show-global-domain`) lists `uid`, `name`,
+    `type` and `domain-type: "global domain"` at the top level beside `servers`.
+    """
+
+    def test_the_uid_is_read_from_the_global_domain_object(self):
+        layout = extract_global_domain_mdss(
+            {"uid": "g-uid", "name": "Global", "servers": [{"multi-domain-server": "mdsNP1", "active": True}]}
+        )
+        assert layout.uid == "g-uid"
+        assert layout.active_mds == "mdsNP1"
+
+    def test_the_uid_survives_a_missing_servers_list(self):
+        assert extract_global_domain_mdss({"uid": "g-uid"}) == GlobalDomainMdss(uid="g-uid")
+
+    def test_a_non_string_uid_is_ignored(self):
+        assert extract_global_domain_mdss({"uid": 42, "servers": []}).uid == ""

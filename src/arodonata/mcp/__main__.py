@@ -7,6 +7,8 @@ import asyncio
 import logging
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import NoReturn
 
@@ -14,6 +16,8 @@ DEFAULT_ENV_FILES = [".env.lib", ".env.secrets"]
 # Levels understood by both ``logging.basicConfig`` and uvicorn (uvicorn's extra "trace" is unknown to logging).
 LOG_LEVELS = ("critical", "error", "warning", "info", "debug")
 log = logging.getLogger("arodonata.mcp")
+# Name prefix of the worker threads that run the synchronous Check Point SDK (``asyncio.to_thread``).
+SDK_THREAD_PREFIX = "arodonata-mcp-sdk"
 
 
 class CLIArgumentError(Exception):
@@ -38,6 +42,12 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--ssl-certfile", default=None)
     p.add_argument("--ssl-keyfile", default=None)
     p.add_argument("--log-level", default="info", type=str.lower, choices=LOG_LEVELS)
+    p.add_argument(
+        "--shutdown-timeout",
+        type=int,
+        default=None,
+        help="Seconds to wait on shutdown for open connections and stuck SDK calls (overrides ARODONATA_MCP_SHUTDOWN_TIMEOUT)",
+    )
     args = p.parse_args(argv)
     if args.env_file is None:
         args.env_file = list(DEFAULT_ENV_FILES)
@@ -59,7 +69,11 @@ def build_settings(args: argparse.Namespace):  # -> tuple[ArodonataMCPSettings, 
     from ..config import ArodonataSettings
     from .settings import ArodonataMCPSettings
 
-    overrides = {k: v for k, v in (("host", args.host), ("port", args.port)) if v is not None}
+    overrides = {
+        k: v
+        for k, v in (("host", args.host), ("port", args.port), ("shutdown_timeout", args.shutdown_timeout))
+        if v is not None
+    }
 
     # ArodonataSettings.api_keys has no validation_alias, so pydantic-settings only ever populates it from a
     # bare (case-insensitive) "API_KEYS" env var or an explicit constructor kwarg -- never from API_KEY_VARS,
@@ -105,6 +119,8 @@ async def serve(args: argparse.Namespace) -> None:
         )
     engine = create_async_engine(database_url)
     client: ArodonataClient | None = None
+    sdk_pool = ThreadPoolExecutor(thread_name_prefix=SDK_THREAD_PREFIX)
+    asyncio.get_running_loop().set_default_executor(sdk_pool)
     try:
         try:
             client = ArodonataClient(engine=engine, settings=lib_settings)
@@ -122,6 +138,8 @@ async def serve(args: argparse.Namespace) -> None:
                 log_level=args.log_level,
                 ssl_certfile=args.ssl_certfile,
                 ssl_keyfile=args.ssl_keyfile,
+                # Claude Code keeps its connection open: without a limit, Ctrl+C waits for it forever.
+                timeout_graceful_shutdown=mcp_settings.shutdown_timeout,
             )
             log.info("arodonata-mcp listening on %s:%s%s", mcp_settings.host, mcp_settings.port, mcp_settings.path)
             await uvicorn.Server(config).serve()
@@ -131,6 +149,43 @@ async def serve(args: argparse.Namespace) -> None:
         if client is not None:
             await client.close()
         await engine.dispose()
+        await _release_sdk_pool(sdk_pool, mcp_settings.shutdown_timeout)
+
+
+def _blocked_sdk_threads() -> list[threading.Thread]:
+    return [t for t in threading.enumerate() if t.name.startswith(SDK_THREAD_PREFIX) and t.is_alive()]
+
+
+async def _release_sdk_pool(pool: ThreadPoolExecutor, timeout: float) -> None:
+    """Stop the SDK worker pool without letting a call stuck in network I/O hold up the exit.
+
+    The Check Point SDK connects without a socket timeout, and a thread cannot be cancelled: a call to an
+    unreachable server keeps its worker blocked after its task was cancelled. Give such calls ``timeout`` seconds,
+    then hand ``asyncio.run`` an unused pool so it does not join the old one for up to 300 s; ``main`` exits past
+    whatever is still blocked.
+    """
+    pool.shutdown(wait=False, cancel_futures=True)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while _blocked_sdk_threads() and loop.time() < deadline:
+        await asyncio.sleep(0.1)
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+
+
+def _hard_exit(code: int) -> NoReturn:
+    os._exit(code)
+
+
+def _exit_past_blocked_sdk_threads(code: int) -> None:
+    """The interpreter joins every pool thread at exit, without a limit: leave at once if any is still blocked."""
+    blocked = _blocked_sdk_threads()
+    if not blocked:
+        return
+    log.warning("exiting with %d Check Point SDK call(s) still blocked in network I/O", len(blocked))
+    logging.shutdown()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    _hard_exit(code)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -158,7 +213,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"arodonata-mcp: configuration error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
-        return 0
+        pass
+    _exit_past_blocked_sdk_threads(0)
     return 0
 
 

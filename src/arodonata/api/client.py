@@ -1068,7 +1068,7 @@ class ArodonataClient:
             mgmt_names: Optional management server filter.
             domain_names: Optional domain filter.
             mode: Refresh mode - "skip", "check", "force", or "incremental".
-            include_global: When False (default), the synthetic "Global" domain
+            include_global: When False (default), the "Global" domain
                 is excluded from the all-domains refresh path so existing
                 callers see today's behavior.
 
@@ -1132,7 +1132,7 @@ class ArodonataClient:
             mgmt_names: Optional management server filter.
             domain_names: Optional domain filter.
             mode: Refresh mode - "skip", "check", or "force".
-            include_global: When False (default), the synthetic "Global" domain is excluded, as in `refresh_objects`.
+            include_global: When False (default), the "Global" domain is excluded, as in `refresh_objects`.
 
         Yields:
             SSEEvent with progress updates.
@@ -1380,7 +1380,7 @@ class ArodonataClient:
             mgmt_names: Optional list of management server names to filter.
             cache_mode: Optional per-call cache refresh mode override (for the domain list).
             cache_ttl: Accepted for signature compatibility; the domain list uses its own TTL.
-            include_global: When False (default), the synthetic "Global" domain
+            include_global: When False (default), the "Global" domain
                 is excluded so existing callers see today's behavior.
 
         Returns:

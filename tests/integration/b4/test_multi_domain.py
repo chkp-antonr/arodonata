@@ -142,6 +142,8 @@ async def test_global_domain_resolves_active_mds_and_creates_dedicated_session(a
     cached = await client.cache.get_domain(f"{mgmt_name}:{GLOBAL_DOMAIN_NAME}")
     assert cached is not None
     assert cached.active_ip, "Global domain must have a non-empty active_ip"
+    assert cached.domain_uid, "Global domain must carry the UID show-global-domain returned"
+    assert cached.domain_uid == resp.data.get("uid")
 
     # 3. Create a dedicated session on Global (used for read-write operations)
     session_name = f"arodonata-global-{uuid.uuid4().hex[:8]}"

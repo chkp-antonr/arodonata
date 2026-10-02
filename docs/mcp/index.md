@@ -18,7 +18,7 @@ It resolves API keys the same way the runnable examples do: `API_KEY_VARS` (a co
 arodonata-mcp --host 0.0.0.0 --port 8765
 ```
 
-Flags: `--env-file` (repeatable; default `.env.lib` then `.env.secrets`), `--host` (overrides `ARODONATA_MCP_HOST`), `--port` (overrides `ARODONATA_MCP_PORT`), `--ssl-certfile`, `--ssl-keyfile`, `--log-level` (one of `critical`, `error`, `warning`, `info`, `debug`; default `info`). An invalid flag or an inconsistent configuration (for example a different number of `MGMT_NAMES`, `MGMT_SERVERS` and API keys) prints one `arodonata-mcp: configuration error: ...` line and exits with status 2.
+Flags: `--env-file` (repeatable; default `.env.lib` then `.env.secrets`), `--host` (overrides `ARODONATA_MCP_HOST`), `--port` (overrides `ARODONATA_MCP_PORT`), `--ssl-certfile`, `--ssl-keyfile`, `--log-level` (one of `critical`, `error`, `warning`, `info`, `debug`; default `info`), `--shutdown-timeout` (overrides `ARODONATA_MCP_SHUTDOWN_TIMEOUT`). An invalid flag or an inconsistent configuration (for example a different number of `MGMT_NAMES`, `MGMT_SERVERS` and API keys) prints one `arodonata-mcp: configuration error: ...` line and exits with status 2.
 
 The command refuses to start with `ARODONATA_MCP_AUTH_MODE=host` or `jwt` (exit code 2): `host` mode has no verifier at all and would serve every request anonymously if there is no authenticating host in front of it, and `jwt` is reserved and not implemented. See [Authentication](#authentication) below.
 
@@ -44,6 +44,7 @@ Every field below is read from an environment variable named `ARODONATA_MCP_<FIE
 | `ARODONATA_MCP_JWT_JWKS_URL` | `""` | Reserved for the unimplemented `jwt` mode. |
 | `ARODONATA_MCP_DEFAULT_LIMIT` | `50` | Default page size for list tools; `0` returns everything. |
 | `ARODONATA_MCP_MAX_RESULT_CHARS` | `200000` | Truncate a tool's text result past this many characters, appending an offset/limit hint to resume. |
+| `ARODONATA_MCP_SHUTDOWN_TIMEOUT` | `5` | Seconds Ctrl+C waits for open client connections (Claude Code keeps one open) and then for Check Point SDK calls stuck in network I/O; past it the server closes the connections and exits without waiting for the stuck calls, logging how many were left. |
 | `ARODONATA_MCP_ALLOWED_HOSTS` | derived from `host`, `port` and `public_url` | Comma-separated Host header values accepted (DNS-rebinding protection); a request with an unlisted Host header gets HTTP 421. |
 | `ARODONATA_MCP_ALLOWED_ORIGINS` | derived from `host`, `port` and `public_url` | Comma-separated Origin header values accepted; a request with an unlisted Origin gets HTTP 403 (a request with no Origin header, e.g. from a non-browser client, is accepted). |
 
@@ -93,7 +94,7 @@ Cache-backed tools answer from Arodonata's local cache by default; pass `cache_m
 | `show_networks` | cache | `filter` matches the subnet in CIDR notation (e.g. `10.0.0.0/24`). |
 | `show_groups` | cache | `filter` matches the group name; includes member UIDs. |
 | `show_gateways_and_servers` | cache | Gateways, clusters, cluster members and management servers; no `domain` parameter (gateways live in the asset cache, not the per-domain object cache) and always reports `cache_age_seconds: null`. |
-| `show_domains` | cache | Domains of a Multi-Domain server; `include_global` adds the synthetic Global domain. Always reports `cache_age_seconds: null` (the domain cache keeps no timestamp). |
+| `show_domains` | cache | Domains of a Multi-Domain server; `include_global` adds the Global domain, which `show-domains` never lists: its UID and active MDS member come from `show-global-domain`. Always reports `cache_age_seconds: null` (the domain cache keeps no timestamp). |
 | `show_object` | cache | Any object by UID. |
 
 ### Rulebase tools
