@@ -291,6 +291,21 @@ class TestPublishSession:
         assert isinstance(result, dict)
 
     @pytest.mark.asyncio
+    async def test_policy_publish_session_invalidates_both_memos(self):
+        client = _tracked_client()
+        await publish_session(client, "mgmt1", "dmn1", "session-abc", _USER)
+        client.invalidate_domain.assert_called_once_with("mgmt1", "dmn1")
+
+    @pytest.mark.asyncio
+    async def test_failed_publish_session_does_not_invalidate(self):
+        client = _tracked_client()
+        client.api_call_with_sid = AsyncMock(
+            return_value=MagicMock(spec=["success", "message", "data"], success=False, message="x", data={})
+        )
+        await publish_session(client, "mgmt1", "dmn1", "session-abc", _USER)
+        client.invalidate_domain.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_uses_model_dump_when_available(self):
         client = _tracked_client()
         api_result = MagicMock()

@@ -289,3 +289,11 @@ async def test_get_rulebase_returns_repository_result():
     result = await adapter.get_rulebase("threat")
 
     assert result == rules
+
+
+def test_adapter_has_no_private_model_map():
+    import inspect as _inspect
+
+    from arodonata.adapters.cache import postgres_adapter
+
+    assert "model_map = {" not in _inspect.getsource(postgres_adapter)

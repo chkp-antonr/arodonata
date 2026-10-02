@@ -268,7 +268,8 @@ class ArodonataClient:
         Sets ``self._domain_service``, ``self._asset_refresh``,
         ``self._rulebase_refresh``, ``self._cache_adapter``,
         ``self._api_adapter``, ``self._session_tracker``,
-        ``self._refresh_coordinator``, and ``self._orchestration``.
+        ``self._refresh_coordinator``, ``self._rulebase_coordinator``, and
+        ``self._orchestration``.
         Relationship managers and the asset-refresh service are constructed
         with ``client=self`` directly, since ``self`` already exists by the
         time this runs (called from the tail of ``__init__``). The refresh
@@ -304,14 +305,6 @@ class ArodonataClient:
             api_query_method=self.api_query,
         )
 
-        # Rulebase refresh service
-        from .services.rulebase_refresh_service import RulebaseRefreshService
-
-        self._rulebase_refresh = RulebaseRefreshService(
-            client=self,
-            cache=self._cache,
-        )
-
         # V2: Create orchestration service with adapters
         from ..adapters.api import ASDKApiAdapter
         from ..adapters.cache import PostgresCacheAdapter
@@ -337,11 +330,26 @@ class ArodonataClient:
             default_ttl=self._default_cache_ttl,
             max_incremental_changes=self._max_incremental_changes,
         )
+
+        # Rulebase refresh service and its coordinator (after the object service/adapters they depend on)
+        from ..core.rulebase_refresh_coordinator import RulebaseRefreshCoordinator
+        from .services.rulebase_refresh_service import RulebaseRefreshService
+
+        self._rulebase_refresh = RulebaseRefreshService(
+            client=self, cache=self._cache, object_service=self._object_service
+        )
+        self._rulebase_coordinator = RulebaseRefreshCoordinator(
+            refresh_service=self._rulebase_refresh,
+            api=self._api_adapter,
+            default_mode=CacheMode(self._default_cache_mode),
+            default_ttl=self._default_cache_ttl,
+        )
         self._orchestration = CacheOrchestrationService(
             cache=self._cache_adapter,
             api=self._api_adapter,
             session_tracker=self._session_tracker,
             coordinator=self._refresh_coordinator,
+            rulebase_coordinator=self._rulebase_coordinator,
         )
 
     def schedule_startup_cleanup(self) -> None:
@@ -547,12 +555,17 @@ class ArodonataClient:
             if isinstance(raw_data, str):
                 response["message"] = raw_data
 
-        return ApiCallResult(
+        result = ApiCallResult(
             success=response.get("success", False),
             data=data,
             message=response.get("message", ""),
             code=response.get("code", ""),
         )
+        if command == "publish" and result.success:
+            # A publish on the shared session moves the domain's head: without this, a TTL memo would let smart reads
+            # serve the pre-publish cache for up to cache_ttl (covers the MCP api_call tool and library callers).
+            self.invalidate_domain(mgmt_name, domain)
+        return result
 
     @traced
     async def api_call_with_sid(
@@ -1068,6 +1081,16 @@ class ArodonataClient:
         yield SSEEvent(
             event_type=SSEEventType.COMPLETE, message="Cache refresh complete", data={"total_results": total_count}
         )
+
+    def invalidate_domain(self, mgmt_name: str, domain_name: str) -> None:
+        """Drop the object and the rulebase freshness memos of one domain, so the next smart read re-checks it.
+
+        Called after every publish the library sees (cpcrud, ``helpers.policy.publish_session``,
+        ``CacheOrchestrationService.publish``, a successful ``api_call('publish')``). It only drops memos; the
+        published-session comparison decides whether anything is refreshed.
+        """
+        self._refresh_coordinator.invalidate(mgmt_name, domain_name)
+        self._rulebase_coordinator.invalidate(mgmt_name, domain_name)
 
     @traced
     async def refresh_rulebases(

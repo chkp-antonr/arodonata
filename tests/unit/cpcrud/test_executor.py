@@ -1,6 +1,6 @@
 # tests/unit/cpcrud/test_executor.py
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -9,20 +9,15 @@ from arodonata.cpcrud.executor import Executor, classify_api_error, fold_reports
 from arodonata.cpcrud.models import ActionResult, ApplyReport, DomainStamp, ObjectState, Outcome, Plan, PlannedAction
 
 
-class FakeRefreshCoordinator:
-    def __init__(self):
-        self.invalidated = []
-
-    def invalidate(self, mgmt_name, domain):
-        self.invalidated.append((mgmt_name, domain))
-
-
 class FakeClient:
     def __init__(self):
         self.calls = []
         self._session_counter = 0
-        self._refresh_coordinator = FakeRefreshCoordinator()
+        self.invalidated = []
         self.refresh_calls = []
+
+    def invalidate_domain(self, mgmt_name, domain_name):
+        self.invalidated.append((mgmt_name, domain_name))
 
     async def create_dedicated_session(self, mgmt_name, domain="", session_name=None, session_description=None):
         self._session_counter += 1
@@ -80,7 +75,7 @@ async def test_execute_creates_and_publishes():
     assert report.published_domains == [
         DomainStamp(mgmt_name="m1", domain_name="General", last_publish_session="sess-AFTER")
     ]
-    assert client._refresh_coordinator.invalidated == [("m1", "General")]
+    assert client.invalidated == [("m1", "General")]
 
 
 @pytest.mark.asyncio
@@ -320,6 +315,7 @@ async def test_delete_drift_counts_as_success():
 
 async def test_remaining_plan_contains_only_failures_with_fresh_stamp():
     client = AsyncMock()
+    client.invalidate_domain = MagicMock()
     client.create_dedicated_session.return_value = ("sid", "ip")
 
     async def api_with_sid(mgmt, sid, server_ip, command, payload=None, wait_for_task=True):
@@ -347,7 +343,7 @@ async def test_remaining_plan_contains_only_failures_with_fresh_stamp():
     assert [a.id for a in report.remaining.actions] == ["act-0002"]
     assert report.remaining.stamps == [DomainStamp(mgmt_name="m", domain_name="d", last_publish_session="sess-AFTER")]
     assert report.remaining.template_hash == "h"
-    client._refresh_coordinator.invalidate.assert_called_once_with("m", "d")
+    client.invalidate_domain.assert_called_once_with("m", "d")
 
 
 async def test_stale_domain_actions_excluded_from_remaining():
@@ -366,7 +362,7 @@ async def test_refresh_force_calls_refresh_objects():
     plan = Plan(actions=[_action("act-0001")], stamps=[], template_hash="h")
     await Executor(client, reader).execute(plan, refresh="force")
     assert client.refresh_calls == [{"mgmt_names": ["m"], "domain_names": ["d"], "mode": "force"}]
-    assert client._refresh_coordinator.invalidated == [("m", "d")]
+    assert client.invalidated == [("m", "d")]
 
 
 async def test_refresh_default_only_invalidates():
@@ -376,7 +372,7 @@ async def test_refresh_default_only_invalidates():
     plan = Plan(actions=[_action("act-0001")], stamps=[], template_hash="h")
     await Executor(client, reader).execute(plan)
     assert client.refresh_calls == []
-    assert client._refresh_coordinator.invalidated == [("m", "d")]
+    assert client.invalidated == [("m", "d")]
 
 
 async def test_no_effective_changes_skips_publish():
@@ -419,3 +415,12 @@ def test_fold_reports_last_result_wins_and_summary_recomputed():
     assert folded.summary == {"create": 2}
     assert folded.remaining is None
     assert len(folded.published_domains) == 2
+
+
+async def test_cpcrud_publish_invalidates_rulebase_memo():
+    """cpcrud invalidates through client.invalidate_domain, which drops the object and the rulebase memo."""
+    client = FakeClient()
+    reader = AsyncMock()
+    reader.get_last_publish_session.return_value = "sess-AFTER"
+    await Executor(client, reader).execute(Plan(actions=[_action("act-0001")], stamps=[], template_hash="h"))
+    assert client.invalidated == [("m", "d")]

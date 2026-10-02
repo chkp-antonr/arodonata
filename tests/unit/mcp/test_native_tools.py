@@ -169,3 +169,20 @@ async def test_refresh_log_event_with_count_sends_progress_notification():
         res = await client.call_tool("refresh_objects", {}, progress_callback=on_progress)
     assert res.is_error is False
     assert received == [(5.0, 20.0, "Saved 5 hosts")]
+
+
+async def test_mcp_api_call_publish_invalidates_rulebase_memo():
+    from datetime import datetime
+    from unittest.mock import AsyncMock
+
+    from arodonata.mcp.native import _run_api_call
+    from arodonata.mcp.registry import ToolOptions
+    from tests.unit.api.client_test_helpers import make_client
+
+    mgmt = AsyncMock()
+    mgmt.api_call = AsyncMock(return_value={"success": True, "data": {}, "message": "", "code": ""})
+    client = make_client(mgmt=mgmt)
+    client.get_mgmt_names = lambda: ["m1"]  # type: ignore[method-assign]
+    client._rulebase_coordinator._checked_at[("m1", "Domain4")] = datetime(2026, 10, 1)
+    await _run_api_call(client, ToolOptions(allow_write_api=True), "publish", "m1", "Domain4", {}, False, "standard")
+    assert ("m1", "Domain4") not in client._rulebase_coordinator._checked_at

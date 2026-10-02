@@ -20,6 +20,9 @@ class AccessRule(BaseModelWithRaw):
     layer_name: str
     mgmt_name: str
     domain_name: str = ""
+    layer_uid: str | None = None
+    section_uid: str | None = None
+    inline_layer_uid: str | None = None
 
     @field_validator("uid")
     @classmethod
@@ -46,6 +49,10 @@ class NATRule(BaseModelWithRaw):
     layer_name: str
     mgmt_name: str
     domain_name: str = ""
+    auto_generated: bool = False
+    layer_uid: str | None = None
+    section_uid: str | None = None
+    inline_layer_uid: str | None = None
 
 
 class HTTPSRule(BaseModelWithRaw):
@@ -61,6 +68,9 @@ class HTTPSRule(BaseModelWithRaw):
     layer_name: str
     mgmt_name: str
     domain_name: str = ""
+    layer_uid: str | None = None
+    section_uid: str | None = None
+    inline_layer_uid: str | None = None
 
 
 class ThreatRule(BaseModelWithRaw):
@@ -75,3 +85,6 @@ class ThreatRule(BaseModelWithRaw):
     layer_name: str
     mgmt_name: str
     domain_name: str = ""
+    layer_uid: str | None = None
+    section_uid: str | None = None
+    inline_layer_uid: str | None = None

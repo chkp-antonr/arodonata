@@ -31,6 +31,7 @@ from arodonata.cache.object_service import (
     SearchType,
     classify_input,
 )
+from arodonata.core.exceptions import InvalidCredentialsError, PublishedHeadError
 
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
@@ -1712,3 +1713,63 @@ async def test_is_domain_stale_still_false_on_transient_error(db):
     await service._cache.upsert_objects([cpobj("h1", "host", "host")])
 
     assert await service._is_domain_stale("mgmt1", "dmn1") is False
+
+
+# ---------------------------------------------------------------------------
+# Typed head read
+# ---------------------------------------------------------------------------
+
+_HEAD = {"uid": "sess-1", "name": "s", "meta-info": {"last-modify-time": {"posix": 1790837582530}}}
+
+
+@pytest.fixture
+def object_service_with_client(db):
+    client = make_client(["m1"])
+    return make_service(db, client), client
+
+
+async def test_read_head_returns_session(object_service_with_client):
+    service, client = object_service_with_client
+    client.api_call = AsyncMock(return_value=ApiCallResult(success=True, data=_HEAD))
+    head = await service.read_last_published_session("m1", "Domain4")
+    assert head.uid == "sess-1" and head.published_time is not None
+
+
+async def test_read_head_raises_invalid_credentials(object_service_with_client):
+    service, client = object_service_with_client
+    client.api_call = AsyncMock(side_effect=InvalidCredentialsError("bad key"))
+    with pytest.raises(InvalidCredentialsError):
+        await service.read_last_published_session("m1", "Domain4")
+
+
+async def test_read_head_raises_on_api_failure(object_service_with_client):
+    service, client = object_service_with_client
+    client.api_call = AsyncMock(return_value=ApiCallResult(success=False, code="generic_error", message="boom"))
+    with pytest.raises(PublishedHeadError, match="generic_error"):
+        await service.read_last_published_session("m1", "Domain4")
+    client.api_call = AsyncMock(side_effect=RuntimeError("socket closed"))
+    with pytest.raises(PublishedHeadError, match="socket closed"):
+        await service.read_last_published_session("m1", "Domain4")
+
+
+async def test_read_head_raises_on_missing_timestamp(object_service_with_client):
+    service, client = object_service_with_client
+    client.api_call = AsyncMock(return_value=ApiCallResult(success=True, data={"uid": "sess-1", "meta-info": {}}))
+    with pytest.raises(PublishedHeadError, match="timestamp"):
+        await service.read_last_published_session("m1", "Domain4")
+
+
+async def test_read_head_raises_on_malformed_payload(object_service_with_client):
+    service, client = object_service_with_client
+    client.api_call = AsyncMock(return_value=ApiCallResult(success=True, data={"uid": "sess-1", "meta-info": "oops"}))
+    with pytest.raises(PublishedHeadError, match="malformed"):
+        await service.read_last_published_session("m1", "Domain4")
+
+
+async def test_fetch_last_published_session_still_returns_none(object_service_with_client):
+    service, client = object_service_with_client
+    for effect in (InvalidCredentialsError("bad"), RuntimeError("x")):
+        client.api_call = AsyncMock(side_effect=effect)
+        assert await service.fetch_last_published_session("m1", "Domain4") is None
+    client.api_call = AsyncMock(return_value=ApiCallResult(success=True, data=_HEAD))
+    assert (await service.fetch_last_published_session("m1", "Domain4")).uid == "sess-1"

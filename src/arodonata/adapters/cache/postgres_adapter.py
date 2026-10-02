@@ -121,22 +121,9 @@ class PostgresCacheAdapter:
         Returns:
             List of rule cache models.
         """
-        from arodonata.cache.models import (
-            RulebaseAccess,
-            RulebaseHTTPS,
-            RulebaseNAT,
-            RulebaseThreat,
-        )
+        from arodonata.cache.models import RULEBASE_MODELS
 
-        # Map rulebase_type to model class
-        model_map = {
-            "access": RulebaseAccess,
-            "nat": RulebaseNAT,
-            "https": RulebaseHTTPS,
-            "threat": RulebaseThreat,
-        }
-
-        model_class = model_map.get(rulebase_type)
+        model_class = RULEBASE_MODELS.get(rulebase_type)
         if model_class is None:
             return []
 

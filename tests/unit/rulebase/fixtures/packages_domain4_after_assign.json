@@ -1,0 +1,422 @@
+[
+  {
+    "uid": "bc4eb566-9e1c-4fe3-bec7-50c6f8b9cc80",
+    "name": "FPCR_UAT_Active",
+    "type": "package",
+    "domain": {
+      "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+      "name": "Domain4",
+      "domain-type": "domain"
+    },
+    "access": true,
+    "threat-prevention": true,
+    "nat-policy": true,
+    "https-inspection-policy": true,
+    "qos": false,
+    "desktop-security": false,
+    "access-layers": [
+      {
+        "uid": "6ce00050-12ea-4cf6-b612-330b55de7acc",
+        "name": "arod-global-pkg Network",
+        "type": "access-layer",
+        "domain": {
+          "uid": "1e294ce0-367a-11e3-aa6e-0800200c9a66",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "70d7954f-090c-45ca-9a94-6b14d6f2b364",
+        "name": "FPCR_UAT_Active AppControl",
+        "type": "access-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      },
+      {
+        "uid": "f97e1159-5917-4db4-8164-55d3642c8c1b",
+        "name": "FPCR_UAT_Active Network",
+        "type": "access-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    ],
+    "threat-layers": [
+      {
+        "uid": "8fb547ec-cfe8-4a53-a60c-f5fd101399c6",
+        "name": "IPS",
+        "type": "threat-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      },
+      {
+        "uid": "872c5651-7d59-4e9f-80f0-ad9585166d36",
+        "name": "FPCR_UAT_Active Threat Prevention",
+        "type": "threat-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    ],
+    "https-inspection-layers": {
+      "inbound-https-layer": {
+        "uid": "26cdf190-2e5b-43b5-8b73-bbe564a08d98",
+        "name": "Default Inbound Layer",
+        "type": "https-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      },
+      "outbound-https-layer": {
+        "uid": "22ab8418-c7f7-42d5-880e-dd3ebc61569c",
+        "name": "Default Outbound Layer",
+        "type": "https-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    }
+  },
+  {
+    "uid": "aa01822e-916f-4ee3-84f3-7106dfbf6de2",
+    "name": "FPCR_UAT_Decom",
+    "type": "package",
+    "domain": {
+      "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+      "name": "Domain4",
+      "domain-type": "domain"
+    },
+    "access": true,
+    "threat-prevention": true,
+    "nat-policy": true,
+    "https-inspection-policy": true,
+    "qos": false,
+    "desktop-security": false,
+    "access-layers": [
+      {
+        "uid": "6ce00050-12ea-4cf6-b612-330b55de7acc",
+        "name": "arod-global-pkg Network",
+        "type": "access-layer",
+        "domain": {
+          "uid": "1e294ce0-367a-11e3-aa6e-0800200c9a66",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "1e8ae0f0-5ac7-4ce0-ad79-b7d329e9e868",
+        "name": "FPCR_UAT_Decom Network",
+        "type": "access-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    ],
+    "threat-layers": [
+      {
+        "uid": "8fb547ec-cfe8-4a53-a60c-f5fd101399c6",
+        "name": "IPS",
+        "type": "threat-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      },
+      {
+        "uid": "4ec23e3e-6bf1-45f5-93b4-8254b73e5c8f",
+        "name": "FPCR_UAT_Decom Threat Prevention",
+        "type": "threat-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    ],
+    "https-inspection-layers": {
+      "inbound-https-layer": {
+        "uid": "26cdf190-2e5b-43b5-8b73-bbe564a08d98",
+        "name": "Default Inbound Layer",
+        "type": "https-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      },
+      "outbound-https-layer": {
+        "uid": "22ab8418-c7f7-42d5-880e-dd3ebc61569c",
+        "name": "Default Outbound Layer",
+        "type": "https-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    }
+  },
+  {
+    "uid": "f9c0d9c3-312f-429b-8bc8-b82d417874cb",
+    "name": "fpcrA1",
+    "type": "package",
+    "domain": {
+      "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+      "name": "Domain4",
+      "domain-type": "domain"
+    },
+    "access": true,
+    "threat-prevention": true,
+    "nat-policy": true,
+    "https-inspection-policy": true,
+    "qos": false,
+    "desktop-security": false,
+    "access-layers": [
+      {
+        "uid": "6ce00050-12ea-4cf6-b612-330b55de7acc",
+        "name": "arod-global-pkg Network",
+        "type": "access-layer",
+        "domain": {
+          "uid": "1e294ce0-367a-11e3-aa6e-0800200c9a66",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "a19edfdb-5c0b-4728-9ab5-e4bc829fe48f",
+        "name": "fpcrA1 Network",
+        "type": "access-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    ],
+    "threat-layers": [
+      {
+        "uid": "8fb547ec-cfe8-4a53-a60c-f5fd101399c6",
+        "name": "IPS",
+        "type": "threat-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      },
+      {
+        "uid": "7e2686ce-7020-46e1-a2df-a165dc42e914",
+        "name": "fpcrA1 Threat Prevention",
+        "type": "threat-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    ],
+    "https-inspection-layers": {
+      "inbound-https-layer": {
+        "uid": "26cdf190-2e5b-43b5-8b73-bbe564a08d98",
+        "name": "Default Inbound Layer",
+        "type": "https-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      },
+      "outbound-https-layer": {
+        "uid": "22ab8418-c7f7-42d5-880e-dd3ebc61569c",
+        "name": "Default Outbound Layer",
+        "type": "https-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    }
+  },
+  {
+    "uid": "ca3b58f0-7187-4024-82ee-8a5885da4c37",
+    "name": "fpcrA2",
+    "type": "package",
+    "domain": {
+      "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+      "name": "Domain4",
+      "domain-type": "domain"
+    },
+    "access": true,
+    "threat-prevention": true,
+    "nat-policy": true,
+    "https-inspection-policy": true,
+    "qos": false,
+    "desktop-security": false,
+    "access-layers": [
+      {
+        "uid": "6ce00050-12ea-4cf6-b612-330b55de7acc",
+        "name": "arod-global-pkg Network",
+        "type": "access-layer",
+        "domain": {
+          "uid": "1e294ce0-367a-11e3-aa6e-0800200c9a66",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "4941902b-ee26-4e57-9d2a-7bb99cff543a",
+        "name": "fpcrA2 Network",
+        "type": "access-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    ],
+    "threat-layers": [
+      {
+        "uid": "8fb547ec-cfe8-4a53-a60c-f5fd101399c6",
+        "name": "IPS",
+        "type": "threat-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      },
+      {
+        "uid": "af6f72c3-310e-40a5-a58d-72e6551b1c1a",
+        "name": "fpcrA2 Threat Prevention",
+        "type": "threat-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    ],
+    "https-inspection-layers": {
+      "inbound-https-layer": {
+        "uid": "26cdf190-2e5b-43b5-8b73-bbe564a08d98",
+        "name": "Default Inbound Layer",
+        "type": "https-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      },
+      "outbound-https-layer": {
+        "uid": "22ab8418-c7f7-42d5-880e-dd3ebc61569c",
+        "name": "Default Outbound Layer",
+        "type": "https-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    }
+  },
+  {
+    "uid": "f26bbf90-154f-4aa0-92a2-17cbf2e55076",
+    "name": "Standard",
+    "type": "package",
+    "domain": {
+      "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+      "name": "Domain4",
+      "domain-type": "domain"
+    },
+    "access": true,
+    "threat-prevention": true,
+    "nat-policy": true,
+    "https-inspection-policy": true,
+    "qos": false,
+    "desktop-security": false,
+    "access-layers": [
+      {
+        "uid": "6ce00050-12ea-4cf6-b612-330b55de7acc",
+        "name": "arod-global-pkg Network",
+        "type": "access-layer",
+        "domain": {
+          "uid": "1e294ce0-367a-11e3-aa6e-0800200c9a66",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "0a0a023e-0ea5-4fa6-9fc5-a270d2e63f3e",
+        "name": "Network",
+        "type": "access-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    ],
+    "threat-layers": [
+      {
+        "uid": "8fb547ec-cfe8-4a53-a60c-f5fd101399c6",
+        "name": "IPS",
+        "type": "threat-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      },
+      {
+        "uid": "40daf1c5-b9b6-447a-a495-92e81c981aad",
+        "name": "Standard Threat Prevention",
+        "type": "threat-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    ],
+    "https-inspection-layers": {
+      "inbound-https-layer": {
+        "uid": "26cdf190-2e5b-43b5-8b73-bbe564a08d98",
+        "name": "Default Inbound Layer",
+        "type": "https-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      },
+      "outbound-https-layer": {
+        "uid": "22ab8418-c7f7-42d5-880e-dd3ebc61569c",
+        "name": "Default Outbound Layer",
+        "type": "https-layer",
+        "domain": {
+          "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+          "name": "Domain4",
+          "domain-type": "domain"
+        }
+      }
+    }
+  }
+]

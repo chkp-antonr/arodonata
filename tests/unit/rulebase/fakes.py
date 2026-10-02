@@ -1,8 +1,9 @@
-"""Test doubles that serve recorded or synthetic rulebases the way the pager assumes CP pages them.
+"""Test doubles that serve recorded or synthetic rulebases the way CP pages them.
 
-``page_by_rule_offset`` is the pager's assumption (``offset``/``limit`` count rules; a section that spans a page
-boundary repeats on both pages, carrying only its in-page children and in-page ``from``/``to``). Gate L (L2)
-checks it against the lab. ``page_by_top_level_offset`` is a deliberately wrong server (offset counts top-level
+``page_by_rule_offset`` is CP's paging (``offset``/``limit`` count rules; a section that spans a page boundary
+repeats on both pages, carrying only its in-page children and in-page ``from``/``to``; a full last page omits
+trailing empty sections). Gate L (L2 and Run B) verified it against the lab and test_fakes.py compares it with the
+recorded pages. ``page_by_top_level_offset`` is a deliberately wrong server (offset counts top-level
 entries), used to prove the pager refuses it.
 """
 
@@ -10,10 +11,13 @@ from __future__ import annotations
 
 import copy
 import json
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from arodonata.api.schemas import ApiCallResult, ApiQueryResult
+from arodonata.cache.models import LastPublishedSession
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CP_DEFAULT_LIMIT = 50
@@ -42,23 +46,29 @@ def flatten_rules(rulebase: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def _sectioned(layer: dict[str, Any]) -> list[tuple[dict[str, Any] | None, dict[str, Any]]]:
-    pairs: list[tuple[dict[str, Any] | None, dict[str, Any]]] = []
+def _entries(layer: dict[str, Any]) -> list[tuple[dict[str, Any] | None, dict[str, Any] | None]]:
+    """(section meta | None, rule | None) in layer order; an empty section is (meta, None)."""
+    out: list[tuple[dict[str, Any] | None, dict[str, Any] | None]] = []
     for item in layer.get("rulebase", []):
         if str(item.get("type", "")).endswith("-section"):
             meta = {k: v for k, v in item.items() if k != "rulebase"}
-            pairs.extend((meta, rule) for rule in item.get("rulebase", []))
+            children = item.get("rulebase", [])
+            if not children:
+                out.append((meta, None))
+            out.extend((meta, rule) for rule in children)
         else:
-            pairs.append((None, item))
-    return pairs
+            out.append((None, item))
+    return out
 
 
 def _page(
-    layer: dict[str, Any], pairs: list[tuple[dict[str, Any] | None, dict[str, Any]]], total: int
+    layer: dict[str, Any], picked: list[tuple[dict[str, Any] | None, dict[str, Any] | None]], total: int
 ) -> dict[str, Any]:
     rulebase: list[dict[str, Any]] = []
-    for meta, rule in pairs:
-        if meta is not None and rulebase and rulebase[-1].get("uid") == meta.get("uid"):
+    for meta, rule in picked:
+        if rule is None:
+            rulebase.append({**copy.deepcopy(meta or {}), "rulebase": []})
+        elif meta is not None and rulebase and rulebase[-1].get("uid") == meta.get("uid") and rulebase[-1]["rulebase"]:
             rulebase[-1]["rulebase"].append(copy.deepcopy(rule))
             rulebase[-1]["to"] = rule["rule-number"]
         elif meta is not None:
@@ -67,7 +77,7 @@ def _page(
             )
         else:
             rulebase.append(copy.deepcopy(rule))
-    numbers = [rule["rule-number"] for _, rule in pairs]
+    numbers = [rule["rule-number"] for _, rule in picked if rule is not None]
     return {
         **{k: layer[k] for k in ("uid", "name") if k in layer},
         "rulebase": rulebase,
@@ -79,15 +89,33 @@ def _page(
 
 
 def page_by_rule_offset(layer: dict[str, Any], limit: int | None, offset: int) -> dict[str, Any]:
-    pairs = _sectioned(layer)
+    """CP's paging as recorded in Gate L: ``offset``/``limit`` count rules; a section spanning a page boundary
+    repeats with its in-page children and in-page ``from``/``to``; an empty section is served on the page where it
+    sits before or between that page's rules, and after the page's last rule only when the page has room for more
+    rules (so a full last page omits trailing empty sections)."""
+    entries = _entries(layer)
     size = CP_DEFAULT_LIMIT if limit is None else limit
-    return _page(layer, pairs[offset : offset + size], len(pairs))
+    total = sum(1 for _, rule in entries if rule is not None)
+    in_page = max(0, min(size, total - offset))
+    picked: list[tuple[dict[str, Any] | None, dict[str, Any] | None]] = []
+    before = 0
+    for meta, rule in entries:
+        if rule is not None:
+            before += 1
+            if offset < before <= offset + size:
+                picked.append((meta, rule))
+        elif total == 0 or (
+            in_page and (offset <= before < offset + in_page or (before == offset + in_page and in_page < size))
+        ):
+            picked.append((meta, None))
+    return _page(layer, picked, total)
 
 
 def page_by_top_level_offset(layer: dict[str, Any], limit: int | None, offset: int) -> dict[str, Any]:
     size = CP_DEFAULT_LIMIT if limit is None else limit
     top = layer.get("rulebase", [])[offset : offset + size]
-    return _page(layer, _sectioned({"rulebase": top}), len(_sectioned(layer)))
+    total = sum(1 for _, rule in _entries(layer) if rule is not None)
+    return _page(layer, _entries({"rulebase": top}), total)
 
 
 def make_layer(
@@ -155,9 +183,18 @@ class FakeRulebaseClient:
         self.query_failures: dict[str, ApiQueryResult] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.query_calls: list[dict[str, Any]] = []
+        self.session: dict[str, Any] = {"uid": "sess", "changes": 0, "locks": 0}
+        self.domains: list[str] = ["Domain4"]
 
-    def add_layer(self, command: str, layer: dict[str, Any], key: str | None = None) -> None:
-        """Serve ``layer`` under ``key`` (NAT packages), else under both its name and its uid."""
+    def add_layer(
+        self, command: str, layer: dict[str, Any], key: str | None = None, *, package: str | None = None
+    ) -> None:
+        """Serve ``layer`` under ``key`` (NAT packages), else under both its name and its uid; with ``package``,
+        under ``<uid>@<package>`` and ``<name>@<package>`` (a global layer read with ``package``)."""
+        if package:
+            self.layers[(command, f"{layer['uid']}@{package}")] = layer
+            self.layers[(command, f"{layer['name']}@{package}")] = layer
+            return
         if key:
             self.layers[(command, key)] = layer
             return
@@ -176,7 +213,15 @@ class FakeRulebaseClient:
     ) -> ApiCallResult:
         body = dict(payload or {})
         self.calls.append((command, body))
-        key = str(body.get("uid") or body.get("name") or body.get("package") or "")
+        if command == "show-session":
+            failure = self.call_failures.get((command, ""))
+            return failure or ApiCallResult(success=True, data=dict(self.session))
+        target = body.get("uid") or body.get("name")
+        key = (
+            f"{target}@{body['package']}"
+            if target and body.get("package")
+            else str(target or body.get("package") or "")
+        )
         layer = self.layers.get((command, key))
         names = {key, *(str(layer[k]) for k in ("name", "uid") if layer and layer.get(k))}
         for name in names:
@@ -211,3 +256,65 @@ class FakeRulebaseClient:
         if container_key != LISTING_KEYS.get(command):
             objects = objects[:CP_DEFAULT_LIMIT]  # cpapi stops after page 1 when the key is not in the response
         return ApiQueryResult(success=True, data=list(objects), objects=list(objects), total=len(objects))
+
+    def get_mgmt_names(self) -> list[str]:
+        return ["m1"]
+
+    async def get_domains(self, mgmt_names: list[str] | None = None, include_global: bool = False) -> list[Any]:
+        return [SimpleNamespace(name=d) for d in self.domains]
+
+
+class FakeHeadService:
+    """``read_last_published_session`` double. Records the call into ``client.calls`` so order can be asserted."""
+
+    def __init__(
+        self,
+        client: FakeRulebaseClient | None = None,
+        uid: str = "sess-1",
+        published: datetime = datetime(2026, 10, 1, 6, 53),
+    ) -> None:
+        self.client, self.uid, self.published = client, uid, published
+        self.error: BaseException | None = None
+
+    async def read_last_published_session(self, mgmt_name: str, domain_name: str) -> LastPublishedSession:
+        if self.client is not None:
+            self.client.calls.append(("show-last-published-session", {}))
+        if self.error is not None:
+            raise self.error
+        return LastPublishedSession(
+            id=f"{mgmt_name}:{domain_name}",
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            published_time=self.published,
+            uid=self.uid,
+        )
+
+
+ACCESS = "show-access-rulebase"
+
+
+def domain4_fake() -> FakeRulebaseClient:
+    """Domain4 after the Global assignment, package FPCR_UAT_Active only, every read from Gate L recordings
+    (the AppControl layer is synthetic: 2 rules)."""
+    client = FakeRulebaseClient()
+    pkg = next(p for p in load_fixture("packages_domain4_after_assign.json") if p["name"] == "FPCR_UAT_Active")
+    client.listings["show-packages"] = [pkg]
+    for name in (
+        "global_layer_no_package.json",
+        "domain_layer_fpcr_uat_active_network.json",
+        "inline_layer_fpcr_uat_active_inline.json",
+    ):
+        client.add_layer(ACCESS, load_fixture(name))
+    client.add_layer(ACCESS, load_fixture("global_layer_with_package.json"), package="FPCR_UAT_Active")
+    app = next(layer for layer in pkg["access-layers"] if layer["name"].endswith("AppControl"))
+    client.add_layer(ACCESS, make_layer(app["uid"], app["name"], 2))
+    client.add_layer("show-threat-rulebase", load_fixture("threat_ips_empty.json"))
+    client.add_layer("show-threat-rulebase", load_fixture("threat_fpcr_uat_active.json"))
+    client.add_layer("show-https-rulebase", load_fixture("https_inbound_empty.json"))
+    client.add_layer("show-https-rulebase", load_fixture("https_outbound.json"))
+    client.add_layer("show-nat-rulebase", load_fixture("nat_fpcr_uat_active.json"), key="FPCR_UAT_Active")
+    ref = lambda entry: {k: entry[k] for k in ("uid", "name", "domain") if k in entry}  # noqa: E731
+    client.listings["show-access-layers"] = [ref(e) for e in pkg["access-layers"]]
+    client.listings["show-threat-layers"] = [ref(e) for e in pkg["threat-layers"]]
+    client.listings["show-https-layers"] = [ref(e) for e in pkg["https-inspection-layers"].values()]
+    return client

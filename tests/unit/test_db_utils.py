@@ -436,3 +436,42 @@ async def test_ensure_missing_columns_runs_widening_step(monkeypatch):
     await db_utils.ensure_missing_columns(engine, RulebaseAccess)
     await engine.dispose()
     assert seen == ["rulebase_access"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_missing_columns_adds_rulebase_v2_columns_to_populated_table():
+    """A pre-v2 rulebase_access table with a row gains the v2 columns, backfilled with their defaults, and the index."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "CREATE TABLE rulebase_access (id VARCHAR(512) PRIMARY KEY, uid VARCHAR(64), rule_number INTEGER, "
+                    "name VARCHAR(255), enabled BOOLEAN, layer_name VARCHAR(255), mgmt_name VARCHAR(64), "
+                    "domain_name VARCHAR(255), sources VARCHAR, destinations VARCHAR, services VARCHAR, action VARCHAR(64), "
+                    "track VARCHAR(64), update_time DATETIME, raw_data JSON)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO rulebase_access (id, uid, rule_number, name, enabled, layer_name, mgmt_name, domain_name, "
+                    "sources, destinations, services, action, track, update_time) VALUES "
+                    "('m:d:L:u', 'u', 1, 'r', 1, 'L', 'm', 'd', '', '', '', 'Accept', '', '2026-10-01 00:00:00')"
+                )
+            )
+
+        await ensure_missing_columns(engine, RulebaseAccess)
+
+        async with engine.connect() as conn:
+            columns = await conn.run_sync(_get_columns_sync, "rulebase_access")
+            row = (
+                await conn.execute(
+                    text("SELECT layer_uid, kind, section_uid, inline_layer_uid, domain_type FROM rulebase_access")
+                )
+            ).one()
+            indexes = await conn.run_sync(lambda c: {i["name"] for i in sa_inspect(c).get_indexes("rulebase_access")})
+        assert {"layer_uid", "kind", "section_uid", "inline_layer_uid", "domain_type"} <= columns
+        assert tuple(row) == (None, "rule", None, None, "")
+        assert "ix_rulebase_access_mgmt_domain_layer_uid" in indexes
+    finally:
+        await engine.dispose()

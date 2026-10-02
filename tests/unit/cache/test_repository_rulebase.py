@@ -16,7 +16,7 @@ from sqlmodel import SQLModel
 
 from arodonata.cache import models  # noqa: F401  (registers tables on metadata)
 from arodonata.cache.database import DatabaseManager
-from arodonata.cache.models import RulebaseAccess, RulebaseNAT
+from arodonata.cache.models import RulebaseAccess, RulebaseLayer, RulebaseNAT, RulebaseSyncState
 from arodonata.cache.repository import CacheRepository
 
 
@@ -195,22 +195,35 @@ async def test_delete_rulebase_by_layer(repo):
     assert {r.uid for r in remaining} == {"a1"}
 
 
-async def test_replace_rulebase_type_swaps_domain_rows_only(repo):
+def sync(domain="d1", **kw):
+    return RulebaseSyncState(id=f"m1:{domain}", mgmt_name="m1", domain_name=domain, format_version=2, status="ok", **kw)
+
+
+def layer_row(uid, domain="d1"):
+    return RulebaseLayer(
+        id=f"m1:{domain}:access:{uid}", mgmt_name="m1", domain_name=domain, rulebase_type="access", layer_uid=uid
+    )
+
+
+async def test_replace_domain_rulebases_swaps_domain_rows_only(repo):
     await repo.upsert_rulebases(
         [
-            make_access("old", rule_number=1, mgmt="m1", domain="d1", layer="A"),
-            make_access("other", rule_number=1, mgmt="m1", domain="d2", layer="A"),
+            make_access("old", rule_number=1, mgmt="m1", domain="d1"),
+            make_access("other", rule_number=1, mgmt="m1", domain="d2"),
         ]
     )
-    new = make_access("new", rule_number=1, mgmt="m1", domain="d1", layer="B")
-    n = await repo.replace_domain_rulebase_type(RulebaseAccess, "m1", "d1", [new, new])  # PK duplicate deduped
+    new = make_access("new", rule_number=1, mgmt="m1", domain="d1")
+    n = await repo.replace_domain_rulebases("m1", "d1", [new, new, layer_row("L")], sync(session_uid="s1"))
     assert n == 1
     assert [r.uid for r in await repo.get_rulebase(RulebaseAccess, ["m1"], ["d1"])] == ["new"]
     assert [r.uid for r in await repo.get_rulebase(RulebaseAccess, ["m1"], ["d2"])] == ["other"]
+    assert (await repo.get_rulebase_sync_state("m1", "d1")).session_uid == "s1"
 
 
-async def test_replace_rulebase_type_commit_failure_keeps_old_rows(repo, monkeypatch):
-    await repo.upsert_rulebases([make_access("old", rule_number=1, mgmt="m1", domain="d1")])
+async def test_replace_domain_rulebases_commit_failure_keeps_rows_and_state(repo, monkeypatch):
+    await repo.replace_domain_rulebases(
+        "m1", "d1", [make_access("old", rule_number=1, mgmt="m1", domain="d1")], sync(session_uid="s1")
+    )
     from sqlalchemy.ext.asyncio import AsyncSession
 
     async def _boom(self, *args, **kwargs):
@@ -218,14 +231,15 @@ async def test_replace_rulebase_type_commit_failure_keeps_old_rows(repo, monkeyp
 
     monkeypatch.setattr(AsyncSession, "commit", _boom)
     with pytest.raises(RuntimeError, match="simulated commit failure"):
-        await repo.replace_domain_rulebase_type(
-            RulebaseAccess, "m1", "d1", [make_access("new", rule_number=1, mgmt="m1", domain="d1")]
+        await repo.replace_domain_rulebases(
+            "m1", "d1", [make_access("new", rule_number=1, mgmt="m1", domain="d1")], sync(session_uid="s2")
         )
     monkeypatch.undo()
     assert [r.uid for r in await repo.get_rulebase(RulebaseAccess, ["m1"], ["d1"])] == ["old"]
+    assert (await repo.get_rulebase_sync_state("m1", "d1")).session_uid == "s1"
 
 
-async def test_replace_rulebase_type_uses_one_session(repo, monkeypatch):
+async def test_replace_domain_rulebases_uses_one_session(repo, monkeypatch):
     real = repo._db.session
     opened = []
 
@@ -234,10 +248,29 @@ async def test_replace_rulebase_type_uses_one_session(repo, monkeypatch):
         return real()
 
     monkeypatch.setattr(repo._db, "session", spy)
-    await repo.replace_domain_rulebase_type(
-        RulebaseAccess, "m1", "d1", [make_access("new", rule_number=1, mgmt="m1", domain="d1")]
-    )
+    await repo.replace_domain_rulebases("m1", "d1", [make_access("new", rule_number=1, mgmt="m1", domain="d1")], sync())
     assert opened == [1]
+
+
+async def test_first_v2_replace_purges_old_format_rows(repo):
+    await repo.upsert_rulebases(
+        [make_access("pre-v2", rule_number=1, mgmt="m1", domain="d1")]
+    )  # id mgmt:domain:layer_name:uid, layer_uid NULL
+    await repo.replace_domain_rulebases("m1", "d1", [], sync())
+    assert await repo.get_rulebase(RulebaseAccess, ["m1"], ["d1"]) == []
+
+
+async def test_mark_rulebase_sync_failed_keeps_session_and_format(repo):
+    await repo.replace_domain_rulebases("m1", "d1", [], sync(session_uid="s1"))
+    await repo.mark_rulebase_sync_failed("m1", "d1", "dirty session")
+    st = await repo.get_rulebase_sync_state("m1", "d1")
+    assert (st.status, st.last_error, st.session_uid, st.format_version) == ("failed", "dirty session", "s1", 2)
+
+
+async def test_mark_rulebase_sync_failed_without_state_creates_unready_row(repo):
+    await repo.mark_rulebase_sync_failed("m1", "d9", "boom")
+    st = await repo.get_rulebase_sync_state("m1", "d9")
+    assert (st.status, st.format_version, st.session_uid) == ("failed", 0, None)
 
 
 async def test_get_rulebase_orders_by_layer_then_rule_number(repo):
@@ -250,3 +283,30 @@ async def test_get_rulebase_orders_by_layer_then_rule_number(repo):
         ]
     )
     assert [r.uid for r in await repo.get_rulebase(RulebaseAccess)] == ["a1", "a2", "b1", "b2"]
+
+
+async def test_get_rulebase_keeps_same_named_layers_apart(repo):
+    await repo.upsert_rulebases(
+        [
+            make_access("g1", rule_number=1, layer_uid="uid-g"),
+            make_access("d1", rule_number=1, layer_uid="uid-d"),
+            make_access("g2", rule_number=2, layer_uid="uid-g"),
+            make_access("d2", rule_number=2, layer_uid="uid-d"),
+        ]
+    )
+    assert [r.uid for r in await repo.get_rulebase(RulebaseAccess)] == ["d1", "d2", "g1", "g2"]
+
+
+async def test_get_rulebase_excludes_place_holders(repo):
+    rule = make_access("r1", rule_number=1)
+    placeholder = make_access("ph", rule_number=2)
+    placeholder.kind = "place-holder"
+    await repo.upsert_rulebases([rule, placeholder])
+    assert [r.uid for r in await repo.get_rulebase(RulebaseAccess)] == ["r1"]
+
+
+def test_repository_uses_shared_model_map():
+    from arodonata.cache import repository
+    from arodonata.cache.models import RULEBASE_MODELS
+
+    assert repository._RULEBASE_MODELS is RULEBASE_MODELS

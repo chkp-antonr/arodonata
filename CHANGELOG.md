@@ -10,6 +10,23 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 
 ## [Unreleased]
 
+### Changed (rulebase cache v2, phase 2)
+
+- Rulebase refresh is per domain and atomic: every policy package, ordered layer, section, place-holder and NAT policy of a domain is read, and the domain's whole rulebase snapshot is replaced in one transaction; a failure keeps the previous snapshot and emits an ERROR event.
+- `refresh_rulebases(mode='check')` re-reads only domains whose last published session differs from the one their rulebase snapshot was built from; `force` always re-reads. The rulebase baseline is separate from the object cache's, so a rules-only publish is detected.
+- `get_*_rules` with `cache_mode` smart, smart-fast or force (smart is the default) refresh rulebases session-aware instead of objects, and only for explicitly named domains, on the named management servers or, when none is named, on the first configured one; broad reads serve the cache. The first named read of a domain after the upgrade, and the first after each publish to it, runs a full domain rulebase read.
+- A rulebase refresh is refused with `dirty session` while the shared API session holds unpublished changes (publish or discard to clear). A rulebase command the server does not have yields an empty type, not a failure; any other listing or layer error now fails the domain (previously a listing failure was a warning).
+- A successful `publish` through `api_call` (library or MCP tool), `helpers.policy.publish_session` or cpcrud now invalidates both cache memos for that domain.
+- `RulebaseRefreshService.refresh_access_rulebases`, `refresh_nat_rulebases`, `refresh_https_rulebases` and `refresh_threat_rulebases` are deprecated (`DeprecationWarning`) and refresh the whole domain.
+- Legacy rule getters never return place-holders; cached rule ids become `mgmt:domain:layer_uid:uid`, and the first refresh after the upgrade replaces pre-v2 rows.
+
+### Added (rulebase cache v2, phase 2)
+
+- `arodonata.rulebase` model, parser and SmartConsole numbering (`number_layer`, `number_package`, section ranges such as `2.1-2.2`, `2.3`, `No Rules`).
+- New cache tables `rulebase_layer`, `rulebase_section`, `rulebase_package_layer`, `rulebase_sync_state`; rule tables gain `layer_uid`, `kind`, `section_uid`, `inline_layer_uid`, `domain_type` (NAT `auto_generated`), and the rule models expose `layer_uid`, `section_uid`, `inline_layer_uid` (NAT `auto_generated`).
+- `ArodonataClient.invalidate_domain(mgmt_name, domain_name)`.
+- The pager recovers empty sections after a layer's last rule, which Check Point omits when the last page is full.
+
 ### Fixed (rulebase cache v2, phase 1)
 
 - Rulebase refresh pages every layer completely (layers with more than 50 rules) and lists every layer (domains with more than 50 layers); a layer is cached completely or not at all.

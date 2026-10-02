@@ -11,7 +11,9 @@ Covers:
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock as _AsyncMock
 
 import pytest
 
@@ -322,3 +324,38 @@ def test_max_incremental_changes_default_is_500():
 
     assert client._refresh_coordinator.max_incremental_changes == 500
     assert client._object_service.max_incremental_changes == 500
+
+
+def _publishing_client(success: bool):
+    mgmt = _AsyncMock()
+    mgmt.api_call = _AsyncMock(return_value={"success": success, "data": {}, "message": "", "code": ""})
+    client = make_client(mgmt=mgmt)
+    for coordinator in (client._refresh_coordinator, client._rulebase_coordinator):
+        coordinator._checked_at[("m1", "Domain4")] = datetime(2026, 10, 1)
+    return client
+
+
+async def test_api_call_publish_invalidates_both_memos():
+    client = _publishing_client(True)
+    await client.api_call("m1", "publish", "Domain4", payload={})
+    assert ("m1", "Domain4") not in client._refresh_coordinator._checked_at
+    assert ("m1", "Domain4") not in client._rulebase_coordinator._checked_at
+
+
+async def test_api_call_failed_publish_does_not_invalidate():
+    client = _publishing_client(False)
+    await client.api_call("m1", "publish", "Domain4", payload={})
+    assert ("m1", "Domain4") in client._rulebase_coordinator._checked_at
+
+
+async def test_invalidate_domain_drops_both_memos():
+    client = _publishing_client(True)
+    client.invalidate_domain("m1", "Domain4")
+    assert not client._refresh_coordinator._checked_at and not client._rulebase_coordinator._checked_at
+
+
+def test_rulebase_coordinator_wired_with_client_defaults():
+    client = make_client(cache_mode="smart-fast", cache_ttl=42)
+    assert client._rulebase_coordinator.default_policy == CachePolicy(mode=CacheMode.SMART_FAST, ttl=42)
+    assert client._rulebase_refresh._object_service is client._object_service
+    assert client._orchestration._rulebase_coordinator is client._rulebase_coordinator

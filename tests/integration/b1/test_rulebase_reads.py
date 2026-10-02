@@ -9,6 +9,10 @@ import pytest
 
 from arodonata.api.schemas import SSEEventType
 from arodonata.models import AccessRule
+from arodonata.rulebase.numbering import number_package
+from tests.unit.rulebase.golden import FPCR_UAT_ACTIVE_ACCESS, summarize
+
+from ..cp_revision import last_published_session
 
 
 async def _refresh_rulebases(client, mgmt_name: str, domain: str) -> list:
@@ -99,3 +103,24 @@ async def test_enabled_only_filter(apikey_client, test_domain_a):
     )
     assert len(enabled) <= len(all_rules)
     assert all(r.enabled for r in enabled)
+
+
+async def test_domain4_snapshot_numbers_match_smartconsole(apikey_client, test_domain_a):
+    """Home-lab Domain4: the cached snapshot numbers FPCR_UAT_Active exactly like SmartConsole (rulebase cache v2, phase 2)."""
+    if test_domain_a != "Domain4":
+        pytest.skip("asserts the home-lab Domain4 shape")
+    client, mgmt_name = apikey_client
+    events = await _refresh_rulebases(client, mgmt_name, test_domain_a)
+    assert not _errors_by_type(events), _errors_by_type(events)
+    snapshot = await client.cache.load_domain_rulebase_snapshot(mgmt_name, test_domain_a)
+    layout = next(p for p in snapshot.packages if p.package_name == "FPCR_UAT_Active")
+    numbered = number_package(layout, "access", {layer.layer_uid: layer for layer in snapshot.layers})
+    assert summarize(numbered[0]) == FPCR_UAT_ACTIVE_ACCESS
+    assert [o.layer_name for o in layout.layers if o.rulebase_type == "access"] == [
+        "arod-global-pkg Network",
+        "FPCR_UAT_Active AppControl",
+    ]
+    assert numbered[1] and numbered[1][0].number == "1"
+    state = await client.cache.get_rulebase_sync_state(mgmt_name, test_domain_a)
+    head = await last_published_session(client, mgmt_name, test_domain_a)
+    assert (state.status, state.session_uid) == ("ok", head["uid"])

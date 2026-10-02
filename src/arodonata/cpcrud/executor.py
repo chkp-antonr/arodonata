@@ -132,7 +132,7 @@ class Executor:
                         last_publish_session=await self._reader.get_last_publish_session(mgmt=mgmt, domain=domain),
                     )
                 )
-                self._client._refresh_coordinator.invalidate(mgmt, domain)
+                self._client.invalidate_domain(mgmt, domain)
                 await self._maybe_force_refresh(refresh, mgmt, domain)
         yield self._report(plan, results, published, stale_domains)
 

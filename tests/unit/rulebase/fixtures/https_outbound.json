@@ -1,0 +1,185 @@
+{
+  "uid": "22ab8418-c7f7-42d5-880e-dd3ebc61569c",
+  "name": "Default Outbound Layer",
+  "from": 1,
+  "to": 2,
+  "total": 2,
+  "rulebase": [
+    {
+      "uid": "fb165b6c-f573-447f-9c46-7787e5514edf",
+      "name": "Health, Finance and Government HTTPS Rule",
+      "type": "https-rule",
+      "rule-number": 1,
+      "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+      },
+      "action": "e9cec0eb-a48d-49f9-a6f9-42e2224d39e3",
+      "track": "6c488338-8eec-4103-ad21-cd461ac2c477",
+      "source": [
+        "97aeb369-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "source-negate": false,
+      "destination": [
+        "f99b1488-7510-11e2-8668-87656188709b"
+      ],
+      "destination-negate": false,
+      "service": [
+        "7f9275f0-4382-4222-b4cd-06d2c5aa3222"
+      ],
+      "service-negate": false,
+      "enabled": true,
+      "comments": "Exempting health, financial and governmental websites from HTTPS inspection in order to protect privacy rights.\n\nNote: This rule requires enablement of URL Filtering on all Policy HTTPS Targets"
+    },
+    {
+      "uid": "8a44020d-3b30-4138-8117-2253d1511ee7",
+      "name": "Predefined Rule",
+      "type": "https-rule",
+      "rule-number": 2,
+      "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+      },
+      "action": "f9c18167-91eb-4892-b6a6-2e5665abf199",
+      "track": "6c488338-8eec-4103-ad21-cd461ac2c477",
+      "source": [
+        "97aeb369-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "source-negate": false,
+      "destination": [
+        "f99b1488-7510-11e2-8668-87656188709b"
+      ],
+      "destination-negate": false,
+      "service": [
+        "7f9275f0-4382-4222-b4cd-06d2c5aa3222"
+      ],
+      "service-negate": false,
+      "enabled": true,
+      "comments": ""
+    }
+  ],
+  "objects-dictionary": [
+    {
+      "uid": "97aeb368-9aea-11d5-bd16-0090272ccb30",
+      "name": "All",
+      "type": "CpmiAnyObject",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+      "name": "Any",
+      "type": "CpmiAnyObject",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "e9cec0eb-a48d-49f9-a6f9-42e2224d39e3",
+      "name": "Bypass",
+      "type": "RulebaseAction",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "00fa9e44-4080-0f65-e053-08241dc22da2",
+      "name": "Financial Services",
+      "type": "application-site-category",
+      "domain": {
+        "uid": "8bf4ac51-2df7-40e1-9bce-bedbedbedbed",
+        "name": "APPI Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "00fa9e44-4083-0f65-e053-08241dc22da2",
+      "name": "Government / Military",
+      "type": "application-site-category",
+      "domain": {
+        "uid": "8bf4ac51-2df7-40e1-9bce-bedbedbedbed",
+        "name": "APPI Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "00fa9e44-4087-0f65-e053-08241dc22da2",
+      "name": "Health",
+      "type": "application-site-category",
+      "domain": {
+        "uid": "8bf4ac51-2df7-40e1-9bce-bedbedbedbed",
+        "name": "APPI Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "7f9275f0-4382-4222-b4cd-06d2c5aa3222",
+      "name": "HTTPS default services",
+      "type": "service-group",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "f9c18167-91eb-4892-b6a6-2e5665abf199",
+      "name": "Inspect",
+      "type": "RulebaseAction",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "f99b1488-7510-11e2-8668-87656188709b",
+      "name": "Internet",
+      "type": "Internet",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "6c488338-8eec-4103-ad21-cd461ac2c477",
+      "name": "Log",
+      "type": "Global",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "56844f13-2e49-4be9-8571-a071c1b6a8ba",
+      "name": "Outbound Certificate",
+      "type": "server-certificate",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "213f0a22-49da-4719-94b3-f2d74623f3fb",
+      "name": "Policy HTTPS Targets",
+      "type": "Global",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    }
+  ]
+}
