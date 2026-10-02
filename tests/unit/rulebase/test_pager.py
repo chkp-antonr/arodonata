@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from arodonata.api.schemas import ApiCallResult
-from arodonata.rulebase.pager import RULEBASE_PAGE_SIZE, RulebaseFetchError, fetch_full_rulebase
+from arodonata.rulebase.pager import RULEBASE_PAGE_SIZE, UNSUPPORTED_CODES, RulebaseFetchError, fetch_full_rulebase
 from tests.unit.rulebase.fakes import FakeRulebaseClient, flatten_rules, load_fixture, page_by_top_level_offset
 
 CMD = "show-access-rulebase"
@@ -28,6 +28,7 @@ async def test_pages_until_total_with_offset_from_to():
         {**BASE, "limit": 2, "offset": 0},
         {**BASE, "limit": 2, "offset": 2},
         {**BASE, "limit": 2, "offset": 4},
+        {**BASE, "limit": 2, "offset": 5},
     ]
     assert [r["rule-number"] for r in flatten_rules(data["rulebase"])] == [1, 2, 3, 4, 5, 6]
     assert [s["name"] for s in data["rulebase"]] == [
@@ -93,7 +94,7 @@ async def test_page_gap_raises():
 async def test_section_split_across_pages_is_merged_by_uid():
     client = _client()
     data = await fetch_full_rulebase(client, "m1", "Domain4", CMD, BASE, page_size=1)
-    assert len(client.calls) == 6
+    assert len(client.calls) == 7
     first = data["rulebase"][0]
     assert first["name"] == "FPCR_UAT_Section_4"
     assert [r["rule-number"] for r in first["rulebase"]] == [1, 2]
@@ -275,3 +276,60 @@ async def test_non_dict_in_objects_dictionary_is_skipped():
 
     data = await fetch_full_rulebase(Client(), "m1", "D", CMD, {"name": "L"})
     assert [o["uid"] for o in data["objects-dictionary"]] == ["a", "b", "c"]
+
+
+NAT_CMD = "show-nat-rulebase"
+NAT_BASE = {"package": "FPCR_UAT_Active", "details-level": "full", "use-object-dictionary": True}
+
+
+def _nat_client() -> FakeRulebaseClient:
+    client = FakeRulebaseClient()
+    client.add_layer(NAT_CMD, load_fixture("nat_fpcr_uat_active.json"), key="FPCR_UAT_Active")
+    return client
+
+
+async def test_trailing_empty_section_recovered_on_full_last_page():
+    client = _nat_client()
+    data = await fetch_full_rulebase(client, "m1", "Domain4", NAT_CMD, NAT_BASE, page_size=2)
+    assert [payload for _, payload in client.calls] == [
+        {**NAT_BASE, "limit": 2, "offset": 0},
+        {**NAT_BASE, "limit": 2, "offset": 1},
+    ]
+    names = [e["name"] for e in data["rulebase"]]
+    assert names[-1] == "Manual Lower Rules" and names.count("Manual Lower Rules") == 1
+    assert [r["rule-number"] for r in flatten_rules(data["rulebase"])] == [1, 2]
+
+
+async def test_no_extra_read_when_last_page_has_room():
+    client = _nat_client()
+    data = await fetch_full_rulebase(client, "m1", "Domain4", NAT_CMD, NAT_BASE, page_size=3)
+    assert len(client.calls) == 1
+    assert data["rulebase"][-1]["name"] == "Manual Lower Rules"
+
+
+async def test_trailing_read_must_return_only_the_last_rule():
+    pages = {
+        0: {
+            "uid": "L",
+            "from": 1,
+            "to": 2,
+            "total": 2,
+            "objects-dictionary": [],
+            "rulebase": [
+                {"uid": "r1", "type": "access-rule", "rule-number": 1},
+                {"uid": "r2", "type": "access-rule", "rule-number": 2},
+            ],
+        },
+        1: {"uid": "L", "from": 1, "to": 2, "total": 2, "objects-dictionary": [], "rulebase": []},
+    }
+
+    class Client:
+        async def api_call(self, **kwargs):
+            return ApiCallResult(success=True, data=pages[kwargs["payload"]["offset"]])
+
+    with pytest.raises(RulebaseFetchError, match="trailing read"):
+        await fetch_full_rulebase(Client(), "m1", "D", CMD, {"name": "L"}, page_size=2)
+
+
+def test_unsupported_codes_are_command_not_found_only():
+    assert UNSUPPORTED_CODES == frozenset({"generic_err_command_not_found"})

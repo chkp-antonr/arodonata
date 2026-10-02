@@ -1,0 +1,9 @@
+{
+  "uid": "b2f3ff9d-d200-4ad6-aae4-109242315f83",
+  "type": "session",
+  "state": "open",
+  "changes": 1,
+  "locks": 2,
+  "in-work": true,
+  "expired-session": false
+}

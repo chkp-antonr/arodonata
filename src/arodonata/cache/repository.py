@@ -14,27 +14,25 @@ from sqlmodel import SQLModel
 
 from ..config import GLOBAL_DOMAIN_NAME
 from ..logger import lazy_logger
+from ..rulebase.model import DomainRulebaseSnapshot
 from .database import DatabaseManager
 from .models import (
+    RULEBASE_MODELS,
     Asset,
     CPObject,
     Domain,
     LastPublishedSession,
-    RulebaseAccess,
-    RulebaseHTTPS,
-    RulebaseNAT,
-    RulebaseThreat,
+    PolicyPackageLayer,
+    RulebaseLayer,
+    RulebaseSection,
+    RulebaseSyncState,
     SIDCache,
 )
+from .rulebase_rows import snapshot_from_rows
 
 log = lazy_logger("arodonata.cache.repository")
 
-_RULEBASE_MODELS: dict[str, type] = {
-    "access": RulebaseAccess,
-    "nat": RulebaseNAT,
-    "https": RulebaseHTTPS,
-    "threat": RulebaseThreat,
-}
+_RULEBASE_MODELS = RULEBASE_MODELS
 
 
 def _sid_key(mgmt_name: str, domain: str, username: str | None = None) -> str:
@@ -1186,9 +1184,16 @@ class CacheRepository:
                     if hasattr(model_class, key):
                         stmt = stmt.where(getattr(model_class, key) == value)
 
+            # Legacy getters return rules only; place-holders exist for numbering (rulebase cache v2)
+            if hasattr(model_class, "kind"):
+                stmt = stmt.where(model_class.kind == "rule")  # type: ignore[attr-defined]
+
             # Layer first, then in-layer position, so rules of different layers never interleave
             if hasattr(model_class, "rule_number"):
-                stmt = stmt.order_by(model_class.layer_name, model_class.rule_number)  # type: ignore[attr-defined]
+                order = [model_class.layer_name]  # type: ignore[attr-defined]
+                if hasattr(model_class, "layer_uid"):  # same-named layers (Global and domain) stay apart
+                    order.append(model_class.layer_uid)  # type: ignore[attr-defined]
+                stmt = stmt.order_by(*order, model_class.rule_number)  # type: ignore[attr-defined]
 
             result = await session.execute(stmt)
             return list(result.scalars().all())
@@ -1273,36 +1278,80 @@ class CacheRepository:
                 return result.rowcount  # type: ignore[attr-defined]
             return 0
 
-    async def replace_domain_rulebase_type(
+    _SNAPSHOT_TABLES: tuple[type[SQLModel], ...] = (RulebaseLayer, RulebaseSection, PolicyPackageLayer)
+
+    async def replace_domain_rulebases(
         self,
-        model_class: type[SQLModel],
         mgmt_name: str,
         domain_name: str,
         rows: Sequence[SQLModel],
+        state: RulebaseSyncState,
     ) -> int:
-        """Atomically replace every cached rule of one rulebase type for a domain.
+        """Atomically replace a domain's whole rulebase snapshot and its sync state.
 
-        Delete + bulk insert run in ONE session and commit, like ``replace_domain_objects``: readers never see a
-        partial type, and a failure rolls back to the previous rows. Rules deleted in CP, emptied layers and
-        deleted layers disappear because the delete covers the whole type. Input is deduped by primary key.
+        One session and commit: deletes the domain's rows from the four rule tables, ``rulebase_layer``,
+        ``rulebase_section`` and ``rulebase_package_layer`` (this also purges pre-v2 rule rows, whatever their id),
+        inserts ``rows`` (deduped by primary key) and merges ``state``. A failure rolls back to the previous snapshot
+        and state.
 
         Returns:
-            Number of rows inserted.
+            Number of rule rows inserted (all four types, place-holders included).
         """
         deduped = list({row.id: row for row in rows}.values())  # type: ignore[attr-defined]
+        rule_models = tuple(_RULEBASE_MODELS.values())
         async with self._db.session() as session:
-            stmt = delete(model_class).where(
-                model_class.mgmt_name == mgmt_name,  # type: ignore[attr-defined]
-                model_class.domain_name == domain_name,  # type: ignore[attr-defined]
-            )
-            result = await session.execute(stmt)
-            deleted = getattr(result, "rowcount", 0) or 0
+            for model in (*rule_models, *self._SNAPSHOT_TABLES):
+                await session.execute(
+                    delete(model).where(
+                        model.mgmt_name == mgmt_name,  # type: ignore[attr-defined]
+                        model.domain_name == domain_name,  # type: ignore[attr-defined]
+                    )
+                )
             session.add_all(deduped)
+            await session.merge(state)
             await session.commit()
-            log().debug(
-                f"Replaced {model_class.__name__} rows for {mgmt_name}/{domain_name}: -{deleted} +{len(deduped)}"
+        inserted = sum(1 for row in deduped if isinstance(row, rule_models))
+        log().debug(f"Replaced rulebase snapshot for {mgmt_name}/{domain_name}: {inserted} rule rows")
+        return inserted
+
+    async def get_rulebase_sync_state(self, mgmt_name: str, domain_name: str) -> RulebaseSyncState | None:
+        """The domain's rulebase sync state, or None before its first rulebase refresh."""
+        async with self._db.session() as session:
+            return await session.get(RulebaseSyncState, f"{mgmt_name}:{domain_name}")
+
+    async def mark_rulebase_sync_failed(self, mgmt_name: str, domain_name: str, error: str) -> None:
+        """Record a failed refresh: status 'failed' and ``last_error``; ``session_uid`` and ``format_version`` stay."""
+        async with self._db.session() as session:
+            key = f"{mgmt_name}:{domain_name}"
+            state = await session.get(RulebaseSyncState, key) or RulebaseSyncState(
+                id=key, mgmt_name=mgmt_name, domain_name=domain_name
             )
-            return len(deduped)
+            state.status = "failed"
+            state.last_error = error
+            state.update_time = datetime.now(UTC).replace(tzinfo=None)
+            await session.merge(state)
+            await session.commit()
+
+    async def load_domain_rulebase_snapshot(self, mgmt_name: str, domain_name: str) -> DomainRulebaseSnapshot | None:
+        """The domain's cached rulebase snapshot (canonical order), or None when it has no sync state."""
+        async with self._db.session() as session:
+            state = await session.get(RulebaseSyncState, f"{mgmt_name}:{domain_name}")
+            if state is None:
+                return None
+
+            async def rows(model: type[SQLModel]) -> list[Any]:
+                stmt = select(model).where(
+                    model.mgmt_name == mgmt_name,  # type: ignore[attr-defined]
+                    model.domain_name == domain_name,  # type: ignore[attr-defined]
+                )
+                return list((await session.execute(stmt)).scalars().all())
+
+            rule_rows: list[Any] = []
+            for model in _RULEBASE_MODELS.values():
+                rule_rows += await rows(model)
+            return snapshot_from_rows(
+                state, await rows(RulebaseLayer), await rows(RulebaseSection), rule_rows, await rows(PolicyPackageLayer)
+            )
 
 
 __all__ = ["CacheRepository"]

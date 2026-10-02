@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Column
+from sqlalchemy import Column, Index
 from sqlmodel import JSON, Field, SQLModel
 
 
@@ -430,11 +430,12 @@ class RulebaseAccess(SQLModel, table=True):
     """Cached access control rules from Network layer."""
 
     __tablename__ = "rulebase_access"
+    __table_args__ = (Index("ix_rulebase_access_mgmt_domain_layer_uid", "mgmt_name", "domain_name", "layer_uid"),)
 
     id: str = Field(
         primary_key=True,
         max_length=512,
-        description="Composite key: 'mgmt_name:domain_name:layer_name:uid'",
+        description="Composite key: 'mgmt_name:domain_name:layer_uid:uid'",
     )
     uid: str = Field(index=True, max_length=64)
     rule_number: int = Field(index=True, description="Rule position in layer")
@@ -443,6 +444,13 @@ class RulebaseAccess(SQLModel, table=True):
     layer_name: str = Field(index=True, max_length=255)
     mgmt_name: str = Field(index=True, max_length=64)
     domain_name: str = Field(index=True, max_length=255, default="")
+    layer_uid: str | None = Field(
+        default=None, max_length=64, description="Layer uid from the response; NULL marks a pre-v2 row"
+    )
+    kind: str = Field(default="rule", max_length=32, description="'rule' or 'place-holder'")
+    section_uid: str | None = Field(default=None, max_length=64, description="Enclosing section uid")
+    inline_layer_uid: str | None = Field(default=None, max_length=64, description="The rule's inline-layer uid")
+    domain_type: str = Field(default="", max_length=32, description="The rule's domain.domain-type")
     sources: str = Field(
         default="",
         description="Comma-separated source names (uid when unresolved); a name containing a comma is split wrongly on read",
@@ -475,11 +483,12 @@ class RulebaseNAT(SQLModel, table=True):
     """Cached NAT rules from NAT layer."""
 
     __tablename__ = "rulebase_nat"
+    __table_args__ = (Index("ix_rulebase_nat_mgmt_domain_layer_uid", "mgmt_name", "domain_name", "layer_uid"),)
 
     id: str = Field(
         primary_key=True,
         max_length=512,
-        description="Composite key: 'mgmt_name:domain_name:layer_name:uid'",
+        description="Composite key: 'mgmt_name:domain_name:layer_uid:uid'",
     )
     uid: str = Field(index=True, max_length=64)
     rule_number: int = Field(index=True)
@@ -488,6 +497,14 @@ class RulebaseNAT(SQLModel, table=True):
     layer_name: str = Field(index=True, max_length=255)
     mgmt_name: str = Field(index=True, max_length=64)
     domain_name: str = Field(index=True, max_length=255, default="")
+    layer_uid: str | None = Field(
+        default=None, max_length=64, description="Layer uid from the response; NULL marks a pre-v2 row"
+    )
+    kind: str = Field(default="rule", max_length=32, description="'rule' or 'place-holder'")
+    section_uid: str | None = Field(default=None, max_length=64, description="Enclosing section uid")
+    inline_layer_uid: str | None = Field(default=None, max_length=64, description="The rule's inline-layer uid")
+    domain_type: str = Field(default="", max_length=32, description="The rule's domain.domain-type")
+    auto_generated: bool = Field(default=False, description="CP auto-generated NAT rule")
     original_source: str = Field(default="", max_length=255)
     original_destination: str = Field(default="", max_length=255)
     original_service: str = Field(default="", max_length=255)
@@ -512,11 +529,12 @@ class RulebaseHTTPS(SQLModel, table=True):
     """Cached HTTPS inspection rules from CVD layer."""
 
     __tablename__ = "rulebase_https"
+    __table_args__ = (Index("ix_rulebase_https_mgmt_domain_layer_uid", "mgmt_name", "domain_name", "layer_uid"),)
 
     id: str = Field(
         primary_key=True,
         max_length=512,
-        description="Composite key: 'mgmt_name:domain_name:layer_name:uid'",
+        description="Composite key: 'mgmt_name:domain_name:layer_uid:uid'",
     )
     uid: str = Field(index=True, max_length=64)
     rule_number: int = Field(index=True)
@@ -525,6 +543,13 @@ class RulebaseHTTPS(SQLModel, table=True):
     layer_name: str = Field(index=True, max_length=255)
     mgmt_name: str = Field(index=True, max_length=64)
     domain_name: str = Field(index=True, max_length=255, default="")
+    layer_uid: str | None = Field(
+        default=None, max_length=64, description="Layer uid from the response; NULL marks a pre-v2 row"
+    )
+    kind: str = Field(default="rule", max_length=32, description="'rule' or 'place-holder'")
+    section_uid: str | None = Field(default=None, max_length=64, description="Enclosing section uid")
+    inline_layer_uid: str | None = Field(default=None, max_length=64, description="The rule's inline-layer uid")
+    domain_type: str = Field(default="", max_length=32, description="The rule's domain.domain-type")
     sources: str = Field(
         default="",
         description="Comma-separated source names (uid when unresolved); a name containing a comma is split wrongly on read",
@@ -552,11 +577,12 @@ class RulebaseThreat(SQLModel, table=True):
     """Cached threat prevention rules from Threat layer."""
 
     __tablename__ = "rulebase_threat"
+    __table_args__ = (Index("ix_rulebase_threat_mgmt_domain_layer_uid", "mgmt_name", "domain_name", "layer_uid"),)
 
     id: str = Field(
         primary_key=True,
         max_length=512,
-        description="Composite key: 'mgmt_name:domain_name:layer_name:uid'",
+        description="Composite key: 'mgmt_name:domain_name:layer_uid:uid'",
     )
     uid: str = Field(index=True, max_length=64)
     rule_number: int = Field(index=True)
@@ -565,6 +591,13 @@ class RulebaseThreat(SQLModel, table=True):
     layer_name: str = Field(index=True, max_length=255)
     mgmt_name: str = Field(index=True, max_length=64)
     domain_name: str = Field(index=True, max_length=255, default="")
+    layer_uid: str | None = Field(
+        default=None, max_length=64, description="Layer uid from the response; NULL marks a pre-v2 row"
+    )
+    kind: str = Field(default="rule", max_length=32, description="'rule' or 'place-holder'")
+    section_uid: str | None = Field(default=None, max_length=64, description="Enclosing section uid")
+    inline_layer_uid: str | None = Field(default=None, max_length=64, description="The rule's inline-layer uid")
+    domain_type: str = Field(default="", max_length=32, description="The rule's domain.domain-type")
     track: str = Field(default="", max_length=64, description="Track type name (Log, None...)")
     protections: str = Field(
         default="",
@@ -584,6 +617,106 @@ class RulebaseThreat(SQLModel, table=True):
         return f"RulebaseThreat(id='{self.id}', name='{self.name}', layer='{self.layer_name}')"
 
 
+def _utcnow() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+class RulebaseLayer(SQLModel, table=True):
+    """One cached layer of a domain's rulebase snapshot (an empty layer has a row with total=0)."""
+
+    __tablename__ = "rulebase_layer"
+    __table_args__ = (Index("ix_rulebase_layer_mgmt_domain_layer_name", "mgmt_name", "domain_name", "layer_name"),)
+
+    id: str = Field(primary_key=True, max_length=512, description="'mgmt_name:domain_name:rulebase_type:layer_uid'")
+    mgmt_name: str = Field(max_length=64)
+    domain_name: str = Field(max_length=255, default="")
+    rulebase_type: str = Field(max_length=16)
+    layer_uid: str = Field(max_length=64)
+    layer_name: str = Field(max_length=255, default="")
+    layer_domain_type: str = Field(max_length=32, default="")
+    total: int = Field(default=0)
+    objects_dictionary: list[dict[str, Any]] | None = Field(
+        default=None,
+        sa_column=Column("objects_dictionary", JSON, nullable=True),
+        description="Trimmed {uid, name, type}",
+    )
+    update_time: datetime = Field(default_factory=_utcnow)
+
+
+class RulebaseSection(SQLModel, table=True):
+    """One section of a cached layer (from/to are in-layer rule numbers; NULL for an empty section)."""
+
+    __tablename__ = "rulebase_section"
+    __table_args__ = (Index("ix_rulebase_section_mgmt_domain_layer_uid", "mgmt_name", "domain_name", "layer_uid"),)
+
+    id: str = Field(primary_key=True, max_length=512, description="'mgmt_name:domain_name:layer_uid:section_uid'")
+    mgmt_name: str = Field(max_length=64)
+    domain_name: str = Field(max_length=255, default="")
+    rulebase_type: str = Field(max_length=16)
+    layer_uid: str = Field(max_length=64)
+    section_uid: str = Field(max_length=64)
+    name: str = Field(max_length=255, default="")
+    from_number: int | None = Field(default=None)
+    to_number: int | None = Field(default=None)
+    rules_before: int = Field(default=0)
+    seq: int = Field(default=0)
+    raw_data: dict[str, Any] | None = Field(default=None, sa_column=Column("raw_data", JSON, nullable=True))
+    update_time: datetime = Field(default_factory=_utcnow)
+
+
+class PolicyPackageLayer(SQLModel, table=True):
+    """One ordered layer of a policy package (a package with no ordered layers has no rows)."""
+
+    __tablename__ = "rulebase_package_layer"
+    __table_args__ = (
+        Index("ix_rulebase_package_layer_mgmt_domain_package_name", "mgmt_name", "domain_name", "package_name"),
+    )
+
+    id: str = Field(
+        primary_key=True, max_length=512, description="'mgmt_name:domain_name:package_uid:rulebase_type:position'"
+    )
+    mgmt_name: str = Field(max_length=64)
+    domain_name: str = Field(max_length=255, default="")
+    package_uid: str = Field(max_length=64)
+    package_name: str = Field(max_length=255)
+    rulebase_type: str = Field(max_length=16)
+    position: int = Field(default=0)
+    slot: str = Field(max_length=16, default="")
+    layer_uid: str = Field(max_length=64)
+    layer_name: str = Field(max_length=255, default="")
+    layer_domain_type: str = Field(max_length=32, default="")
+    placeholder_uid: str | None = Field(default=None, max_length=64)
+    parent_rule_uid: str | None = Field(default=None, max_length=64)
+    parent_rule_name: str | None = Field(default=None, max_length=255)
+    domain_layer_uid: str | None = Field(default=None, max_length=64)
+    update_time: datetime = Field(default_factory=_utcnow)
+
+
+class RulebaseSyncState(SQLModel, table=True):
+    """Which published session a domain's rulebase snapshot was built from (separate from the object baseline)."""
+
+    __tablename__ = "rulebase_sync_state"
+
+    id: str = Field(primary_key=True, max_length=512, description="'mgmt_name:domain_name'")
+    mgmt_name: str = Field(max_length=64)
+    domain_name: str = Field(max_length=255, default="")
+    session_uid: str | None = Field(default=None, max_length=64)
+    session_published_time: datetime | None = Field(default=None)
+    refreshed_at: datetime | None = Field(default=None)
+    format_version: int = Field(default=0)
+    status: str = Field(default="", max_length=16, description="'ok' | 'unversioned' | 'failed'")
+    last_error: str | None = Field(default=None)
+    update_time: datetime = Field(default_factory=_utcnow)
+
+
+RULEBASE_MODELS: dict[str, type[SQLModel]] = {
+    "access": RulebaseAccess,
+    "nat": RulebaseNAT,
+    "https": RulebaseHTTPS,
+    "threat": RulebaseThreat,
+}
+
+
 __all__ = [
     "SIDCache",
     "Asset",
@@ -597,4 +730,9 @@ __all__ = [
     "RulebaseNAT",
     "RulebaseHTTPS",
     "RulebaseThreat",
+    "RulebaseLayer",
+    "RulebaseSection",
+    "PolicyPackageLayer",
+    "RulebaseSyncState",
+    "RULEBASE_MODELS",
 ]

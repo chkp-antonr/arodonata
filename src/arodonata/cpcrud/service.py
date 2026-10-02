@@ -124,7 +124,7 @@ class CPCRUDService:
                 break
             attempt += 1
             for mgmt, domain in remaining.domains():
-                self._client._refresh_coordinator.invalidate(mgmt, domain)  # MMP parity: refresh state before retrying
+                self._client.invalidate_domain(mgmt, domain)  # MMP parity: refresh state before retrying
             current = remaining
         yield SSEEvent(event_type=SSEEventType.COMPLETE, message="apply finished", data={"summary": report.summary})
         yield report

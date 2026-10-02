@@ -1,105 +1,68 @@
-"""Rulebase population and refresh service: per domain and type, every layer is read completely, then the type's rows are replaced in one transaction."""
+"""Rulebase refresh: per domain, every policy package, layer and NAT policy is read completely, with sections, place-holders and the global place-holder link, then the domain's snapshot and sync state are replaced in one transaction."""
 
 from __future__ import annotations
 
+import warnings as _warnings
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from sqlmodel import SQLModel
-
-from ...cache.models import RulebaseAccess, RulebaseHTTPS, RulebaseNAT, RulebaseThreat
+from ...cache.models import RulebaseSyncState
+from ...cache.rulebase_rows import build_rulebase_rows
+from ...config import GLOBAL_DOMAIN_NAME
 from ...core.domain_list_refresh import DOMAIN_LIST_REFRESH_TTL_SECONDS, DomainListRefreshTracker
-from ...extractors.base import ExtractionContext
-from ...extractors.rulebases import (
-    AccessRuleExtractor,
-    HTTPSRuleExtractor,
-    NATRuleExtractor,
-    ThreatRuleExtractor,
-)
+from ...core.exceptions import InvalidCredentialsError, PublishedHeadError
 from ...logger import lazy_logger
-from ...rulebase.pager import RulebaseFetchError, fetch_full_rulebase
+from ...rulebase.model import (
+    RULEBASE_CACHE_FORMAT,
+    RULEBASE_COMMANDS,
+    DomainRefreshResult,
+    DomainRulebaseSnapshot,
+    LayerSnapshot,
+    PackageLayout,
+    RulebaseType,
+)
+from ...rulebase.pager import UNSUPPORTED_CODES, RulebaseFetchError, fetch_full_rulebase
+from ...rulebase.parse import find_parent_rule, link_placeholder, parse_layer_response, parse_packages
 
 if TYPE_CHECKING:
     from ...cache import CacheRepository
+    from ...cache.models import LastPublishedSession
+    from ...cache.object_service import ObjectService
     from ...core.cache_policy import Clock
     from ..client import ArodonataClient
 
 log = lazy_logger("arodonata.api.services.rulebase_refresh_service")
 
-
-@dataclass(frozen=True)
-class _TypeSpec:
-    """How one rulebase type is listed and read."""
-
-    rulebase_type: str  # "access" | "nat" | "https" | "threat"
-    label: str  # for messages
-    list_command: str
-    container_key: str
-    list_details_level: str
-    rulebase_command: str
-    target: str  # what one listing entry is: "layer" | "package"
-    target_param: str  # payload key the entry's name goes into when read by name: "name" | "package"
-    model_class: type[SQLModel]
-    requires_flag: str | None = None  # entries without this flag set are not read (NAT: nat-policy)
-    name_from_response: bool = True  # layer_name = the response's top-level name; NAT: the package name
-    fetch_by_uid: bool = False  # read an entry by its uid when it has one (layer names can repeat); NAT: by package
+_LAYER_TYPES: tuple[RulebaseType, ...] = ("access", "https", "threat")
+_LISTINGS: dict[RulebaseType, tuple[str, str]] = {
+    "access": ("show-access-layers", "access-layers"),
+    "https": ("show-https-layers", "https-layers"),
+    "threat": ("show-threat-layers", "threat-layers"),
+}
 
 
-_ACCESS = _TypeSpec(
-    "access",
-    "access",
-    "show-access-layers",
-    "access-layers",
-    "standard",
-    "show-access-rulebase",
-    "layer",
-    "name",
-    RulebaseAccess,
-    fetch_by_uid=True,
-)
-_HTTPS = _TypeSpec(
-    "https",
-    "HTTPS",
-    "show-https-layers",
-    "https-layers",
-    "standard",
-    "show-https-rulebase",
-    "layer",
-    "name",
-    RulebaseHTTPS,
-    fetch_by_uid=True,
-)
-_THREAT = _TypeSpec(
-    "threat",
-    "Threat",
-    "show-threat-layers",
-    "threat-layers",
-    "standard",
-    "show-threat-rulebase",
-    "layer",
-    "name",
-    RulebaseThreat,
-    fetch_by_uid=True,
-)
-_NAT = _TypeSpec(
-    "nat",
-    "NAT",
-    "show-packages",
-    "packages",
-    "full",
-    "show-nat-rulebase",
-    "package",
-    "package",
-    RulebaseNAT,
-    requires_flag="nat-policy",
-    name_from_response=False,
-)
-_SPECS = {spec.rulebase_type: spec for spec in (_ACCESS, _NAT, _HTTPS, _THREAT)}
+class _DomainFailed(Exception):
+    """A domain refresh step failed: nothing is replaced, the old snapshot stays."""
+
+
+def _now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _without_type(layouts: list[PackageLayout], rulebase_type: RulebaseType) -> list[PackageLayout]:
+    return [
+        PackageLayout(
+            layout.package_uid,
+            layout.package_name,
+            tuple(o for o in layout.layers if o.rulebase_type != rulebase_type),
+        )
+        for layout in layouts
+    ]
 
 
 class RulebaseRefreshService:
-    """Service for refreshing rulebase cache from Check Point API."""
+    """Refreshes the rulebase cache from the Check Point API, one domain snapshot at a time."""
 
     def __init__(
         self,
@@ -107,6 +70,7 @@ class RulebaseRefreshService:
         cache: CacheRepository,
         domain_list_refresh_ttl: int = DOMAIN_LIST_REFRESH_TTL_SECONDS,
         clock: Clock | None = None,
+        object_service: ObjectService | None = None,
     ) -> None:
         """Initialize rulebase refresh service.
 
@@ -119,208 +83,338 @@ class RulebaseRefreshService:
                 See `arodonata.core.domain_list_refresh`.
             clock: Injectable time source for the TTL memo (tests only;
                 defaults to the real wall clock).
+            object_service: Reads the domain's published head (``read_last_published_session``). Optional so the
+                exported class stays source-compatible; ``refresh_domain`` and ``is_rulebase_stale`` raise
+                RuntimeError without it.
         """
         self._client = client
         self._cache = cache
+        self._object_service = object_service
         self._domain_list_refresh = DomainListRefreshTracker(ttl_seconds=domain_list_refresh_ttl, clock=clock)
 
-        # Initialize extractors
-        self._extractors: dict[str, Any] = {
-            "access": AccessRuleExtractor(),
-            "nat": NATRuleExtractor(),
-            "https": HTTPSRuleExtractor(),
-            "threat": ThreatRuleExtractor(),
+    def _require_object_service(self) -> ObjectService:
+        if self._object_service is None:
+            raise RuntimeError("RulebaseRefreshService needs object_service for refresh_domain and is_rulebase_stale")
+        return self._object_service
+
+    # ---- one domain ------------------------------------------------------------------------------------------
+
+    async def refresh_domain(
+        self, mgmt_name: str, domain: str, *, force: bool = False
+    ) -> AsyncGenerator[dict[str, Any]]:
+        """Read one domain's rulebases completely and replace its snapshot atomically.
+
+        Steps: published head (before any rulebase read), dirty-session guard, show-packages and NAT per package,
+        every layer of each type (package layers, listing, inline closure), place-holder links per package and
+        global layer (skipped for the Global domain), then one replace with the sync state. Any failure keeps the
+        old snapshot and marks the sync state failed. ``force`` only changes head failure: the snapshot is then
+        stored unversioned instead of failing. ``asyncio.CancelledError`` is not caught.
+
+        Yields:
+            Progress events; ``warning`` events; the last event has status ``domain_refreshed`` or
+            ``domain_failed`` and carries the DomainRefreshResult under ``result``.
+        """
+        object_service = self._require_object_service()
+        scope = {"mgmt_name": mgmt_name, "domain_name": domain}
+        yield {"message": f"Refreshing rulebases for {mgmt_name}:{domain}", **scope}
+        warnings: list[str] = []
+        error: str | None = None
+        head: LastPublishedSession | None = None
+        try:
+            head = await self._read_head(object_service, mgmt_name, domain, force, warnings)
+            await self._ensure_clean_session(mgmt_name, domain)
+            packages, layers = await self._read_domain(mgmt_name, domain, warnings)
+            snapshot = DomainRulebaseSnapshot(
+                mgmt_name=mgmt_name,
+                domain_name=domain,
+                session_uid=(head.uid or None) if head else None,
+                session_published_time=head.published_time if head else None,
+                refreshed_at=_now(),
+                packages=tuple(sorted(packages, key=lambda p: p.package_name)),
+                layers=tuple(sorted(layers.values(), key=lambda layer: (layer.rulebase_type, layer.layer_uid))),
+            )
+            status: Literal["ok", "unversioned"] = "ok" if head is not None else "unversioned"
+            state = RulebaseSyncState(
+                id=f"{mgmt_name}:{domain}",
+                mgmt_name=mgmt_name,
+                domain_name=domain,
+                session_uid=snapshot.session_uid,
+                session_published_time=snapshot.session_published_time,
+                refreshed_at=snapshot.refreshed_at,
+                format_version=RULEBASE_CACHE_FORMAT,
+                status=status,
+                last_error=None,
+            )
+            await self._cache.replace_domain_rulebases(mgmt_name, domain, build_rulebase_rows(snapshot), state)
+        except (_DomainFailed, InvalidCredentialsError) as exc:
+            error = str(exc)
+        except Exception as exc:
+            log().exception(f"Rulebase refresh of {mgmt_name}:{domain} failed")
+            error = f"{type(exc).__name__}: {exc}"
+        for warning in warnings:
+            log().warning(warning)
+            yield {"status": "warning", "message": warning, **scope}
+        if error is not None:
+            yield await self._failed(mgmt_name, domain, error, warnings)
+            return
+        counts = {
+            t: sum(1 for layer in snapshot.layers if layer.rulebase_type == t for i in layer.items if i.kind == "rule")
+            for t in ("access", "nat", "https", "threat")
+        }
+        result = DomainRefreshResult(mgmt_name, domain, status, snapshot.session_uid, counts, None, tuple(warnings))
+        total = sum(counts.values())
+        yield {
+            "message": f"Saved {total} rules for {mgmt_name}:{domain}",
+            "status": "domain_refreshed",
+            "count": total,
+            "result": result,
+            **scope,
         }
 
-    def _extract_rules_recursive(
-        self,
-        rules_data: list[dict[str, Any]],
-        extractor: Any,
-        context: ExtractionContext,
-        model_class: type[SQLModel],
-        mgmt_name: str,
-        domain: str,
-        layer_name: str,
-    ) -> list[Any]:
-        """Recursively extract rules from rulebase data, including sections.
-
-        Args:
-            rules_data: List of rule/section objects from API.
-            extractor: Rule extractor instance.
-            context: Extraction context.
-            model_class: Rulebase model class (e.g., RulebaseAccess).
-            mgmt_name: Management name.
-            domain: Domain name.
-            layer_name: Layer name.
-
-        Returns:
-            List of extracted rule models.
-        """
-        extracted = []
-        for item in rules_data:
-            if not isinstance(item, dict):
-                continue
-
-            item_type = item.get("type")
-
-            # If it's a section, recurse
-            # Sections (access-section, nat-section, ...) hold their rules in a nested rulebase
-            if str(item_type).endswith("-section") or "rulebase" in item:
-                section_rules = item.get("rulebase", [])
-                extracted.extend(
-                    self._extract_rules_recursive(
-                        section_rules, extractor, context, model_class, mgmt_name, domain, layer_name
-                    )
-                )
-                continue
-
-            # If it matches the expected rule type for the extractor
-            # AccessRuleExtractor handles 'access-rule'
-            # NATRuleExtractor handles 'nat-rule'
-            # etc.
-            rule_type_map = {
-                AccessRuleExtractor: "access-rule",
-                NATRuleExtractor: "nat-rule",
-                HTTPSRuleExtractor: "https-rule",
-                ThreatRuleExtractor: "threat-rule",
-            }
-            expected_type = rule_type_map.get(type(extractor))
-
-            if item_type == expected_type:
-                rule_dict = {**extractor.extract(item, context), "layer_name": layer_name}
-
-                # Build ID: mgmt:domain:layer:uid
-                rule_id = f"{mgmt_name}:{domain}:{layer_name}:{rule_dict['uid']}"
-                rule_model = model_class(id=rule_id, **rule_dict)
-                extracted.append(rule_model)
-
-        return extracted
-
-    def _validate_and_get_layer_name(self, layer: Any) -> str | None:
-        """Validate layer object and extract layer name.
-
-        Args:
-            layer: Layer object from API response.
-
-        Returns:
-            Layer name if valid, None otherwise.
-        """
-        if not isinstance(layer, dict):
-            log().warning(f"Invalid listing entry: {type(layer)} - {layer}")
-            return None
-        layer_name = layer.get("name")
-        if not layer_name:
-            log().warning("Invalid listing entry: no name")
-            return None
-        return layer_name
-
-    def _rows_from_layer_response(
-        self,
-        data: dict[str, Any],
-        rulebase_type: str,
-        mgmt_name: str,
-        domain: str,
-        *,
-        layer_name: str,
-    ) -> list[SQLModel]:
-        """Rule rows of one fully fetched layer, references resolved through its ``objects-dictionary``.
-
-        Args:
-            data: A complete ``show-*-rulebase`` response (``fetch_full_rulebase``).
-            rulebase_type: "access", "nat", "https" or "threat".
-            mgmt_name: Management server name.
-            domain: Domain name.
-            layer_name: The response's own top-level ``name`` (NAT: the package name).
-        """
-        objects_map = {
-            str(obj["uid"]): str(obj["name"])
-            for obj in data.get("objects-dictionary", [])
-            if isinstance(obj, dict) and "uid" in obj and "name" in obj
+    async def _failed(self, mgmt_name: str, domain: str, error: str, warnings: list[str]) -> dict[str, Any]:
+        message = f"Rulebase refresh failed for {mgmt_name}:{domain}: {error}; cached snapshot kept"
+        log().warning(message)
+        # The state store may be what failed: the domain_failed event is yielded regardless (spec 2.8).
+        session_uid: str | None = None
+        try:
+            await self._cache.mark_rulebase_sync_failed(mgmt_name, domain, error)
+        except Exception:
+            log().exception(f"Could not record the failed rulebase refresh of {mgmt_name}:{domain}")
+        try:
+            state = await self._cache.get_rulebase_sync_state(mgmt_name, domain)
+            session_uid = state.session_uid if state else None
+        except Exception:
+            log().exception(f"Could not read the rulebase sync state of {mgmt_name}:{domain}")
+        result = DomainRefreshResult(mgmt_name, domain, "failed", session_uid, {}, error, tuple(warnings))
+        return {
+            "message": message,
+            "status": "domain_failed",
+            "error": error,
+            "count": 0,
+            "result": result,
+            "mgmt_name": mgmt_name,
+            "domain_name": domain,
         }
-        return self._extract_rules_recursive(
-            rules_data=data.get("rulebase", []),
-            extractor=self._extractors[rulebase_type],
-            context=ExtractionContext(mgmt_name=mgmt_name, domain_name=domain, objects_map=objects_map),
-            model_class=_SPECS[rulebase_type].model_class,
+
+    async def _read_head(
+        self, object_service: ObjectService, mgmt_name: str, domain: str, force: bool, warnings: list[str]
+    ) -> LastPublishedSession | None:
+        try:
+            return await object_service.read_last_published_session(mgmt_name, domain)
+        except PublishedHeadError as exc:
+            if not force:
+                raise _DomainFailed(f"last published session unreadable: {exc.reason}") from exc
+            warnings.append(
+                f"Last published session of {mgmt_name}:{domain} unreadable ({exc.reason}); "
+                "snapshot stored unversioned, the next check refreshes it again"
+            )
+            return None
+
+    async def _ensure_clean_session(self, mgmt_name: str, domain: str) -> None:
+        """Refuse to read through a shared session that holds unpublished changes (spec 2.8: refuse, not a
+        dedicated login)."""
+        result = await self._client.api_call(mgmt_name=mgmt_name, command="show-session", domain=domain, payload={})
+        if not result.success or not isinstance(result.data, dict):
+            raise _DomainFailed(f"show-session failed: {result.code}: {result.message}")
+        if int(result.data.get("changes") or 0) > 0 or int(result.data.get("locks") or 0) > 0:
+            raise _DomainFailed("dirty session")
+
+    async def _list(self, mgmt_name: str, domain: str, command: str, key: str, details: str) -> list[Any] | None:
+        """A complete listing, or None when the server has no such command (the type is empty)."""
+        result = await self._client.api_query(
             mgmt_name=mgmt_name,
             domain=domain,
-            layer_name=layer_name,
+            command=command,
+            details_level=details,  # type: ignore[arg-type]
+            container_key=key,
         )
+        if result.success:
+            return list(result.objects)
+        if result.code in UNSUPPORTED_CODES:
+            log().debug(f"{command} unsupported on {mgmt_name}:{domain} ({result.code}); type cached empty")
+            return None
+        raise _DomainFailed(f"{command} failed: {result.code}: {result.message}")
+
+    async def _fetch(
+        self, mgmt_name: str, domain: str, rulebase_type: RulebaseType, target: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """One complete layer (NAT: package), or None when the command is unsupported."""
+        try:
+            return await fetch_full_rulebase(
+                self._client,
+                mgmt_name,
+                domain,
+                RULEBASE_COMMANDS[rulebase_type],
+                {**target, "details-level": "full", "use-object-dictionary": True},
+            )
+        except RulebaseFetchError as exc:
+            if exc.code in UNSUPPORTED_CODES:
+                return None
+            raise _DomainFailed(f"{rulebase_type} {target}: {exc}") from exc
+
+    async def _fetch_closure(
+        self,
+        mgmt_name: str,
+        domain: str,
+        rulebase_type: RulebaseType,
+        targets: list[tuple[dict[str, Any], str]],
+        layers: dict[str, LayerSnapshot],
+    ) -> bool:
+        """Fetch every target layer once (by uid, else by name) and every inline layer they reach.
+
+        Returns False when the type's command is unsupported.
+        """
+        queue = list(targets)
+        while queue:
+            target, domain_type = queue.pop(0)
+            if target.get("uid") and target["uid"] in layers:
+                continue
+            log().debug(
+                f"Fetching {rulebase_type} layer {target.get('name') or target.get('uid')} of {mgmt_name}:{domain}"
+            )
+            data = await self._fetch(mgmt_name, domain, rulebase_type, target)
+            if data is None:
+                return False
+            snapshot = parse_layer_response(data, rulebase_type, layer_domain_type=domain_type)
+            if snapshot.layer_uid in layers:
+                continue
+            layers[snapshot.layer_uid] = snapshot
+            queue += [
+                ({"uid": i.inline_layer_uid}, "")
+                for i in snapshot.items
+                if i.inline_layer_uid and i.inline_layer_uid not in layers
+            ]
+        return True
 
     @staticmethod
-    def _type_failed(spec: _TypeSpec, scope: dict[str, str], error: str) -> dict[str, Any]:
-        message = (
-            f"{spec.label} rulebase refresh failed for {scope['mgmt_name']}:{scope['domain_name']}: {error}; "
-            "cached rows kept"
-        )
-        log().warning(message)
-        return {"message": message, "status": "domain_failed", "error": error, **scope}
+    def _listing_target(rulebase_type: RulebaseType, entry: Any) -> tuple[dict[str, Any], str]:
+        if isinstance(entry, dict) and entry.get("uid"):
+            target: dict[str, Any] = {"uid": str(entry["uid"])}
+        elif isinstance(entry, dict) and entry.get("name"):
+            target = {"name": str(entry["name"])}
+        else:
+            raise _DomainFailed(f"invalid {rulebase_type} layer listing entry: {entry!r}")
+        domain_info = entry.get("domain")
+        return target, str((domain_info.get("domain-type") if isinstance(domain_info, dict) else "") or "")
 
-    async def _refresh_type(self, spec: _TypeSpec, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]:
-        """Read every layer (NAT: every package with a NAT policy) of one type completely, then replace that type's
-        rows for the domain in one transaction.
+    async def _read_domain(
+        self, mgmt_name: str, domain: str, warnings: list[str]
+    ) -> tuple[list[PackageLayout], dict[str, LayerSnapshot]]:
+        layers: dict[str, LayerSnapshot] = {}
+        packages_raw = await self._list(mgmt_name, domain, "show-packages", "packages", "full") or []
+        nat_uids: dict[str, str] = {}
+        for pkg in packages_raw:
+            if not isinstance(pkg, dict) or not pkg.get("nat-policy") or not pkg.get("uid"):
+                continue
+            name = str(pkg.get("name") or "")
+            data = await self._fetch(mgmt_name, domain, "nat", {"package": name})
+            if data is None:
+                nat_uids.clear()
+                layers = {uid: layer for uid, layer in layers.items() if layer.rulebase_type != "nat"}
+                break
+            nat = parse_layer_response({**data, "uid": data.get("uid") or pkg["uid"]}, "nat", layer_name=name)
+            nat_uids[str(pkg["uid"])] = nat.layer_uid
+            layers[nat.layer_uid] = nat
+        layouts = parse_packages(packages_raw, nat_layer_uids=nat_uids)
 
-        Any per-layer failure (fetch error, invalid listing entry, extraction error) aborts the type with no
-        replace, so the old rows stay and a ``domain_failed`` event is yielded: skipping a layer under a whole-type
-        replace would silently drop its rows. A failed listing keeps the old rows and yields ``warning``.
-        """
-        scope = {"mgmt_name": mgmt_name, "domain_name": domain, "rulebase_type": spec.rulebase_type}
-        try:
-            listing = await self._client.api_query(
-                mgmt_name=mgmt_name,
-                domain=domain,
-                command=spec.list_command,
-                details_level=spec.list_details_level,  # type: ignore[arg-type]
-                container_key=spec.container_key,
-            )
-            if not listing.success:
-                message = (
-                    f"{spec.list_command} failed for {mgmt_name}:{domain}: {listing.message}; "
-                    f"cached {spec.label} rules kept"
-                )
-                log().warning(message)
-                yield {"message": message, "status": "warning", **scope}
-                return
+        for rulebase_type in _LAYER_TYPES:
+            command, key = _LISTINGS[rulebase_type]
+            listing = await self._list(mgmt_name, domain, command, key, "standard")
+            targets = [
+                ({"uid": o.layer_uid}, o.layer_domain_type)
+                for layout in layouts
+                for o in layout.layers
+                if o.rulebase_type == rulebase_type
+            ]
+            if listing is not None:
+                targets += [self._listing_target(rulebase_type, entry) for entry in listing]
+            if listing is None or not await self._fetch_closure(mgmt_name, domain, rulebase_type, targets, layers):
+                layouts = _without_type(layouts, rulebase_type)
+                layers = {uid: layer for uid, layer in layers.items() if layer.rulebase_type != rulebase_type}
 
-            rows: list[SQLModel] = []
-            for entry in listing.objects:
-                entry_name = self._validate_and_get_layer_name(entry)
-                if not entry_name:
-                    yield self._type_failed(spec, scope, f"invalid {spec.target} listing entry: {entry!r}")
-                    return
-                if spec.requires_flag and not entry.get(spec.requires_flag):
+        if domain != GLOBAL_DOMAIN_NAME:
+            layouts = await self._link_placeholders(mgmt_name, domain, layouts, layers, warnings)
+            for rulebase_type in _LAYER_TYPES:
+                nested = [
+                    ({"uid": o.domain_layer_uid}, "domain")
+                    for layout in layouts
+                    for o in layout.layers
+                    if o.rulebase_type == rulebase_type and o.domain_layer_uid
+                ]
+                if nested:
+                    await self._fetch_closure(mgmt_name, domain, rulebase_type, nested, layers)
+        return layouts, layers
+
+    async def _link_placeholders(
+        self,
+        mgmt_name: str,
+        domain: str,
+        layouts: list[PackageLayout],
+        layers: dict[str, LayerSnapshot],
+        warnings: list[str],
+    ) -> list[PackageLayout]:
+        """Per package and global ordered layer with a place-holder: one read with ``package`` to find the parent
+        rule and the domain layer under it. A failed link is a per-package warning; the place-holder is then
+        numbered without descent."""
+        linked: list[PackageLayout] = []
+        for layout in layouts:
+            for ordered in [o for o in layout.layers if o.layer_domain_type == "global domain"]:
+                snapshot = layers.get(ordered.layer_uid)
+                placeholder = next((i for i in snapshot.items if i.kind == "place-holder"), None) if snapshot else None
+                if placeholder is None:
                     continue
-                yield {"message": f"Fetching {spec.label} rules for {spec.target}: {entry_name}"}
-                # After a Global assignment the listing also holds the Global domain's layers, whose names can repeat
-                # the domain's; a uid is unambiguous where a name is not.
-                entry_uid = entry.get("uid")
-                target = {"uid": entry_uid} if spec.fetch_by_uid and entry_uid else {spec.target_param: entry_name}
+                label = f"Package {layout.package_name}: place-holder link of {ordered.layer_name}"
                 try:
                     data = await fetch_full_rulebase(
                         self._client,
                         mgmt_name,
                         domain,
-                        spec.rulebase_command,
-                        {**target, "details-level": "full", "use-object-dictionary": True},
+                        RULEBASE_COMMANDS[ordered.rulebase_type],
+                        {"uid": ordered.layer_uid, "package": layout.package_name, "details-level": "standard"},
                     )
-                except RulebaseFetchError as exc:
-                    yield self._type_failed(spec, scope, f"{spec.target} {entry_name}: {exc}")
-                    return
-                layer_name = str(data.get("name") or entry_name) if spec.name_from_response else entry_name
-                try:
-                    rows += self._rows_from_layer_response(
-                        data, spec.rulebase_type, mgmt_name, domain, layer_name=layer_name
+                except InvalidCredentialsError:
+                    raise
+                except Exception as exc:  # RulebaseFetchError or a transport error; CancelledError is not an Exception
+                    warnings.append(f"{label} failed ({exc}); numbered without the domain layer")
+                    continue
+                parent = find_parent_rule(data, ordered.rulebase_type, placeholder.rule_number)
+                if parent is None:
+                    warnings.append(
+                        f"{label}: no domain parent rule at {placeholder.rule_number}; numbered without the domain layer"
                     )
-                except (AttributeError, TypeError, KeyError, ValueError) as exc:
-                    yield self._type_failed(spec, scope, f"{spec.target} {entry_name}: {exc}")
-                    return
+                    continue
+                layout = link_placeholder(layout, ordered.rulebase_type, ordered.layer_uid, placeholder.uid, parent)
+            linked.append(layout)
+        return linked
 
-            count = await self._cache.replace_domain_rulebase_type(spec.model_class, mgmt_name, domain, rows)
-            log().debug(f"Saved {count} {spec.label} rules for {mgmt_name}:{domain}")
-            yield {"message": f"Saved {count} {spec.label} rules for {mgmt_name}:{domain}", "count": count, **scope}
-        except Exception as e:
-            log().exception(f"Error refreshing {spec.label} rules for {mgmt_name}:{domain}: {e}")
-            yield {"message": f"Error: {e}", "status": "error", **scope}
+    async def is_rulebase_stale(self, mgmt_name: str, domain: str) -> bool:
+        """Whether the domain's rulebase snapshot is older than its last published session (spec 2.9)."""
+        stale, _ = await self._staleness(mgmt_name, domain)
+        return stale
+
+    async def _staleness(self, mgmt_name: str, domain: str) -> tuple[bool, str | None]:
+        """(stale, warning). No usable sync state is stale without an API call; invalid credentials are stale (the
+        refresh then reports the failure); an unreadable head is fresh with a warning (fail-open)."""
+        object_service = self._require_object_service()
+        state = await self._cache.get_rulebase_sync_state(mgmt_name, domain)
+        if state is None or state.format_version < RULEBASE_CACHE_FORMAT or state.status != "ok":
+            return True, None
+        try:
+            head = await object_service.read_last_published_session(mgmt_name, domain)
+        except InvalidCredentialsError:
+            return True, None
+        except PublishedHeadError as exc:
+            return (
+                False,
+                f"Rulebase staleness check for {mgmt_name}:{domain} failed ({exc.reason}); cached snapshot served",
+            )
+        if head.uid and state.session_uid:
+            return head.uid != state.session_uid, None
+        if state.session_published_time is None:
+            return True, None
+        return head.published_time > state.session_published_time, None
+
+    # ---- all domains -----------------------------------------------------------------------------------------
 
     async def refresh_all(
         self,
@@ -334,10 +428,11 @@ class RulebaseRefreshService:
         Args:
             mgmt_names: Optional management server filter.
             domain_names: Optional domain filter.
-            mode: Refresh mode (only "force" currently implemented for rules;
-                affects only whether the domain *list* is re-fetched before
+            mode: "skip" does nothing; "check" refreshes only stale domains
+                (see `is_rulebase_stale`); "force" refreshes every domain. The
+                mode also decides whether the domain *list* is re-fetched before
                 resolving `target_domains` below - see
-                `_ensure_domain_list_fresh`).
+                `_ensure_domain_list_fresh`.
             include_global: When False (default), the synthetic "Global" domain
                 is excluded so existing callers see today's behavior.
 
@@ -364,27 +459,26 @@ class RulebaseRefreshService:
                 target_domains = [d for d in target_domains if d in domain_names]
 
             for d_name in target_domains:
-                yield {
-                    "message": f"Refreshing rulebases for {m_name}:{d_name}",
-                    "mgmt_name": m_name,
-                    "domain_name": d_name,
-                }
-
-                # 1. Access Rulebases
-                async for event in self.refresh_access_rulebases(m_name, d_name):
-                    yield event
-
-                # 2. NAT Rulebases
-                async for event in self.refresh_nat_rulebases(m_name, d_name):
-                    yield event
-
-                # 3. HTTPS Rulebases
-                async for event in self.refresh_https_rulebases(m_name, d_name):
-                    yield event
-
-                # 4. Threat Rulebases
-                async for event in self.refresh_threat_rulebases(m_name, d_name):
-                    yield event
+                scope = {"mgmt_name": m_name, "domain_name": d_name}
+                if mode == "check":
+                    try:
+                        stale, warning = await self._staleness(m_name, d_name)
+                    except Exception:
+                        # refresh_domain then runs and reports its own failure as domain_failed
+                        log().exception(f"Rulebase staleness check of {m_name}:{d_name} failed; treating it as stale")
+                        stale, warning = True, None
+                    if warning:
+                        log().warning(warning)
+                        yield {"status": "warning", "message": warning, **scope}
+                    if not stale:
+                        yield {
+                            "status": "domain_fresh",
+                            "message": f"Rulebases of {m_name}:{d_name} are up to date",
+                            **scope,
+                        }
+                        continue
+                async for event in self.refresh_domain(m_name, d_name, force=mode == "force"):
+                    yield {k: v for k, v in event.items() if k != "result"}
 
     async def _ensure_domain_list_fresh(self, mgmt_name: str, mode: Literal["skip", "check", "force"]) -> None:
         """Re-fetch `mgmt_name`'s domain list from the API before `refresh_all`
@@ -421,24 +515,34 @@ class RulebaseRefreshService:
 
         self._domain_list_refresh.mark_checked(mgmt_name)
 
+    async def _deprecated_refresh(self, method: str, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]:
+        """Shared body of the deprecated per-type wrappers: warn, then ``refresh_domain(force=True)`` without ``result``."""
+        _warnings.warn(
+            f"RulebaseRefreshService.{method} is deprecated and refreshes the whole domain; use refresh_domain",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        async for event in self.refresh_domain(mgmt_name, domain, force=True):
+            yield {k: v for k, v in event.items() if k != "result"}
+
     async def refresh_access_rulebases(self, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]:
-        """Refresh every access layer of a domain (atomic for the access type)."""
-        async for event in self._refresh_type(_ACCESS, mgmt_name, domain):
+        """Deprecated: refreshes the whole domain (every rulebase type), like ``refresh_domain(force=True)``."""
+        async for event in self._deprecated_refresh("refresh_access_rulebases", mgmt_name, domain):
             yield event
 
     async def refresh_nat_rulebases(self, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]:
-        """Refresh the NAT rulebase of every package with ``nat-policy`` (rows keyed by package name)."""
-        async for event in self._refresh_type(_NAT, mgmt_name, domain):
+        """Deprecated: refreshes the whole domain (every rulebase type), like ``refresh_domain(force=True)``."""
+        async for event in self._deprecated_refresh("refresh_nat_rulebases", mgmt_name, domain):
             yield event
 
     async def refresh_https_rulebases(self, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]:
-        """Refresh every HTTPS inspection layer of a domain (atomic for the HTTPS type)."""
-        async for event in self._refresh_type(_HTTPS, mgmt_name, domain):
+        """Deprecated: refreshes the whole domain (every rulebase type), like ``refresh_domain(force=True)``."""
+        async for event in self._deprecated_refresh("refresh_https_rulebases", mgmt_name, domain):
             yield event
 
     async def refresh_threat_rulebases(self, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]:
-        """Refresh every threat prevention layer of a domain (atomic for the threat type)."""
-        async for event in self._refresh_type(_THREAT, mgmt_name, domain):
+        """Deprecated: refreshes the whole domain (every rulebase type), like ``refresh_domain(force=True)``."""
+        async for event in self._deprecated_refresh("refresh_threat_rulebases", mgmt_name, domain):
             yield event
 
 

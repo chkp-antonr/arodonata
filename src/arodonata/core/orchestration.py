@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 if TYPE_CHECKING:
     from arodonata.core.cache_mode import CacheMode
     from arodonata.core.cache_refresh_coordinator import CacheRefreshCoordinator
+    from arodonata.core.rulebase_refresh_coordinator import RulebaseRefreshCoordinator
     from arodonata.core.session_tracker import SessionChangeTracker
     from arodonata.ports.api_port import ApiPort
     from arodonata.ports.cache_port import CachePort
@@ -40,6 +41,7 @@ class CacheOrchestrationService:
         api: "ApiPort",
         session_tracker: "SessionChangeTracker | None",
         coordinator: "CacheRefreshCoordinator | None" = None,
+        rulebase_coordinator: "RulebaseRefreshCoordinator | None" = None,
     ) -> None:
         """Initialize orchestration service.
 
@@ -49,11 +51,29 @@ class CacheOrchestrationService:
             session_tracker: Session change tracker (optional for now).
             coordinator: Cache refresh coordinator (optional; when absent,
                 read helpers skip cache-mode-driven refresh entirely).
+            rulebase_coordinator: Rulebase refresh coordinator (optional; when
+                absent, rule reads skip cache-mode-driven refresh).
         """
         self._cache = cache
         self._api = api
         self._session_tracker = session_tracker
         self._coordinator = coordinator
+        self._rulebase_coordinator = rulebase_coordinator
+
+    async def _ensure_rulebases(
+        self,
+        mgmt_names: list[str] | None,
+        domain_names: list[str] | None,
+        cache_mode: "CacheMode | str | None",
+        cache_ttl: int | None,
+    ) -> None:
+        """Rule reads refresh rulebase snapshots (session-aware, named domains only), not objects."""
+        from arodonata.core.cache_policy import CachePolicy, RefreshScope
+
+        if self._rulebase_coordinator is None:
+            return
+        policy = CachePolicy.resolve(cache_mode, cache_ttl, self._rulebase_coordinator.default_policy)
+        await self._rulebase_coordinator.ensure(RefreshScope(mgmt_names=mgmt_names, domain_names=domain_names), policy)
 
     async def _ensure(
         self,
@@ -393,7 +413,7 @@ class CacheOrchestrationService:
         Returns:
             List of AccessRule Pydantic models.
         """
-        await self._ensure(mgmt_names, domain_names, cache_mode, cache_ttl)
+        await self._ensure_rulebases(mgmt_names, domain_names, cache_mode, cache_ttl)
 
         from arodonata.models import AccessRule
 
@@ -421,6 +441,9 @@ class CacheOrchestrationService:
                 layer_name=r.layer_name,
                 mgmt_name=r.mgmt_name,
                 domain_name=r.domain_name,
+                layer_uid=r.layer_uid,
+                section_uid=r.section_uid,
+                inline_layer_uid=r.inline_layer_uid,
                 raw_data=r.raw_data,
             )
             for r in cache_rules
@@ -448,7 +471,7 @@ class CacheOrchestrationService:
         Returns:
             List of NATRule Pydantic models.
         """
-        await self._ensure(mgmt_names, domain_names, cache_mode, cache_ttl)
+        await self._ensure_rulebases(mgmt_names, domain_names, cache_mode, cache_ttl)
 
         from arodonata.models import NATRule
 
@@ -472,9 +495,13 @@ class CacheOrchestrationService:
                 translated_source=r.translated_source,
                 translated_destination=r.translated_destination,
                 translated_service=r.translated_service,
+                auto_generated=r.auto_generated,
                 layer_name=r.layer_name,
                 mgmt_name=r.mgmt_name,
                 domain_name=r.domain_name,
+                layer_uid=r.layer_uid,
+                section_uid=r.section_uid,
+                inline_layer_uid=r.inline_layer_uid,
                 raw_data=r.raw_data,
             )
             for r in cache_rules
@@ -502,7 +529,7 @@ class CacheOrchestrationService:
         Returns:
             List of HTTPSRule Pydantic models.
         """
-        await self._ensure(mgmt_names, domain_names, cache_mode, cache_ttl)
+        await self._ensure_rulebases(mgmt_names, domain_names, cache_mode, cache_ttl)
 
         from arodonata.models import HTTPSRule
 
@@ -526,6 +553,9 @@ class CacheOrchestrationService:
                 layer_name=r.layer_name,
                 mgmt_name=r.mgmt_name,
                 domain_name=r.domain_name,
+                layer_uid=r.layer_uid,
+                section_uid=r.section_uid,
+                inline_layer_uid=r.inline_layer_uid,
                 raw_data=r.raw_data,
             )
             for r in cache_rules
@@ -553,7 +583,7 @@ class CacheOrchestrationService:
         Returns:
             List of ThreatRule Pydantic models.
         """
-        await self._ensure(mgmt_names, domain_names, cache_mode, cache_ttl)
+        await self._ensure_rulebases(mgmt_names, domain_names, cache_mode, cache_ttl)
 
         from arodonata.models import ThreatRule
 
@@ -576,6 +606,9 @@ class CacheOrchestrationService:
                 layer_name=r.layer_name,
                 mgmt_name=r.mgmt_name,
                 domain_name=r.domain_name,
+                layer_uid=r.layer_uid,
+                section_uid=r.section_uid,
+                inline_layer_uid=r.inline_layer_uid,
                 raw_data=r.raw_data,
             )
             for r in cache_rules
@@ -608,6 +641,9 @@ class CacheOrchestrationService:
 
         if not success:
             raise RuntimeError(f"Publish failed for {mgmt_name}/{domain}: {response}")
+
+        if self._rulebase_coordinator is not None:
+            self._rulebase_coordinator.invalidate(mgmt_name, domain)
 
         if self._coordinator is not None:
             self._coordinator.invalidate(mgmt_name, domain)

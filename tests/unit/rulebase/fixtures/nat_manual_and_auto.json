@@ -1,0 +1,192 @@
+{
+  "uid": "66810c7f-dd32-4fcd-8e26-61985e2da198",
+  "from": 1,
+  "to": 4,
+  "total": 4,
+  "rulebase": [
+    {
+      "uid": "2fe1c45b-02e1-4f3e-914a-b7c29c7fab56",
+      "name": "arod-gl-nat-top",
+      "type": "nat-rule",
+      "rule-number": 1,
+      "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+      },
+      "enabled": true,
+      "comments": "",
+      "auto-generated": false,
+      "method": "static",
+      "original-source": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+      "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+      "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+      "translated-source": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+      "translated-destination": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+      "translated-service": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c"
+    },
+    {
+      "uid": "a013c38b-5789-4a5d-be63-594b3411c3fe",
+      "name": "Automatic Generated Rules : Machine Static NAT",
+      "type": "nat-section",
+      "rulebase": []
+    },
+    {
+      "uid": "66840790-ad47-496e-acc9-e4c8819aec8a",
+      "name": "Automatic Generated Rules : Machine Hide NAT",
+      "type": "nat-section",
+      "rulebase": []
+    },
+    {
+      "uid": "9cf8ae07-ab21-40e3-8128-0a0528c3d15f",
+      "name": "Automatic Generated Rules : Address Range Static NAT",
+      "type": "nat-section",
+      "rulebase": []
+    },
+    {
+      "uid": "29875511-97ec-4825-a178-62124406e1bd",
+      "name": "Automatic Generated Rules : Network Static NAT",
+      "type": "nat-section",
+      "rulebase": []
+    },
+    {
+      "uid": "be4ca47a-ee00-44d3-aa5a-087da8aa1884",
+      "name": "Automatic Generated Rules : Address Range Hide NAT",
+      "type": "nat-section",
+      "rulebase": []
+    },
+    {
+      "uid": "a3641357-4c3a-49e5-90f7-6b01cb846d59",
+      "name": "Automatic Generated Rules : Network Hide NAT",
+      "type": "nat-section",
+      "from": 2,
+      "to": 3,
+      "rulebase": [
+        {
+          "uid": "43ef455c-83c0-40df-9306-b6658ac449cc",
+          "name": "Automatic Rule: CP_default_Office_Mode_addresses_pool",
+          "type": "nat-rule",
+          "rule-number": 2,
+          "domain": {
+            "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+            "name": "Domain5",
+            "domain-type": "domain"
+          },
+          "enabled": true,
+          "comments": "",
+          "auto-generated": true,
+          "method": "hide",
+          "original-source": "feddaca8-fa14-4905-8f3e-a202c428e729",
+          "original-destination": "feddaca8-fa14-4905-8f3e-a202c428e729",
+          "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+          "translated-source": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+          "translated-destination": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+          "translated-service": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c"
+        },
+        {
+          "uid": "507af8c5-39ca-4ef7-85eb-d7c3a46a1dbd",
+          "name": "Automatic Rule: CP_default_Office_Mode_addresses_pool",
+          "type": "nat-rule",
+          "rule-number": 3,
+          "domain": {
+            "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+            "name": "Domain5",
+            "domain-type": "domain"
+          },
+          "enabled": true,
+          "comments": "",
+          "auto-generated": true,
+          "method": "hide",
+          "original-source": "feddaca8-fa14-4905-8f3e-a202c428e729",
+          "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+          "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+          "translated-source": "feddaca8-fa14-4905-8f3e-a202c428e729",
+          "translated-destination": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+          "translated-service": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c"
+        }
+      ]
+    },
+    {
+      "uid": "d9b876a4-81eb-41bf-8fe6-a6959ae7b14c",
+      "name": "Manual Lower Rules",
+      "type": "nat-section",
+      "from": 4,
+      "to": 4,
+      "rulebase": [
+        {
+          "uid": "75dc042c-058a-4197-9a73-d742f90f2ed2",
+          "name": "arod-gl-nat-bottom",
+          "type": "nat-rule",
+          "rule-number": 4,
+          "domain": {
+            "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+            "name": "Domain5",
+            "domain-type": "domain"
+          },
+          "enabled": true,
+          "comments": "",
+          "auto-generated": false,
+          "method": "static",
+          "original-source": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+          "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+          "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+          "translated-source": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+          "translated-destination": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+          "translated-service": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c"
+        }
+      ]
+    }
+  ],
+  "objects-dictionary": [
+    {
+      "uid": "97aeb368-9aea-11d5-bd16-0090272ccb30",
+      "name": "All",
+      "type": "CpmiAnyObject",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+      "name": "Any",
+      "type": "CpmiAnyObject",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "feddaca8-fa14-4905-8f3e-a202c428e729",
+      "name": "CP_default_Office_Mode_addresses_pool",
+      "type": "network",
+      "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+      }
+    },
+    {
+      "uid": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+      "name": "Original",
+      "type": "Global",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+      "name": "Policy Targets",
+      "type": "Global",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    }
+  ]
+}

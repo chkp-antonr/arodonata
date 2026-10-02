@@ -1,0 +1,48 @@
+{
+  "unknown_command": {
+    "command": "show-arod-nonexistent-rulebase",
+    "payload": {},
+    "code": "generic_err_command_not_found",
+    "message": "Requested API command: [show-arod-nonexistent-rulebase] not found"
+  },
+  "nat_unknown_package": {
+    "command": "show-nat-rulebase",
+    "payload": {
+      "package": "arod-no-such-package"
+    },
+    "code": "generic_err_object_not_found",
+    "message": "Requested object [arod-no-such-package] not found"
+  },
+  "threat_unknown_uid": {
+    "command": "show-threat-rulebase",
+    "payload": {
+      "uid": "00000000-0000-4000-8000-000000000000"
+    },
+    "code": "generic_err_object_not_found",
+    "message": "Requested object [00000000-0000-4000-8000-000000000000] not found"
+  },
+  "https_unknown_uid": {
+    "command": "show-https-rulebase",
+    "payload": {
+      "uid": "00000000-0000-4000-8000-000000000000"
+    },
+    "code": "generic_err_object_not_found",
+    "message": "Requested object [00000000-0000-4000-8000-000000000000] not found"
+  },
+  "threat_on_access_layer": {
+    "command": "show-threat-rulebase",
+    "payload": {
+      "uid": "f97e1159-5917-4db4-8164-55d3642c8c1b"
+    },
+    "code": "generic_error",
+    "message": "Runtime error: com.checkpoint.management.access.objects.access_rulebase.AccessCtrlRule incompatible with com.checkpoint.objects.threat_rulebase.ThreatRule"
+  },
+  "nat_policy_false": {
+    "command": "show-nat-rulebase",
+    "payload": {
+      "package": "arod-gl4-noblades"
+    },
+    "code": "generic_err_object_not_found",
+    "message": "Requested object [Nat policy in package [arod-gl4-noblades]] not found"
+  }
+}

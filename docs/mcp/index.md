@@ -82,7 +82,7 @@ Cache-backed tools answer from Arodonata's local cache by default; pass `cache_m
 | `arodonata_init` | cache | Call this first: lists configured management servers, whether each is MDS, their domains, and cache age. |
 | `search_objects` | cache | Searches cached objects across servers/domains by name, IP or pattern, following group membership; returns `results` as a list of `{mgmt_name, domain, search_term, search_type, objects, memberships}`. |
 | `refresh_objects` | live | Re-syncs the object cache from the management server(s); `mode='incremental'` pulls only changes since the last publish. |
-| `refresh_rulebases` | live | Re-syncs cached access, NAT, HTTPS and threat rulebases; accepts `include_global`, and failures land in `errors`. |
+| `refresh_rulebases` | live | Re-syncs cached access, NAT, HTTPS and threat rulebases per domain; `mode='check'` re-reads only domains with a new published session; accepts `include_global`; failures (including `dirty session` while the shared session holds unpublished changes) land in `errors`. |
 | `api_call` | live | Runs any Management API command through Arodonata's session handling; only `show-*` commands unless writes are enabled. |
 
 ### Cached tools
@@ -134,7 +134,7 @@ Generated from the same manifest as the reference server's tool list, one tool p
 
 - Multi-server: every tool takes an optional `mgmt_name` (required only when more than one server is configured), unlike the reference server's one-host-per-process model.
 - List envelopes carry `source` (`"cache"` or `"live"`) and `cache_age_seconds` alongside the objects, so a client can tell whether an answer came from the cache and how stale it is.
-- Cache-backed tools (including the cache path of the `show_*_rulebase` tools) take `cache_mode`: `cache` reads the cache as-is, `smart` re-syncs stale domains first, `smart-fast` re-syncs incrementally, `force` does a full reload. Omit it for the server default. Live tools and `api_call` do not take `cache_mode`.
+- Cache-backed tools (including the cache path of the `show_*_rulebase` tools) take `cache_mode`: `cache` reads the cache as-is, `smart` re-syncs stale domains first, `smart-fast` re-syncs incrementally, `force` does a full reload. For the `show_*_rulebase` tools, `smart`, `smart-fast` and `force` refresh the rulebases of the named `domain` only (session-aware); without `domain` the cache is served as-is. Omit it for the server default. Live tools and `api_call` do not take `cache_mode`.
 - Rulebase tools support `format` values `raw`, `markdown` and `model_friendly`; unlike the reference server's fixed-width padded table, cells always carry full, non-truncated values.
 - `find_zero_hits_rules` and `simulate_packet` from the reference server are not ported in this version.
 - HTTP only: no stdio transport.

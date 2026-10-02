@@ -9,19 +9,26 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from arodonata.cache.models import Asset as AssetModel
+from sqlmodel import SQLModel
+
 from arodonata.cache.models import (
+    RULEBASE_MODELS,
     CPObject,
     DistributedLock,
     Domain,
     LastPublishedSession,
+    PolicyPackageLayer,
     RulebaseAccess,
     RulebaseHTTPS,
+    RulebaseLayer,
     RulebaseNAT,
+    RulebaseSection,
+    RulebaseSyncState,
     RulebaseThreat,
     ServerList,
     SIDCache,
 )
+from arodonata.cache.models import Asset as AssetModel
 
 # --------------------------------------------------------------------------
 # ServerList value object
@@ -461,3 +468,45 @@ def test_rulebase_models_share_composite_id_primary_key() -> None:
     """All rulebase tables use a composite 'mgmt:domain:layer:uid' id primary key."""
     for model in (RulebaseAccess, RulebaseNAT, RulebaseHTTPS, RulebaseThreat):
         assert model.__table__.columns["id"].primary_key is True
+
+
+# --------------------------------------------------------------------------
+# Rulebase cache v2 schema
+# --------------------------------------------------------------------------
+
+
+def test_rulebase_v2_columns_and_defaults() -> None:
+    rule = RulebaseAccess(id="m:d:L:u", uid="u", rule_number=1, name="r", enabled=True, layer_name="L", mgmt_name="m")
+    assert (rule.layer_uid, rule.kind, rule.section_uid, rule.inline_layer_uid, rule.domain_type) == (
+        None,
+        "rule",
+        None,
+        None,
+        "",
+    )
+    nat = RulebaseNAT(id="m:d:P:u", uid="u", rule_number=1, name="n", enabled=True, layer_name="P", mgmt_name="m")
+    assert nat.auto_generated is False
+    for model in RULEBASE_MODELS.values():
+        assert f"ix_{model.__tablename__}_mgmt_domain_layer_uid" in {i.name for i in model.__table__.indexes}  # type: ignore[attr-defined]
+
+
+def test_rulebase_v2_tables_registered() -> None:
+    tables = SQLModel.metadata.tables
+    for name in ("rulebase_layer", "rulebase_section", "rulebase_package_layer", "rulebase_sync_state"):
+        assert name in tables
+    assert {i.name for i in RulebaseLayer.__table__.indexes} == {"ix_rulebase_layer_mgmt_domain_layer_name"}  # type: ignore[attr-defined]
+    assert {i.name for i in RulebaseSection.__table__.indexes} == {"ix_rulebase_section_mgmt_domain_layer_uid"}  # type: ignore[attr-defined]
+    assert {i.name for i in PolicyPackageLayer.__table__.indexes} == {  # type: ignore[attr-defined]
+        "ix_rulebase_package_layer_mgmt_domain_package_name"
+    }
+    state = RulebaseSyncState(id="m:d", mgmt_name="m", domain_name="d")
+    assert (state.format_version, state.status, state.session_uid, state.last_error) == (0, "", None, None)
+
+
+def test_rulebase_models_map() -> None:
+    assert RULEBASE_MODELS == {
+        "access": RulebaseAccess,
+        "nat": RulebaseNAT,
+        "https": RulebaseHTTPS,
+        "threat": RulebaseThreat,
+    }

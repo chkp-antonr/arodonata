@@ -43,6 +43,7 @@ from .protocols import (
     ServerConfig,
     SIDRecord,
 )
+from .rulebase_refresh_coordinator import RulebaseRefreshCoordinator
 from .session_tracker import SessionChange, SessionChangeTracker
 
 __all__ = [
@@ -50,6 +51,7 @@ __all__ = [
     "CacheMode",
     "CachePolicy",
     "CacheRefreshCoordinator",
+    "RulebaseRefreshCoordinator",
     "SessionChangeTracker",
     "SessionChange",
     "CacheOrchestrationService",

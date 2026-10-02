@@ -89,6 +89,14 @@ class InvalidCredentialsError(AuthenticationError):
     pass
 
 
+class PublishedHeadError(Exception):
+    """``show-last-published-session`` could not tell where a domain's head is (failed call, exception, no timestamp)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 # API Errors
 class ApiError(ArodonataError):
     """API operation errors."""
@@ -209,6 +217,7 @@ __all__ = [
     "AuthenticationError",
     "SessionExpiredError",
     "InvalidCredentialsError",
+    "PublishedHeadError",
     "ApiError",
     "ApiCallError",
     "ApiQueryError",

@@ -218,6 +218,9 @@ async def publish_session(
         payload={},
     )
 
+    if getattr(result, "success", False):
+        client.invalidate_domain(mgmt_name, domain_name)
+
     # Clear session changes from tracker
     if client._orchestration._session_tracker:
         client._orchestration._session_tracker.clear_session(mgmt_name=mgmt_name, domain=domain_name)

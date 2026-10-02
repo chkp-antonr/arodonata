@@ -46,21 +46,19 @@ log line-by-line instead of blocking until completion.
   ranges, groups) are applied; a rules-only publish just advances the
   freshness baseline.
 
-The same engine backs the `smart-fast` cache mode used by read helpers.
+The same engine backs the `smart-fast` cache mode used by read helpers for objects. Rule reads (`get_*_rules`) do not refresh objects: they use the rulebase sync state (see [Rulebase refresh](#rulebase-refresh)) and refresh only explicitly named domains, on the named management servers or, when none is named, on the first configured one (an application that omits the server is assumed to have one).
 
 ## Rulebase refresh
 
-Per domain and rulebase type, `refresh_rulebases` reads every layer completely (pages of 100, with `from`/`to` continuity checked) and then replaces that type's rows in one transaction, so a layer is cached completely or not at all.
+`refresh_rulebases` works per domain. It first reads the domain's last published session, refuses to continue while the shared API session holds unpublished changes or locks (`dirty session`, also with `force`), then reads `show-packages`, the NAT policy of every package with `nat-policy`, and every access, HTTPS and threat layer the packages, the layer listings and the rules' inline layers reach, each completely (pages of 100 with `from`/`to` continuity checked; empty trailing sections recovered). For a package whose global layer holds a place-holder, one more read of that global layer with `package` finds the parent rule and the domain layer nested under it. The domain's whole snapshot (rules, layers, sections, package layouts) and its sync state are then replaced in one transaction, so a domain is cached completely or not at all.
 
-If listing the layers fails, a warning event is emitted and the type's existing rows are kept. If a single layer fails, an ERROR event is emitted and the type's existing rows are kept. Rules, emptied layers and layers deleted in Check Point disappear on the next successful refresh.
+The sync state (`rulebase_sync_state`) records which published session the snapshot was built from, separately from the object cache's baseline. `mode='check'` and smart reads compare it with the domain's current last published session (session uid, publish time as fallback) and re-read only when it differs; `force` always re-reads. If the head cannot be read, `check` treats a domain that already has a usable snapshot (sync state `ok`, current format) as fresh and emits a warning; a domain without one is refreshed, and that refresh then fails on the unreadable head (or, with `force`, stores the snapshot unversioned so the next check re-reads it).
 
-Layers are fetched by uid, because after a Global assignment a domain's listing also contains the Global domain's layers, whose names can repeat the domain's (for example `Network`); same-named layers are all cached under that name.
+Failures keep the previous snapshot and mark the sync state `failed` with the error: a layer or listing error, an unreadable head (except with `force`), invalid credentials, or a dirty session. A command the server does not have (`generic_err_command_not_found`) leaves that rulebase type empty instead. A failed place-holder link is a warning: that package's place-holder is then numbered without the domain layer. Two refreshes of the same domain running at the same moment (for example a `refresh_rulebases` call and a smart read in another worker) can make the later commit fail on PostgreSQL with a duplicate key; that refresh then reports `domain_failed`, the snapshot written by the other one stays, and the next check refreshes normally.
 
-NAT is cached per policy package that has `nat-policy`, and the rule's `layer_name` holds the package name. Names in `sources`, `destinations`, `services`, `action`, `track` and NAT fields come from each response's `objects-dictionary` (the uid is kept when a name cannot be resolved).
+Legacy rule getters (`get_*_rules`) read the same rows; place-holders are excluded. NAT rows keep the package name as `layer_name`. `sources`, `destinations` and `services` are stored as comma-joined names, so a name that itself contains a comma splits when the rule is read back; the exact values stay in `raw_data` with the layer's objects-dictionary.
 
-`sources`, `destinations` and `services` are stored as comma-joined names, so a name that itself contains a comma splits when the rule is read back. The exact values remain in `raw_data` together with the layer's objects-dictionary.
-
-Refresh is not session-aware yet; session-aware rulebase refresh comes in a later phase.
+Hierarchical numbers (`1`, `2`, `2.1`, `2.2.1`, section ranges `2.1-2.2`, `2.3`, `No Rules`) are not stored: `arodonata.rulebase.numbering.number_package` computes them from a snapshot (`CacheRepository.load_domain_rulebase_snapshot`), exactly as SmartConsole shows them for a package.
 
 ## Reading from the cache
 

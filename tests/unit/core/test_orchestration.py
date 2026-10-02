@@ -7,6 +7,7 @@ doubles from ``tests/unit/doubles.py`` where possible.
 """
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -122,12 +123,13 @@ class SuccessAttrResponse:
         self.success = success
 
 
-def _svc(cache=None, api=None, session_tracker=None, coordinator=None):
+def _svc(cache=None, api=None, session_tracker=None, coordinator=None, rulebase_coordinator=None):
     return CacheOrchestrationService(
         cache=cache if cache is not None else FakeCache(),
         api=api if api is not None else FakeApi(),
         session_tracker=session_tracker,
         coordinator=coordinator,
+        rulebase_coordinator=rulebase_coordinator,
     )
 
 
@@ -509,7 +511,7 @@ async def test_ensure_is_noop_without_coordinator():
 
 async def test_rulebase_helper_also_dispatches_to_coordinator():
     coord = RecordingCoordinator()
-    svc = _svc(cache=FakeCache(), coordinator=coord)
+    svc = _svc(cache=FakeCache(), rulebase_coordinator=coord)
     await svc.get_access_rules(mgmt_names=["m1"], domain_names=["d1"], cache_mode="force")
     _, policy = coord.ensure_calls[0]
     assert policy.mode == CacheMode.FORCE
@@ -689,3 +691,81 @@ async def test_discard_clears_tracked_changes():
     svc = _svc(cache=FakeCache(), session_tracker=tracker)
     await svc.discard("m1", "d1")
     assert tracker.has_changes("m1", "d1") is False
+
+
+async def test_get_access_rules_maps_v2_fields():
+    rule = RulebaseAccess(
+        id="mgmt1:dmn1:L1:r1",
+        uid="r1",
+        rule_number=1,
+        name="r",
+        enabled=True,
+        layer_name="Network",
+        mgmt_name="mgmt1",
+        domain_name="dmn1",
+        layer_uid="L1",
+        section_uid="S1",
+        inline_layer_uid="IN",
+        raw_data={},
+    )
+    [ar] = await _svc(cache=ConfiguredCache(rulebase=[rule])).get_access_rules()
+    assert (ar.layer_uid, ar.section_uid, ar.inline_layer_uid) == ("L1", "S1", "IN")
+
+
+async def test_get_nat_rules_maps_auto_generated():
+    rule = RulebaseNAT(
+        id="mgmt1:dmn1:N1:r1",
+        uid="r1",
+        rule_number=1,
+        name="n",
+        enabled=True,
+        layer_name="P",
+        mgmt_name="mgmt1",
+        domain_name="dmn1",
+        layer_uid="N1",
+        auto_generated=True,
+        raw_data={},
+    )
+    [nr] = await _svc(cache=ConfiguredCache(rulebase=[rule])).get_nat_rules()
+    assert nr.auto_generated is True and nr.layer_uid == "N1"
+
+
+class ScopeRecordingCoordinator:
+    def __init__(self):
+        self.default_policy = CachePolicy(mode=CacheMode.SMART, ttl=300)
+        self.ensured, self.invalidated = [], []
+
+    async def ensure(self, scope, policy):
+        self.ensured.append((scope.mgmt_names, scope.domain_names, policy.mode))
+
+    def invalidate(self, mgmt_name, domain_name):
+        self.invalidated.append((mgmt_name, domain_name))
+
+
+@pytest.mark.parametrize("getter", ["get_access_rules", "get_nat_rules", "get_https_rules", "get_threat_rules"])
+async def test_get_access_rules_smart_triggers_rulebase_refresh_not_object_refresh(getter):
+    objects, rulebases = ScopeRecordingCoordinator(), ScopeRecordingCoordinator()
+    svc = CacheOrchestrationService(
+        cache=ConfiguredCache(rulebase=[]),
+        api=MagicMock(),
+        session_tracker=None,
+        coordinator=objects,
+        rulebase_coordinator=rulebases,
+    )
+    await getattr(svc, getter)(mgmt_names=["m1"], domain_names=["Domain4"], cache_mode="smart")
+    assert rulebases.ensured == [(["m1"], ["Domain4"], CacheMode.SMART)] and objects.ensured == []
+
+
+async def test_orchestration_publish_invalidates_rulebase_memo():
+    objects, rulebases = ScopeRecordingCoordinator(), ScopeRecordingCoordinator()
+    api = MagicMock()
+    api.publish = AsyncMock(return_value={"success": True})
+    svc = CacheOrchestrationService(
+        cache=ConfiguredCache(),
+        api=api,
+        session_tracker=None,
+        coordinator=objects,
+        rulebase_coordinator=rulebases,
+    )
+    await svc.publish("m1", "Domain4")
+    assert rulebases.invalidated == [("m1", "Domain4")] and objects.invalidated == [("m1", "Domain4")]

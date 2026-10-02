@@ -165,7 +165,8 @@ class ThreatRuleExtractor(BaseExtractor):
     def _extract_protections(self, protections: Any, context: ExtractionContext | None = None) -> list[str]:
         """Protection names: dict entries by ``name``, uid strings through the objects map (uid when unresolved).
 
-        The field name is checked against the Gate L threat recording in Phase 2.
+        Gate L (L3): ``show-threat-rulebase`` rules carry no protections field, so this yields nothing on real data
+        and the column stays empty (decision 9); the threat profile is the rule's ``action``.
         """
         if not isinstance(protections, list):
             return []

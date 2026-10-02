@@ -1,0 +1,80 @@
+[
+  {
+    "uid": "2495585a-7a84-4f92-a77f-b282f9cf3c70",
+    "name": "Standard",
+    "type": "package",
+    "domain": {
+      "uid": "1e294ce0-367a-11e3-aa6e-0800200c9a66",
+      "name": "Global",
+      "domain-type": "global domain"
+    },
+    "access": true,
+    "threat-prevention": true,
+    "nat-policy": true,
+    "https-inspection-policy": false,
+    "qos": false,
+    "desktop-security": false,
+    "access-layers": [
+      {
+        "uid": "66a544ed-7c58-4245-954c-54ae67fb9f9d",
+        "name": "Network",
+        "type": "access-layer",
+        "domain": {
+          "uid": "1e294ce0-367a-11e3-aa6e-0800200c9a66",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      }
+    ],
+    "threat-layers": [
+      {
+        "uid": "8f241b38-7956-44a3-9777-716b515a81e3",
+        "name": "IPS",
+        "type": "threat-layer",
+        "domain": {
+          "uid": "1e294ce0-367a-11e3-aa6e-0800200c9a66",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "3e646499-f23a-48f2-979f-576e97506287",
+        "name": "Standard Threat Prevention",
+        "type": "threat-layer",
+        "domain": {
+          "uid": "1e294ce0-367a-11e3-aa6e-0800200c9a66",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      }
+    ]
+  },
+  {
+    "uid": "ebf362f5-bec7-4a0c-9cd4-253ba907d9eb",
+    "name": "t-global-pkg",
+    "type": "package",
+    "domain": {
+      "uid": "1e294ce0-367a-11e3-aa6e-0800200c9a66",
+      "name": "Global",
+      "domain-type": "global domain"
+    },
+    "access": true,
+    "threat-prevention": false,
+    "nat-policy": true,
+    "https-inspection-policy": false,
+    "qos": false,
+    "desktop-security": false,
+    "access-layers": [
+      {
+        "uid": "e2166e13-71cd-4543-a32a-9cfd853bb792",
+        "name": "t-global-pkg Network",
+        "type": "access-layer",
+        "domain": {
+          "uid": "1e294ce0-367a-11e3-aa6e-0800200c9a66",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      }
+    ]
+  }
+]

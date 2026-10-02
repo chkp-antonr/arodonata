@@ -1,0 +1,90 @@
+{
+  "uid": "25d7c8f1-2538-4130-a83f-cb5c1b071ace",
+  "from": 2,
+  "to": 2,
+  "total": 2,
+  "rulebase": [
+    {
+      "uid": "9bbbcd2e-fba9-4973-95b6-4eb5fb8a264e",
+      "name": "Automatic Generated Rules : Network Hide NAT",
+      "type": "nat-section",
+      "from": 2,
+      "to": 2,
+      "rulebase": [
+        {
+          "uid": "62e6d4ff-685c-41b7-9d23-5855a619e67c",
+          "name": "Automatic Rule: CP_default_Office_Mode_addresses_pool",
+          "type": "nat-rule",
+          "rule-number": 2,
+          "domain": {
+            "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+            "name": "Domain4",
+            "domain-type": "domain"
+          },
+          "enabled": true,
+          "comments": "",
+          "auto-generated": true,
+          "method": "hide",
+          "original-source": "ec7636dc-449d-49ef-8202-a8a5a1aaea2e",
+          "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+          "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+          "translated-source": "ec7636dc-449d-49ef-8202-a8a5a1aaea2e",
+          "translated-destination": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+          "translated-service": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c"
+        }
+      ]
+    }
+  ],
+  "objects-dictionary": [
+    {
+      "uid": "97aeb368-9aea-11d5-bd16-0090272ccb30",
+      "name": "All",
+      "type": "CpmiAnyObject",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+      "name": "Any",
+      "type": "CpmiAnyObject",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "ec7636dc-449d-49ef-8202-a8a5a1aaea2e",
+      "name": "CP_default_Office_Mode_addresses_pool",
+      "type": "network",
+      "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+      }
+    },
+    {
+      "uid": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+      "name": "Original",
+      "type": "Global",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+      "name": "Policy Targets",
+      "type": "Global",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    }
+  ]
+}

@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from ..config import GLOBAL_DOMAIN_NAME
 from ..core import RefreshMode
 from ..core.domain_list_refresh import DOMAIN_LIST_REFRESH_TTL_SECONDS, DomainListRefreshTracker
-from ..core.exceptions import InvalidCredentialsError
+from ..core.exceptions import InvalidCredentialsError, PublishedHeadError
 from ..core.incremental_refresh import FallbackToFull, IncrementalRefresher
 from ..logger import lazy_logger
 from ..utils.helpers import utc_now_naive
@@ -946,6 +946,62 @@ class ObjectService:
             return None
         return record
 
+    async def read_last_published_session(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+    ) -> LastPublishedSession:
+        """Read the domain's current last-published session WITHOUT storing it, or raise.
+
+        Args:
+            mgmt_name: Management server name.
+            domain_name: Domain name.
+
+        Returns:
+            An unsaved LastPublishedSession.
+
+        Raises:
+            InvalidCredentialsError: The login was refused for invalid credentials (propagated unchanged).
+            PublishedHeadError: The call failed, raised, or returned no usable timestamp.
+        """
+        api_domain = "" if domain_name in ("SMC User", "System Data") else domain_name
+        try:
+            response = await self._client.api_call(
+                mgmt_name=mgmt_name,
+                domain=api_domain,
+                command="show-last-published-session",
+                payload={},
+            )
+        except InvalidCredentialsError:
+            raise
+        except Exception as e:
+            raise PublishedHeadError(f"show-last-published-session raised {type(e).__name__}: {e}") from e
+
+        if not response.success or not response.data:
+            raise PublishedHeadError(f"show-last-published-session failed: {response.code}: {response.message}")
+
+        data = response.data
+        try:
+            published_time = self._parse_api_timestamp(data.get("meta-info", {}).get("last-modify-time", {}))
+            if not published_time:
+                raise PublishedHeadError("show-last-published-session returned no usable timestamp")
+
+            return LastPublishedSession(
+                id=f"{mgmt_name}:{domain_name}",
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                published_time=published_time,
+                uid=data.get("uid", ""),
+                name=data.get("name", ""),
+                ip_address=data.get("ip-address", ""),
+                creator=data.get("creator", ""),
+                description=data.get("description", ""),
+            )
+        except PublishedHeadError:
+            raise
+        except Exception as e:
+            raise PublishedHeadError(f"show-last-published-session returned a malformed payload: {e}") from e
+
     async def fetch_last_published_session(
         self,
         mgmt_name: str,
@@ -965,40 +1021,14 @@ class ObjectService:
 
         Returns:
             An unsaved LastPublishedSession, or None if the API call failed or
-            returned no usable timestamp.
+            returned no usable timestamp. Never raises (see
+            `read_last_published_session` for the raising variant).
         """
         try:
-            api_domain = "" if domain_name in ("SMC User", "System Data") else domain_name
-
-            response = await self._client.api_call(
-                mgmt_name=mgmt_name,
-                domain=api_domain,
-                command="show-last-published-session",
-                payload={},
-            )
-
-            if response.success and response.data:
-                data = response.data
-                meta_info = data.get("meta-info", {})
-                last_modify_time = meta_info.get("last-modify-time", {})
-                published_time = self._parse_api_timestamp(last_modify_time)
-
-                if published_time:
-                    return LastPublishedSession(
-                        id=f"{mgmt_name}:{domain_name}",
-                        mgmt_name=mgmt_name,
-                        domain_name=domain_name,
-                        published_time=published_time,
-                        uid=data.get("uid", ""),
-                        name=data.get("name", ""),
-                        ip_address=data.get("ip-address", ""),
-                        creator=data.get("creator", ""),
-                        description=data.get("description", ""),
-                    )
+            return await self.read_last_published_session(mgmt_name, domain_name)
         except Exception as e:
             log().warning(f"Failed to read LastPublishedSession for {mgmt_name}/{domain_name}: {e}")
-
-        return None
+            return None
 
     async def fetch_full_object(
         self,

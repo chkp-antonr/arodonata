@@ -1,0 +1,87 @@
+{
+  "uid": "872c5651-7d59-4e9f-80f0-ad9585166d36",
+  "name": "FPCR_UAT_Active Threat Prevention",
+  "from": 1,
+  "to": 1,
+  "total": 1,
+  "rulebase": [
+    {
+      "uid": "109c9891-5d62-492f-8929-b2e7dbc11e96",
+      "type": "threat-rule",
+      "rule-number": 1,
+      "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+      },
+      "action": "fa1aa324-a8cc-4dbd-bc04-f31fdb8abf61",
+      "track": "6c488338-8eec-4103-ad21-cd461ac2c477",
+      "source": [
+        "97aeb369-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "source-negate": false,
+      "destination": [
+        "97aeb369-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "destination-negate": false,
+      "service": [
+        "97aeb369-9aea-11d5-bd16-0090272ccb30"
+      ],
+      "service-negate": false,
+      "enabled": true,
+      "comments": ""
+    }
+  ],
+  "objects-dictionary": [
+    {
+      "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+      "name": "Any",
+      "type": "CpmiAnyObject",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "6c488338-8eec-4103-ad21-cd461ac2c477",
+      "name": "Log",
+      "type": "Global",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "fa1aa324-a8cc-4dbd-bc04-f31fdb8abf61",
+      "name": "Optimized",
+      "type": "threat-profile",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+      "name": "Policy Targets",
+      "type": "Global",
+      "domain": {
+        "uid": "a0bbbc99-adef-4ef8-bb6d-defdefdefdef",
+        "name": "Check Point Data",
+        "domain-type": "data domain"
+      }
+    },
+    {
+      "uid": "c9984796-ac84-4e48-84be-ab907a3a2e21",
+      "name": "ThreatStandardSubRulebase",
+      "type": "ThreatExceptionRulebase",
+      "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+      }
+    }
+  ]
+}
