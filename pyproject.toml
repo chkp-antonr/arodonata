@@ -48,6 +48,7 @@ dependencies = [
 [project.optional-dependencies]
 otel = ["arlogi[otel]>=0.611.0"]
 mcp = ["mcp>=2.2,<3"]
+report = ["jinja2>=3.1,<4"]
 
 [project.scripts]
 arodonata-mcp = "arodonata.mcp.__main__:main"

@@ -27,6 +27,7 @@ FACADE_METHODS = [
     "search_objects",
     "refresh_objects",
     "refresh_rulebases",
+    "collect_change_report",
 ]
 
 

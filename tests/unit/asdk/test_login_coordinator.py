@@ -1667,3 +1667,36 @@ def test_no_login_coordinator_function_takes_the_api_key_as_plain_str():
         and inspect.signature(fn).parameters["api_key"].annotation in ("str", str, "str | None")
     ]
     assert offenders == []
+
+
+async def test_create_dedicated_session_logs_no_sid_prefix(caplog):
+    sid = "SIDSENTINEL-ded-0123456789abcdef"
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", api_key=SecretStr("key"), port=4434)
+    transport = AsyncMock()
+    transport.login_with_apikey.return_value = {"success": True, "sid": sid, "data": {"uid": "u-1"}}
+    coord = _make_coordinator(registry=registry, transport=transport)
+    with caplog.at_level(1):
+        got, _ = await coord.create_dedicated_session("mgmt1", "", session_name="job-1")
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert got == sid and "Dedicated session created for 'mgmt1:': UID=u-1" in text
+    assert sid[:8] not in text
+    assert transport.login_with_apikey.await_args.kwargs["log_sid"] is False
+
+
+def test_ordinary_login_parse_still_logs_sid_prefix_at_trace(caplog):
+    sid = "SIDSENTINEL-own-0123456789abcdef"
+    coord = _make_coordinator()
+    with caplog.at_level(1):
+        got, uid = coord._parse_login_response(
+            {"success": True, "sid": sid, "data": {"uid": "u-2"}}, "m1", "d", "10.0.0.1"
+        )
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert (got, uid) == (sid, "u-2") and f"(SID: [{sid[:8]}...], UID: u-2)" in text
+    caplog.clear()
+    with caplog.at_level(1):
+        coord._parse_login_response(
+            {"success": True, "sid": sid, "data": {"uid": "u-2"}}, "m1", "d", "10.0.0.1", log_sid=False
+        )
+    quiet = "\n".join(r.getMessage() for r in caplog.records)
+    assert "Login successful" in quiet and sid[:8] not in quiet

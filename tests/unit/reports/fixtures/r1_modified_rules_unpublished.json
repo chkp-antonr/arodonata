@@ -1,0 +1,2536 @@
+{
+ "changes": [
+  {
+   "session": {
+    "session-uid": "f59e47e5-bccf-4abc-a72e-66c48939d8d9",
+    "session-name": "pytest-cr-r1b",
+    "session-description": "",
+    "published": false,
+    "domain-info": {
+     "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+     "name": "Domain5",
+     "domain-type": "domain"
+    },
+    "user-name": "admin"
+   },
+   "operations": {
+    "added-objects": [
+     {
+      "uid": "5c3efbfa-ecb1-4e46-b8f7-bbef4b157065",
+      "name": "pytest-cr-new",
+      "type": "access-rule",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "position": 4,
+      "track": {
+       "type": {
+        "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+        "name": "None",
+        "type": "Track"
+       },
+       "per-session": false,
+       "per-connection": false,
+       "accounting": false,
+       "enable-firewall-session": false,
+       "alert": "none"
+      },
+      "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+      "source": [
+       {
+        "uid": "ef0f1459-465d-4638-9718-83c77daa1bec",
+        "name": "pytest-cr-h3",
+        "type": "host",
+        "ipv4-address": "192.0.2.1"
+       }
+      ],
+      "source-negate": false,
+      "destination": [
+       {
+        "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+        "name": "None",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "destination-negate": false,
+      "service": [
+       {
+        "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+        "name": "None",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "service-negate": false,
+      "service-resource": "",
+      "vpn": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "action": {
+       "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+       "name": "Accept",
+       "type": "RulebaseAction"
+      },
+      "action-settings": {
+       "enable-identity-captive-portal": false
+      },
+      "content": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "content-negate": false,
+      "content-direction": "any",
+      "time": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "custom-fields": {
+       "field-1": "",
+       "field-2": "",
+       "field-3": ""
+      },
+      "comments": "",
+      "enabled": true,
+      "install-on": [
+       {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+        "name": "Policy Targets",
+        "type": "Global"
+       }
+      ],
+      "tags": []
+     }
+    ],
+    "modified-objects": [
+     {
+      "new-object": {
+       "uid": "c8f9fad9-c9ce-44f5-b014-77c7c146c06e",
+       "name": "pytest-cr-dis",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+       "source": [
+        {
+         "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+         "name": "pytest-cr-h1",
+         "type": "host",
+         "ipv4-address": "192.0.2.2"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "ec556a89-da23-4951-b295-be209b0d4a34",
+         "name": "pytest-cr-g1",
+         "type": "group"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "",
+       "enabled": false,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      },
+      "old-object": {
+       "uid": "c8f9fad9-c9ce-44f5-b014-77c7c146c06e",
+       "name": "pytest-cr-dis",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+       "source": [
+        {
+         "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+         "name": "pytest-cr-h1",
+         "type": "host",
+         "ipv4-address": "192.0.2.2"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "ec556a89-da23-4951-b295-be209b0d4a34",
+         "name": "pytest-cr-g1",
+         "type": "group"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      }
+     },
+     {
+      "new-object": {
+       "uid": "e6a2c7ce-a758-42cd-b4c2-486ba8e0c794",
+       "name": "pytest-cr-move",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "position": 1,
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+       "source": [
+        {
+         "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+         "name": "pytest-cr-h1",
+         "type": "host",
+         "ipv4-address": "192.0.2.2"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "ec556a89-da23-4951-b295-be209b0d4a34",
+         "name": "pytest-cr-g1",
+         "type": "group"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      },
+      "old-object": {
+       "uid": "e6a2c7ce-a758-42cd-b4c2-486ba8e0c794",
+       "name": "pytest-cr-move",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "position": 7,
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+       "source": [
+        {
+         "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+         "name": "pytest-cr-h1",
+         "type": "host",
+         "ipv4-address": "192.0.2.2"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "ec556a89-da23-4951-b295-be209b0d4a34",
+         "name": "pytest-cr-g1",
+         "type": "group"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      }
+     },
+     {
+      "new-object": {
+       "uid": "20b467f1-ce3b-4066-8e23-0c724fea42dc",
+       "name": "FPCR_UAT_Section_3-r1",
+       "type": "access-section",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "tags": [],
+       "read-only": true
+      },
+      "old-object": {
+       "uid": "20b467f1-ce3b-4066-8e23-0c724fea42dc",
+       "name": "FPCR_UAT_Section_3",
+       "type": "access-section",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "tags": [],
+       "read-only": true
+      }
+     },
+     {
+      "new-object": {
+       "uid": "b8e6f532-2569-43e7-b1da-7fdd1fd1f7bb",
+       "name": "pytest-cr-del_target",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+       "source": [
+        {
+         "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+         "name": "pytest-cr-h1",
+         "type": "host",
+         "ipv4-address": "192.0.2.2"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "ec556a89-da23-4951-b295-be209b0d4a34",
+         "name": "pytest-cr-g1",
+         "type": "group"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "r1b",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      },
+      "old-object": {
+       "uid": "b8e6f532-2569-43e7-b1da-7fdd1fd1f7bb",
+       "name": "pytest-cr-del_target",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+       "source": [
+        {
+         "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+         "name": "pytest-cr-h1",
+         "type": "host",
+         "ipv4-address": "192.0.2.2"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "ec556a89-da23-4951-b295-be209b0d4a34",
+         "name": "pytest-cr-g1",
+         "type": "group"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      }
+     },
+     {
+      "new-object": {
+       "uid": "4fa97ccb-b792-485a-a84a-28a74785f06b",
+       "name": "pytest-cr-ins_target",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+       "source": [
+        {
+         "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+         "name": "pytest-cr-h1",
+         "type": "host",
+         "ipv4-address": "192.0.2.2"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "ec556a89-da23-4951-b295-be209b0d4a34",
+         "name": "pytest-cr-g1",
+         "type": "group"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "r1b",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      },
+      "old-object": {
+       "uid": "4fa97ccb-b792-485a-a84a-28a74785f06b",
+       "name": "pytest-cr-ins_target",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+       "source": [
+        {
+         "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+         "name": "pytest-cr-h1",
+         "type": "host",
+         "ipv4-address": "192.0.2.2"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "ec556a89-da23-4951-b295-be209b0d4a34",
+         "name": "pytest-cr-g1",
+         "type": "group"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      }
+     },
+     {
+      "new-object": {
+       "uid": "b7eb578a-5433-4115-8b9d-076ca41e895e",
+       "name": "pytest-cr-nat_mod",
+       "type": "nat-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "package": "66810c7f-dd32-4fcd-8e26-61985e2da198",
+       "method": "static",
+       "auto-generated": false,
+       "original-destination": {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       },
+       "translated-destination": {
+        "uid": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+        "name": "Original",
+        "type": "Global"
+       },
+       "original-source": {
+        "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+        "name": "pytest-cr-h1",
+        "type": "host",
+        "ipv4-address": "192.0.2.2"
+       },
+       "translated-source": {
+        "uid": "ef0f1459-465d-4638-9718-83c77daa1bec",
+        "name": "pytest-cr-h3",
+        "type": "host",
+        "ipv4-address": "192.0.2.1"
+       },
+       "original-service": {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       },
+       "translated-service": {
+        "uid": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+        "name": "Original",
+        "type": "Global"
+       },
+       "comments": "r1b",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      },
+      "old-object": {
+       "uid": "b7eb578a-5433-4115-8b9d-076ca41e895e",
+       "name": "pytest-cr-nat_mod",
+       "type": "nat-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "package": "66810c7f-dd32-4fcd-8e26-61985e2da198",
+       "method": "static",
+       "auto-generated": false,
+       "original-destination": {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       },
+       "translated-destination": {
+        "uid": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+        "name": "Original",
+        "type": "Global"
+       },
+       "original-source": {
+        "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+        "name": "pytest-cr-h1",
+        "type": "host",
+        "ipv4-address": "192.0.2.2"
+       },
+       "translated-source": {
+        "uid": "04f83fdd-61c9-401d-892b-39bdd24acc64",
+        "name": "pytest-cr-h2",
+        "type": "host",
+        "ipv4-address": "192.0.2.3"
+       },
+       "original-service": {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       },
+       "translated-service": {
+        "uid": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+        "name": "Original",
+        "type": "Global"
+       },
+       "comments": "",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      }
+     },
+     {
+      "new-object": {
+       "uid": "0a147435-a60c-4de1-b6fd-7231394bca13",
+       "name": "pytest-cr-secmove",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "position": 1,
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+       "source": [
+        {
+         "uid": "04f83fdd-61c9-401d-892b-39bdd24acc64",
+         "name": "pytest-cr-h2",
+         "type": "host",
+         "ipv4-address": "192.0.2.3"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      },
+      "old-object": {
+       "uid": "0a147435-a60c-4de1-b6fd-7231394bca13",
+       "name": "pytest-cr-secmove",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "position": 1,
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+       "source": [
+        {
+         "uid": "04f83fdd-61c9-401d-892b-39bdd24acc64",
+         "name": "pytest-cr-h2",
+         "type": "host",
+         "ipv4-address": "192.0.2.3"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      }
+     },
+     {
+      "new-object": {
+       "uid": "923b32f7-1933-4bc2-91b9-43284bd83f7e",
+       "name": "pytest-cr-https_mod",
+       "type": "https-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "owner": "18d66ef8-b141-4519-91a5-5d0e52afc926",
+       "layer": {
+        "uid": "18d66ef8-b141-4519-91a5-5d0e52afc926",
+        "name": "Default Outbound Layer",
+        "type": "https-layer"
+       },
+       "source": [
+        {
+         "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+         "name": "pytest-cr-h1",
+         "type": "host",
+         "ipv4-address": "192.0.2.2"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "7f9275f0-4382-4222-b4cd-06d2c5aa3222",
+         "name": "HTTPS default services",
+         "type": "service-group"
+        }
+       ],
+       "service-negate": false,
+       "site-category": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "site-category-negate": false,
+       "action": {
+        "uid": "e9cec0eb-a48d-49f9-a6f9-42e2224d39e3",
+        "name": "Bypass",
+        "type": "RulebaseAction"
+       },
+       "track": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c477",
+        "name": "Log",
+        "type": "Global"
+       },
+       "blade": [
+        {
+         "uid": "97aeb368-9aea-11d5-bd16-0090272ccb30",
+         "name": "All",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "certificate": {
+        "uid": "56844f13-2e49-4be9-8571-a071c1b6a8ba",
+        "name": "Outbound Certificate",
+        "type": "server-certificate"
+       },
+       "comments": "r1b",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "213f0a22-49da-4719-94b3-f2d74623f3fb",
+         "name": "Policy HTTPS Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      },
+      "old-object": {
+       "uid": "923b32f7-1933-4bc2-91b9-43284bd83f7e",
+       "name": "pytest-cr-https_mod",
+       "type": "https-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "owner": "18d66ef8-b141-4519-91a5-5d0e52afc926",
+       "layer": {
+        "uid": "18d66ef8-b141-4519-91a5-5d0e52afc926",
+        "name": "Default Outbound Layer",
+        "type": "https-layer"
+       },
+       "source": [
+        {
+         "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+         "name": "pytest-cr-h1",
+         "type": "host",
+         "ipv4-address": "192.0.2.2"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "7f9275f0-4382-4222-b4cd-06d2c5aa3222",
+         "name": "HTTPS default services",
+         "type": "service-group"
+        }
+       ],
+       "service-negate": false,
+       "site-category": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "site-category-negate": false,
+       "action": {
+        "uid": "e9cec0eb-a48d-49f9-a6f9-42e2224d39e3",
+        "name": "Bypass",
+        "type": "RulebaseAction"
+       },
+       "track": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c477",
+        "name": "Log",
+        "type": "Global"
+       },
+       "blade": [
+        {
+         "uid": "97aeb368-9aea-11d5-bd16-0090272ccb30",
+         "name": "All",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "certificate": {
+        "uid": "56844f13-2e49-4be9-8571-a071c1b6a8ba",
+        "name": "Outbound Certificate",
+        "type": "server-certificate"
+       },
+       "comments": "",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "213f0a22-49da-4719-94b3-f2d74623f3fb",
+         "name": "Policy HTTPS Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      }
+     },
+     {
+      "new-object": {
+       "uid": "0a147435-a60c-4de1-b6fd-7231394bca13",
+       "name": "pytest-cr-secmove",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "position": 1,
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+       "source": [
+        {
+         "uid": "04f83fdd-61c9-401d-892b-39bdd24acc64",
+         "name": "pytest-cr-h2",
+         "type": "host",
+         "ipv4-address": "192.0.2.3"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      },
+      "old-object": {
+       "uid": "0a147435-a60c-4de1-b6fd-7231394bca13",
+       "name": "pytest-cr-secmove",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "position": 1,
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+       "source": [
+        {
+         "uid": "04f83fdd-61c9-401d-892b-39bdd24acc64",
+         "name": "pytest-cr-h2",
+         "type": "host",
+         "ipv4-address": "192.0.2.3"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      }
+     },
+     {
+      "new-object": {
+       "uid": "86299792-c17e-4107-801c-8fb3643671b7",
+       "name": "pytest-cr-thr_mod",
+       "type": "threat-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "layer": "c680da9d-ee2c-482c-bb5f-bafdf75ae85e",
+       "source": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "protected-scope": [
+        {
+         "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+         "name": "pytest-cr-h1",
+         "type": "host",
+         "ipv4-address": "192.0.2.2"
+        }
+       ],
+       "protected-scope-negate": false,
+       "track": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c477",
+        "name": "Log",
+        "type": "Global"
+       },
+       "track-settings": {
+        "packet-capture": true,
+        "forensics": true
+       },
+       "action": {
+        "uid": "fa1aa324-a8cc-4dbd-bc04-f31fdb8abf61",
+        "name": "Optimized",
+        "type": "threat-profile"
+       },
+       "exceptions-layer": "12510834-8f2c-4150-8067-4b38089927d8",
+       "comments": "r1b",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      },
+      "old-object": {
+       "uid": "86299792-c17e-4107-801c-8fb3643671b7",
+       "name": "pytest-cr-thr_mod",
+       "type": "threat-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "layer": "c680da9d-ee2c-482c-bb5f-bafdf75ae85e",
+       "source": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "protected-scope": [
+        {
+         "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+         "name": "pytest-cr-h1",
+         "type": "host",
+         "ipv4-address": "192.0.2.2"
+        }
+       ],
+       "protected-scope-negate": false,
+       "track": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c477",
+        "name": "Log",
+        "type": "Global"
+       },
+       "track-settings": {
+        "packet-capture": true,
+        "forensics": true
+       },
+       "action": {
+        "uid": "fa1aa324-a8cc-4dbd-bc04-f31fdb8abf61",
+        "name": "Optimized",
+        "type": "threat-profile"
+       },
+       "exceptions-layer": "12510834-8f2c-4150-8067-4b38089927d8",
+       "comments": "",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      }
+     },
+     {
+      "new-object": {
+       "uid": "c6d1608c-60cc-48ee-80e2-fef851bcf6ff",
+       "name": "pytest-cr-inl_mod",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "09bbcd43-e54e-47f7-8250-34cddf114a05",
+       "source": [
+        {
+         "uid": "ef0f1459-465d-4638-9718-83c77daa1bec",
+         "name": "pytest-cr-h3",
+         "type": "host",
+         "ipv4-address": "192.0.2.1"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "r1b",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      },
+      "old-object": {
+       "uid": "c6d1608c-60cc-48ee-80e2-fef851bcf6ff",
+       "name": "pytest-cr-inl_mod",
+       "type": "access-rule",
+       "domain": {
+        "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+        "name": "Domain5",
+        "domain-type": "domain"
+       },
+       "track": {
+        "type": {
+         "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+         "name": "None",
+         "type": "Track"
+        },
+        "per-session": false,
+        "per-connection": false,
+        "accounting": false,
+        "enable-firewall-session": false,
+        "alert": "none"
+       },
+       "layer": "09bbcd43-e54e-47f7-8250-34cddf114a05",
+       "source": [
+        {
+         "uid": "ef0f1459-465d-4638-9718-83c77daa1bec",
+         "name": "pytest-cr-h3",
+         "type": "host",
+         "ipv4-address": "192.0.2.1"
+        }
+       ],
+       "source-negate": false,
+       "destination": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "destination-negate": false,
+       "service": [
+        {
+         "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+         "name": "None",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "service-negate": false,
+       "service-resource": "",
+       "vpn": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "action": {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+       },
+       "action-settings": {
+        "enable-identity-captive-portal": false
+       },
+       "content": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "content-negate": false,
+       "content-direction": "any",
+       "time": [
+        {
+         "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+         "name": "Any",
+         "type": "CpmiAnyObject"
+        }
+       ],
+       "custom-fields": {
+        "field-1": "",
+        "field-2": "",
+        "field-3": ""
+       },
+       "comments": "",
+       "enabled": true,
+       "install-on": [
+        {
+         "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+         "name": "Policy Targets",
+         "type": "Global"
+        }
+       ],
+       "tags": []
+      }
+     }
+    ],
+    "deleted-objects": [
+     {
+      "uid": "2370a85e-fb21-47c0-934e-ed1648221d2e",
+      "name": "pytest-cr-deltop",
+      "type": "access-rule",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "position": 1,
+      "track": {
+       "type": {
+        "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+        "name": "None",
+        "type": "Track"
+       },
+       "per-session": false,
+       "per-connection": false,
+       "accounting": false,
+       "enable-firewall-session": false,
+       "alert": "none"
+      },
+      "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+      "source": [
+       {
+        "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+        "name": "pytest-cr-h1",
+        "type": "host",
+        "ipv4-address": "192.0.2.2"
+       }
+      ],
+      "source-negate": false,
+      "destination": [
+       {
+        "uid": "ec556a89-da23-4951-b295-be209b0d4a34",
+        "name": "pytest-cr-g1",
+        "type": "group"
+       }
+      ],
+      "destination-negate": false,
+      "service": [
+       {
+        "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+        "name": "None",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "service-negate": false,
+      "service-resource": "",
+      "vpn": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "action": {
+       "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+       "name": "Accept",
+       "type": "RulebaseAction"
+      },
+      "action-settings": {
+       "enable-identity-captive-portal": false
+      },
+      "content": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "content-negate": false,
+      "content-direction": "any",
+      "time": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "custom-fields": {
+       "field-1": "",
+       "field-2": "",
+       "field-3": ""
+      },
+      "comments": "",
+      "enabled": true,
+      "install-on": [
+       {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+        "name": "Policy Targets",
+        "type": "Global"
+       }
+      ],
+      "tags": []
+     },
+     {
+      "uid": "4c230642-a7aa-43c4-be96-3c374514db53",
+      "name": null,
+      "type": "ThreatExceptionSection",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "color": "black",
+      "tags": [],
+      "comments": "",
+      "customFields": null
+     },
+     {
+      "uid": "b267a6fd-b50d-4ce8-b409-5f6082f494c2",
+      "name": "pytest-cr-thr_del",
+      "type": "threat-rule",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "position": 2,
+      "layer": "c680da9d-ee2c-482c-bb5f-bafdf75ae85e",
+      "source": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "source-negate": false,
+      "destination": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "destination-negate": false,
+      "service": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "service-negate": false,
+      "protected-scope": [
+       {
+        "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+        "name": "pytest-cr-h1",
+        "type": "host",
+        "ipv4-address": "192.0.2.2"
+       }
+      ],
+      "protected-scope-negate": false,
+      "track": {
+       "uid": "6c488338-8eec-4103-ad21-cd461ac2c477",
+       "name": "Log",
+       "type": "Global"
+      },
+      "track-settings": {
+       "packet-capture": true,
+       "forensics": true
+      },
+      "action": {
+       "uid": "fa1aa324-a8cc-4dbd-bc04-f31fdb8abf61",
+       "name": "Optimized",
+       "type": "threat-profile"
+      },
+      "exceptions-layer": "c03ff82c-30c0-4094-8cef-4798810a5eb3",
+      "comments": "",
+      "enabled": true,
+      "install-on": [
+       {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+        "name": "Policy Targets",
+        "type": "Global"
+       }
+      ],
+      "tags": []
+     },
+     {
+      "uid": "c03ff82c-30c0-4094-8cef-4798810a5eb3",
+      "name": "ThreatStandardSubRulebase",
+      "type": "ThreatExceptionRulebase",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "color": "black",
+      "tags": [],
+      "comments": "",
+      "display-name": "",
+      "customFields": null
+     },
+     {
+      "uid": "bf662a07-3966-4c8c-b468-a689875147cc",
+      "name": "pytest-cr-inl_del",
+      "type": "access-rule",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "position": 2,
+      "track": {
+       "type": {
+        "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+        "name": "None",
+        "type": "Track"
+       },
+       "per-session": false,
+       "per-connection": false,
+       "accounting": false,
+       "enable-firewall-session": false,
+       "alert": "none"
+      },
+      "layer": "09bbcd43-e54e-47f7-8250-34cddf114a05",
+      "source": [
+       {
+        "uid": "ef0f1459-465d-4638-9718-83c77daa1bec",
+        "name": "pytest-cr-h3",
+        "type": "host",
+        "ipv4-address": "192.0.2.1"
+       }
+      ],
+      "source-negate": false,
+      "destination": [
+       {
+        "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+        "name": "None",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "destination-negate": false,
+      "service": [
+       {
+        "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+        "name": "None",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "service-negate": false,
+      "service-resource": "",
+      "vpn": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "action": {
+       "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+       "name": "Accept",
+       "type": "RulebaseAction"
+      },
+      "action-settings": {
+       "enable-identity-captive-portal": false
+      },
+      "content": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "content-negate": false,
+      "content-direction": "any",
+      "time": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "custom-fields": {
+       "field-1": "",
+       "field-2": "",
+       "field-3": ""
+      },
+      "comments": "",
+      "enabled": true,
+      "install-on": [
+       {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+        "name": "Policy Targets",
+        "type": "Global"
+       }
+      ],
+      "tags": []
+     },
+     {
+      "uid": "463f9c24-fa53-4c02-ba2d-420f3529dd9b",
+      "name": "pytest-cr-nat_del",
+      "type": "nat-rule",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "position": 2,
+      "package": "66810c7f-dd32-4fcd-8e26-61985e2da198",
+      "method": "static",
+      "auto-generated": false,
+      "original-destination": {
+       "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+       "name": "Any",
+       "type": "CpmiAnyObject"
+      },
+      "translated-destination": {
+       "uid": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+       "name": "Original",
+       "type": "Global"
+      },
+      "original-source": {
+       "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+       "name": "pytest-cr-h1",
+       "type": "host",
+       "ipv4-address": "192.0.2.2"
+      },
+      "translated-source": {
+       "uid": "04f83fdd-61c9-401d-892b-39bdd24acc64",
+       "name": "pytest-cr-h2",
+       "type": "host",
+       "ipv4-address": "192.0.2.3"
+      },
+      "original-service": {
+       "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+       "name": "Any",
+       "type": "CpmiAnyObject"
+      },
+      "translated-service": {
+       "uid": "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c",
+       "name": "Original",
+       "type": "Global"
+      },
+      "comments": "",
+      "enabled": true,
+      "install-on": [
+       {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+        "name": "Policy Targets",
+        "type": "Global"
+       }
+      ],
+      "tags": []
+     },
+     {
+      "uid": "b9e5a972-96bd-47ea-8710-2f6f7d9ee164",
+      "name": "pytest-cr-https_del",
+      "type": "https-rule",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "position": 2,
+      "owner": "18d66ef8-b141-4519-91a5-5d0e52afc926",
+      "layer": {
+       "uid": "18d66ef8-b141-4519-91a5-5d0e52afc926",
+       "name": "Default Outbound Layer",
+       "type": "https-layer"
+      },
+      "source": [
+       {
+        "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+        "name": "pytest-cr-h1",
+        "type": "host",
+        "ipv4-address": "192.0.2.2"
+       }
+      ],
+      "source-negate": false,
+      "destination": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "destination-negate": false,
+      "service": [
+       {
+        "uid": "7f9275f0-4382-4222-b4cd-06d2c5aa3222",
+        "name": "HTTPS default services",
+        "type": "service-group"
+       }
+      ],
+      "service-negate": false,
+      "site-category": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "site-category-negate": false,
+      "action": {
+       "uid": "e9cec0eb-a48d-49f9-a6f9-42e2224d39e3",
+       "name": "Bypass",
+       "type": "RulebaseAction"
+      },
+      "track": {
+       "uid": "6c488338-8eec-4103-ad21-cd461ac2c477",
+       "name": "Log",
+       "type": "Global"
+      },
+      "blade": [
+       {
+        "uid": "97aeb368-9aea-11d5-bd16-0090272ccb30",
+        "name": "All",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "certificate": {
+       "uid": "56844f13-2e49-4be9-8571-a071c1b6a8ba",
+       "name": "Outbound Certificate",
+       "type": "server-certificate"
+      },
+      "comments": "",
+      "enabled": true,
+      "install-on": [
+       {
+        "uid": "213f0a22-49da-4719-94b3-f2d74623f3fb",
+        "name": "Policy HTTPS Targets",
+        "type": "Global"
+       }
+      ],
+      "tags": []
+     },
+     {
+      "uid": "5effe16f-c277-4c37-b742-341c1ae5eb3e",
+      "name": "pytest-cr-delsec",
+      "type": "access-rule",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "position": 4,
+      "track": {
+       "type": {
+        "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+        "name": "None",
+        "type": "Track"
+       },
+       "per-session": false,
+       "per-connection": false,
+       "accounting": false,
+       "enable-firewall-session": false,
+       "alert": "none"
+      },
+      "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+      "source": [
+       {
+        "uid": "04f83fdd-61c9-401d-892b-39bdd24acc64",
+        "name": "pytest-cr-h2",
+        "type": "host",
+        "ipv4-address": "192.0.2.3"
+       }
+      ],
+      "source-negate": false,
+      "destination": [
+       {
+        "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+        "name": "None",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "destination-negate": false,
+      "service": [
+       {
+        "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+        "name": "None",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "service-negate": false,
+      "service-resource": "",
+      "vpn": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "action": {
+       "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+       "name": "Accept",
+       "type": "RulebaseAction"
+      },
+      "action-settings": {
+       "enable-identity-captive-portal": false
+      },
+      "content": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "content-negate": false,
+      "content-direction": "any",
+      "time": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "custom-fields": {
+       "field-1": "",
+       "field-2": "",
+       "field-3": ""
+      },
+      "comments": "",
+      "enabled": true,
+      "install-on": [
+       {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+        "name": "Policy Targets",
+        "type": "Global"
+       }
+      ],
+      "tags": []
+     },
+     {
+      "uid": "9d404f14-90c4-4448-b6d3-d34e3498f000",
+      "name": "pytest-cr-del_above",
+      "type": "access-rule",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "position": 5,
+      "track": {
+       "type": {
+        "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+        "name": "None",
+        "type": "Track"
+       },
+       "per-session": false,
+       "per-connection": false,
+       "accounting": false,
+       "enable-firewall-session": false,
+       "alert": "none"
+      },
+      "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+      "source": [
+       {
+        "uid": "c9ce445d-1116-446d-a31a-1853acfa96e9",
+        "name": "pytest-cr-h1",
+        "type": "host",
+        "ipv4-address": "192.0.2.2"
+       }
+      ],
+      "source-negate": false,
+      "destination": [
+       {
+        "uid": "ec556a89-da23-4951-b295-be209b0d4a34",
+        "name": "pytest-cr-g1",
+        "type": "group"
+       }
+      ],
+      "destination-negate": false,
+      "service": [
+       {
+        "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+        "name": "None",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "service-negate": false,
+      "service-resource": "",
+      "vpn": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "action": {
+       "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+       "name": "Accept",
+       "type": "RulebaseAction"
+      },
+      "action-settings": {
+       "enable-identity-captive-portal": false
+      },
+      "content": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "content-negate": false,
+      "content-direction": "any",
+      "time": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "custom-fields": {
+       "field-1": "",
+       "field-2": "",
+       "field-3": ""
+      },
+      "comments": "",
+      "enabled": true,
+      "install-on": [
+       {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+        "name": "Policy Targets",
+        "type": "Global"
+       }
+      ],
+      "tags": []
+     }
+    ]
+   }
+  }
+ ],
+ "total": 1
+}

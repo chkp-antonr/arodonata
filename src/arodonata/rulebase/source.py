@@ -34,6 +34,7 @@ class RulePosition:
     section_range: str | None
     layer_uid: str  # layer that physically holds the rule
     layer_name: str
+    section_uid: str | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class LayerPosition:
     ordered_layer_position: int
     ordered_layer_name: str
     prefix: str  # "" for an ordered layer, "2." under Global's parent rule 2, "2.2." for the inline layer of rule 2.2
+    has_sections: bool = False  # in-layer positions count within sections, so a position alone is no number
 
 
 @dataclass(frozen=True)
@@ -115,6 +117,8 @@ class RulebaseSource(Protocol):
     A cached source reports the sync-state status (``ok`` | ``unversioned`` | ``failed``) with ``snapshot_*`` fields
     describing the cached snapshot. A live source reports status ``live``, with ``snapshot_*`` describing what it
     read (the head session it read at, that session's publish time, and the read time as ``snapshot_refreshed_at``).
+    A live source reading inside an unpublished app-owned session reports that session's uid as
+    ``snapshot_session_uid`` and ``None`` as ``snapshot_published_at``.
     """
 
     async def packages(self, mgmt_name: str, domain_name: str) -> list[PackageLayout]: ...
@@ -284,19 +288,26 @@ def locate_rules_in_snapshot(
             for ordered, entries in zip(_ordered(layout, rt), number_package(layout, rt, layers), strict=True):
 
                 def at(
-                    prefix: str, layout: PackageLayout = layout, ordered: OrderedLayer = ordered, rt: RulebaseType = rt
+                    prefix: str,
+                    layer_uid: str,
+                    layout: PackageLayout = layout,
+                    ordered: OrderedLayer = ordered,
+                    rt: RulebaseType = rt,
                 ) -> LayerPosition:
-                    return LayerPosition(layout.package_name, rt, ordered.position, ordered.layer_name, prefix)
+                    has_sections = bool(layers[layer_uid].sections) if layer_uid in layers else False
+                    return LayerPosition(
+                        layout.package_name, rt, ordered.position, ordered.layer_name, prefix, has_sections
+                    )
 
                 if ordered.layer_uid in layer_positions:
-                    layer_positions[ordered.layer_uid].append(at(""))
+                    layer_positions[ordered.layer_uid].append(at("", ordered.layer_uid))
                 ranges: dict[str, str] = {}
                 for entry in entries:
                     if entry.kind == "section":
                         ranges[entry.uid] = entry.range
                         continue
                     if entry.inline_layer_uid in layer_positions and entry.kind in ("rule", "parent-rule"):
-                        layer_positions[entry.inline_layer_uid].append(at(f"{entry.number}."))
+                        layer_positions[entry.inline_layer_uid].append(at(f"{entry.number}.", entry.inline_layer_uid))
                     if entry.uid in rules:
                         rules[entry.uid].append(
                             RulePosition(
@@ -309,6 +320,7 @@ def locate_rules_in_snapshot(
                                 section_range=ranges.get(entry.section_uid) if entry.section_uid else None,
                                 layer_uid=entry.layer_uid,
                                 layer_name=entry.layer_name,
+                                section_uid=entry.section_uid,
                             )
                         )
     return RuleLocations(

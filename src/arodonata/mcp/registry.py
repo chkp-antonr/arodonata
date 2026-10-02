@@ -47,6 +47,7 @@ def register_arodonata_tools(
 ) -> RegisteredTools:
     """Add the Arodonata tool set to ``server``. The caller owns ``client`` and its lifecycle."""
     from .cached_tools import register_cached_tools
+    from .change_report_tools import register_change_report_tools
     from .compat import register_live_tools
     from .cpcrud_tools import register_cpcrud_tools
     from .native import register_native_tools
@@ -61,6 +62,7 @@ def register_arodonata_tools(
     )
     cached: list[str] = register_cached_tools(server, client, opts)
     cached += register_rulebase_tools(server, client, opts)
+    cached += register_change_report_tools(server, client, opts)
     live: list[str] = register_live_tools(server, client, opts) if live_compat else []
     native = register_native_tools(server, client, opts)
     cpcrud_names: list[str] = register_cpcrud_tools(server, client, opts) if cpcrud else []

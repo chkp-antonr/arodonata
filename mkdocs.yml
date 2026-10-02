@@ -114,6 +114,7 @@ nav:
       - getting-started/cpcrud.md
   - Guide:
       - User Guide: user-guide/cpcrud.md
+      - Change Report: user-guide/change-report.md
       - Configuration: configuration/index.md
       - Multi-Server Setup: configuration/multi-server.md
       - MCP Server: mcp/index.md
@@ -136,6 +137,7 @@ nav:
       - examples/07-session-basics.md
       - examples/08-otel-smart-refresh.md
       - examples/09-mcp-embedded.md
+      - examples/10-change-report-evidence.md
   - Project:
       - Testing: development/testing.md
       - Changelog: CHANGELOG.md

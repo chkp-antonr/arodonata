@@ -1,0 +1,194 @@
+{
+ "changes": [
+  {
+   "session": {
+    "session-uid": "3250a85f-9765-44ac-8355-432be83da916",
+    "session-name": "Global Domain Assignment",
+    "session-description": "Global Domain Assignment",
+    "published": true,
+    "publish-time": {
+     "posix": 1790837582530,
+     "iso-8601": "2026-10-01T09:53+0300"
+    },
+    "domain-info": {
+     "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+     "name": "Domain4",
+     "domain-type": "domain"
+    },
+    "user-name": "admin"
+   },
+   "operations": {
+    "added-objects": [
+     {
+      "uid": "bd472c25-89c7-4ae0-be8b-51f084faa9ce",
+      "type": "ThreatBladeAssignment",
+      "domain": {
+       "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+       "name": "Domain4",
+       "domain-type": "domain"
+      },
+      "color": "black"
+     },
+     {
+      "uid": "6011d131-8ad4-4c10-ba4b-9f0e27049c24",
+      "type": "AccessPolicyAssignment",
+      "domain": {
+       "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+       "name": "Domain4",
+       "domain-type": "domain"
+      },
+      "color": "black"
+     }
+    ],
+    "modified-objects": [
+     {
+      "new-object": {
+       "uid": "4f34ed7d-10b4-4dd7-818a-4c052850b0fa",
+       "name": "Application Control & URL Filtering Settings",
+       "type": "app-control-advanced-settings",
+       "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+       },
+       "color": "none"
+      },
+      "old-object": {
+       "uid": "4f34ed7d-10b4-4dd7-818a-4c052850b0fa",
+       "name": "Application Control & URL Filtering Settings",
+       "type": "app-control-advanced-settings",
+       "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+       },
+       "color": "none"
+      }
+     },
+     {
+      "new-object": {
+       "uid": "a1b2249c-96a6-4c3c-aaed-72979d6f7f19",
+       "name": "fpcrA2",
+       "type": "AccessPolicy",
+       "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+       },
+       "color": "black"
+      },
+      "old-object": {
+       "uid": "a1b2249c-96a6-4c3c-aaed-72979d6f7f19",
+       "name": "fpcrA2",
+       "type": "AccessPolicy",
+       "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+       },
+       "color": "black"
+      }
+     },
+     {
+      "new-object": {
+       "uid": "08e79c7a-bce2-4317-b850-fa8351dc67a1",
+       "name": "FPCR_UAT_Active",
+       "type": "AccessPolicy",
+       "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+       },
+       "color": "black"
+      },
+      "old-object": {
+       "uid": "08e79c7a-bce2-4317-b850-fa8351dc67a1",
+       "name": "FPCR_UAT_Active",
+       "type": "AccessPolicy",
+       "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+       },
+       "color": "black"
+      }
+     },
+     {
+      "new-object": {
+       "uid": "9cc74189-a30e-4597-973b-fdb890b322df",
+       "name": "fpcrA1",
+       "type": "AccessPolicy",
+       "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+       },
+       "color": "black"
+      },
+      "old-object": {
+       "uid": "9cc74189-a30e-4597-973b-fdb890b322df",
+       "name": "fpcrA1",
+       "type": "AccessPolicy",
+       "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+       },
+       "color": "black"
+      }
+     },
+     {
+      "new-object": {
+       "uid": "e37ca272-fe18-444d-914c-16c413d5f049",
+       "name": "FPCR_UAT_Decom",
+       "type": "AccessPolicy",
+       "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+       },
+       "color": "black"
+      },
+      "old-object": {
+       "uid": "e37ca272-fe18-444d-914c-16c413d5f049",
+       "name": "FPCR_UAT_Decom",
+       "type": "AccessPolicy",
+       "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+       },
+       "color": "black"
+      }
+     },
+     {
+      "new-object": {
+       "uid": "5a6dfc84-ebed-4540-bc29-c131acf024b0",
+       "name": "Standard",
+       "type": "AccessPolicy",
+       "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+       },
+       "color": "black"
+      },
+      "old-object": {
+       "uid": "5a6dfc84-ebed-4540-bc29-c131acf024b0",
+       "name": "Standard",
+       "type": "AccessPolicy",
+       "domain": {
+        "uid": "df401e44-1cbb-4257-99af-dc445d89b3f7",
+        "name": "Domain4",
+        "domain-type": "domain"
+       },
+       "color": "black"
+      }
+     }
+    ],
+    "deleted-objects": []
+   }
+  }
+ ],
+ "total": 1
+}

@@ -298,7 +298,7 @@ class AMgmtClient:
         if payload is None:
             payload = {}
 
-        log().trace(f"Using explicit SID [{sid[:8]}...] for '{mgmt_name}' command '{command}'")
+        log().trace(f"Using explicit SID for '{mgmt_name}' command '{command}'")
 
         server_config = self._registry.get_server(mgmt_name)
         port = server_config.port if server_config else None
@@ -366,7 +366,7 @@ class AMgmtClient:
             response = await self._transport.logout(server_ip, sid, port=port)
             return response.get("success", False)
         except Exception as e:
-            log().warning(f"Logout SID [{sid[:8]}...] failed: {e}")
+            log().warning(f"Logout of explicit SID for '{mgmt_name}' failed: {type(e).__name__}")
             return False
 
     async def api_query(

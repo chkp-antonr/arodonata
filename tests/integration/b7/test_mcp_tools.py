@@ -192,3 +192,14 @@ async def test_live_rulebase_filter_pages_consistently(apikey_client, test_domai
     body = _text(res)
     assert res.is_error is False, body
     assert "Source: live" in body and "Cleanup rule" in body, body
+
+
+async def test_change_report_tool_markdown(apikey_client):
+    async with _mcp(apikey_client) as (mcp, mgmt_name, _domains):
+        result = await mcp.call_tool(
+            "change_report",
+            {"mgmt_name": mgmt_name, "domain": "Domain4", "session_uids": ["354446be-2f2b-4f2f-b7b3-e10603fad414"]},
+        )
+        assert result.is_error is False, _text(result)
+        body = _text(result)
+        assert body.startswith("# Change report") and "2.2.1" in body

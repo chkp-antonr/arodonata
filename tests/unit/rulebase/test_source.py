@@ -396,3 +396,24 @@ async def test_cached_source_implements_both_protocols(repo):
         "locate_rules",
     }
     assert "find_layer_domains" in vars(RulebaseDomainIndex) and "find_package_domains" in vars(RulebaseDomainIndex)
+
+
+def test_locate_rules_returns_section_uid():
+    snapshot = domain4_snapshot()
+    sections = {s.name: s.uid for layer in snapshot.layers for s in layer.sections}
+    rule = next(i for layer in snapshot.layers for i in layer.items if i.name == "fpcr_uat_FPCR_UAT_Active_3")
+    [position] = locate_rules_in_snapshot(snapshot, [rule.uid]).rules[rule.uid]
+    assert (position.number, position.section_name, position.section_uid) == (
+        "2.3",
+        "FPCR_UAT_Section_3",
+        sections["FPCR_UAT_Section_3"],
+    )
+
+
+def test_locate_rules_reports_layer_has_sections():
+    snapshot = domain4_snapshot()
+    uid = {layer.layer_name: layer.layer_uid for layer in snapshot.layers}
+    domain, inline = uid["FPCR_UAT_Active Network"], uid["FPCR_UAT_Active Inline"]
+    located = locate_rules_in_snapshot(snapshot, layer_uids=[domain, inline])
+    assert [(p.prefix, p.has_sections) for p in located.layers[domain]] == [("2.", True)]
+    assert [(p.prefix, p.has_sections) for p in located.layers[inline]] == [("2.2.", False)]
