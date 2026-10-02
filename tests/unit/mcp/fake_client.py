@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -484,6 +484,30 @@ class FakeArodonataClient:
             rulebase_type=rulebase_type,
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
+        )
+
+    async def collect_change_report(
+        self,
+        scopes: Sequence[Any],
+        *,
+        include_raw: bool = False,
+        concurrency: int = 4,
+        max_sessions: int | None = None,
+    ) -> Any:
+        from arodonata.reports.changes import ChangeReport
+
+        return self._rec_facade(
+            "collect_change_report",
+            lambda: ChangeReport(
+                generated_at=datetime(2026, 10, 2, 9, 0, tzinfo=UTC),
+                arodonata_version="0.0.0",
+                requested=[],
+                servers=[],
+            ),
+            scopes=list(scopes),
+            include_raw=include_raw,
+            concurrency=concurrency,
+            max_sessions=max_sessions,
         )
 
     async def api_call(

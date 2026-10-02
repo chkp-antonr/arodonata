@@ -16,6 +16,7 @@ site.
 | `07_session_basics.py` | Raw session management: baseline, publish, revert |
 | `08_otel_smart_refresh.py` | Same as `04`, but with OTel tracing + a per-span timing breakdown |
 | `09_mcp_embedded.py` | Serving Arodonata as an MCP endpoint inside a FastAPI application |
+| `10_change_report_evidence.py` | Pending and published change evidence (HTML/JSON) for one session |
 
 ## Setup
 

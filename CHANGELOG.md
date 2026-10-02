@@ -10,6 +10,18 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 
 ## [Unreleased]
 
+### Added (change report)
+
+- `arodonata.reports.changes`: evidence of Check Point policy sessions — `SessionScope`/`RangeScope` inputs across management servers and domains, `ArodonataClient.collect_change_report` / `build_change_report`, `render_change_report` to HTML (self-contained, `report` extra), JSON (`ChangeReport`, re-renderable) and markdown; SmartConsole rule numbers from the rulebase cache, or live through an app-owned session (`OwnedSession`) for unpublished sessions
+- MCP tool `change_report` (read-only, markdown)
+- `api/services/rulebase_reader.py` (read pipeline shared by the cache refresh and the live source) and `LiveRulebaseSource`; `RulePosition.section_uid`, `LayerPosition.has_sections`
+- Example `10_change_report_evidence.py` and the "Change Report" user guide
+
+### Changed (change report)
+
+- `api_call_with_sid` returns `success=False, code="invalid_response"` for non-dict data instead of raising a validation error
+- Log lines for app-owned SIDs (`api_call_with_sid` trace, `logout_sid` warning, `create_dedicated_session` info) no longer carry a SID prefix, and a request's SID is redacted from transport failure logs
+
 ### Added (rulebase cache v2, phase 3)
 
 - `ArodonataClient.get_policy_packages`, `get_package_rulebase`, `get_layer_rulebase` and `locate_rules` (rule positions and layer numbering prefixes, with the snapshot's session, publish time, refresh time and status): packages and layers numbered exactly like SmartConsole from the rulebase cache (`1`, `2`, `2.1`, `2.2.1`, section ranges), refreshed session-aware first per `cache_mode`; `RulebaseSource` / `CachedRulebaseSource` and `RulebaseDomainIndex` in `arodonata.rulebase`. A domain whose last refresh failed is served from its last good snapshot with `status` and `last_error`; a call without a domain reads the one cached domain holding the layer or package. `locate_rules` takes `layer_uids`, `cache_mode` and `cache_ttl` by keyword only and rejects a bare string as a uid collection.

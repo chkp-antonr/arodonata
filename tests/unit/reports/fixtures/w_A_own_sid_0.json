@@ -1,0 +1,197 @@
+{
+ "changes": [
+  {
+   "session": {
+    "session-uid": "46fd36e3-2203-4484-8257-d8df0d94d3a8",
+    "session-name": "arod-probe-A",
+    "session-description": "probe A",
+    "published": false,
+    "domain-info": {
+     "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+     "name": "Domain5",
+     "domain-type": "domain"
+    },
+    "user-name": "admin"
+   },
+   "operations": {
+    "added-objects": [
+     {
+      "uid": "4f6e6afe-df23-4dcc-ace6-43e38da6ac06",
+      "name": "arod-probe-h1",
+      "type": "host",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "ipv4-address": "192.0.2.1",
+      "interfaces": [],
+      "nat-settings": {
+       "auto-rule": false
+      },
+      "comments": "",
+      "color": "black",
+      "tags": [],
+      "read-only": true
+     },
+     {
+      "uid": "ed4994f9-faca-4a15-bb1e-940548a045d8",
+      "name": "arod-probe-h2",
+      "type": "host",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "ipv4-address": "192.0.2.2",
+      "interfaces": [],
+      "nat-settings": {
+       "auto-rule": false
+      },
+      "comments": "",
+      "color": "black",
+      "tags": [],
+      "read-only": true
+     },
+     {
+      "uid": "92589fe9-b4e8-432e-9a02-37fcc241da25",
+      "name": "arod-probe-g1",
+      "type": "group",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "members": [
+       "4f6e6afe-df23-4dcc-ace6-43e38da6ac06",
+       "ed4994f9-faca-4a15-bb1e-940548a045d8"
+      ],
+      "comments": "",
+      "color": "black",
+      "tags": [],
+      "read-only": true
+     },
+     {
+      "uid": "6cf3dfce-e331-45d0-9b34-aefe595fcb7b",
+      "name": "arod-probe-r1",
+      "type": "access-rule",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "position": 1,
+      "track": {
+       "type": {
+        "uid": "29e53e3d-23bf-48fe-b6b1-d59bd88036f9",
+        "name": "None",
+        "type": "Track"
+       },
+       "per-session": false,
+       "per-connection": false,
+       "accounting": false,
+       "enable-firewall-session": false,
+       "alert": "none"
+      },
+      "layer": "4e4e638b-add7-4d2d-9e9d-f7c077af3b8f",
+      "source": [
+       {
+        "uid": "4f6e6afe-df23-4dcc-ace6-43e38da6ac06",
+        "name": "arod-probe-h1",
+        "type": "host",
+        "ipv4-address": "192.0.2.1"
+       }
+      ],
+      "source-negate": false,
+      "destination": [
+       {
+        "uid": "92589fe9-b4e8-432e-9a02-37fcc241da25",
+        "name": "arod-probe-g1",
+        "type": "group"
+       }
+      ],
+      "destination-negate": false,
+      "service": [
+       {
+        "uid": "97aeb36a-9aea-11d5-bd16-0090272ccb30",
+        "name": "None",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "service-negate": false,
+      "service-resource": "",
+      "vpn": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "action": {
+       "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+       "name": "Accept",
+       "type": "RulebaseAction"
+      },
+      "action-settings": {
+       "enable-identity-captive-portal": false
+      },
+      "content": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "content-negate": false,
+      "content-direction": "any",
+      "time": [
+       {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+       }
+      ],
+      "custom-fields": {
+       "field-1": "",
+       "field-2": "",
+       "field-3": ""
+      },
+      "comments": "edited in same session",
+      "enabled": true,
+      "install-on": [
+       {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c476",
+        "name": "Policy Targets",
+        "type": "Global"
+       }
+      ],
+      "tags": []
+     }
+    ],
+    "modified-objects": [],
+    "deleted-objects": [
+     {
+      "uid": "c0dc2546-6757-465e-95f9-c4e8d53efdcc",
+      "name": "arod-probe-h0",
+      "type": "host",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "ipv4-address": "192.0.2.3",
+      "interfaces": [],
+      "nat-settings": {
+       "auto-rule": false
+      },
+      "comments": "",
+      "color": "black",
+      "tags": [],
+      "read-only": false
+     }
+    ]
+   }
+  }
+ ],
+ "total": 1
+}

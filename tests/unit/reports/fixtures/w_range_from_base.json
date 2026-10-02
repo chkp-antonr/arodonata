@@ -1,0 +1,124 @@
+{
+ "changes": [
+  {
+   "session": {
+    "session-uid": "c563a302-4628-49f7-989b-27d30ad8b0db",
+    "session-name": "arod-probe-P0",
+    "session-description": "",
+    "published": true,
+    "publish-time": {
+     "posix": 1790835537748,
+     "iso-8601": "2026-10-01T09:18+0300"
+    },
+    "domain-info": {
+     "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+     "name": "Domain5",
+     "domain-type": "domain"
+    },
+    "user-name": "admin"
+   },
+   "operations": {
+    "added-objects": [
+     {
+      "uid": "c0dc2546-6757-465e-95f9-c4e8d53efdcc",
+      "name": "arod-probe-h0",
+      "type": "host",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "ipv4-address": "192.0.2.1",
+      "color": "black"
+     }
+    ],
+    "modified-objects": [],
+    "deleted-objects": []
+   }
+  },
+  {
+   "session": {
+    "session-uid": "46fd36e3-2203-4484-8257-d8df0d94d3a8",
+    "session-name": "arod-probe-A",
+    "session-description": "probe A",
+    "published": true,
+    "publish-time": {
+     "posix": 1790835558610,
+     "iso-8601": "2026-10-01T09:19+0300"
+    },
+    "domain-info": {
+     "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+     "name": "Domain5",
+     "domain-type": "domain"
+    },
+    "user-name": "admin"
+   },
+   "operations": {
+    "added-objects": [
+     {
+      "uid": "6cf3dfce-e331-45d0-9b34-aefe595fcb7b",
+      "name": "arod-probe-r1",
+      "type": "access-rule",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "color": "black"
+     },
+     {
+      "uid": "92589fe9-b4e8-432e-9a02-37fcc241da25",
+      "name": "arod-probe-g1",
+      "type": "group",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "color": "black"
+     },
+     {
+      "uid": "4f6e6afe-df23-4dcc-ace6-43e38da6ac06",
+      "name": "arod-probe-h1",
+      "type": "host",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "ipv4-address": "192.0.2.2",
+      "color": "black"
+     },
+     {
+      "uid": "ed4994f9-faca-4a15-bb1e-940548a045d8",
+      "name": "arod-probe-h2",
+      "type": "host",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "ipv4-address": "192.0.2.3",
+      "color": "black"
+     }
+    ],
+    "modified-objects": [],
+    "deleted-objects": [
+     {
+      "uid": "c0dc2546-6757-465e-95f9-c4e8d53efdcc",
+      "name": "arod-probe-h0",
+      "type": "host",
+      "domain": {
+       "uid": "93327c4d-6a67-4a99-89c8-64292dc3332f",
+       "name": "Domain5",
+       "domain-type": "domain"
+      },
+      "ipv4-address": "192.0.2.1",
+      "color": "black"
+     }
+    ]
+   }
+  }
+ ],
+ "total": 2
+}

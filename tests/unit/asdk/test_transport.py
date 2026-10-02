@@ -976,3 +976,71 @@ async def test_apikey_login_log_lines_show_at_most_the_last_four_characters(capl
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert _SECRET_KEY[:4] not in text
     assert _SECRET_KEY not in text
+
+
+# --------------------------------------------------------------------------
+# SID never reaches a log line it should not (D20)
+# --------------------------------------------------------------------------
+
+LOG_SID = "SIDSENTINEL-0123456789abcdef"
+
+
+def _log_text(caplog) -> str:
+    return "\n".join(r.getMessage() for r in caplog.records)
+
+
+async def _apikey_login_log(caplog, **kwargs) -> str:
+    transport = ApiTransport()
+    mock_client = MagicMock()
+    mock_client.login_with_api_key.return_value = _make_response(success=True, data={"sid": LOG_SID})
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with caplog.at_level(1), p1, p2, p3:
+        result = await transport.login_with_apikey("10.0.0.1", "a-very-long-api-key-1234", **kwargs)
+    assert result["sid"] == LOG_SID
+    return _log_text(caplog)
+
+
+async def test_login_with_apikey_log_sid_false_logs_no_sid_prefix(caplog):
+    text = await _apikey_login_log(caplog, log_sid=False)
+    assert "LOGIN (apikey) SUCCESS" in text and LOG_SID[:8] not in text
+
+
+async def test_login_with_apikey_default_still_logs_sid_prefix(caplog):
+    assert f"SID={LOG_SID[:8]}..." in await _apikey_login_log(caplog)
+
+
+@pytest.mark.parametrize("prefix_len", [8, 12, len(LOG_SID)])
+async def test_api_call_failure_and_error_logs_redact_the_request_sid(caplog, prefix_len):
+    echoed = LOG_SID[:prefix_len]
+    transport = ApiTransport()
+    mock_client = MagicMock()
+    mock_client.sid = LOG_SID
+    mock_client.api_call.return_value = _make_response(
+        success=False, data={"code": "generic_err_wrong_session_id", "message": f"session {echoed} expired"}
+    )
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with caplog.at_level(1), p1, p2, p3:
+        await transport.api_call("10.0.0.1", LOG_SID, "show-hosts", wait_for_task=False)
+    assert "API CALL FAILED" in _log_text(caplog) and LOG_SID[:8] not in _log_text(caplog)
+    caplog.clear()
+    mock_client.api_call.side_effect = RuntimeError(f"transport echoed {echoed}")
+    with caplog.at_level(1), p1, p2, p3, pytest.raises(RuntimeError):
+        await transport.api_call("10.0.0.1", LOG_SID, "show-hosts", wait_for_task=False)
+    assert "API CALL ERROR" in _log_text(caplog) and LOG_SID[:8] not in _log_text(caplog)
+
+
+async def test_logout_failure_and_error_logs_redact_the_request_sid(caplog):
+    transport = ApiTransport()
+    mock_client = MagicMock()
+    mock_client.api_call.return_value = _make_response(
+        success=False, data={"code": "generic_err", "message": f"bad session {LOG_SID}"}
+    )
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with caplog.at_level(1), p1, p2, p3:
+        await transport.logout("10.0.0.1", LOG_SID)
+    assert "LOGOUT FAILED" in _log_text(caplog) and LOG_SID[:8] not in _log_text(caplog)
+    caplog.clear()
+    mock_client.api_call.side_effect = RuntimeError(f"refused {LOG_SID[:10]}")
+    with caplog.at_level(1), p1, p2, p3:
+        await transport.logout("10.0.0.1", LOG_SID)
+    assert "LOGOUT ERROR" in _log_text(caplog) and LOG_SID[:8] not in _log_text(caplog)

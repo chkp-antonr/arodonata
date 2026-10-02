@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncGenerator, Awaitable, Callable, Collection
+from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
 from arlogi.otel.decorator import set_trace_modules, traced
@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from ..core.cache_mode import CacheMode
     from ..models.domains import Domain, Gateway, Group, Host, Network
     from ..models.rulebases import AccessRule, HTTPSRule, NATRule, ThreatRule
+    from ..reports.changes import ChangeReport, ChangeReportResult, RenderOptions, ReportFormat, Scope
     from ..rulebase.model import PackageLayout, RulebaseType
     from ..rulebase.source import CachedRulebaseSource, LayerRulebase, PackageRulebase, RuleLocations
 
@@ -613,9 +614,19 @@ class ArodonataClient:
             task_timeout=-1 if timeout > 0 else self._settings.task_timeout,
         )
 
+        raw_data = response.get("data")
+        if raw_data is not None and not isinstance(raw_data, dict):
+            # Same guard as api_call (a list or text body is a failure, not a ValidationError), plus a code.
+            log().warning(f"API returned non-dict data type for {command} (explicit SID): {type(raw_data).__name__}")
+            return ApiCallResult(
+                success=False,
+                data=None,
+                message=raw_data if isinstance(raw_data, str) else response.get("message", ""),
+                code="invalid_response",
+            )
         return ApiCallResult(
             success=response.get("success", False),
-            data=response.get("data"),
+            data=raw_data,
             message=response.get("message", ""),
             code=response.get("code", ""),
         )
@@ -1290,6 +1301,48 @@ class ArodonataClient:
         return await self._rulebase_source.locate_rules(
             mgmt, domain_name, rule_uids, rulebase_type, layer_uids=layer_uids
         )
+
+    @traced
+    async def collect_change_report(
+        self,
+        scopes: Sequence[Scope],
+        *,
+        include_raw: bool = False,
+        concurrency: int = 4,
+        max_sessions: int | None = None,
+    ) -> ChangeReport:
+        """Collect the changes of sessions (``SessionScope``) or published ranges (``RangeScope``) into a ChangeReport.
+
+        Reads ``show-changes`` through the shared session (read-only), member names through ``show-object``, and
+        numbers rules from the rulebase cache, or live through an ``owned_session``'s SID for unpublished sessions.
+        Partial failures are warnings in the report; invalid input raises ``ChangeReportInputError``. See the user
+        guide "Change Report".
+        """
+        from ..reports.changes import collect as _collect
+
+        self._ensure_open()
+        return await _collect.collect_change_report(
+            self, scopes, include_raw=include_raw, concurrency=concurrency, max_sessions=max_sessions
+        )
+
+    @traced
+    async def build_change_report(
+        self,
+        scopes: Sequence[Scope],
+        formats: Collection[ReportFormat],
+        options: RenderOptions | None = None,
+        *,
+        include_raw: bool = False,
+        concurrency: int = 4,
+        max_sessions: int | None = None,
+    ) -> ChangeReportResult:
+        """``collect_change_report`` then ``render_change_report`` (HTML needs the ``report`` extra)."""
+        from ..reports.changes.render import render_change_report
+
+        report = await self.collect_change_report(
+            scopes, include_raw=include_raw, concurrency=concurrency, max_sessions=max_sessions
+        )
+        return render_change_report(report, formats, options)
 
     # ==================== V2: Typed Helper Methods ====================
     # These methods return Pydantic models instead of raw API responses

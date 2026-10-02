@@ -173,3 +173,36 @@ async def test_cache_mode_cache_passes_through(repo):
     client = facade_client(repo)
     await client.get_layer_rulebase("m1", "Domain4", NETWORK, cache_mode="cache")
     assert client._rulebase_coordinator.ensured == [(["m1"], ["Domain4"], CacheMode.CACHE)]
+
+
+async def test_collect_change_report_delegates_to_reports_collect(monkeypatch):
+    from arodonata.reports.changes import SessionScope
+    from arodonata.reports.changes import collect as collect_mod
+
+    seen = {}
+
+    async def fake_collect(client, scopes, **kw):
+        seen.update(client=client, scopes=scopes, **kw)
+        return "report"
+
+    monkeypatch.setattr(collect_mod, "collect_change_report", fake_collect)
+    client = make_client()
+    scopes = [SessionScope(session_uids=["s1"])]
+    assert await client.collect_change_report(scopes, include_raw=True, concurrency=7, max_sessions=3) == "report"
+    assert seen == {"client": client, "scopes": scopes, "include_raw": True, "concurrency": 7, "max_sessions": 3}
+
+
+async def test_build_change_report_collects_then_renders(monkeypatch):
+    from arodonata.reports.changes import ChangeReport, SessionScope
+    from arodonata.reports.changes import collect as collect_mod
+
+    report = ChangeReport.model_validate(
+        {"generated_at": "2026-10-02T09:00:00Z", "arodonata_version": "x", "requested": [], "servers": []}
+    )
+
+    async def fake_collect(client, scopes, **kw):
+        return report
+
+    monkeypatch.setattr(collect_mod, "collect_change_report", fake_collect)
+    result = await make_client().build_change_report([SessionScope(session_uids=["s1"])], ["json"])
+    assert result.report is report and result.json == report.model_dump_json().encode()

@@ -1,0 +1,211 @@
+{%- macro item_list(items) -%}
+{%- for i in items -%}
+<span class="item-{{ i.status }}">{% if i.link %}<a href="#{{ i.link }}">{{ i.name }}</a>{% else %}{{ i.name }}{% endif %}</span>{% if not loop.last %}<br>{% endif %}
+{%- endfor -%}
+{%- endmacro -%}
+
+{%- macro cell(c) -%}
+<td{% if c.changed %} class="cell-changed"{% endif %}>
+{%- if c.negated %}<span class="neg">¬</span> {% endif -%}
+{%- if c.items is not none %}{{ item_list(c.items) }}{% else %}{{ c.text or "" }}{% endif -%}
+{%- if c.link %} <a class="dlink" href="#{{ c.link }}">↓</a>{% endif -%}
+</td>
+{%- endmacro -%}
+
+{%- macro change_row(ch) -%}
+<tr><td>{{ ch.field }}</td>
+{%- if ch.removed or ch.added -%}
+<td>{% for r in ch.removed %}<span class="item-removed">- {{ r.name }}</span>{% if not loop.last %}<br>{% endif %}{% endfor %}</td><td>{% for r in ch.added %}<span class="item-added">+ {{ r.name }}</span>{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+{%- else -%}
+<td>{{ ch.old if ch.old is not none else "" }}</td><td>{{ ch.new if ch.new is not none else "" }}</td>
+{%- endif -%}
+</tr>
+{%- endmacro -%}
+
+{%- macro change_table(changes, other_fields, anchor, caption) -%}
+<table class="detail" id="{{ anchor }}"><caption>{{ caption }}</caption>
+<thead><tr><th>Field</th><th>Old / removed</th><th>New / added</th></tr></thead>
+<tbody>
+{% for ch in changes %}{{ change_row(ch) }}
+{% endfor %}
+</tbody></table>
+{% if other_fields %}<p class="other-fields">Other fields changed: {{ other_fields | join(", ") }}</p>
+{% endif %}
+{% if not changes and not other_fields %}<p class="no-diff">No compared field differs (see JSON)</p>
+{% endif %}
+{%- endmacro -%}
+
+{%- macro rule_table(t) -%}
+<h6>{{ t.title }}</h6>
+<table class="rules">
+<thead><tr><th class="col-enabled"></th><th>No.</th>{% for key, title in t.columns %}<th>{{ title }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for r in t.rows %}
+{% if r.kind == "section" %}
+<tr class="section-row"><td colspan="{{ t.columns | length + 2 }}">{{ r.name }}{% if r.section_range %} ({{ r.section_range }}){% endif %}{% for ch in r.section_changes if ch.field == "name" and ch.old %} — renamed from {{ ch.old }}{% endfor %}{% if r.status %} <span class="tag tag-{{ r.status }}">{{ r.status | upper }}</span>{% endif %}</td></tr>
+{% else %}
+<tr class="row-{{ r.status }}{% if r.disabled %} row-disabled{% endif %}"><td class="col-enabled{% if r.enabled_changed %} cell-changed{% endif %}">{% if r.disabled %}<span class="disabled-mark">✗</span>{% endif %}</td><td class="col-number{% if r.moved or r.previous_number %} num-moved{% endif %}">{{ r.number or "–" }}{% if r.section_position is not none %} <span class="basis">(position {{ r.section_position }} in its section)</span>{% endif %}{% if r.previous_number %} (was {{ r.previous_number }}){% elif r.moved %} (moved){% endif %}{% if r.basis_label %} <span class="basis">({{ r.basis_label }})</span>{% endif %}{% if r.status == "added" %} <span class="tag tag-new">NEW</span>{% elif r.status == "deleted" %} <span class="tag tag-deleted">DELETED</span>{% endif %}</td>{% for c in r.cells %}{{ cell(c) }}{% endfor %}</tr>
+{% endif %}
+{% endfor %}
+</tbody></table>
+{% for d in t.details %}{{ change_table(d.changes, d.other_fields, d.anchor, d.label) }}
+{% endfor %}
+{%- endmacro -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ options.title }}</title>
+<style>
+body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; color: #1a1a1a; margin: 24px; }
+h1 { font-size: 22px; } h2 { font-size: 18px; border-bottom: 1px solid #ccc; } h3 { font-size: 16px; } h4 { font-size: 15px; margin-top: 24px; } h5 { font-size: 14px; } h6 { font-size: 13px; margin: 12px 0 4px; }
+table { border-collapse: collapse; width: 100%; margin: 4px 0 12px; }
+th, td { border: 1px solid #d0d0d0; padding: 3px 6px; text-align: left; vertical-align: top; }
+th { background: #f2f2f2; }
+table.header-fields, table.session-meta { width: auto; }
+caption { text-align: left; font-weight: bold; padding: 4px 0; }
+tr.row-added td:first-child { border-left: 4px solid #2e9d4f; }
+tr.row-modified td:first-child { border-left: 4px solid #e0b400; }
+tr.row-deleted td { text-decoration: line-through; }
+tr.row-disabled td { background: #efefef; }
+td.cell-changed { background: #fff3b0; }
+tr.section-row td { background: #e8eef7; font-weight: bold; }
+.item-added { color: #1d7a3a; }
+.item-removed { color: #b3261e; text-decoration: line-through; }
+.item-modified { background: #fff3b0; }
+.tag { display: inline-block; font-size: 10px; font-weight: bold; padding: 0 4px; border-radius: 3px; margin-left: 4px; text-decoration: none; }
+.tag-new, .tag-added { background: #2e9d4f; color: #fff; }
+.tag-deleted { background: #b3261e; color: #fff; }
+.tag-modified { background: #e0b400; color: #000; }
+.col-enabled { width: 14px; }
+.disabled-mark { color: #b3261e; font-weight: bold; }
+.num-moved { background: #fff3b0; }
+.basis { font-size: 10px; color: #666; }
+.neg { font-weight: bold; }
+.dlink { text-decoration: none; font-size: 10px; }
+.warnings { border: 1px solid #e0b400; background: #fffbea; padding: 6px 12px; }
+.unavailable { border: 1px solid #b3261e; background: #fdecea; padding: 6px 12px; }
+.empty, .internal, .no-diff, .other-fields { color: #555; }
+pre { white-space: pre-wrap; word-break: break-all; background: #f7f7f7; padding: 6px; }
+@media print { .domain { break-before: page; } thead { display: table-header-group; } tr { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<header>
+<h1>{{ options.title | inline }}</h1>
+{% if options.header_fields %}
+<table class="header-fields">
+{% for key, value in options.header_fields.items() %}
+<tr><th>{{ key | inline }}</th><td>{{ value | inline }}</td></tr>
+{% endfor %}
+</table>
+{% endif %}
+<p class="meta">Generated {{ view.generated_at }} UTC{% if options.generated_by %} · Generated by {{ options.generated_by }}{% endif %} · arodonata {{ view.version }}</p>
+</header>
+<nav class="toc">
+<h2>Contents</h2>
+<ul>
+{% for server in view.servers %}
+<li>{{ server.name }}<ul>
+{% for domain in server.domains %}
+<li>{{ domain.display_name }}{% if domain.unavailable %} (unavailable){% endif %}<ul>
+{% for s in domain.sessions %}
+<li><a href="#{{ s.anchor }}">{{ s.session.name }}</a> — {{ s.counts_text }}</li>
+{% endfor %}
+</ul></li>
+{% endfor %}
+</ul></li>
+{% endfor %}
+</ul>
+</nav>
+{% if view.warnings %}
+<div class="warnings">
+<h2>Warnings</h2>
+{% for group in view.warnings %}
+<h3>{{ group.mgmt }} / {{ group.domain or "SMC User" }}</h3>
+<ul>
+{% for w in group.items %}
+<li class="sev-{{ w.severity }}">[{{ w.severity }}] {{ w.code }}: {{ w.message }}{% if w.session_uid %} (session {{ w.session_uid }}){% endif %}</li>
+{% endfor %}
+</ul>
+{% endfor %}
+</div>
+{% endif %}
+{% for server in view.servers %}
+<section class="mgmt">
+<h2>{{ server.name }}</h2>
+{% for domain in server.domains %}
+<section class="domain">
+<h3>{{ domain.display_name }}</h3>
+{% for s in domain.sessions %}
+<article class="session" id="{{ s.anchor }}">
+<h4>{{ s.session.name }}</h4>
+<table class="session-meta">
+<tr><th>Session</th><td>{{ s.session.uid }}</td></tr>
+<tr><th>Administrator</th><td>{{ s.session.user_name }}</td></tr>
+{% if s.session.description %}<tr><th>Description</th><td>{{ s.session.description }}</td></tr>
+{% endif %}
+<tr><th>Status</th><td>{{ s.published_label }}</td></tr>
+{% if s.numbering_label %}<tr><th>Numbering</th><td>{{ s.numbering_label }}</td></tr>
+{% endif %}
+</table>
+{% if s.empty %}<p class="empty">No visible changes</p>
+{% endif %}
+{% for rb in s.rulebases %}
+<h5>{{ rb.title }}</h5>
+{% for t in rb.tables %}{{ rule_table(t) }}
+{% endfor %}
+{% if rb.unplaced %}{{ rule_table(rb.unplaced) }}
+{% endif %}
+{% endfor %}
+{% if s.sections %}
+<h5>Section changes</h5>
+<table class="objects"><thead><tr><th>Status</th><th>Name</th><th>Changes</th></tr></thead><tbody>
+{% for o in s.sections %}
+<tr id="{{ o.anchor }}"><td><span class="tag tag-{{ o.status }}">{{ o.status | upper }}</span></td><td>{{ o.name }}</td><td>{% for ch in o.changes %}{{ ch.field }}: {{ ch.old or "" }} → {{ ch.new or "" }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td></tr>
+{% endfor %}
+</tbody></table>
+{% endif %}
+{% if s.added_deleted or s.modified_objects %}
+<h5>Objects</h5>
+{% if s.added_deleted %}
+<table class="objects"><thead><tr><th>Status</th><th>Name</th><th>Type</th><th>Value</th></tr></thead><tbody>
+{% for o in s.added_deleted %}
+<tr id="{{ o.anchor }}" class="row-{{ o.status }}"><td><span class="tag tag-{{ 'new' if o.status == 'added' else o.status }}">{{ 'NEW' if o.status == 'added' else o.status | upper }}</span></td><td>{{ o.name }}</td><td>{{ o.type }}</td><td>{{ o.key_value }}</td></tr>
+{% endfor %}
+</tbody></table>
+{% endif %}
+{% for o in s.modified_objects %}{{ change_table(o.changes, o.other_fields, o.anchor, o.type ~ " " ~ o.name) }}
+{% endfor %}
+{% endif %}
+{% if s.other %}
+<h5>Other changes</h5>
+<table class="objects"><thead><tr><th>Status</th><th>Type</th><th>Name</th></tr></thead><tbody>
+{% for o in s.other %}
+<tr id="{{ o.anchor }}"><td><span class="tag tag-{{ 'new' if o.status == 'added' else o.status }}">{{ 'NEW' if o.status == 'added' else o.status | upper }}</span></td><td>{{ o.type }}</td><td>{{ o.name }}</td></tr>
+{% endfor %}
+</tbody></table>
+{% endif %}
+{% if s.internal_count %}<p class="internal">Hidden internal changes: {{ s.internal_count }} (see JSON)</p>
+{% endif %}
+</article>
+{% endfor %}
+{% if domain.unavailable %}
+<div class="unavailable">Domain unavailable: {{ domain.unavailable.code }}: {{ domain.unavailable.message }}</div>
+{% endif %}
+</section>
+{% endfor %}
+</section>
+{% endfor %}
+{% if view.raw %}
+<section class="raw">
+<h2>Raw show-changes responses</h2>
+{% for r in view.raw %}
+<details><summary>{{ r.mgmt }} / {{ r.domain or "SMC User" }} / {{ r.request | compact_json }} ({% if r.success %}success{% else %}{{ r.code }}{% endif %})</summary>
+<pre>{{ (r.response if r.success else {"code": r.code, "message": r.message}) | pretty_json }}</pre>
+</details>
+{% endfor %}
+</section>
+{% endif %}
+</body>
+</html>

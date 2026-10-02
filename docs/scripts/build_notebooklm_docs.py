@@ -315,6 +315,7 @@ GUIDE_SOURCES = [
     ("Configuration — Multi-Server Setup", "configuration/multi-server.md"),
     ("MCP Server", "mcp/index.md"),
     ("User Guide — CRUD Operations", "user-guide/cpcrud.md"),
+    ("Change Report", "user-guide/change-report.md"),
     ("Development — Testing", "development/testing.md"),
 ]
 
@@ -352,6 +353,7 @@ EXAMPLE_MD_FILES = [
     "examples/07-session-basics.md",
     "examples/08-otel-smart-refresh.md",
     "examples/09-mcp-embedded.md",
+    "examples/10-change-report-evidence.md",
 ]
 
 SNIPPET_RE = re.compile(r'^--8<-- "(.+?)"\s*$', re.MULTILINE)

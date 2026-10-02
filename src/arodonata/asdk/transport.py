@@ -40,6 +40,18 @@ def mask_secret(secret: SecretStr | str | None) -> str:
 RawApiResponse = dict[str, Any]
 
 
+def _redact_sid(text: str, sid: SecretStr | str | None) -> str:
+    """Remove the request's own SID, the full value and every prefix of 8+ characters, from a text about to be logged
+    (a server message or exception text can echo it, e.g. an expired-session error)."""
+    secret = sid.get_secret_value() if isinstance(sid, SecretStr) else (sid or "")
+    if not secret or not text:
+        return text
+    text = text.replace(secret, "***")
+    for n in range(len(secret) - 1, 7, -1):
+        text = text.replace(secret[:n], "***")
+    return text
+
+
 class ApiTransport:
     """Thin wrapper around sync SDK calls with async execution.
 
@@ -331,7 +343,9 @@ class ApiTransport:
             if result["success"]:
                 log().trace(f"API CALL SUCCESS: {command}")
             else:
-                log().trace(f"API CALL FAILED: {command} - {result.get('message', 'Unknown error')}")
+                log().trace(
+                    f"API CALL FAILED: {command} - {_redact_sid(str(result.get('message', 'Unknown error')), sid)}"
+                )
                 span_attrs(response_code=result.get("code"))
 
             if wait_for_task and command != "show-task":
@@ -350,7 +364,7 @@ class ApiTransport:
             log().error(f"API CALL TIMEOUT: {command} (timeout={timeout}s)")
             raise
         except Exception as e:
-            log().error(f"API CALL ERROR: {command} - {e}")
+            log().error(f"API CALL ERROR: {command} - {_redact_sid(str(e), sid)}")
             raise
 
     async def _await_tasks(
@@ -508,8 +522,11 @@ class ApiTransport:
         session_name: str | None = None,
         session_description: str | None = None,
         session_timeout: int | None = None,
+        *,
+        log_sid: bool = True,
     ) -> RawApiResponse:
-        """Perform login using an API key.
+        """Perform login using an API key. ``log_sid=False`` keeps any part of the new SID out of the log (sessions
+        an app owns, D20).
 
         Args:
             server_ip: Management server IP address.
@@ -570,7 +587,8 @@ class ApiTransport:
 
             result = self._build_login_response(response)
             if result["success"]:
-                log().debug(f"LOGIN (apikey) SUCCESS: {server_ip}{domain_context} -> SID={result['sid'][:8]}...")
+                shown = f" -> SID={result['sid'][:8]}..." if log_sid else ""
+                log().debug(f"LOGIN (apikey) SUCCESS: {server_ip}{domain_context}{shown}")
             else:
                 log().error(
                     f"LOGIN (apikey) FAILED: {server_ip}{domain_context}\n"
@@ -702,10 +720,12 @@ class ApiTransport:
             if result["success"]:
                 log().trace(f"LOGOUT SUCCESS: {server_ip}")
             else:
-                log().trace(f"LOGOUT FAILED: {server_ip} - {result.get('message', 'Unknown error')}")
+                log().trace(
+                    f"LOGOUT FAILED: {server_ip} - {_redact_sid(str(result.get('message', 'Unknown error')), sid)}"
+                )
             return result
         except Exception as e:
-            log().error(f"LOGOUT ERROR: {server_ip} - {e}")
+            log().error(f"LOGOUT ERROR: {server_ip} - {_redact_sid(str(e), sid)}")
             return {"success": False, "message": str(e)}
 
     @traced

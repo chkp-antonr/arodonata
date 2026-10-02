@@ -821,8 +821,11 @@ class LoginCoordinator:
         session_name: str | None = None,
         session_description: str | None = None,
         session_timeout: int | None = None,
+        *,
+        log_sid: bool = True,
     ) -> dict[str, Any]:
-        """One login round trip to `server_ip`, inside that server's RateLimiter slot.
+        """One login round trip to `server_ip`, inside that server's RateLimiter slot. ``log_sid=False`` keeps the
+        new SID out of the transport's log (dedicated sessions an app owns).
 
         The slot covers the HTTP call only. It used to be held by the caller for
         the whole retry ladder, which pinned one of three domain-server slots for
@@ -850,8 +853,10 @@ class LoginCoordinator:
         log().trace(
             f"Attempting login: mgmt='{mgmt_name}', domain='{domain}', IP={server_ip}, API_KEY={mask_secret(api_key)}"
         )
+        extra: dict[str, Any] = {} if log_sid else {"log_sid": False}
         async with self._rate_limiter.acquire(server_ip):
             return await self._transport.login_with_apikey(
+                **extra,
                 server_ip=server_ip,
                 api_key=api_key,
                 domain=domain if domain else None,
@@ -889,13 +894,15 @@ class LoginCoordinator:
         raise AuthenticationError(f"{label} to '{mgmt_name}:{domain}' gave up: {exc}") from exc
 
     def _parse_login_response(
-        self, response: dict[str, Any], mgmt_name: str, domain: str, server_ip: str
+        self, response: dict[str, Any], mgmt_name: str, domain: str, server_ip: str, *, log_sid: bool = True
     ) -> tuple[str, str | None]:
-        """Parse login API response into (sid, uid) or raise."""
+        """Parse login API response into (sid, uid) or raise. ``log_sid=False`` keeps the SID (even a prefix) out of
+        the log: used for dedicated sessions an app owns (D20)."""
         if response.get("success") and response.get("sid"):
             sid = str(response["sid"])
             uid = self._extract_uid_from_response(response)
-            log().trace(f"Login successful for '{mgmt_name}:{domain}' (SID: [{sid[:8]}...], UID: {uid})")
+            shown = f"SID: [{sid[:8]}...], " if log_sid else ""
+            log().trace(f"Login successful for '{mgmt_name}:{domain}' ({shown}UID: {uid})")
             return sid, uid
 
         code = response.get("code", "")
@@ -1758,6 +1765,7 @@ class LoginCoordinator:
                 session_name=session_name,
                 session_description=session_description,
                 session_timeout=self._settings.session_timeout,
+                log_sid=False,
             )
             # Through the shared parser rather than a bespoke success check. The
             # bespoke one built its error from `message` alone and dropped `code`,
@@ -1770,7 +1778,7 @@ class LoginCoordinator:
             # rejected key, both of which the retry loop already knows what to do
             # with. Same fix as the cleanup login (d2c38ec); this path was missed.
             try:
-                return self._parse_login_response(response, mgmt_name, domain, server_ip)
+                return self._parse_login_response(response, mgmt_name, domain, server_ip, log_sid=False)
             except InvalidCredentialsError:
                 raise  # fatal either way; the subclass is the signal, don't bury it
             except AuthenticationError as exc:
@@ -1797,7 +1805,7 @@ class LoginCoordinator:
         sid, uid = result
         if uid:
             uid = str(uid)
-        log().info(f"Dedicated session created for '{mgmt_name}:{domain}': SID=[{sid[:8]}...], UID={uid}")
+        log().info(f"Dedicated session created for '{mgmt_name}:{domain}': UID={uid}")
         return sid, server_ip
 
 
