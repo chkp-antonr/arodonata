@@ -20,8 +20,40 @@ from .model import (
 from .numbering import NumberedEntry, number_layer, number_package, section_range
 from .pager import RULEBASE_PAGE_SIZE, UNSUPPORTED_CODES, RulebaseFetchError, fetch_full_rulebase
 from .parse import find_parent_rule, link_placeholder, objects_map, parse_layer_response, parse_packages
+from .source import (
+    AmbiguousLayerName,
+    CachedRulebaseSource,
+    LayerPosition,
+    LayerRulebase,
+    PackageRulebase,
+    RulebaseCacheNotReady,
+    RulebaseDomainIndex,
+    RulebaseNotFound,
+    RulebaseSource,
+    RuleLocations,
+    RulePosition,
+    layer_rulebase_from_snapshot,
+    locate_rules_in_snapshot,
+    package_rulebase_from_snapshot,
+    resolve_layer,
+)
 
 __all__ = [
+    "AmbiguousLayerName",
+    "CachedRulebaseSource",
+    "LayerPosition",
+    "LayerRulebase",
+    "PackageRulebase",
+    "RuleLocations",
+    "RulebaseCacheNotReady",
+    "RulebaseDomainIndex",
+    "RulebaseNotFound",
+    "RulebaseSource",
+    "RulePosition",
+    "layer_rulebase_from_snapshot",
+    "locate_rules_in_snapshot",
+    "package_rulebase_from_snapshot",
+    "resolve_layer",
     "PLACEHOLDER_TYPE",
     "RULEBASE_CACHE_FORMAT",
     "RULEBASE_COMMANDS",

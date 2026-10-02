@@ -1332,6 +1332,33 @@ class CacheRepository:
             await session.merge(state)
             await session.commit()
 
+    async def find_rulebase_layers(self, mgmt_name: str, layer: str, rulebase_type: str) -> list[tuple[str, str]]:
+        """``(domain_name, layer_uid)`` of every cached layer of that type whose uid or name is ``layer``."""
+        async with self._db.session() as session:
+            stmt = (
+                select(RulebaseLayer.domain_name, RulebaseLayer.layer_uid)  # type: ignore[call-overload]
+                .where(
+                    RulebaseLayer.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+                    RulebaseLayer.rulebase_type == rulebase_type,  # type: ignore[arg-type]
+                    or_(RulebaseLayer.layer_uid == layer, RulebaseLayer.layer_name == layer),  # type: ignore[arg-type]
+                )
+                .distinct()
+            )
+            return sorted((str(d), str(u)) for d, u in (await session.execute(stmt)).all())
+
+    async def find_rulebase_packages(self, mgmt_name: str, package: str) -> list[tuple[str, str]]:
+        """``(domain_name, package_uid)`` of every cached package whose name or uid is ``package``."""
+        async with self._db.session() as session:
+            stmt = (
+                select(PolicyPackageLayer.domain_name, PolicyPackageLayer.package_uid)  # type: ignore[call-overload]
+                .where(
+                    PolicyPackageLayer.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+                    or_(PolicyPackageLayer.package_name == package, PolicyPackageLayer.package_uid == package),  # type: ignore[arg-type]
+                )
+                .distinct()
+            )
+            return sorted((str(d), str(u)) for d, u in (await session.execute(stmt)).all())
+
     async def load_domain_rulebase_snapshot(self, mgmt_name: str, domain_name: str) -> DomainRulebaseSnapshot | None:
         """The domain's cached rulebase snapshot (canonical order), or None when it has no sync state."""
         async with self._db.session() as session:

@@ -18,6 +18,8 @@ from typing import Any
 
 from arodonata.api.schemas import ApiCallResult, ApiQueryResult
 from arodonata.cache.models import LastPublishedSession
+from arodonata.rulebase.model import DomainRulebaseSnapshot
+from arodonata.rulebase.parse import find_parent_rule, link_placeholder, parse_layer_response, parse_packages
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CP_DEFAULT_LIMIT = 50
@@ -318,3 +320,41 @@ def domain4_fake() -> FakeRulebaseClient:
     client.listings["show-threat-layers"] = [ref(e) for e in pkg["threat-layers"]]
     client.listings["show-https-layers"] = [ref(e) for e in pkg["https-inspection-layers"].values()]
     return client
+
+
+def domain4_snapshot(mgmt_name: str = "m1", domain_name: str = "Domain4") -> DomainRulebaseSnapshot:
+    """Domain4 after the Global assignment, package FPCR_UAT_Active only, from Gate L recordings: global layer with
+    the place-holder linked to FPCR_UAT_Active Network, its inline layer, a synthetic 2-rule AppControl layer, NAT,
+    threat (IPS empty, TP one rule) and HTTPS (inbound empty, outbound two rules). Canonical order (Phase 2)."""
+    pkg = next(p for p in load_fixture("packages_domain4_after_assign.json") if p["name"] == "FPCR_UAT_Active")
+    app = next(layer for layer in pkg["access-layers"] if layer["name"].endswith("AppControl"))
+    layers = [
+        parse_layer_response(load_fixture("global_layer_no_package.json"), "access", layer_domain_type="global domain"),
+        parse_layer_response(
+            load_fixture("domain_layer_fpcr_uat_active_network.json"), "access", layer_domain_type="domain"
+        ),
+        parse_layer_response(load_fixture("inline_layer_fpcr_uat_active_inline.json"), "access"),
+        parse_layer_response(make_layer(app["uid"], app["name"], 2), "access", layer_domain_type="domain"),
+        parse_layer_response(load_fixture("nat_fpcr_uat_active.json"), "nat", layer_name="FPCR_UAT_Active"),
+        parse_layer_response(load_fixture("threat_ips_empty.json"), "threat", layer_domain_type="domain"),
+        parse_layer_response(load_fixture("threat_fpcr_uat_active.json"), "threat", layer_domain_type="domain"),
+        parse_layer_response(load_fixture("https_inbound_empty.json"), "https", layer_domain_type="domain"),
+        parse_layer_response(load_fixture("https_outbound.json"), "https", layer_domain_type="domain"),
+    ]
+    nat_uid = next(layer.layer_uid for layer in layers if layer.rulebase_type == "nat")
+    [layout] = parse_packages([pkg], nat_layer_uids={pkg["uid"]: nat_uid})
+    glb = next(o for o in layout.layers if o.layer_domain_type == "global domain")
+    global_layer = next(layer for layer in layers if layer.layer_uid == glb.layer_uid)
+    placeholder = next(i for i in global_layer.items if i.kind == "place-holder")
+    parent = find_parent_rule(load_fixture("global_layer_with_package.json"), "access", placeholder.rule_number)
+    assert parent is not None
+    layout = link_placeholder(layout, "access", glb.layer_uid, placeholder.uid, parent)
+    return DomainRulebaseSnapshot(
+        mgmt_name=mgmt_name,
+        domain_name=domain_name,
+        session_uid="sess-1",
+        session_published_time=datetime(2026, 10, 1, 6, 53),
+        refreshed_at=datetime(2026, 10, 1, 7, 0),
+        packages=(layout,),
+        layers=tuple(sorted(layers, key=lambda layer: (layer.rulebase_type, layer.layer_uid))),
+    )

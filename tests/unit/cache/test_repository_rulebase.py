@@ -18,6 +18,8 @@ from arodonata.cache import models  # noqa: F401  (registers tables on metadata)
 from arodonata.cache.database import DatabaseManager
 from arodonata.cache.models import RulebaseAccess, RulebaseLayer, RulebaseNAT, RulebaseSyncState
 from arodonata.cache.repository import CacheRepository
+from arodonata.cache.rulebase_rows import build_rulebase_rows
+from tests.unit.rulebase.fakes import domain4_snapshot
 
 
 @pytest.fixture
@@ -310,3 +312,31 @@ def test_repository_uses_shared_model_map():
     from arodonata.cache.models import RULEBASE_MODELS
 
     assert repository._RULEBASE_MODELS is RULEBASE_MODELS
+
+
+async def _store(repo, domain, mgmt="m1"):
+    snap = domain4_snapshot(mgmt, domain)
+    state = RulebaseSyncState(id=f"{mgmt}:{domain}", mgmt_name=mgmt, domain_name=domain, format_version=2, status="ok")
+    await repo.replace_domain_rulebases(mgmt, domain, build_rulebase_rows(snap), state)
+    return snap
+
+
+async def test_find_rulebase_layers_by_name_and_uid_across_domains(repo):
+    snap = await _store(repo, "Domain4")
+    await _store(repo, "Domain5")
+    uid = next(lyr.layer_uid for lyr in snap.layers if lyr.layer_name == "FPCR_UAT_Active Network")
+    assert await repo.find_rulebase_layers("m1", "FPCR_UAT_Active Network", "access") == [
+        ("Domain4", uid),
+        ("Domain5", uid),
+    ]
+    assert await repo.find_rulebase_layers("m1", uid, "access") == [("Domain4", uid), ("Domain5", uid)]
+    assert await repo.find_rulebase_layers("m1", "FPCR_UAT_Active Network", "threat") == []
+    assert await repo.find_rulebase_layers("other", "FPCR_UAT_Active Network", "access") == []
+
+
+async def test_find_rulebase_packages(repo):
+    snap = await _store(repo, "Domain4")
+    puid = snap.packages[0].package_uid
+    assert await repo.find_rulebase_packages("m1", "FPCR_UAT_Active") == [("Domain4", puid)]
+    assert await repo.find_rulebase_packages("m1", puid) == [("Domain4", puid)]
+    assert await repo.find_rulebase_packages("m1", "Nope") == []

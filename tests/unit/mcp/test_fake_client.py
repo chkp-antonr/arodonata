@@ -20,6 +20,8 @@ FACADE_METHODS = [
     "get_nat_rules",
     "get_https_rules",
     "get_threat_rules",
+    "get_layer_rulebase",
+    "get_package_rulebase",
     "api_call",
     "api_query",
     "search_objects",

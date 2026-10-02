@@ -10,6 +10,16 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 
 ## [Unreleased]
 
+### Added (rulebase cache v2, phase 3)
+
+- `ArodonataClient.get_policy_packages`, `get_package_rulebase`, `get_layer_rulebase` and `locate_rules` (rule positions and layer numbering prefixes, with the snapshot's session, publish time, refresh time and status): packages and layers numbered exactly like SmartConsole from the rulebase cache (`1`, `2`, `2.1`, `2.2.1`, section ranges), refreshed session-aware first per `cache_mode`; `RulebaseSource` / `CachedRulebaseSource` and `RulebaseDomainIndex` in `arodonata.rulebase`. A domain whose last refresh failed is served from its last good snapshot with `status` and `last_error`; a call without a domain reads the one cached domain holding the layer or package. `locate_rules` takes `layer_uids`, `cache_mode` and `cache_ttl` by keyword only and rejects a bare string as a uid collection.
+
+### Changed (rulebase cache v2, phase 3)
+
+- MCP `show_*_rulebase` cache path: layer-relative hierarchical numbers, section rows with ranges, place-holder and expanded inline-layer rows, names from the layers' objects dictionaries, age from the domain's rulebase refresh; `package` on the access/HTTPS/threat tools gives the package's SmartConsole numbering. A call without `domain` returns the one domain holding the layer instead of every cached domain and fails with the candidates when several do; a layer uid resolves through the rulebase cache instead of the object cache.
+- MCP `format='raw'` on the cache path returns numbered entries (rules, sections, inline children) plus `objects-dictionary`, `status` and `last_error` instead of flat raw rules.
+- MCP live rulebase path: rows are numbered with section rows and ranges, so row counts include sections.
+
 ### Changed (rulebase cache v2, phase 2)
 
 - Rulebase refresh is per domain and atomic: every policy package, ordered layer, section, place-holder and NAT policy of a domain is read, and the domain's whole rulebase snapshot is replaced in one transaction; a failure keeps the previous snapshot and emits an ERROR event.

@@ -3,7 +3,8 @@
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from arodonata.cache.models import CPObject, Domain, LastPublishedSession
+    from arodonata.cache.models import CPObject, Domain, LastPublishedSession, RulebaseSyncState
+    from arodonata.rulebase.model import DomainRulebaseSnapshot
 
 
 @runtime_checkable
@@ -100,4 +101,20 @@ class CachePort(Protocol):
         Returns:
             List of rule objects (type depends on cache implementation).
         """
+        ...
+
+    async def get_rulebase_sync_state(self, mgmt_name: str, domain_name: str) -> "RulebaseSyncState | None":
+        """The domain's rulebase sync state, or None before its first rulebase refresh."""
+        ...
+
+    async def load_domain_rulebase_snapshot(self, mgmt_name: str, domain_name: str) -> "DomainRulebaseSnapshot | None":
+        """The domain's cached rulebase snapshot, or None when it has no sync state."""
+        ...
+
+    async def find_rulebase_layers(self, mgmt_name: str, layer: str, rulebase_type: str) -> list[tuple[str, str]]:
+        """(domain_name, layer_uid) of cached layers of that type matching ``layer`` by uid or name."""
+        ...
+
+    async def find_rulebase_packages(self, mgmt_name: str, package: str) -> list[tuple[str, str]]:
+        """(domain_name, package_uid) of cached packages matching ``package`` by name or uid."""
         ...

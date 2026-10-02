@@ -250,3 +250,46 @@ def test_nat_numbering_is_flat_rule_number():
     assert numbers(entries) == ["1", "2", "3", "4"]
     assert [(e.kind, e.range) for e in entries if e.kind == "section"][-2:] == [("section", "2-3"), ("section", "4")]
     assert entries[0].kind == "rule" and entries[0].section_name is None
+
+
+def test_expand_inline_false_names_without_descending():
+    layers = {"L": snap("L", [rule("r1", 1, inline="X")]), "X": snap("X", [rule("x1", 1)])}
+    entries = number_layer("L", layers, expand_inline=False)
+    assert [e.number for e in entries] == ["1"] and entries[0].inline_layer_uid == "X"
+
+
+def test_sparse_layer_sections_precede_their_first_rule():
+    """A filtered read is sparse (rule numbers with gaps); headers follow walk order, not rule numbers."""
+    data = {
+        "uid": "L",
+        "name": "L",
+        "rulebase": [
+            {
+                "type": "access-section",
+                "uid": "A",
+                "name": "A",
+                "from": 3,
+                "to": 3,
+                "rulebase": [{"type": "access-rule", "uid": "r3", "name": "r3", "rule-number": 3}],
+            },
+            {
+                "type": "access-section",
+                "uid": "B",
+                "name": "B",
+                "from": 7,
+                "to": 8,
+                "rulebase": [
+                    {"type": "access-rule", "uid": "r7", "name": "r7", "rule-number": 7},
+                    {"type": "access-rule", "uid": "r8", "name": "r8", "rule-number": 8},
+                ],
+            },
+        ],
+    }
+    layer = parse_layer_response(data, "access")
+    assert [(e.kind, e.name, e.number, e.range) for e in number_layer("L", {"L": layer})] == [
+        ("section", "A", "", "3"),
+        ("rule", "r3", "3", ""),
+        ("section", "B", "", "7-8"),
+        ("rule", "r7", "7", ""),
+        ("rule", "r8", "8", ""),
+    ]
