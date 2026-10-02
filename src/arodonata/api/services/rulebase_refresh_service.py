@@ -233,7 +233,7 @@ class RulebaseRefreshService:
                 mode also decides whether the domain *list* is re-fetched before
                 resolving `target_domains` below - see
                 `_ensure_domain_list_fresh`.
-            include_global: When False (default), the synthetic "Global" domain
+            include_global: When False (default), the "Global" domain
                 is excluded so existing callers see today's behavior.
 
         Yields:

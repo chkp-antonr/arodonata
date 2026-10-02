@@ -690,3 +690,54 @@ async def test_get_domain_uid_returns_empty_on_cache_miss():
     result = await service.get_domain_uid("mgmt1", "domainA")
 
     assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_mdm_domains_caches_the_global_uid_from_show_global_domain():
+    """Global is not listed by show-domains, but it is a real domain with a UID: cache it."""
+    api_client = AsyncMock()
+    api_client.api_query = AsyncMock(
+        side_effect=[
+            ApiQueryResult(success=True, objects=[{"name": "domainA", "uid": "uid-a", "servers": []}]),  # show-domains
+            ApiQueryResult(success=True, objects=[{"name": "mds1", "ipv4-address": "10.0.0.1"}]),  # show-mdss
+        ]
+    )
+    api_client.api_call = AsyncMock(
+        return_value=ApiCallResult(
+            success=True,
+            data={"uid": "global-uid", "name": "Global", "servers": [{"multi-domain-server": "mds1", "active": True}]},
+        )
+    )
+    cache = AsyncMock()
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+
+    await service._populate_mdm_domains("mgmt1", make_server(is_mdm=True, server_ip="10.0.0.1"), is_mdm=True)
+
+    record = next(
+        call.args[0] for call in cache.upsert_domain.await_args_list if call.args[0].domain_name == GLOBAL_DOMAIN_NAME
+    )
+    assert record.domain_uid == "global-uid"
+
+
+@pytest.mark.asyncio
+async def test_mdm_domains_keeps_the_cached_global_uid_when_show_global_domain_fails():
+    """A failed enrichment call must not wipe a UID the cache already knows (the upsert replaces the whole row)."""
+    api_client = AsyncMock()
+    api_client.api_query = AsyncMock(
+        side_effect=[
+            ApiQueryResult(success=True, objects=[{"name": "domainA", "uid": "uid-a", "servers": []}]),  # show-domains
+            ApiQueryResult(success=True, objects=[]),  # show-mdss
+        ]
+    )
+    api_client.api_call = AsyncMock(return_value=ApiCallResult(success=False, message="refused"))
+    cache = AsyncMock()
+    cache.get_domain = AsyncMock(return_value=SimpleNamespace(domain_uid="global-uid"))
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+
+    await service._populate_mdm_domains("mgmt1", make_server(is_mdm=True, server_ip="10.0.0.1"), is_mdm=True)
+
+    record = next(
+        call.args[0] for call in cache.upsert_domain.await_args_list if call.args[0].domain_name == GLOBAL_DOMAIN_NAME
+    )
+    assert record.domain_uid == "global-uid"
+    cache.get_domain.assert_awaited_with(mdm_dmn=f"mgmt1:{GLOBAL_DOMAIN_NAME}")

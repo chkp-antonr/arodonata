@@ -56,7 +56,7 @@ class DomainService:
         Args:
             mgmt_name: Management server name.
             cache_mode: Cache mode for the underlying API query.
-            include_global: When False (default), the synthetic "Global" domain
+            include_global: When False (default), the "Global" domain
                 is written to the cache table (for MDMs) but excluded from the
                 *returned* list, so unflagged callers (e.g. asset collection)
                 are unaffected by its existence.
@@ -242,7 +242,7 @@ class DomainService:
                 global_domain = Domain.build(
                     mgmt_name=mgmt_name,
                     domain_name=GLOBAL_DOMAIN_NAME,
-                    domain_uid="",
+                    domain_uid=global_layout.uid or await self._cached_global_uid(mgmt_name),
                     active_ip=active_ip,
                     active_mds=global_layout.active_mds,
                     active_mds_ip=active_mds_ip,
@@ -266,11 +266,17 @@ class DomainService:
             return domain_names
         return [d for d in domain_names if d != GLOBAL_DOMAIN_NAME]
 
+    async def _cached_global_uid(self, mgmt_name: str) -> str:
+        """The Global UID already cached, so a failed `show-global-domain` does not wipe it (the upsert replaces the row)."""
+        row = await self._cache.get_domain(mdm_dmn=f"{mgmt_name}:{GLOBAL_DOMAIN_NAME}")
+        uid = getattr(row, "domain_uid", "") if row is not None else ""
+        return uid if isinstance(uid, str) else ""
+
     async def _fetch_global_domain_mdss(self, mgmt_name: str) -> GlobalDomainMdss:
         """Which MDS member holds the writable Global domain; empty layout on any failure.
 
-        `show-domains` never lists Global, so its active member has to come from
-        its own object via `show-global-domain`. Enrichment only: a failed call
+        `show-domains` never lists Global, so its UID and active member have to
+        come from its own object via `show-global-domain`. Enrichment only: a failed call
         falls back to an empty layout so domain population proceeds and uses
         the configured MDS IP as default.
         """

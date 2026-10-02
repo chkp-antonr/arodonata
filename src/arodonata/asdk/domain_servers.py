@@ -87,14 +87,19 @@ class GlobalDomainMdss:
     Resolve the name to an address with `mds_ip_map`. `active_mds` is empty when
     no member is flagged active; a caller must then fall back deliberately
     rather than be handed an arbitrary member.
+
+    `uid` is the Global domain's own UID, from the same object (`show-domains`
+    never lists Global, so this is the only place it comes from); empty when the
+    call failed.
     """
 
     active_mds: str = ""
     standby_mdss: tuple[str, ...] = ()
+    uid: str = ""
 
 
 def extract_global_domain_mdss(global_domain_obj: dict[str, Any]) -> GlobalDomainMdss:
-    """Read the Global domain's active and standby MDS members.
+    """Read the Global domain's UID and its active and standby MDS members.
 
     Deliberately not `extract_domain_servers`: that one skips every entry
     without an `ipv4-address`, which for Global is every entry, so it would
@@ -103,9 +108,11 @@ def extract_global_domain_mdss(global_domain_obj: dict[str, Any]) -> GlobalDomai
     read-only replica, and every write to Global fails - as a login error
     rather than a permission one.
     """
+    uid = global_domain_obj.get("uid", "")
+    uid = uid if isinstance(uid, str) else ""
     servers = global_domain_obj.get("servers", [])
     if not isinstance(servers, list):
-        return GlobalDomainMdss()
+        return GlobalDomainMdss(uid=uid)
 
     active_mds = ""
     standby_mdss: list[str] = []
@@ -120,7 +127,7 @@ def extract_global_domain_mdss(global_domain_obj: dict[str, Any]) -> GlobalDomai
         else:
             standby_mdss.append(mds)
 
-    return GlobalDomainMdss(active_mds=active_mds, standby_mdss=tuple(standby_mdss))
+    return GlobalDomainMdss(active_mds=active_mds, standby_mdss=tuple(standby_mdss), uid=uid)
 
 
 def mds_ip_map(mds_objects: list[Any]) -> dict[str, str]:

@@ -14,6 +14,8 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 
 - `get_domains` no longer refreshes every domain's objects before listing domains (on a large MDS this took minutes to hours and hit Check Point's login rate limit): it refreshes only the domain list (`show-domains`); `RulebaseRefreshService.refresh_all` no longer triggers an object refresh either
 - MCP `show_domains` returned an empty record per domain; records are now built from the cached domain fields
+- The cached Global domain row had an empty UID: it now carries the UID `show-global-domain` returns (a failed lookup keeps the UID already cached); docs and the MCP `show_domains` description no longer call Global "synthetic"
+- `arodonata-mcp` could not be stopped with Ctrl+C while Claude Code was connected (uvicorn waited for the open connection forever), and after shutdown the process could hang on a Check Point SDK call stuck in network I/O (the SDK connects without a socket timeout); both waits are now bounded by `ARODONATA_MCP_SHUTDOWN_TIMEOUT` / `--shutdown-timeout` (default 5 s)
 
 ### Changed
 

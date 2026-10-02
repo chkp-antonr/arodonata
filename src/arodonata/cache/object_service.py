@@ -479,7 +479,7 @@ class ObjectService:
             mgmt_names: Optional management server filter.
             domain_names: Optional domain filter.
             mode: Refresh mode (skip/check/force/incremental).
-            include_global: When False (default), the synthetic "Global" domain
+            include_global: When False (default), the "Global" domain
                 is excluded from the all-domains refresh path so existing
                 callers see today's behavior. An explicit ``domain_names``
                 request for "Global" is honored regardless of this flag.
@@ -543,7 +543,7 @@ class ObjectService:
             mgmt_name: Management server name.
             domain_names: Optional domain filter.
             mode: Refresh mode.
-            include_global: When False (default), the synthetic "Global" domain
+            include_global: When False (default), the "Global" domain
                 is excluded from the all-domains refresh path.
 
         Yields:
@@ -612,7 +612,7 @@ class ObjectService:
             mgmt_name: Management server name.
             domain_names: Optional domain filter.
             mode: Refresh mode.
-            include_global: When False (default), the synthetic "Global" domain
+            include_global: When False (default), the "Global" domain
                 is excluded from the table read. An explicit request for
                 "Global" via ``domain_names`` is honored regardless, since
                 this method treats ``domain_names`` as an intersection filter

@@ -1388,10 +1388,16 @@ class LoginCoordinator:
             global_layout = global_mdss or GlobalDomainMdss()
             active_mds_ip = (mds_ips or {}).get(global_layout.active_mds, "")
             active_ip = active_mds_ip or default_ip
+            # The upsert replaces the whole row: keep a known UID when the lookup failed.
+            global_uid = global_layout.uid
+            if not global_uid:
+                row = await self._cache.get_domain(mdm_dmn=f"{mgmt_name}:{GLOBAL_DOMAIN_NAME}")
+                cached_uid = getattr(row, "domain_uid", "") if row is not None else ""
+                global_uid = cached_uid if isinstance(cached_uid, str) else ""
             domain_record = Domain.build(
                 mgmt_name=mgmt_name,
                 domain_name=GLOBAL_DOMAIN_NAME,
-                domain_uid="",
+                domain_uid=global_uid,
                 active_ip=active_ip,
                 active_mds=global_layout.active_mds,
                 active_mds_ip=active_mds_ip,
