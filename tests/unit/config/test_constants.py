@@ -16,7 +16,7 @@ class TestDefaultValues:
         assert constants.DEFAULT_API_TIMEOUT == 120
 
     def test_default_concurrent_limit(self):
-        assert constants.DEFAULT_CONCURRENT_LIMIT == 3
+        assert constants.DEFAULT_CONCURRENT_LIMIT == 4
 
     def test_default_login_backoff(self):
         assert constants.DEFAULT_LOGIN_BACKOFF == 5

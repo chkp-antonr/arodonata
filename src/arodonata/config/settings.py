@@ -111,7 +111,7 @@ class ArodonataSettings(BaseSettings):
         default=DEFAULT_CONCURRENT_LIMIT,
         ge=1,
         le=20,
-        description="Max concurrent API requests per server",
+        description="Max concurrent API requests per MDS member (per server for a SmartCenter)",
         validation_alias="ARODONATA_CONCURRENT_LIMIT",
     )
     rate_limit_slot_timeout: int = Field(
