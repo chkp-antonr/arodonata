@@ -31,6 +31,7 @@ from ..config import (
 )
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
+from ._sid import redact_sid, sid_prefix
 from .domain_servers import (
     GlobalDomainMdss,
     extract_domain_servers,
@@ -483,7 +484,7 @@ class LoginCoordinator:
                 async with self._rate_limiter.acquire(member):
                     await self._transport.logout(server_ip, tmp_sid, port=port)
             except Exception as exc:
-                log().warning(f"Failed to logout cleanup temp SID [{tmp_sid[:8]}...]: {exc}")
+                log().warning(f"Failed to logout cleanup temp SID: {redact_sid(str(exc), tmp_sid)}")
 
     async def _fire_keepalive(
         self,
@@ -933,7 +934,7 @@ class LoginCoordinator:
         if response.get("success") and response.get("sid"):
             sid = str(response["sid"])
             uid = self._extract_uid_from_response(response)
-            shown = f"SID: [{sid[:8]}...], " if log_sid else ""
+            shown = f"{sid_prefix(sid)}, " if log_sid else ""
             log().trace(f"Login successful for '{mgmt_name}:{domain}' ({shown}UID: {uid})")
             return sid, uid
 
@@ -992,7 +993,7 @@ class LoginCoordinator:
                 mgmt_name, domain, self._settings.session_expire_seconds, username=self._credential_username
             )
             if cached and cached.sid:
-                log().trace(f"Cache HIT: Using cached SID [{cached.sid[:8]}...] for '{mgmt_name}:{domain}'")
+                log().trace(f"Cache HIT: Using cached {sid_prefix(cached.sid)} for '{mgmt_name}:{domain}'")
                 return cached.sid, cached.uid
             log().trace(f"Cache MISS: No SID for '{mgmt_name}:{domain}'")
         else:
@@ -1554,7 +1555,7 @@ class LoginCoordinator:
                     mgmt_name, domain, self._settings.session_expire_seconds, username=self._credential_username
                 )
                 if cached and cached.sid and cached.server_ip:
-                    log().trace(f"Cache HIT (pre-lock): '{mgmt_name}:{domain}' (SID: [{cached.sid[:8]}...])")
+                    log().trace(f"Cache HIT (pre-lock): '{mgmt_name}:{domain}' ({sid_prefix(cached.sid)})")
                     span_attrs(sid_cache="hit-pre-lock")
                     return cached.sid, cached.server_ip
 
@@ -1612,7 +1613,7 @@ class LoginCoordinator:
         )
         if cached and cached.sid and cached.server_ip:
             if not force or (cached.created_at >= entry_time):
-                log().trace(f"Cache HIT (post-lock): '{mgmt_name}:{domain}' (SID: [{cached.sid[:8]}...])")
+                log().trace(f"Cache HIT (post-lock): '{mgmt_name}:{domain}' ({sid_prefix(cached.sid)})")
                 span_attrs(sid_cache="hit-post-lock")
                 return cached.sid, cached.server_ip
 
@@ -1631,7 +1632,7 @@ class LoginCoordinator:
         log().debug(
             f"LOGIN ATTEMPT: mgmt='{mgmt_name}', domain='{domain}', ip={server_ip}:{port or 443}, "
             f"force={force}, entry_time={entry_time.isoformat()}, "
-            f"cached_sid={cached.sid[:8] if cached and cached.sid else 'None'}..., "
+            f"cached {sid_prefix(cached.sid if cached else None)}, "
             f"cached_created={cached.created_at.isoformat() if cached and cached.created_at else 'None'}"
         )
 

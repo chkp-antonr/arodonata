@@ -12,6 +12,8 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 
 ### Fixed
 
+- SID hygiene: a log line names its session by an 8-character prefix (`SID=[3f9a1c2e...]`) at DEBUG and TRACE only; the one WARNING line that carried a prefix (failed logout of the cleanup SID) no longer does, and `repr()` of a cached SID row no longer shows it. The full SID never appears
+- A Check Point error message that echoes a SID (`Wrong session id [...]`) no longer reaches logs or callers: the transport masks the request's SID and any SID inside a "session id [...]" phrase in every result's `message` and in its error log lines
 - A RateLimiter slot held longer than its 5-minute lock TTL (a long listing or publish task) no longer lapses: the holder renews the slot's row every third of the TTL until release, so another process cannot take the same slot meanwhile
 - `arodonata-mcp` no longer logs the SDK's `Terminating session: None` line on every request (stateless mode); at `--log-level debug` it still does
 - `get_domains` no longer refreshes every domain's objects before listing domains (on a large MDS this took minutes to hours and hit Check Point's login rate limit): it refreshes only the domain list (`show-domains`); `RulebaseRefreshService.refresh_all` no longer triggers an object refresh either

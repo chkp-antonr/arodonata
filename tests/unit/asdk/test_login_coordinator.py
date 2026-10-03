@@ -1724,7 +1724,7 @@ def test_ordinary_login_parse_still_logs_sid_prefix_at_trace(caplog):
             {"success": True, "sid": sid, "data": {"uid": "u-2"}}, "m1", "d", "10.0.0.1"
         )
     text = "\n".join(r.getMessage() for r in caplog.records)
-    assert (got, uid) == (sid, "u-2") and f"(SID: [{sid[:8]}...], UID: u-2)" in text
+    assert (got, uid) == (sid, "u-2") and f"(SID=[{sid[:8]}...], UID: u-2)" in text
     caplog.clear()
     with caplog.at_level(1):
         coord._parse_login_response(
