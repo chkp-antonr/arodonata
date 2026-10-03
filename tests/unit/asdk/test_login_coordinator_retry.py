@@ -885,7 +885,7 @@ async def test_gate_deadline_surfaces_as_authentication_error_with_the_throttle_
     assert "login_max_wait=900s" in str(excinfo.value)
 
 
-async def test_execute_login_request_takes_the_target_slot_around_the_transport_call():
+async def test_execute_login_request_takes_the_members_slot_around_the_transport_call():
     events: list[str] = []
 
     async def slot_in(*args):
@@ -907,11 +907,16 @@ async def test_execute_login_request_takes_the_target_slot_around_the_transport_
         return {"success": True, "sid": "s"}
 
     transport.login_with_apikey = AsyncMock(side_effect=http)
-    coord = _make_coordinator(rate_limiter=rl, transport=transport)
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(
+        server_ip="10.0.0.9"
+    )  # the configured host: the system domain's member
+    coord = _make_coordinator(rate_limiter=rl, transport=transport, registry=registry)
 
     await coord._execute_login_request("m", "", "10.0.0.7", "key")
 
-    rl.acquire.assert_called_once_with("10.0.0.7")
+    rl.acquire.assert_called_once_with("10.0.0.9")
+    assert transport.login_with_apikey.await_args.kwargs["server_ip"] == "10.0.0.7"
     assert events == ["slot-in", "http", "slot-out"]
 
 
@@ -1264,12 +1269,16 @@ async def test_cleanup_gets_temp_sid_runs_cleanup_logs_out():
     transport = AsyncMock()
     transport.login_with_apikey.return_value = {"success": True, "sid": "tmp", "data": {}}
     transport.logout.return_value = {"success": True}
-    coord = _make_coordinator(transport=transport, session_cleaner=cleaner)
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(
+        server_ip="10.0.0.9"
+    )  # the configured host: the system domain's member
+    coord = _make_coordinator(transport=transport, session_cleaner=cleaner, registry=registry)
 
     await coord._cleanup_for_max_sessions("mgmt1", "", "10.0.0.1", "key", None)
 
     cleaner.cleanup_stale_sessions.assert_awaited_once_with(
-        mgmt_name="mgmt1", domain="", system_sid="tmp", server_ip="10.0.0.1", port=None
+        mgmt_name="mgmt1", domain="", system_sid="tmp", server_ip="10.0.0.1", port=None, slot_host="10.0.0.9"
     )
     transport.logout.assert_awaited_once_with("10.0.0.1", "tmp", port=None)
 

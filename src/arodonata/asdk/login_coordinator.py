@@ -431,12 +431,18 @@ class LoginCoordinator:
         # side quest would retry until the *outer* login's deadline and leave
         # nothing for the login it exists to unblock. One window is enough for the
         # server to answer differently; more than that is not this call's to spend.
+        try:
+            member = await self.mds_host(mgmt_name, domain)
+        except Exception as exc:  # noqa: BLE001 - cleanup is best effort; the caller's login proceeds regardless
+            log().warning(f"Could not acquire temp SID for cleanup: {exc}")
+            return
+
         sub_token = _login_pacing.set(self._sub_deadline_pacing(self._throttle_window))
         try:
             tmp_sid = await self._retry_with_backoff(
                 _temp_login,
                 "Cleanup login",
-                mds_host=await self.mds_host(mgmt_name, domain),
+                mds_host=member,
                 target=f"{mgmt_name}/{domain or 'system'}",
                 max_retries=1,
             )
@@ -453,6 +459,7 @@ class LoginCoordinator:
                 system_sid=tmp_sid,
                 server_ip=server_ip,
                 port=port,
+                slot_host=member,
             )
             span_attrs(
                 **{
@@ -470,7 +477,7 @@ class LoginCoordinator:
             log().warning(f"Session cleanup failed for '{mgmt_name}:{domain}': {exc}")
         finally:
             try:
-                async with self._rate_limiter.acquire(server_ip):
+                async with self._rate_limiter.acquire(member):
                     await self._transport.logout(server_ip, tmp_sid, port=port)
             except Exception as exc:
                 log().warning(f"Failed to logout cleanup temp SID [{tmp_sid[:8]}...]: {exc}")
@@ -498,7 +505,7 @@ class LoginCoordinator:
             username: CP username when the cache key is user-scoped (credential mode).
         """
         try:
-            async with self._rate_limiter.acquire(server_ip):
+            async with self._rate_limiter.acquire(await self.mds_host(mgmt_name, domain)):
                 await self._transport.keepalive(server_ip, sid, port)
             await self._cache.update_keepalive(mgmt_name, domain, username=username)
             log().trace(f"Keepalive sent for '{mgmt_name}:{domain}'")
@@ -829,20 +836,22 @@ class LoginCoordinator:
         *,
         log_sid: bool = True,
     ) -> dict[str, Any]:
-        """One login round trip to `server_ip`, inside that server's RateLimiter slot. ``log_sid=False`` keeps the
+        """One login round trip to `server_ip`, inside the hosting MDS member's RateLimiter slot. ``log_sid=False`` keeps the
         new SID out of the transport's log (dedicated sessions an app owns).
 
         The slot covers the HTTP call only. It used to be held by the caller for
-        the whole retry ladder, which pinned one of three domain-server slots for
+        the whole retry ladder, which pinned a slot for
         minutes while a throttled login waited (2026-09-14); pacing is the login
         gate's job now (asdk/login_gate.py), and the slot goes back to meaning
         what it means everywhere else -- one in-flight request.
         """
+        # The slot is the hosting member's (see mds_host); the request goes to `server_ip`.
+        slot_host = await self.mds_host(mgmt_name, domain)
         if self._auth_mode == "credential" and self._username and self._password_secret:
             log().trace(
                 f"Attempting credential login: mgmt='{mgmt_name}', domain='{domain}', IP={server_ip}, user={self._username}"
             )
-            async with self._rate_limiter.acquire(server_ip):
+            async with self._rate_limiter.acquire(slot_host):
                 return await self._transport.login_with_credentials(
                     server_ip=server_ip,
                     username=self._username,
@@ -859,7 +868,7 @@ class LoginCoordinator:
             f"Attempting login: mgmt='{mgmt_name}', domain='{domain}', IP={server_ip}, API_KEY={mask_secret(api_key)}"
         )
         extra: dict[str, Any] = {} if log_sid else {"log_sid": False}
-        async with self._rate_limiter.acquire(server_ip):
+        async with self._rate_limiter.acquire(slot_host):
             return await self._transport.login_with_apikey(
                 **extra,
                 server_ip=server_ip,
@@ -1186,12 +1195,13 @@ class LoginCoordinator:
         # system sessions, and forcing would bypass the cache on every domain IP
         # refresh (e.g. failover), triggering an unnecessary extra system login.
         system_sid, system_ip = await self.login(mgmt_name, "", force=False, _skip_prefetch=True)
+        system_slot = await self.mds_host(mgmt_name, "")
 
         # Fetch domain info using system login
         # Retry once if session expired during the fetch
         max_attempts = 2
         for attempt in range(max_attempts):
-            async with self._rate_limiter.acquire(system_ip):
+            async with self._rate_limiter.acquire(system_slot):
                 response = await self._transport.api_call(
                     server_ip=system_ip,
                     sid=system_sid,
@@ -1225,12 +1235,14 @@ class LoginCoordinator:
         mds_ips: dict[str, str] = {}
         global_mdss = GlobalDomainMdss()
         if server_config.is_mdm is not False:
-            mds_ips = await self._fetch_mds_ips(system_ip, system_sid, server_config.port)
+            mds_ips = await self._fetch_mds_ips(system_ip, system_sid, server_config.port, slot_host=system_slot)
             if domain == GLOBAL_DOMAIN_NAME:
                 # Only for Global: it is absent from `show-domains`, so its active
                 # member has to come from its own object. One extra call, on the
                 # cache-miss path only.
-                global_mdss = await self._fetch_global_domain_mdss(system_ip, system_sid, server_config.port)
+                global_mdss = await self._fetch_global_domain_mdss(
+                    system_ip, system_sid, server_config.port, slot_host=system_slot
+                )
 
         return await self._cache_domain_active_ip(
             mgmt_name,
@@ -1251,7 +1263,9 @@ class LoginCoordinator:
             return response_data.get("objects", [])
         return []
 
-    async def _fetch_mds_ips(self, system_ip: str, system_sid: str, port: int | None) -> dict[str, str]:
+    async def _fetch_mds_ips(
+        self, system_ip: str, system_sid: str, port: int | None, *, slot_host: str
+    ) -> dict[str, str]:
         """{MDS member name: IPv4} via `show-mdss` on the system session; {} on any failure.
 
         The login gate keys on the member that hosts a domain's active server
@@ -1260,7 +1274,7 @@ class LoginCoordinator:
         machine anyway.
         """
         try:
-            async with self._rate_limiter.acquire(system_ip):
+            async with self._rate_limiter.acquire(slot_host):
                 response = await self._transport.api_call(
                     server_ip=system_ip,
                     sid=system_sid,
@@ -1280,7 +1294,9 @@ class LoginCoordinator:
         objects = data.get("objects", []) if isinstance(data, dict) else data if isinstance(data, list) else []
         return mds_ip_map(objects)
 
-    async def _fetch_global_domain_mdss(self, system_ip: str, system_sid: str, port: int | None) -> GlobalDomainMdss:
+    async def _fetch_global_domain_mdss(
+        self, system_ip: str, system_sid: str, port: int | None, *, slot_host: str
+    ) -> GlobalDomainMdss:
         """Which MDS member holds the writable Global domain; empty layout on any failure.
 
         `show-domains` never lists Global, so the generic domain path cannot
@@ -1295,7 +1311,7 @@ class LoginCoordinator:
         behaviour of using the configured MDS.
         """
         try:
-            async with self._rate_limiter.acquire(system_ip):
+            async with self._rate_limiter.acquire(slot_host):
                 response = await self._transport.api_call(
                     server_ip=system_ip,
                     sid=system_sid,
@@ -1316,13 +1332,13 @@ class LoginCoordinator:
         return extract_global_domain_mdss(data if isinstance(data, dict) else {})
 
     async def mds_host(self, mgmt_name: str, domain: str) -> str:
-        """The machine Check Point rate-limits this login on: what the login gate keys on.
+        """The MDS member a call to `mgmt_name`/`domain` counts against: what the login gate and the RateLimiter key on.
 
-        A domain login goes to a domain server hosted on some MDS member -- and
-        domains move between members on failover -- so for a domain it is the
-        member IP recorded on the domain's cache row by `_cache_domain_active_ip`.
-        The system domain, Global, a SmartCenter, or a row without that
-        information fall back to the configured host.
+        Check Point serves every domain of a member from that member's one API server, and rate-limits logins per
+        member. A domain's requests go to its domain server, hosted on some member -- and domains move between
+        members on failover -- so for a domain it is the member IP recorded on the domain's cache row by
+        `_cache_domain_active_ip`. The system domain, Global without a known member, a SmartCenter, or a row
+        without that information fall back to the configured host.
         """
         if domain:
             row = await self._cache.get_domain(mdm_dmn=f"{mgmt_name}:{domain}")
