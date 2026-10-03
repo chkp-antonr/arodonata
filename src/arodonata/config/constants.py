@@ -64,14 +64,14 @@ DEFAULT_LOGIN_TIMEOUT: Final[int] = 120  # seconds
 # caller that knows it will not hit a real throttle (a test with a mocked one,
 # say) should not be made to wait out a window that does not exist.
 LOGIN_THROTTLE_WINDOW_SECONDS: Final[int] = 70  # seconds
+DEFAULT_LOGIN_THROTTLE_INITIAL_SECONDS: Final[int] = 7  # seconds
+DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS: Final[int] = 5  # seconds
 # RateLimiter concurrency (asdk/rate_limiter.py): requests in flight per MDS *member*,
 # the machine that serves the API for every domain it hosts -- the same key the login
 # gate uses (LoginCoordinator.mds_host). Measured on the home lab (2026-10-03,
 # docs/_AI_/2610/261003-warmup-parallelism/findings.md): one request at a time gets
 # ~200 objects/s, a member tops out at ~650-700 objects/s with 4-5 in flight, and more
 # adds nothing while taking headroom from SmartConsole and other clients of the member.
-DEFAULT_LOGIN_THROTTLE_INITIAL_SECONDS: Final[int] = 7  # seconds
-DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS: Final[int] = 5  # seconds
 DEFAULT_CONCURRENT_LIMIT: Final[int] = 4
 DEFAULT_LOGIN_BACKOFF: Final[int] = 5  # seconds
 DEFAULT_LOGIN_RETRIES: Final[int] = 8
