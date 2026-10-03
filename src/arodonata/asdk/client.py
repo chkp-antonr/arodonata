@@ -183,7 +183,10 @@ class AMgmtClient:
             server_config = self._registry.get_server(mgmt_name)
             port = server_config.port if server_config else None
 
-            async with self._rate_limiter.acquire(server_ip):
+            # The slot is the hosting MDS member's (LoginCoordinator.mds_host), the request goes to the
+            # domain server. Resolved per attempt: a failover retry re-resolves the domain's member.
+            slot_host = await self._login_coordinator.mds_host(mgmt_name, domain)
+            async with self._rate_limiter.acquire(slot_host):
                 response = await transport_fn(server_ip=server_ip, sid=sid, port=port)
 
             if response.get("code") in SESSION_ERROR_CODES and attempt < max_attempts - 1:

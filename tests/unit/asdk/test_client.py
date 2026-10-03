@@ -550,3 +550,48 @@ async def test_close_lets_a_short_background_sweep_finish_instead_of_cancelling_
 
     assert finished.is_set()
     assert not task.cancelled()
+
+
+# --------------------------------------------------------------------------
+# Session calls: slot on the MDS member (mds_host), request to the domain server
+# --------------------------------------------------------------------------
+
+
+async def test_session_call_takes_the_members_slot_and_calls_the_domain_server():
+    client, registry, transport, limiter, lc = _make_client()
+    registry.get_server.return_value = MagicMock(port=None)
+    lc.login = AsyncMock(return_value=("sid", "192.168.5.184"))
+    lc.mds_host = AsyncMock(return_value="192.168.5.170")
+    transport.api_call.return_value = {"success": True, "data": {}}
+
+    await client.api_call("home", "show-hosts", domain="Domain4")
+
+    lc.mds_host.assert_awaited_with("home", "Domain4")
+    limiter.acquire.assert_called_once_with("192.168.5.170")
+    assert transport.api_call.await_args.kwargs["server_ip"] == "192.168.5.184"
+
+
+async def test_query_takes_the_members_slot():
+    client, registry, transport, limiter, lc = _make_client()
+    registry.get_server.return_value = MagicMock(port=None)
+    lc.login = AsyncMock(return_value=("sid", "192.168.5.184"))
+    lc.mds_host = AsyncMock(return_value="192.168.5.170")
+    transport.api_query.return_value = {"success": True, "data": []}
+
+    await client.api_query("home", "show-hosts", domain="Domain4")
+
+    limiter.acquire.assert_called_once_with("192.168.5.170")
+    assert transport.api_query.await_args.kwargs["server_ip"] == "192.168.5.184"
+
+
+async def test_failover_retry_takes_the_slot_of_the_new_member():
+    client, registry, transport, limiter, lc = _make_client()
+    registry.get_server.return_value = MagicMock(port=None)
+    lc.login = AsyncMock(side_effect=[("sid", "192.168.5.184"), ("sid2", "192.168.5.194")])
+    lc.mds_host = AsyncMock(side_effect=["192.168.5.170", "192.168.5.171"])
+    code = next(iter(FAILOVER_ERROR_CODES))
+    transport.api_call.side_effect = [{"success": False, "code": code}, {"success": True, "data": {}}]
+
+    await client.api_call("home", "show-hosts", domain="Domain4")
+
+    assert [c.args[0] for c in limiter.acquire.call_args_list] == ["192.168.5.170", "192.168.5.171"]

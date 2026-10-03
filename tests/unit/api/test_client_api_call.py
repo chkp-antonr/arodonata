@@ -454,6 +454,9 @@ class _FakeLoginCoordinator:
             self._sids[key] = f"sid-{self._counter}"
         return self._sids[key], "10.0.0.1"
 
+    async def mds_host(self, mgmt_name, domain):
+        return "10.0.0.1"
+
     async def logout(self, mgmt_name, domain=""):
         self._sids.pop((mgmt_name, domain), None)
         return True
