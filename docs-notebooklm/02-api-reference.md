@@ -1765,10 +1765,11 @@ sleep until the row lapses. One refusal per window is the price of discovery;
 the gate stops it being paid more than once.
 
 Which server a login counts against is the caller's business (see
-LoginCoordinator._mds_host): the gate is keyed on whatever string it is given.
+LoginCoordinator.mds_host): the gate is keyed on whatever string it is given.
 
 This is a _rate_ concern and deliberately separate from RateLimiter, which caps
-_concurrency_ per target IP. Design: docs/superpowers/specs/2026-09-14-mds-login-gate-design.md
+_concurrency_ per MDS member, keyed like the gate (LoginCoordinator.mds_host).
+Design: docs/superpowers/specs/2026-09-14-mds-login-gate-design.md
 
 #### class `LoginGateDeadlineError(ThrottlingError)`
 
@@ -1834,43 +1835,44 @@ The row is never released; it lapses.
 Return once no refusal is live for `mds_host`; raise if that would pass `deadline`.
 
 Args:
-    mds_host: The server the login counts against (LoginCoordinator._mds_host).
+    mds_host: The server the login counts against (LoginCoordinator.mds_host).
     deadline: Absolute `loop.time()` after which the login gives up.
     max_wait: The setting behind `deadline`, for the error message only.
     keepalive: Awaited before every sleep chunk -- the caller's lock renewal.
 
 ### `arodonata/asdk/rate_limiter.py`
 
-Rate limiter for per-server concurrent API request limiting.
+Rate limiter for per-MDS member concurrent API request limiting.
 
-Manages distributed locks to limit concurrent operations per server IP,
+Manages distributed locks to limit concurrent operations per MDS member,
 preventing overload of management servers across multiple workers.
 
 #### class `RateLimiter`
 
-Per-server distributed lock for concurrent API operation limiting.
+Per-MDS member distributed lock for concurrent API operation limiting.
 
 Uses SQL-database-backed distributed locks (any SQLAlchemy-supported
 dialect) to enforce concurrent operation limits across multiple
 workers/processes.
 
-Lock keys use a slot-based approach: ratelimit:{server_ip}:slot_{n}
-where n is determined by hashing the operation ID to distribute load.
+Lock keys use a slot-based approach: ratelimit:{host}:slot_{n}
+where host is the MDS member hosting the target (LoginCoordinator.mds_host)
+and n is determined by hashing the operation ID to distribute load.
 
 Example:
-    limiter = RateLimiter(concurrent_limit=3)
+    limiter = RateLimiter(concurrent_limit=4)
     async with limiter.acquire("192.168.1.10"):
-        # Make API call - limited to 3 concurrent per server across all workers
+        # Make API call - limited to 4 concurrent per member across all workers
         pass
 
 ##### Methods
 
-###### `def __init__(self, concurrent_limit: int = 3, lock_manager: DatabaseLockManager | None = None, slot_timeout: int = DEFAULT_RATE_LIMIT_SLOT_TIMEOUT) -> None`
+###### `def __init__(self, concurrent_limit: int = 4, lock_manager: DatabaseLockManager | None = None, slot_timeout: int = DEFAULT_RATE_LIMIT_SLOT_TIMEOUT) -> None`
 
 Initialize rate limiter.
 
 Args:
-    concurrent_limit: Maximum concurrent operations per server.
+    concurrent_limit: Maximum concurrent operations per MDS member.
     lock_manager: Optional DatabaseLockManager instance.
     slot_timeout: Default seconds acquire() waits for a free slot before
         giving up (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT for why this must
@@ -1890,7 +1892,7 @@ Clean up resources.
 Acquire lock for server operations (reentrant per task).
 
 Args:
-    server_ip: Server IP address.
+    server_ip: The slot key — the MDS member hosting the target (LoginCoordinator.mds_host).
     timeout: Maximum time to wait for lock acquisition in seconds.
         Defaults to the slot_timeout this RateLimiter was constructed
         with (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT).
@@ -4032,7 +4034,7 @@ password: SecretStr | None = Field(default=None, description='Password for crede
 mgmt_ip: str | None = Field(default=None, description='Management server IP for credential mode', validation_alias='ARODONATA_MGMT_IP')
 session_expire_seconds: int = Field(default=DEFAULT_SESSION_EXPIRE, ge=0, description='Session expiration in seconds', validation_alias='ARODONATA_SESSION_EXPIRE')
 session_timeout: int = Field(default=DEFAULT_SESSION_TIMEOUT, ge=0, description='Session timeout in seconds (passed to login API)', validation_alias='ARODONATA_SESSION_TIMEOUT')
-concurrent_limit: int = Field(default=DEFAULT_CONCURRENT_LIMIT, ge=1, le=20, description='Max concurrent API requests per server', validation_alias='ARODONATA_CONCURRENT_LIMIT')
+concurrent_limit: int = Field(default=DEFAULT_CONCURRENT_LIMIT, ge=1, le=20, description='Max concurrent API requests per MDS member (per server for a SmartCenter)', validation_alias='ARODONATA_CONCURRENT_LIMIT')
 rate_limit_slot_timeout: int = Field(default=DEFAULT_RATE_LIMIT_SLOT_TIMEOUT, ge=1, description='Seconds a caller waits for a free concurrency slot (RateLimiter.acquire) before giving up. Must comfortably exceed how long another caller can legitimately hold a slot during its own login retry-with-backoff sequence, or concurrent callers fail fast under real server-side throttling even though the server would have accepted a login moments later.', validation_alias='ARODONATA_RATE_LIMIT_SLOT_TIMEOUT')
 api_timeout: int = Field(default=DEFAULT_API_TIMEOUT, ge=1, description='API timeout in seconds', validation_alias='ARODONATA_API_TIMEOUT')
 task_timeout: int = Field(default=DEFAULT_TASK_TIMEOUT, ge=1, description='Seconds to wait for a server-side task (publish, install-policy, assign-global-assignment, revert-to-revision) after the call that started it has returned. Separate from api_timeout on purpose: see DEFAULT_TASK_TIMEOUT', validation_alias='ARODONATA_TASK_TIMEOUT')
@@ -4923,7 +4925,7 @@ Update server metadata.
 @runtime_checkable
 ```
 
-Interface for rate limiting per server.
+Interface for rate limiting per MDS member.
 
 ##### Methods
 
@@ -4933,7 +4935,7 @@ Interface for rate limiting per server.
 @asynccontextmanager
 ```
 
-Acquire rate limit slot for server.
+Acquire a rate limit slot; server_ip is the slot key (the MDS member hosting the target).
 
 #### class `ILoginCoordinator(Protocol)`
 

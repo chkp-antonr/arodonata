@@ -20,12 +20,14 @@ def caller(client=None):
     return SidCaller(client, "m1", SecretStr(SID), "192.0.2.1"), client
 
 
-async def test_sid_caller_forwards_to_api_call_with_sid_without_domain():
+async def test_sid_caller_forwards_to_api_call_with_sid_with_the_domain_as_slot_key():
     sc, client = caller()
     client.api_call_with_sid.return_value = ApiCallResult(success=True, data={"uid": "u1"})
     result = await sc.api_call(mgmt_name="m1", domain="Domain5", command="show-session", payload={})
     assert result.data == {"uid": "u1"}
-    assert client.api_call_with_sid.await_args == call("m1", SID, "192.0.2.1", "show-session", payload={})
+    assert client.api_call_with_sid.await_args == call(
+        "m1", SID, "192.0.2.1", "show-session", payload={}, domain="Domain5"
+    )
     assert SID not in repr(sc)
 
 

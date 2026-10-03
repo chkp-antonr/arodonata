@@ -10,10 +10,11 @@ sleep until the row lapses. One refusal per window is the price of discovery;
 the gate stops it being paid more than once.
 
 Which server a login counts against is the caller's business (see
-LoginCoordinator._mds_host): the gate is keyed on whatever string it is given.
+LoginCoordinator.mds_host): the gate is keyed on whatever string it is given.
 
 This is a *rate* concern and deliberately separate from RateLimiter, which caps
-*concurrency* per target IP. Design: docs/superpowers/specs/2026-09-14-mds-login-gate-design.md
+*concurrency* per MDS member, keyed like the gate (LoginCoordinator.mds_host).
+Design: docs/superpowers/specs/2026-09-14-mds-login-gate-design.md
 """
 
 from __future__ import annotations
@@ -183,7 +184,7 @@ class LoginGate:
         """Return once no refusal is live for `mds_host`; raise if that would pass `deadline`.
 
         Args:
-            mds_host: The server the login counts against (LoginCoordinator._mds_host).
+            mds_host: The server the login counts against (LoginCoordinator.mds_host).
             deadline: Absolute `loop.time()` after which the login gives up.
             max_wait: The setting behind `deadline`, for the error message only.
             keepalive: Awaited before every sleep chunk -- the caller's lock renewal.

@@ -195,7 +195,7 @@ async def test_api_call_with_sid_forwards_and_wraps():
     )
 
     result = await client.api_call_with_sid(
-        "mgmt1", "sid-1", "10.0.0.1", "publish", payload={"p": 1}, wait_for_task=False, timeout=-1
+        "mgmt1", "sid-1", "10.0.0.1", "publish", payload={"p": 1}, wait_for_task=False, timeout=-1, domain="Domain4"
     )
 
     assert isinstance(result, ApiCallResult)
@@ -212,6 +212,7 @@ async def test_api_call_with_sid_forwards_and_wraps():
         # No caller-supplied timeout, so the server-side task gets its own budget
         # instead of the leftovers of a round-trip allowance.
         task_timeout=settings.task_timeout,
+        domain="Domain4",
     )
 
 
@@ -453,6 +454,9 @@ class _FakeLoginCoordinator:
             self._counter += 1
             self._sids[key] = f"sid-{self._counter}"
         return self._sids[key], "10.0.0.1"
+
+    async def mds_host(self, mgmt_name, domain):
+        return "10.0.0.1"
 
     async def logout(self, mgmt_name, domain=""):
         self._sids.pop((mgmt_name, domain), None)

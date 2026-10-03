@@ -409,3 +409,26 @@ async def test_store_schema_hash_degrades_gracefully_on_failure(
 
     # Must not raise.
     await manager._store_schema_hash("f" * 64)
+
+
+async def _busy_timeout_ms(engine: AsyncEngine) -> int:
+    db = DatabaseManager(engine)
+    async with db.session() as session:
+        return (await session.execute(text("PRAGMA busy_timeout"))).scalar_one()
+
+
+async def test_sqlite_connections_wait_30_s_for_a_busy_database(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'busy.db'}")
+    try:
+        assert await _busy_timeout_ms(engine) == 30_000
+    finally:
+        await engine.dispose()
+
+
+async def test_an_explicit_sqlite_timeout_of_the_caller_wins(tmp_path):
+    """Guard: a timeout set in connect_args is kept."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'busy.db'}", connect_args={"timeout": 0.05})
+    try:
+        assert await _busy_timeout_ms(engine) == 50
+    finally:
+        await engine.dispose()

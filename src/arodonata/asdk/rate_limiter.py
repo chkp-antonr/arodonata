@@ -1,6 +1,6 @@
-"""Rate limiter for per-server concurrent API request limiting.
+"""Rate limiter for per-MDS member concurrent API request limiting.
 
-Manages distributed locks to limit concurrent operations per server IP,
+Manages distributed locks to limit concurrent operations per MDS member,
 preventing overload of management servers across multiple workers.
 """
 
@@ -16,7 +16,7 @@ from contextvars import ContextVar
 from arlogi.otel.decorator import traced
 
 from ..cache.lock_manager import DatabaseLockManager, LockAcquisitionError, LockContext
-from ..config.constants import DEFAULT_RATE_LIMIT_SLOT_TIMEOUT
+from ..config.constants import DEFAULT_CONCURRENT_LIMIT, DEFAULT_RATE_LIMIT_SLOT_TIMEOUT
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
 
@@ -27,32 +27,33 @@ _caller_id_counter = itertools.count(1)
 
 
 class RateLimiter:
-    """Per-server distributed lock for concurrent API operation limiting.
+    """Per-MDS member distributed lock for concurrent API operation limiting.
 
     Uses SQL-database-backed distributed locks (any SQLAlchemy-supported
     dialect) to enforce concurrent operation limits across multiple
     workers/processes.
 
-    Lock keys use a slot-based approach: ratelimit:{server_ip}:slot_{n}
-    where n is determined by hashing the operation ID to distribute load.
+    Lock keys use a slot-based approach: ratelimit:{host}:slot_{n}
+    where host is the MDS member hosting the target (LoginCoordinator.mds_host)
+    and n is determined by hashing the operation ID to distribute load.
 
     Example:
-        limiter = RateLimiter(concurrent_limit=3)
+        limiter = RateLimiter(concurrent_limit=4)
         async with limiter.acquire("192.168.1.10"):
-            # Make API call - limited to 3 concurrent per server across all workers
+            # Make API call - limited to 4 concurrent per member across all workers
             pass
     """
 
     def __init__(
         self,
-        concurrent_limit: int = 3,
+        concurrent_limit: int = DEFAULT_CONCURRENT_LIMIT,
         lock_manager: DatabaseLockManager | None = None,
         slot_timeout: int = DEFAULT_RATE_LIMIT_SLOT_TIMEOUT,
     ) -> None:
         """Initialize rate limiter.
 
         Args:
-            concurrent_limit: Maximum concurrent operations per server.
+            concurrent_limit: Maximum concurrent operations per MDS member.
             lock_manager: Optional DatabaseLockManager instance.
             slot_timeout: Default seconds acquire() waits for a free slot before
                 giving up (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT for why this must
@@ -165,7 +166,7 @@ class RateLimiter:
         """Acquire lock for server operations (reentrant per task).
 
         Args:
-            server_ip: Server IP address.
+            server_ip: The slot key — the MDS member hosting the target (LoginCoordinator.mds_host).
             timeout: Maximum time to wait for lock acquisition in seconds.
                 Defaults to the slot_timeout this RateLimiter was constructed
                 with (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT).

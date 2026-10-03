@@ -1,6 +1,7 @@
 """Configuration management for Arodonata library."""
 
 from .constants import (
+    CACHE_QUERY_PAGE_SIZE,
     CREDENTIAL_REJECTION_MESSAGE,
     DEFAULT_API_TIMEOUT,
     DEFAULT_CONCURRENT_LIMIT,
@@ -19,6 +20,7 @@ from .constants import (
     LOGIN_THROTTLE_WINDOW_SECONDS,
     SERVER_UNREACHABLE_MESSAGE,
     SESSION_ERROR_CODES,
+    SQLITE_BUSY_TIMEOUT_SECONDS,
     THROTTLE_ERROR_CODE,
 )
 from .settings import ArodonataSettings
@@ -29,6 +31,8 @@ __all__ = [
     "DEFAULT_SESSION_TIMEOUT",
     "DEFAULT_API_TIMEOUT",
     "DEFAULT_TASK_TIMEOUT",
+    "CACHE_QUERY_PAGE_SIZE",
+    "SQLITE_BUSY_TIMEOUT_SECONDS",
     "DEFAULT_CONCURRENT_LIMIT",
     "DEFAULT_LOGIN_BACKOFF",
     "DEFAULT_LOGIN_MAX_WAIT",

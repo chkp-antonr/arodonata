@@ -41,7 +41,7 @@ Standard Check Point API client scripts often struggle with connection overhead,
 | **Async Core** | Fully non-blocking network calls | Scales to enterprise deployments with zero thread overhead |
 | **Session Cache** | Automatic database-backed session token persistence | Bypasses repetitive logins, preserving firewall resources |
 | **Multi-Domain (MDM)** | Native domain resolution and context propagation | Operates across complex tenant environments seamlessly |
-| **Rate Limiting** | Active per-server request gating and database locks | Prevents overloading firewalls during large-scale tasks |
+| **Rate Limiting** | Active per-MDS-member request gating and database locks | Prevents overloading firewalls during large-scale tasks |
 | **SSE Event Streams** | Live Server-Sent Events for background refresh tasks | Real-time monitoring of sync status and progress bars |
 | **MCP Server** | Streamable-HTTP MCP endpoint with the Check Point show_* tool surface | Lets Claude and other MCP clients query policy through the cache |
 

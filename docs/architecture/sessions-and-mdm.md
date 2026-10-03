@@ -7,7 +7,7 @@
 - **[`session_cleaner.py`](../api/arodonata/asdk/session_cleaner.md)** —
   background cleanup of stale sessions, so long-running processes don't leak
   SIDs on the management server.
-- **[`rate_limiter.py`](../api/arodonata/asdk/rate_limiter.md)** — per-server
+- **[`rate_limiter.py`](../api/arodonata/asdk/rate_limiter.md)** — per-MDS-member
   concurrency gating (`ArodonataSettings.concurrent_limit`), so a burst of
   cache-refresh work doesn't overload a single management server.
 

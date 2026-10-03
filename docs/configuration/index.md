@@ -20,7 +20,7 @@ isn't special in this regard, it's just one field among many.
 | `mgmt_ip` | `str \| None` | `None` | Required when `username`/`password` are set. |
 | `session_expire_seconds` | `int` | see [`constants.py`](../api/arodonata/config/constants.md) | Cache freshness threshold in seconds. |
 | `session_timeout` | `int` | see `constants.py` | Session timeout passed to the Check Point login API. |
-| `concurrent_limit` | `int` (1-20) | see `constants.py` | Max concurrent API requests per server. |
+| `concurrent_limit` | `int` (1-20) | 4 | Max concurrent API requests per MDS member (logins and calls; per server for a SmartCenter). A slot is held for one whole request (a cache listing or a task wait holds it until it is done). One cache-refresh call starts at most `concurrent_limit − 1` (at least one) domain refreshes per member; overlapping calls, other processes and long tasks can still use every slot. |
 | `api_timeout` | `int` | see `constants.py` | Per-request API timeout in seconds. |
 | `login_retry_backoff` | `int` | see `constants.py` | Backoff (seconds) between login retries. |
 | `login_max_retries` | `int` | see `constants.py` | Maximum login retry attempts. |

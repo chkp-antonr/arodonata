@@ -56,7 +56,7 @@ DEFAULT_LOGIN_TIMEOUT: Final[int] = 120  # seconds
 # the worst recovery seen with margin.
 #
 # Note this is a *rate* limit, and is NOT what RateLimiter enforces: that caps
-# concurrency (DEFAULT_CONCURRENT_LIMIT simultaneous calls per target IP). The two
+# concurrency (DEFAULT_CONCURRENT_LIMIT simultaneous calls per MDS member). The two
 # are easy to confuse and unrelated.
 #
 # Tunable via ArodonataSettings.login_throttle_window, because the limit is
@@ -66,16 +66,34 @@ DEFAULT_LOGIN_TIMEOUT: Final[int] = 120  # seconds
 LOGIN_THROTTLE_WINDOW_SECONDS: Final[int] = 70  # seconds
 DEFAULT_LOGIN_THROTTLE_INITIAL_SECONDS: Final[int] = 7  # seconds
 DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS: Final[int] = 5  # seconds
-DEFAULT_CONCURRENT_LIMIT: Final[int] = 3
+# RateLimiter concurrency (asdk/rate_limiter.py): requests in flight per MDS *member*,
+# the machine that serves the API for every domain it hosts -- the same key the login
+# gate uses (LoginCoordinator.mds_host). Measured on the home lab (2026-10-03,
+# docs/_AI_/2610/261003-warmup-parallelism/findings.md): one request at a time gets
+# ~200 objects/s, a member tops out at ~650-700 objects/s with 4-5 in flight, and more
+# adds nothing while taking headroom from SmartConsole and other clients of the member.
+# A slot is held for one whole request (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT). One
+# `CacheRefreshCoordinator.ensure` call starts at most `concurrent_limit - 1` domain
+# refreshes per member, which leaves a slot for logins and keepalives *from that call's
+# point of view*; overlapping ensure calls, other processes, long tasks and keepalives
+# can still take every slot of a member.
+DEFAULT_CONCURRENT_LIMIT: Final[int] = 4
+# Page size for the cache's list fetches (show-hosts, show-gateways-and-servers, show-domains, ...): Check
+# Point's maximum, instead of cpapi's api_query default of 50. Every page pays a round trip; on the home lab
+# a 12 150-object domain loaded in 68.4 s at 500 vs 79.1 s at 50 (findings 2026-10-03), more on remote labs.
+CACHE_QUERY_PAGE_SIZE: Final[int] = 500
 DEFAULT_LOGIN_BACKOFF: Final[int] = 5  # seconds
 DEFAULT_LOGIN_RETRIES: Final[int] = 8
 # How long a caller waits for a free RateLimiter concurrency slot (asdk/rate_limiter.py)
-# before giving up. A slot is held for one in-flight request. Since 2026-09-14 that
-# includes logins: a login takes the target server's slot for a single HTTP round
+# before giving up. A slot is held for one whole request: for `api_query` that is a
+# whole listing (cpapi fetches the pages inside that one call, so the slot is held
+# across all of them, not per page), and a call that waits for a task (`wait_for_task`,
+# e.g. publish or revert) holds it for the whole task. Since 2026-09-14 logins take
+# slots too: a login takes the hosting MDS member's slot for a single HTTP round
 # trip (bounded by DEFAULT_LOGIN_TIMEOUT), never across its retry ladder or a
 # throttle wait -- those happen outside the slot, and pacing belongs to the login
-# gate (asdk/login_gate.py). Long-running tasks (publish, revert) legitimately hold
-# a slot for their whole run, so this stays generous.
+# gate (asdk/login_gate.py). Long-running tasks legitimately hold a slot for their
+# whole run, so this stays generous.
 DEFAULT_RATE_LIMIT_SLOT_TIMEOUT: Final[int] = 90  # seconds
 
 # Total wall-clock one login() may spend waiting out Check Point's per-MDS login
@@ -104,6 +122,11 @@ DEFAULT_TASK_POLL_FAILURE_TOLERANCE: Final[int] = 5
 TASK_QUERY_COMMANDS: Final[dict[str, str]] = {"show-changes": "changes"}
 TASK_QUERY_PAGE_SIZE: Final[int] = 50  # cpapi's api_query page size
 TASK_QUERY_MAX_PAGE_SIZE: Final[int] = 500  # show-changes `limit` accepts 1-500
+
+# How long a SQLite connection waits for another writer (several processes on one cache file, or a large
+# domain swap) before failing with "database is locked". SQLite's own default is 5 s. An engine created with
+# its own connect_args={"timeout": ...} keeps that value.
+SQLITE_BUSY_TIMEOUT_SECONDS: Final[float] = 30.0
 
 # Session error codes that trigger relogin
 SESSION_ERROR_CODES: Final[frozenset[str]] = frozenset(
@@ -170,6 +193,8 @@ __all__ = [
     "LOGIN_THROTTLE_WINDOW_SECONDS",
     "DEFAULT_LOGIN_THROTTLE_INITIAL_SECONDS",
     "DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS",
+    "CACHE_QUERY_PAGE_SIZE",
+    "SQLITE_BUSY_TIMEOUT_SECONDS",
     "DEFAULT_CONCURRENT_LIMIT",
     "DEFAULT_LOGIN_BACKOFF",
     "DEFAULT_LOGIN_RETRIES",

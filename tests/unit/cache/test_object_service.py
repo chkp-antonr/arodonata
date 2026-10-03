@@ -597,6 +597,91 @@ async def test_get_domains_to_refresh_force_mode_refetches_on_every_call_no_ttl(
     assert client._domain_service.populate_domain_cache.await_count == 2
 
 
+async def test_get_domains_force_without_domain_list_refresh_skips_the_refetch(db):
+    client = make_client(mgmt_names=["mgmt1"])
+    service = make_service(db, client)
+    for name in ("dmnA", "dmnB"):
+        await service._cache.upsert_domain(Domain.build(mgmt_name="mgmt1", domain_name=name, active_ip="1.1.1.1"))
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+
+    domains = await service._get_domains_to_refresh("mgmt1", ["dmnA"], RefreshMode.FORCE, refresh_domain_list=False)
+
+    assert domains == ["dmnA"]
+    client._domain_service.populate_domain_cache.assert_not_called()
+
+
+async def test_get_domains_ttl_stale_without_domain_list_refresh_skips_the_refetch(db):
+    client = make_client(mgmt_names=["mgmt1"])
+    service = make_service(db, client)
+    await service._cache.upsert_domain(Domain.build(mgmt_name="mgmt1", domain_name="dmnA", active_ip="1.1.1.1"))
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+    assert service._domain_list_refresh.is_stale("mgmt1")  # first CHECK would re-fetch
+
+    await service._get_domains_to_refresh("mgmt1", ["dmnA"], RefreshMode.CHECK, refresh_domain_list=False)
+
+    client._domain_service.populate_domain_cache.assert_not_called()
+
+
+async def test_get_domains_force_default_still_refetches_with_named_domains_cached(db):
+    client = make_client(mgmt_names=["mgmt1"])
+    service = make_service(db, client)
+    await service._cache.upsert_domain(Domain.build(mgmt_name="mgmt1", domain_name="dmnA", active_ip="1.1.1.1"))
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock()
+
+    await service._get_domains_to_refresh("mgmt1", ["dmnA"], RefreshMode.FORCE)
+
+    client._domain_service.populate_domain_cache.assert_awaited_once_with("mgmt1")
+
+
+async def test_get_domains_without_domain_list_refresh_refetches_for_a_named_domain_missing_from_the_table(db):
+    client = make_client(mgmt_names=["mgmt1"])
+    service = make_service(db, client)
+    await service._cache.upsert_domain(Domain.build(mgmt_name="mgmt1", domain_name="dmnA", active_ip="1.1.1.1"))
+
+    async def _populate(mgmt_name):
+        await service._cache.upsert_domain(Domain.build(mgmt_name=mgmt_name, domain_name="dmnNew", active_ip="2.2.2.2"))
+
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock(side_effect=_populate)
+
+    domains = await service._get_domains_to_refresh(
+        "mgmt1", ["dmnA", "dmnNew"], RefreshMode.FORCE, refresh_domain_list=False
+    )
+
+    assert set(domains) == {"dmnA", "dmnNew"}
+    client._domain_service.populate_domain_cache.assert_awaited_once_with("mgmt1")
+
+
+async def test_get_domains_without_domain_list_refresh_still_populates_an_empty_table(db):
+    client = make_client(mgmt_names=["mgmt1"])
+    service = make_service(db, client)
+
+    async def _populate(mgmt_name):
+        await service._cache.upsert_domain(Domain.build(mgmt_name=mgmt_name, domain_name="dmnX", active_ip="9.9.9.9"))
+
+    client._domain_service = MagicMock()
+    client._domain_service.populate_domain_cache = AsyncMock(side_effect=_populate)
+
+    domains = await service._get_domains_to_refresh("mgmt1", None, RefreshMode.FORCE, refresh_domain_list=False)
+
+    assert domains == ["dmnX"]
+    client._domain_service.populate_domain_cache.assert_awaited_once_with("mgmt1")
+
+
+async def test_refresh_objects_threads_refresh_domain_list_to_the_domain_selection(db):
+    service = make_service(db)
+    service._get_domains_to_refresh = AsyncMock(return_value=[])
+
+    await collect(service.refresh_objects(mgmt_names=["mgmt1"], mode="force", refresh_domain_list=False))
+    assert service._get_domains_to_refresh.await_args.kwargs["refresh_domain_list"] is False
+
+    await collect(service.refresh_objects(mgmt_names=["mgmt1"], mode="force"))
+    assert service._get_domains_to_refresh.await_args.kwargs["refresh_domain_list"] is True
+
+
 async def test_get_domains_check_mode_refetches_domain_list_on_first_call(db):
     """CHECK mode must still discover a domain list it has never fetched before -
     the TTL memo starts empty, so the very first CHECK call for an mgmt server
@@ -918,6 +1003,19 @@ async def test_collect_objects_by_type_success(db):
     assert [o.uid for o in objects] == ["o1"]
     client.api_query.assert_awaited_once()
     assert client.api_query.await_args.kwargs["command"] == "show-hosts"
+
+
+async def test_collect_objects_by_type_pages_by_500(db):
+    client = make_client()
+    client.api_query.return_value = ApiQueryResult(success=True, objects=[])
+    service = make_service(db, client)
+
+    for object_type in ("host", "network", "address-range", "group"):
+        await service._collect_objects_by_type("mgmt1", "dmn1", object_type)
+
+    payloads = [c.kwargs["payload"] for c in client.api_query.await_args_list]
+    assert payloads == [{"limit": 500}] * 4
+    assert len({id(p) for p in payloads}) == 4  # a fresh dict per call: cpapi mutates the payload
 
 
 async def test_collect_objects_by_type_api_error(db):

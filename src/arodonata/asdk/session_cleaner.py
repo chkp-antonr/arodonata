@@ -161,6 +161,7 @@ class SessionCleaner:
         system_sid: str,
         server_ip: str,
         port: int | None,
+        slot_host: str,
     ) -> None:
         """Evaluate and optionally discard one session. Mutates result in place."""
         decision = self._get_session_decision(session)
@@ -181,7 +182,7 @@ class SessionCleaner:
             return
 
         try:
-            async with self._rate_limiter.acquire(server_ip):
+            async with self._rate_limiter.acquire(slot_host):
                 discard_response = await self._transport.discard_session(server_ip, system_sid, uid, port)
             if discard_response.get("success"):
                 result.discarded += 1
@@ -203,6 +204,8 @@ class SessionCleaner:
         system_sid: str,
         server_ip: str,
         port: int | None = None,
+        *,
+        slot_host: str | None = None,
     ) -> CleanupResult:
         """Discard stale disconnected Management API sessions.
 
@@ -221,6 +224,8 @@ class SessionCleaner:
             system_sid: Already-authenticated SID to use for show-sessions/discard.
             server_ip: Management server IP address.
             port: Optional port number.
+            slot_host: RateLimiter key for the discards -- the MDS member the session lives on
+                (LoginCoordinator.mds_host); defaults to server_ip.
 
         Returns:
             CleanupResult with counts of discarded/skipped/errored sessions.
@@ -245,7 +250,7 @@ class SessionCleaner:
         log().debug(f"Session cleanup for '{mgmt_name}:{domain}': evaluating {len(sessions)} sessions")
 
         for session in sessions:
-            await self._process_session(session, result, system_sid, server_ip, port)
+            await self._process_session(session, result, system_sid, server_ip, port, slot_host or server_ip)
 
         log().info(
             f"Session cleanup complete for '{mgmt_name}:{domain}': "

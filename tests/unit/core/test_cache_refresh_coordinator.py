@@ -84,6 +84,7 @@ class FakeObjectService:
     def __init__(self, stale=False, objects_by_uid=None, head_published_time=DEFAULT_HEAD) -> None:
         self.stale = stale
         self.full_reloads: list[tuple[str, str]] = []
+        self.refresh_domain_list_args: list[bool] = []
         self.baseline_refreshes: list[tuple[str, str]] = []
         self.stale_checks = 0
         self.fetched: list[str] = []
@@ -102,8 +103,9 @@ class FakeObjectService:
         self.stale_checks += 1
         return self.stale
 
-    async def refresh_objects(self, mgmt_names=None, domain_names=None, mode="force"):
+    async def refresh_objects(self, mgmt_names=None, domain_names=None, mode="force", *, refresh_domain_list=True):
         self.full_reloads.append((mgmt_names[0], domain_names[0]))
+        self.refresh_domain_list_args.append(refresh_domain_list)
         yield {"progress": 1}  # coordinator drains this generator
 
     async def refresh_last_published_session(self, mgmt, domain):
@@ -121,7 +123,7 @@ class FailingObjectService(FakeObjectService):
     instead of completing, mirroring ObjectService._refresh_domain aborting
     a refresh on an object-type fetch error."""
 
-    async def refresh_objects(self, mgmt_names=None, domain_names=None, mode="force"):
+    async def refresh_objects(self, mgmt_names=None, domain_names=None, mode="force", *, refresh_domain_list=True):
         self.full_reloads.append((mgmt_names[0], domain_names[0]))
         yield {"status": "domain_failed", "message": "boom", "error": "boom"}
 
@@ -207,6 +209,17 @@ async def test_force_reloads_unconditionally_ignoring_ttl_and_staleness():
     assert obj.full_reloads == [("m1", "d1")]
     assert obj.stale_checks == 0  # FORCE never checks staleness
     assert outcome.refreshed_domains == [("m1", "d1")]
+
+
+async def test_full_reload_does_not_refetch_the_domain_list():
+    """The coordinator already knows its domains: every reload would otherwise re-read show-domains/show-mdss."""
+    obj = FakeObjectService(stale=True)
+    cache = StatefulCache({("m1", "d1"): ["x"]})
+    coord = make_coord(cache, obj, mode=CacheMode.FORCE)
+
+    await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.FORCE, 300))
+
+    assert obj.refresh_domain_list_args == [False]
 
 
 async def test_smart_stale_triggers_full_reload():

@@ -37,3 +37,13 @@ async def test_logout_sid_failure_logs_no_sid_prefix(caplog):
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert "Logout of explicit SID for 'm1' failed: RuntimeError" in text
     assert SID[:8] not in text
+
+
+async def test_api_call_with_sid_forwards_the_domain():
+    mgmt = AsyncMock()
+    mgmt.api_call_with_sid.return_value = {"success": True, "data": {}}
+    client = make_client(mgmt=mgmt)
+
+    await client.api_call_with_sid("m1", SID, "192.0.2.1", "show-session", domain="Domain4")
+
+    assert mgmt.api_call_with_sid.await_args.kwargs["domain"] == "Domain4"

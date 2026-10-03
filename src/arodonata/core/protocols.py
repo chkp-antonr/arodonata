@@ -148,11 +148,11 @@ class IServerRegistry(Protocol):
 
 @runtime_checkable
 class IRateLimiter(Protocol):
-    """Interface for rate limiting per server."""
+    """Interface for rate limiting per MDS member."""
 
     @asynccontextmanager
     async def acquire(self, server_ip: str) -> AsyncGenerator[None]:
-        """Acquire rate limit slot for server."""
+        """Acquire a rate limit slot; server_ip is the slot key (the MDS member hosting the target)."""
         yield
 
 

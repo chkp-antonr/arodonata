@@ -830,12 +830,12 @@ async def test_try_login_once_wraps_other_exception_as_auth_error():
 
 
 async def test_try_login_once_translates_an_mds_host_failure_as_authentication_error():
-    """`_mds_host` is inside the try now: a transient cache failure resolving the
+    """`mds_host` is inside the try now: a transient cache failure resolving the
     hosting member is a login failure like any other, not a raw exception past
     this method (it used to sit before the try, and would have propagated as-is).
     """
     coord = _make_coordinator()
-    coord._mds_host = AsyncMock(side_effect=RuntimeError("cache backend unavailable"))
+    coord.mds_host = AsyncMock(side_effect=RuntimeError("cache backend unavailable"))
 
     with pytest.raises(AuthenticationError):
         await coord._try_login_once("m", "", "ip", "key", False, None, None, None)
@@ -865,12 +865,12 @@ async def test_try_login_once_takes_no_slot_itself():
 async def test_try_login_once_keys_the_gate_on_the_hosting_member_not_the_target_ip():
     """Domain logins go to domain-server IPs; the allowance they spend is the hosting member's."""
     coord = _make_coordinator()
-    coord._mds_host = AsyncMock(return_value="10.0.0.2")
+    coord.mds_host = AsyncMock(return_value="10.0.0.2")
     coord._retry_with_backoff = AsyncMock(return_value=("sid", "uid"))
 
     await coord._try_login_once("mgmt1", "Domain2", "10.0.0.7", "key", False, None, None, None)
 
-    coord._mds_host.assert_awaited_once_with("mgmt1", "Domain2")
+    coord.mds_host.assert_awaited_once_with("mgmt1", "Domain2")
     assert coord._retry_with_backoff.call_args.kwargs["mds_host"] == "10.0.0.2"
 
 
@@ -885,7 +885,7 @@ async def test_gate_deadline_surfaces_as_authentication_error_with_the_throttle_
     assert "login_max_wait=900s" in str(excinfo.value)
 
 
-async def test_execute_login_request_takes_the_target_slot_around_the_transport_call():
+async def test_execute_login_request_takes_the_members_slot_around_the_transport_call():
     events: list[str] = []
 
     async def slot_in(*args):
@@ -907,11 +907,16 @@ async def test_execute_login_request_takes_the_target_slot_around_the_transport_
         return {"success": True, "sid": "s"}
 
     transport.login_with_apikey = AsyncMock(side_effect=http)
-    coord = _make_coordinator(rate_limiter=rl, transport=transport)
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(
+        server_ip="10.0.0.9"
+    )  # the configured host: the system domain's member
+    coord = _make_coordinator(rate_limiter=rl, transport=transport, registry=registry)
 
     await coord._execute_login_request("m", "", "10.0.0.7", "key")
 
-    rl.acquire.assert_called_once_with("10.0.0.7")
+    rl.acquire.assert_called_once_with("10.0.0.9")
+    assert transport.login_with_apikey.await_args.kwargs["server_ip"] == "10.0.0.7"
     assert events == ["slot-in", "http", "slot-out"]
 
 
@@ -1264,12 +1269,16 @@ async def test_cleanup_gets_temp_sid_runs_cleanup_logs_out():
     transport = AsyncMock()
     transport.login_with_apikey.return_value = {"success": True, "sid": "tmp", "data": {}}
     transport.logout.return_value = {"success": True}
-    coord = _make_coordinator(transport=transport, session_cleaner=cleaner)
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(
+        server_ip="10.0.0.9"
+    )  # the configured host: the system domain's member
+    coord = _make_coordinator(transport=transport, session_cleaner=cleaner, registry=registry)
 
     await coord._cleanup_for_max_sessions("mgmt1", "", "10.0.0.1", "key", None)
 
     cleaner.cleanup_stale_sessions.assert_awaited_once_with(
-        mgmt_name="mgmt1", domain="", system_sid="tmp", server_ip="10.0.0.1", port=None
+        mgmt_name="mgmt1", domain="", system_sid="tmp", server_ip="10.0.0.1", port=None, slot_host="10.0.0.9"
     )
     transport.logout.assert_awaited_once_with("10.0.0.1", "tmp", port=None)
 
@@ -1347,7 +1356,7 @@ async def test_cleanup_temp_login_is_gated_and_closes_the_gate_when_refused():
     (`10.0.0.1`), the configured management host is `10.9.9.9`, and the MDS member
     actually hosting the domain -- the machine Check Point rate-limits, and the only
     correct gate key -- is `10.50.50.50`. With all three equal this test could not
-    tell `_mds_host` from `server_ip` and would have passed on either.
+    tell `mds_host` from `server_ip` and would have passed on either.
     """
     gate = FakeGate(give_up_after=1)
     cleaner = MagicMock(spec=SessionCleaner)
@@ -1725,7 +1734,7 @@ async def test_a_throttle_is_reported_by_the_gate_alone_with_the_login_target(ca
 async def test_login_hands_the_gate_mgmt_and_domain_as_the_target():
     gate = FakeGate(give_up_after=10)
     coord = _make_coordinator(settings=_make_settings(max_retries=2), login_gate=gate)
-    coord._mds_host = AsyncMock(return_value="mds")
+    coord.mds_host = AsyncMock(return_value="mds")
     attempts = 0
 
     async def op(*_args, **_kwargs):

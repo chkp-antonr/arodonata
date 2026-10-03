@@ -63,7 +63,7 @@ class TestDefaults:
         settings = ArodonataSettings()
         assert settings.session_expire_seconds == 3600
         assert settings.session_timeout == 600
-        assert settings.concurrent_limit == 3
+        assert settings.concurrent_limit == 4
         assert settings.api_timeout == 120
         assert settings.login_retry_backoff == 5
         assert settings.login_max_retries == 8
@@ -191,6 +191,10 @@ class TestFieldConstraints:
     def test_concurrent_limit_within_bounds_ok(self):
         settings = ArodonataSettings(concurrent_limit=20)
         assert settings.concurrent_limit == 20
+
+    def test_concurrent_limit_env_overrides_default(self, monkeypatch):
+        monkeypatch.setenv("ARODONATA_CONCURRENT_LIMIT", "7")
+        assert ArodonataSettings().concurrent_limit == 7
 
     def test_rate_limit_slot_timeout_configurable_via_kwarg(self):
         settings = ArodonataSettings(rate_limit_slot_timeout=120)

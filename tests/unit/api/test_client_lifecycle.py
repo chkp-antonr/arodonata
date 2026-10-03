@@ -708,3 +708,16 @@ async def test_search_objects_with_refresh_invokes_refresh_objects():
     # refresh_objects START is converted to LOG and RESULT/COMPLETE filtered out
     assert any(e.event_type == SSEEventType.START and "Searching" in (e.message or "") for e in events)
     svc.refresh_objects.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_refresh_coordinator_runs_concurrent_limit_minus_one_domains_per_member():
+    client = ArodonataClient(
+        settings=ArodonataSettings(concurrent_limit=6), username="admin", password="secret", mgmt_ip="1.2.3.4"
+    )
+    try:
+        coord = client._refresh_coordinator
+        assert coord._domain_concurrency == 5
+        assert coord._member_of == client._login_coordinator.mds_host
+    finally:
+        await client.close()

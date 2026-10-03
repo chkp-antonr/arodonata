@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from arodonata.core.cache_mode import CacheMode
@@ -14,6 +15,9 @@ if TYPE_CHECKING:
     from arodonata.core.cache_policy import Clock
 
 log = lazy_logger("arodonata.core.cache_refresh_coordinator")
+
+#: Resolves (mgmt, domain) to the MDS member serving it (LoginCoordinator.mds_host).
+MemberOf = Callable[[str, str], Awaitable[str]]
 
 
 class CacheRefreshCoordinator:
@@ -29,7 +33,26 @@ class CacheRefreshCoordinator:
         default_ttl: int = 300,
         clock: Clock | None = None,
         max_incremental_changes: int = 500,
+        member_of: MemberOf | None = None,
+        domain_concurrency: int = 1,
     ) -> None:
+        """Create the coordinator.
+
+        Args:
+            cache: Cache repository.
+            api: API facade used for change and head lookups.
+            object_service: Object service that performs the reloads.
+            session_tracker: Optional session tracker.
+            default_mode: Cache mode used when a read names none.
+            default_ttl: Freshness window in seconds for the smart modes.
+            clock: Clock for freshness checks (tests inject one).
+            max_incremental_changes: Largest change set applied incrementally before a full reload.
+            member_of: Resolver `(mgmt, domain) -> MDS member`; `ensure` refreshes members in parallel and at most
+                `domain_concurrency` domains of one member at once. Without it, domains group by management server
+                name, so different servers refresh in parallel (previously they refreshed one after another) and
+                the domains of one server share one `domain_concurrency` budget.
+            domain_concurrency: Domain refreshes started at once per member per `ensure` call.
+        """
         self._cache = cache
         self._api = api
         self._object_service = object_service
@@ -41,6 +64,11 @@ class CacheRefreshCoordinator:
         # per-(mgmt, domain) locks to collapse concurrent refreshes in-process
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self.max_incremental_changes = max_incremental_changes
+        self._member_of = member_of
+        # Domain refreshes started at once per member *per ensure call* (concurrent_limit - 1 from the client).
+        # Overlapping ensure calls each get their own budget, so the member-keyed RateLimiter is the real bound
+        # on the load a member sees.
+        self._domain_concurrency = max(1, domain_concurrency)
 
     # ---- public API ------------------------------------------------------
 
@@ -52,14 +80,49 @@ class CacheRefreshCoordinator:
             outcome.skipped_reason = "cache-mode"
             return outcome
 
-        for mgmt, domain in await self._resolve_pairs(scope):
-            await self._ensure_one(mgmt, domain, policy, outcome)
+        await self._ensure_pairs(await self._resolve_pairs(scope), policy, outcome)
 
         return outcome
 
     def invalidate(self, mgmt_name: str, domain_name: str) -> None:
         """Drop the TTL memo for a domain so the next check cannot be skipped."""
         self._checked_at.pop((mgmt_name, domain_name), None)
+
+    # ---- fan-out ---------------------------------------------------------
+
+    async def _ensure_pairs(self, pairs: list[tuple[str, str]], policy: CachePolicy, outcome: RefreshOutcome) -> None:
+        """Ensure every pair: members in parallel, at most `domain_concurrency` domains of one member at once.
+
+        Per-domain locks (`_ensure_one`) still collapse concurrent refreshes of one domain. Every domain runs
+        to the end even when another raises; the first exception is re-raised once all have finished. The
+        outcome lists keep scope order.
+        """
+        by_member: dict[str, list[tuple[str, str]]] = {}
+        for mgmt, domain in pairs:
+            by_member.setdefault(await self._member_key(mgmt, domain), []).append((mgmt, domain))
+        results = await asyncio.gather(
+            *(self._ensure_member(group, policy, outcome) for group in by_member.values()), return_exceptions=True
+        )
+        order = {pair: i for i, pair in enumerate(pairs)}
+        outcome.refreshed_domains.sort(key=lambda pair: order.get(pair, len(order)))
+        outcome.failed_domains.sort(key=lambda pair: order.get(pair, len(order)))
+        _raise_first(results, [f"member {key}" for key in by_member])
+
+    async def _ensure_member(self, pairs: list[tuple[str, str]], policy: CachePolicy, outcome: RefreshOutcome) -> None:
+        slots = asyncio.Semaphore(self._domain_concurrency)
+
+        async def one(mgmt: str, domain: str) -> None:
+            async with slots:
+                await self._ensure_one(mgmt, domain, policy, outcome)
+
+        results = await asyncio.gather(*(one(m, d) for m, d in pairs), return_exceptions=True)
+        _raise_first(results, [f"{m}/{d}" for m, d in pairs])
+
+    async def _member_key(self, mgmt: str, domain: str) -> str:
+        """The MDS member serving the domain; without a resolver, the management server stands in for it."""
+        if self._member_of is None:
+            return mgmt
+        return await self._member_of(mgmt, domain)
 
     # ---- per-domain logic ------------------------------------------------
 
@@ -100,7 +163,11 @@ class CacheRefreshCoordinator:
 
     async def _full_reload(self, mgmt: str, domain: str, outcome: RefreshOutcome) -> None:
         failed = False
-        async for event in self._object_service.refresh_objects(mgmt_names=[mgmt], domain_names=[domain], mode="force"):
+        # The coordinator already knows its domains, and many reloads run at once: without this every one of them
+        # would issue show-domains/show-mdss and rewrite every domain row of the server.
+        async for event in self._object_service.refresh_objects(
+            mgmt_names=[mgmt], domain_names=[domain], mode="force", refresh_domain_list=False
+        ):
             if event.get("status") == "domain_failed":
                 failed = True
 
@@ -187,3 +254,17 @@ class CacheRefreshCoordinator:
 
     def _mark_checked(self, mgmt: str, domain: str) -> None:
         self._checked_at[(mgmt, domain)] = self._clock.now()
+
+
+def _raise_first(results: list[Any], labels: list[str]) -> None:
+    """Re-raise the first exception `asyncio.gather(..., return_exceptions=True)` collected.
+
+    Each further exception is logged with its label and type name (never its message) before the first is raised.
+    """
+    errors = [
+        (label, result) for label, result in zip(labels, results, strict=True) if isinstance(result, BaseException)
+    ]
+    for label, error in errors[1:]:
+        log().warning(f"Refresh of {label} also failed: {type(error).__name__}")
+    if errors:
+        raise errors[0][1]

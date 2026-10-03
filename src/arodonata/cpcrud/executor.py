@@ -190,9 +190,11 @@ class Executor:
                 results.append(result)
                 yield result
             if discard:
-                await self._client.api_call_with_sid(mgmt, sid, server_ip, "discard", payload={})
+                await self._client.api_call_with_sid(mgmt, sid, server_ip, "discard", payload={}, domain=domain)
             elif not no_publish and any(r.outcome in _WRITE_OUTCOMES for r in results):
-                await self._client.api_call_with_sid(mgmt, sid, server_ip, "publish", payload={}, wait_for_task=True)
+                await self._client.api_call_with_sid(
+                    mgmt, sid, server_ip, "publish", payload={}, wait_for_task=True, domain=domain
+                )
         except Exception as exc:  # session-open failure -> every not-yet-run action errors
             done_ids = {r.action_id for r in results}
             for action in actions:
@@ -253,7 +255,13 @@ class Executor:
             )
         try:
             res = await self._client.api_call_with_sid(
-                mgmt, sid, server_ip, action.command, payload=action.payload, wait_for_task=True
+                mgmt,
+                sid,
+                server_ip,
+                action.command,
+                payload=action.payload,
+                wait_for_task=True,
+                domain=action.domain_name,
             )
         except Exception as exc:
             return ActionResult(
@@ -276,7 +284,7 @@ class Executor:
                     mgmt_name=action.mgmt_name,
                     domain_name=action.domain_name,
                     uid=action.resolved_uid,
-                    locking_session=await self._find_locking_session(mgmt, sid, server_ip),
+                    locking_session=await self._find_locking_session(mgmt, sid, server_ip, action.domain_name),
                     message=res.message,
                 )
             if kind == "exists" and action.operation == "add":
@@ -330,9 +338,11 @@ class Executor:
             uid=uid or action.resolved_uid,
         )
 
-    async def _find_locking_session(self, mgmt: str, sid: str, server_ip: str) -> dict[str, Any] | None:
+    async def _find_locking_session(self, mgmt: str, sid: str, server_ip: str, domain: str) -> dict[str, Any] | None:
         try:
-            res = await self._client.api_call_with_sid(mgmt, sid, server_ip, "show-sessions", payload={"limit": 100})
+            res = await self._client.api_call_with_sid(
+                mgmt, sid, server_ip, "show-sessions", payload={"limit": 100}, domain=domain
+            )
         except Exception:
             return None
         if not res.success:

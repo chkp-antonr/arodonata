@@ -484,3 +484,9 @@ def test_current_task_id_isolated_in_different_contexts_when_no_task(monkeypatch
     fresh_ctx = contextvars.Context()
     id3 = fresh_ctx.run(RateLimiter._current_task_id)
     assert id3 != id1
+
+
+def test_default_limit_is_the_per_member_default():
+    from arodonata.config.constants import DEFAULT_CONCURRENT_LIMIT
+
+    assert RateLimiter(lock_manager=FakeLockManager())._concurrent_limit == DEFAULT_CONCURRENT_LIMIT == 4

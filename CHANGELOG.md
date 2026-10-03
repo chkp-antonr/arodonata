@@ -19,9 +19,16 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 - `arodonata-mcp` could not be stopped with Ctrl+C while Claude Code was connected (uvicorn waited for the open connection forever), and after shutdown the process could hang on a Check Point SDK call stuck in network I/O (the SDK connects without a socket timeout); both waits are now bounded by `ARODONATA_MCP_SHUTDOWN_TIMEOUT` / `--shutdown-timeout` (default 5 s)
 - Stopping `arodonata-mcp` with Ctrl+C no longer ends with a SQLAlchemy `CancelledError` traceback: uvicorn re-raised the caught SIGINT after its own shutdown, and `asyncio.run` then cancelled the client and engine cleanup
 - A throttled login (`err_too_many_requests`) no longer logs an ERROR response dump and a coordinator WARNING: the login gate's single `CLOSED` line reports it and now names the refused login (`mgmt/domain`) next to the window
+- A keepalive no longer drops a healthy session when no slot of the MDS member is free (or the member cannot be resolved): it is skipped and the next sweep retries; only a failing keepalive request evicts the SID
 
 ### Changed
 
+- `ARODONATA_CONCURRENT_LIMIT` now caps requests in flight per MDS member (Check Point serves all domains of a member from one API server), keyed like the login gate; default 4 (was 3 per domain server IP)
+- The object cache refreshes a server's domains concurrently (at most `concurrent_limit − 1`, at least one, per MDS member), so the first-use warm-up of a multi-domain server finishes several times faster
+- Refreshes driven by the cache coordinator no longer re-read the domain list (`show-domains`/`show-mdss`) and rewrite every domain row per domain reload; `ObjectService.refresh_objects` gained `refresh_domain_list` (default True, unchanged behaviour)
+- Cache listings (objects, gateways and servers, domains, MDS members) are fetched in pages of 500 instead of cpapi's default 50
+- `api_call_with_sid` accepts `domain=` to take the hosting member's slot (without it the member is looked up by the server IP)
+- SQLite connections wait up to 30 s for a busy cache database (was SQLite's 5 s; an engine that sets its own timeout keeps it) and one client's domain swaps run one at a time, so concurrent refreshes and several processes on one file no longer fail with "database is locked"
 - `get_domains` without `mgmt_names` still reads every cached server but refreshes only the first configured server's domain list (before, a cold call loaded every server); MCP `arodonata_init` passes all configured servers explicitly. `CacheOrchestrationService.get_domains` is a pure read and ignores its `cache_mode`/`cache_ttl` arguments
 
 ### Added

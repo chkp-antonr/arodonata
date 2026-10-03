@@ -60,7 +60,10 @@ class SidCallError(RuntimeError):
 
 
 class SidCaller:
-    """RulebaseCaller bound to one app-owned SID (read-only). The SID is domain-bound: ``domain`` is ignored."""
+    """RulebaseCaller bound to one app-owned SID (read-only).
+
+    The SID is domain-bound: ``domain`` only selects the RateLimiter slot (the hosting member).
+    """
 
     def __init__(self, client: ArodonataClient, mgmt_name: str, sid: SecretStr, server_ip: str) -> None:
         self._client = client
@@ -86,7 +89,7 @@ class SidCaller:
             raise ValueError(f"{command!r} is not allowed through an owned session (read-only)")
         try:
             result = await self._client.api_call_with_sid(
-                self._mgmt, self._sid.get_secret_value(), self._server_ip, command, payload=dict(payload)
+                self._mgmt, self._sid.get_secret_value(), self._server_ip, command, payload=dict(payload), domain=domain
             )
         except Exception as exc:
             raise SidCallError(f"{command} raised {type(exc).__name__}: {self.scrub(str(exc))}") from None

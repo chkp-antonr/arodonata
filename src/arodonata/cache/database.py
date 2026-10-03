@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlmodel import SQLModel
 
+from ..config import SQLITE_BUSY_TIMEOUT_SECONDS
 from ..logger import lazy_logger
 from .models import DistributedLock, SchemaVersion  # noqa: F401
 
@@ -68,6 +70,14 @@ def _build_schema_version_upsert_stmt(
     )
 
 
+def _default_sqlite_busy_timeout(engine: AsyncEngine) -> None:
+    """Make every new SQLite connection wait SQLITE_BUSY_TIMEOUT_SECONDS for a busy database, unless the engine set its own."""
+
+    @event.listens_for(engine.sync_engine, "do_connect")
+    def _busy_timeout(dialect: Any, conn_rec: Any, cargs: Any, cparams: dict[str, Any]) -> None:
+        cparams.setdefault("timeout", SQLITE_BUSY_TIMEOUT_SECONDS)
+
+
 class DatabaseManager:
     """Manages database sessions from pre-configured engine.
 
@@ -89,16 +99,26 @@ class DatabaseManager:
 
         # Note: App is responsible for disposing the engine
         await engine.dispose()
+
+    For SQLite engines it registers a ``do_connect`` listener on the caller's engine that defaults the driver
+    timeout to ``SQLITE_BUSY_TIMEOUT_SECONDS`` (an explicit ``connect_args`` timeout wins), so concurrent writers
+    and several processes on one file wait for a busy database instead of failing with "database is locked".
     """
 
     def __init__(self, engine: AsyncEngine) -> None:
         """Initialize database manager with pre-configured engine.
+
+        For SQLite engines this registers a ``do_connect`` listener on ``engine`` (the caller's engine, not a copy)
+        that defaults the driver timeout to ``SQLITE_BUSY_TIMEOUT_SECONDS``; a ``timeout`` set through
+        ``connect_args`` wins. Other dialects are untouched.
 
         Args:
             engine: Pre-configured AsyncEngine instance owned by the application.
                    The application is responsible for disposing this engine.
         """
         self._engine = engine
+        if engine.dialect.name == "sqlite":
+            _default_sqlite_busy_timeout(engine)
         self._sessionmaker = async_sessionmaker(
             self._engine,
             class_=AsyncSession,

@@ -156,6 +156,7 @@ class FakeReportClient:
         payload: dict[str, Any] | None = None,
         wait_for_task: bool = True,
         timeout: int = -1,
+        domain: str | None = None,
     ) -> ApiCallResult:
         body = dict(payload or {})
         self.sid_calls.append((sid, command, body))

@@ -865,3 +865,49 @@ async def test_cleanup_multiple_sessions_mixed_outcomes():
     assert result.discarded == 1
     assert result.skipped == 2
     mock_transport.discard_session.assert_called_once_with("10.0.0.1", "tmp-sid", "sess-a", None)
+
+
+def _one_stale_session_transport():
+    old_posix = int((datetime.now(UTC) - timedelta(hours=2)).timestamp() * 1000)
+    transport = AsyncMock()
+    transport.show_sessions.return_value = {
+        "success": True,
+        "data": {
+            "objects": [
+                {
+                    "uid": "sess-001",
+                    "application": "Management API",
+                    "connection-mode": "disconnected",
+                    "number-of-changes": 0,
+                    "tasks": [],
+                    "creation-time": {"posix-millis": old_posix},
+                }
+            ]
+        },
+        "message": "",
+        "code": "",
+    }
+    transport.discard_session.return_value = {"success": True, "data": {}, "message": "", "code": ""}
+    return transport
+
+
+async def test_discard_takes_the_given_member_slot_and_goes_to_the_server():
+    transport, limiter = _one_stale_session_transport(), _cm_result()
+    cleaner = _make_cleaner(transport=transport, rate_limiter=limiter)
+
+    result = await cleaner.cleanup_stale_sessions(
+        "home", "Domain4", "tmp-sid", "192.168.5.184", slot_host="192.168.5.170"
+    )
+
+    assert result.discarded == 1
+    limiter.acquire.assert_called_once_with("192.168.5.170")
+    transport.discard_session.assert_called_once_with("192.168.5.184", "tmp-sid", "sess-001", None)
+
+
+async def test_discard_slot_defaults_to_the_server_ip():
+    transport, limiter = _one_stale_session_transport(), _cm_result()
+    cleaner = _make_cleaner(transport=transport, rate_limiter=limiter)
+
+    await cleaner.cleanup_stale_sessions("mgmt1", "", "tmp-sid", "10.0.0.1")
+
+    limiter.acquire.assert_called_once_with("10.0.0.1")

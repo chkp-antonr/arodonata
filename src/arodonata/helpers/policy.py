@@ -216,6 +216,7 @@ async def publish_session(
         server_ip=server_ip,
         command="publish",
         payload={},
+        domain=domain_name,
     )
 
     if getattr(result, "success", False):
@@ -263,6 +264,7 @@ async def discard_session(
         server_ip=server_ip,
         command="discard",
         payload={},
+        domain=domain_name,
     )
 
     # Clear session changes from tracker
@@ -378,6 +380,7 @@ async def add_object(
         server_ip=server_ip,
         command=command,
         payload=payload,
+        domain=domain_name,
     )
 
     if not result.success:
@@ -530,6 +533,7 @@ async def set_object(
         server_ip=server_ip,
         command=command,
         payload=payload,
+        domain=domain_name,
     )
 
     if not result.success:
@@ -600,6 +604,7 @@ async def delete_object(
         server_ip=server_ip,
         command=command,
         payload=payload,
+        domain=domain_name,
     )
 
     if not result.success:
