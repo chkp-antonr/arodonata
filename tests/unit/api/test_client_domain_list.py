@@ -237,3 +237,59 @@ async def test_get_domains_smart_modes_refresh_the_list(mode):
     client = domain_client(cached_rows=[])
     await client.get_domains(mgmt_names=["m1"], cache_mode=mode)
     client._domain_service.populate_domain_cache.assert_awaited_once()
+
+
+async def test_warm_up_status_is_none_until_a_warm_up_starts():
+    client = domain_client(warm=True, objects_last_update=datetime(2026, 10, 2, tzinfo=UTC))
+    await client.get_domains(mgmt_names=["m1"])
+    assert client.object_cache_warm_up("m1") is None
+
+
+async def test_warm_up_status_runs_then_finishes_with_the_outcome_counts():
+    from arodonata.core.cache_mode import CacheMode
+    from arodonata.core.cache_policy import RefreshOutcome
+
+    client = domain_client(warm=True, objects_last_update=None)
+    release = asyncio.Event()
+    outcome = RefreshOutcome(
+        mode_used=CacheMode.SMART, refreshed_domains=[("m1", "a"), ("m1", "b")], failed_domains=[("m1", "c")]
+    )
+
+    async def slow_ensure(scope, policy):
+        await release.wait()
+        return outcome
+
+    client._refresh_coordinator.ensure = AsyncMock(side_effect=slow_ensure)
+    await client.get_domains(mgmt_names=["m1"])
+    running = client.object_cache_warm_up("m1")
+    assert running is not None and running.state == "running"
+    assert running.started_at.tzinfo is not None and running.finished_at is None
+    release.set()
+    await asyncio.gather(*list(client._background_tasks))
+    done = client.object_cache_warm_up("m1")
+    assert done is not None and done.state == "finished"
+    assert (done.refreshed_domains, done.failed_domains) == (2, 1)
+    assert done.started_at == running.started_at and done.finished_at is not None
+
+
+async def test_warm_up_status_reports_a_failed_warm_up():
+    client = domain_client(warm=True, objects_last_update=None)
+    client._refresh_coordinator.ensure = AsyncMock(side_effect=RuntimeError("login refused"))
+    await client.get_domains(mgmt_names=["m1"])
+    await asyncio.gather(*list(client._background_tasks), return_exceptions=True)
+    status = client.object_cache_warm_up("m1")
+    assert status is not None and status.state == "failed" and status.finished_at is not None
+
+
+async def test_warm_up_status_reports_a_warm_up_cancelled_by_close():
+    client = domain_client(warm=True, objects_last_update=None)
+
+    async def endless(scope, policy):
+        await asyncio.sleep(3600)
+
+    client._refresh_coordinator.ensure = AsyncMock(side_effect=endless)
+    await client.get_domains(mgmt_names=["m1"])
+    await asyncio.sleep(0)
+    await asyncio.wait_for(client.close(), timeout=2)
+    status = client.object_cache_warm_up("m1")
+    assert status is not None and status.state == "cancelled"

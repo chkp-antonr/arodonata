@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from ..api.schemas import SSEEvent, SSEEventType
+from ..api.schemas import ObjectCacheWarmUp, SSEEvent, SSEEventType
 from ._sdk import Context, MCPServer
 from .common import ToolFailure, add_guarded_tool, ensure_success, list_envelope, resolve_mgmt_name, to_api_payload
 from .projection import cache_age_seconds
@@ -124,6 +125,30 @@ async def _run_api_call(
     return {"data": result.data, "source": "live"}
 
 
+def _warm_up_record(warm_up: ObjectCacheWarmUp) -> dict[str, Any]:
+    """What a model needs to know about a background object-cache load: still running, or how it ended."""
+    if warm_up.state == "running":
+        running = (datetime.now(UTC) - warm_up.started_at).total_seconds()
+        return {"state": "running", "running_seconds": int(running)}
+    return {
+        "state": warm_up.state,
+        "refreshed_domains": warm_up.refreshed_domains,
+        "failed_domains": warm_up.failed_domains,
+    }
+
+
+def _server_entry(client: ArodonataClient, mgmt: str, domains: list[Any]) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "mgmt_name": mgmt,
+        "is_mds": any(d.is_mdm for d in domains),
+        "domains": [d.name for d in domains],
+    }
+    warm_up = client.object_cache_warm_up(mgmt)
+    if warm_up is not None:
+        entry["object_cache_warm_up"] = _warm_up_record(warm_up)
+    return entry
+
+
 def register_native_tools(server: MCPServer, client: ArodonataClient, opts: ToolOptions) -> list[str]:
     names: list[str] = []
 
@@ -132,18 +157,19 @@ def register_native_tools(server: MCPServer, client: ArodonataClient, opts: Tool
         mgmt_names = client.get_mgmt_names()
         # every server explicitly: get_domains without mgmt refreshes only the first configured server's list
         domains = await client.get_domains(mgmt_names=mgmt_names, include_global=False)
-        servers = []
-        for mgmt in mgmt_names:
-            mine = [d for d in domains if d.mgmt_name == mgmt]
-            servers.append(
-                {"mgmt_name": mgmt, "is_mds": any(d.is_mdm for d in mine), "domains": [d.name for d in mine]}
-            )
+        servers = [_server_entry(client, mgmt, [d for d in domains if d.mgmt_name == mgmt]) for mgmt in mgmt_names]
+        loading = [s["mgmt_name"] for s in servers if s.get("object_cache_warm_up", {}).get("state") == "running"]
         last = await client.cache.get_objects_last_update()
         if len(mgmt_names) == 1:
             guidance = f"One management server is configured ('{mgmt_names[0]}'); the mgmt_name parameter is optional."
         else:
             guidance = "Several management servers are configured; pass mgmt_name to every tool."
         guidance += " For MDS servers pass domain; omit it for single-domain servers. Tools marked cache-backed answer from the local cache; pass cache_mode='smart' to re-sync stale data first or cache_mode='force' for a full reload from the management server."
+        if loading:
+            guidance += (
+                f" The object cache of {', '.join(loading)} is being loaded in the background: cache-backed tools may"
+                " miss domains not loaded yet; pass cache_mode='smart' to load a domain on demand."
+            )
         return {"servers": servers, "cache_age_seconds": cache_age_seconds(last), "guidance": guidance}
 
     add_guarded_tool(server, arodonata_init, name=opts.name("arodonata_init"))

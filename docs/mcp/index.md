@@ -80,7 +80,7 @@ Cache-backed tools answer from Arodonata's local cache by default; pass `cache_m
 
 | Tool | Backing | Notes |
 |---|---|---|
-| `arodonata_init` | cache | Call this first: lists configured management servers, whether each is MDS, their domains, and cache age. |
+| `arodonata_init` | cache | Call this first: lists configured management servers, whether each is MDS, their domains, and cache age. A server whose empty object cache is being loaded in the background carries `object_cache_warm_up` (`running` with `running_seconds`, or how it ended with the refreshed and failed domain counts), and the guidance says so while it runs. |
 | `search_objects` | cache | Searches cached objects across servers/domains by name, IP or pattern, following group membership; returns `results` as a list of `{mgmt_name, domain, search_term, search_type, objects, memberships}`. |
 | `refresh_objects` | live | Re-syncs the object cache from the management server(s); `mode='incremental'` pulls only changes since the last publish. |
 | `refresh_rulebases` | live | Re-syncs cached access, NAT, HTTPS and threat rulebases per domain; `mode='check'` re-reads only domains with a new published session; accepts `include_global`; failures (including `dirty session` while the shared session holds unpublished changes) land in `errors`. |

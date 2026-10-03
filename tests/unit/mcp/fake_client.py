@@ -225,6 +225,10 @@ class FakeArodonataClient:
         self.snapshot = mcp_snapshot()
         self.status = "ok"
         self.last_error: str | None = None
+        self.warm_ups: dict[str, Any] = {}
+
+    def object_cache_warm_up(self, mgmt_name: str) -> Any:
+        return self.warm_ups.get(mgmt_name)
 
     def _rec(self, name: str, **kwargs: Any) -> Any:
         self.calls.append((name, kwargs))

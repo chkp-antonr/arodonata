@@ -16,6 +16,8 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 - MCP `show_domains` returned an empty record per domain; records are now built from the cached domain fields
 - The cached Global domain row had an empty UID: it now carries the UID `show-global-domain` returns (a failed lookup keeps the UID already cached); docs and the MCP `show_domains` description no longer call Global "synthetic"
 - `arodonata-mcp` could not be stopped with Ctrl+C while Claude Code was connected (uvicorn waited for the open connection forever), and after shutdown the process could hang on a Check Point SDK call stuck in network I/O (the SDK connects without a socket timeout); both waits are now bounded by `ARODONATA_MCP_SHUTDOWN_TIMEOUT` / `--shutdown-timeout` (default 5 s)
+- Stopping `arodonata-mcp` with Ctrl+C no longer ends with a SQLAlchemy `CancelledError` traceback: uvicorn re-raised the caught SIGINT after its own shutdown, and `asyncio.run` then cancelled the client and engine cleanup
+- A throttled login (`err_too_many_requests`) no longer logs an ERROR response dump and a coordinator WARNING: the login gate's single `CLOSED` line reports it and now names the refused login (`mgmt/domain`) next to the window
 
 ### Changed
 
@@ -24,6 +26,7 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 ### Added
 
 - First-use warm-up: when `get_domains` finds a server's object cache empty it returns the domain list at once and loads the objects in the background (`warm_object_cache_on_first_use`, `ARODONATA_WARM_OBJECT_CACHE_ON_FIRST_USE`, default on)
+- `ArodonataClient.object_cache_warm_up(mgmt_name)` (`ObjectCacheWarmUp`) reports the first-use background load; MCP `arodonata_init` shows it per server and, while it runs, says so in its guidance
 
 ### Added (change report)
 

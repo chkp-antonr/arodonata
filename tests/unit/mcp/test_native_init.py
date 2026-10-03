@@ -40,3 +40,36 @@ async def test_init_single_server_guidance_says_mgmt_name_optional():
     fake = FakeArodonataClient(["only"])
     out = payload(await call_tool(make_server(fake), "arodonata_init"))
     assert "optional" in out["guidance"]
+
+
+async def test_init_reports_a_running_background_warm_up_and_says_so_in_the_guidance():
+    """Without this the model read cache_age_seconds=null as "empty, loads on first use" while the load was running."""
+    from datetime import UTC, datetime, timedelta
+
+    from arodonata.api.schemas import ObjectCacheWarmUp
+
+    fake = FakeArodonataClient(["mgmt1", "mgmt2"])
+    fake.responses["get_domains"] = [_domain("General")]
+    fake.warm_ups["mgmt1"] = ObjectCacheWarmUp(state="running", started_at=datetime.now(UTC) - timedelta(seconds=30))
+    out = payload(await call_tool(make_server(fake), "arodonata_init"))
+    servers = {s["mgmt_name"]: s for s in out["servers"]}
+    warm = servers["mgmt1"]["object_cache_warm_up"]
+    assert warm["state"] == "running" and 29 <= warm["running_seconds"] <= 60
+    assert "object_cache_warm_up" not in servers["mgmt2"]
+    assert "being loaded in the background" in out["guidance"] and "mgmt1" in out["guidance"]
+
+
+async def test_init_reports_a_finished_warm_up_with_its_counts():
+    from datetime import UTC, datetime
+
+    from arodonata.api.schemas import ObjectCacheWarmUp
+
+    fake = FakeArodonataClient(["mgmt1"])
+    now = datetime.now(UTC)
+    fake.warm_ups["mgmt1"] = ObjectCacheWarmUp(
+        state="finished", started_at=now, finished_at=now, refreshed_domains=11, failed_domains=1
+    )
+    out = payload(await call_tool(make_server(fake), "arodonata_init"))
+    warm = out["servers"][0]["object_cache_warm_up"]
+    assert warm == {"state": "finished", "refreshed_domains": 11, "failed_domains": 1}
+    assert "being loaded in the background" not in out["guidance"]

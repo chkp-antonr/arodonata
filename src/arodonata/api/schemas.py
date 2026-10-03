@@ -8,9 +8,21 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class ObjectCacheWarmUp(BaseModel):
+    """Background load of a server's empty object cache, started by the first ``get_domains`` (once per client)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    state: Literal["running", "finished", "failed", "cancelled"] = Field(description="Where the load is")
+    started_at: datetime = Field(description="When the load started (UTC)")
+    finished_at: datetime | None = Field(default=None, description="When it ended; None while running")
+    refreshed_domains: int = Field(default=0, description="Domains loaded (known once finished)")
+    failed_domains: int = Field(default=0, description="Domains that failed to load (known once finished)")
 
 
 class SSEEventType(StrEnum):

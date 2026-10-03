@@ -434,7 +434,11 @@ class LoginCoordinator:
         sub_token = _login_pacing.set(self._sub_deadline_pacing(self._throttle_window))
         try:
             tmp_sid = await self._retry_with_backoff(
-                _temp_login, "Cleanup login", mds_host=await self._mds_host(mgmt_name, domain), max_retries=1
+                _temp_login,
+                "Cleanup login",
+                mds_host=await self._mds_host(mgmt_name, domain),
+                target=f"{mgmt_name}/{domain or 'system'}",
+                max_retries=1,
             )
         except Exception as exc:  # noqa: BLE001 - cleanup is best effort; the caller's login proceeds regardless
             log().warning(f"Could not acquire temp SID for cleanup: {exc}")
@@ -619,6 +623,7 @@ class LoginCoordinator:
         operation_name: str,
         *,
         mds_host: str,
+        target: str = "",
         max_retries: int | None = None,
         backoff: int | None = None,
     ) -> Any:
@@ -631,7 +636,8 @@ class LoginCoordinator:
         Everything else is a failure: it gets the exponential ladder and is
         limited to `max_retries` attempts. See asdk/login_gate.py.
 
-        `mds_host` is the machine the login counts against (see `_mds_host`).
+        `mds_host` is the machine the login counts against (see `_mds_host`);
+        `target` ("mgmt/domain") only names the login in the gate's log line.
         """
         max_retries = max_retries or self._settings.login_max_retries
         backoff = backoff or self._settings.login_retry_backoff
@@ -683,7 +689,7 @@ class LoginCoordinator:
                         + (throttles - 1) * DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS,
                         self._throttle_window,
                     )
-                    await gate.close(mds_host, window=adaptive_window)
+                    await gate.close(mds_host, window=adaptive_window, target=target)
                     continue  # the next wait_open sleeps the window out
 
             failures += 1
@@ -743,8 +749,7 @@ class LoginCoordinator:
             timeouts += 1
 
         if kind == "throttle":
-            log().warning(f"{operation_name} throttled by Check Point (err_too_many_requests) - closing the login gate")
-            return kind, timeouts
+            return kind, timeouts  # the gate's CLOSED line reports it
 
         # Backoff clears lockouts, not addresses. Once the evidence says nothing is
         # listening, hand the failure up instead of spending the rest of the budget
@@ -1014,6 +1019,7 @@ class LoginCoordinator:
                 ),
                 "Login",
                 mds_host=mds_host,
+                target=f"{mgmt_name}/{domain or 'system'}",
             )
             if result is None:
                 raise AuthenticationError("Login failed: No session ID returned")
@@ -1798,7 +1804,9 @@ class LoginCoordinator:
             mds_host = await self._mds_host(mgmt_name, domain)
             # Each attempt takes the target's RateLimiter slot around its own HTTP call
             # (inside _execute_login_request); nothing is held across the ladder.
-            result = await self._retry_with_backoff(_attempt, "Dedicated session login", mds_host=mds_host)
+            result = await self._retry_with_backoff(
+                _attempt, "Dedicated session login", mds_host=mds_host, target=f"{mgmt_name}/{domain or 'system'}"
+            )
         except LoginGateDeadlineError as e:
             # Must never leave LoginCoordinator unwrapped -- see
             # _raise_gate_deadline_as_auth_error and asdk/login_gate.py.

@@ -229,6 +229,7 @@ def _fake_server_stack(monkeypatch, tmp_path, server_serve):
     monkeypatch.setattr(app_module, "create_mcp_server", lambda client, settings: object())
     monkeypatch.setattr(app_module, "create_asgi_app", lambda client, settings, server: object())
     monkeypatch.setattr(uvicorn, "Server", FakeServer)
+    monkeypatch.setitem(main.__globals__, "_server_class", lambda: FakeServer)
 
 
 def test_uvicorn_gets_the_shutdown_timeout_so_an_open_client_connection_cannot_block_ctrl_c(monkeypatch, tmp_path):
@@ -292,3 +293,24 @@ def test_a_clean_shutdown_returns_normally_without_a_hard_exit(monkeypatch, tmp_
     _fake_server_stack(monkeypatch, tmp_path, quick_call)
     monkeypatch.setitem(main.__globals__, "_hard_exit", fail_exit)
     assert main(["--shutdown-timeout", "1"]) == 0
+
+
+async def test_the_server_does_not_re_raise_the_caught_sigint_after_a_clean_shutdown(monkeypatch):
+    """uvicorn re-raises the signals it caught once serve() returns, for its host's sake. We are the host: re-raised,
+    the SIGINT makes asyncio.run cancel the main task mid-cleanup, and SQLAlchemy logs a CancelledError traceback
+    for the aiosqlite connection it was closing."""
+    import signal
+
+    import uvicorn
+
+    server = main.__globals__["_server_class"]()(uvicorn.Config(app=None))
+
+    async def stop_on_ctrl_c(sockets=None):
+        server.handle_exit(signal.SIGINT, None)
+
+    raised: list[int] = []
+    monkeypatch.setattr(server, "_serve", stop_on_ctrl_c)
+    monkeypatch.setattr(signal, "raise_signal", raised.append)
+    await server.serve()
+    assert raised == []
+    assert server.should_exit is True

@@ -72,6 +72,7 @@ class FakeGate:
         self.closed: list[str] = []
         self.closed_windows: list[int | None] = []
         self.waits: list[dict] = []
+        self.targets: list[str] = []
         self.give_up_after = give_up_after
 
     async def wait_open(self, mds_host, *, deadline, max_wait, keepalive=None):
@@ -85,9 +86,10 @@ class FakeGate:
         if keepalive is not None and mds_host in self.closed:
             await keepalive()
 
-    async def close(self, mds_host, window=None):
+    async def close(self, mds_host, window=None, *, target=""):
         self.closed.append(mds_host)
         self.closed_windows.append(window)
+        self.targets.append(target)
 
 
 def _make_coordinator(
@@ -1698,3 +1700,41 @@ async def test_deadline_with_no_attempt_of_its_own_says_the_gate_was_closed_by_o
 
     assert attempts == 0
     assert "no attempt" in str(excinfo.value)
+
+
+async def test_a_throttle_is_reported_by_the_gate_alone_with_the_login_target(caplog):
+    """The gate's CLOSED line says it all; the coordinator adds no line of its own, and hands the gate the target."""
+    gate = FakeGate(give_up_after=10)
+    coord = _make_coordinator(settings=_make_settings(max_retries=2), login_gate=gate)
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ThrottlingError("Login throttled: err_too_many_requests")
+        return ("sid-1", "uid-1")
+
+    with caplog.at_level(1):
+        await coord._retry_with_backoff(op, "Login", mds_host="mds", target="home/FPCR_TEST_A")
+
+    assert gate.targets == ["home/FPCR_TEST_A"]
+    assert not [r for r in caplog.records if "throttled by Check Point" in r.getMessage()]
+
+
+async def test_login_hands_the_gate_mgmt_and_domain_as_the_target():
+    gate = FakeGate(give_up_after=10)
+    coord = _make_coordinator(settings=_make_settings(max_retries=2), login_gate=gate)
+    coord._mds_host = AsyncMock(return_value="mds")
+    attempts = 0
+
+    async def op(*_args, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ThrottlingError("Login throttled: err_too_many_requests")
+        return ("sid-1", "uid-1")
+
+    coord._login_operation_for = op
+    await coord._try_login_once("home", "FPCR_TEST_A", "10.0.0.7", "key", False, None, None, None)
+    assert gate.targets == ["home/FPCR_TEST_A"]
