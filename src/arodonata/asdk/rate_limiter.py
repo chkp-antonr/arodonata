@@ -15,7 +15,7 @@ from contextvars import ContextVar
 
 from arlogi.otel.decorator import traced
 
-from ..cache.lock_manager import DatabaseLockManager, LockAcquisitionError, LockContext
+from ..cache.lock_manager import DatabaseLockManager, LockAcquisitionError, LockContext, LockOwnershipError
 from ..config.constants import DEFAULT_CONCURRENT_LIMIT, DEFAULT_RATE_LIMIT_SLOT_TIMEOUT
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
@@ -36,6 +36,8 @@ class RateLimiter:
     Lock keys use a slot-based approach: ratelimit:{host}:slot_{n}
     where host is the MDS member hosting the target (LoginCoordinator.mds_host)
     and n is determined by hashing the operation ID to distribute load.
+    A held slot's row is renewed every third of its TTL until release, so a
+    request that outlasts the TTL (a whole listing, a publish task) keeps it.
 
     Example:
         limiter = RateLimiter(concurrent_limit=4)
@@ -49,6 +51,7 @@ class RateLimiter:
         concurrent_limit: int = DEFAULT_CONCURRENT_LIMIT,
         lock_manager: DatabaseLockManager | None = None,
         slot_timeout: int = DEFAULT_RATE_LIMIT_SLOT_TIMEOUT,
+        slot_renew_interval: float | None = None,
     ) -> None:
         """Initialize rate limiter.
 
@@ -58,10 +61,16 @@ class RateLimiter:
             slot_timeout: Default seconds acquire() waits for a free slot before
                 giving up (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT for why this must
                 comfortably exceed a single login retry-with-backoff sequence).
+            slot_renew_interval: Seconds between renewals of a held slot's lock row.
+                Defaults to a third of the row's TTL (DEFAULT_TTL_RATE_LIMIT, so 100 s);
+                must be positive.
         """
         self._concurrent_limit = concurrent_limit
         self._lock_manager = lock_manager
         self._slot_timeout = slot_timeout
+        if slot_renew_interval is not None and slot_renew_interval <= 0:
+            raise ValueError(f"slot_renew_interval must be positive, got {slot_renew_interval}")
+        self._slot_renew_interval_override = slot_renew_interval
         self._in_process_locks: dict[str, asyncio.Lock] = {}  # For in-process synchronization
         self._reentrancy_count: dict[str, int] = {}  # Track reentrant locks per task, keyed by held slot
         self._task_slot: dict[str, str] = {}  # (server_ip, task) -> lock_key of the slot actually held
@@ -98,6 +107,12 @@ class RateLimiter:
 
         assert self._lock_manager is not None
         return self._lock_manager
+
+    def _slot_renew_interval(self, ttl: int) -> float:
+        """Seconds between renewals of a held slot's distributed row: a third of its TTL unless overridden."""
+        if self._slot_renew_interval_override is not None:
+            return self._slot_renew_interval_override
+        return ttl / 3
 
     def _get_slot_number(self, server_ip: str) -> int:
         """Get slot number for server IP using consistent hash.
@@ -151,6 +166,29 @@ class RateLimiter:
             in_process.release()
             return None
         return in_process, lock
+
+    async def _keep_slot(self, lock_manager: DatabaseLockManager, lock_key: str, owner_id: str, ttl: int) -> None:
+        """Renew the held slot's distributed row every `_slot_renew_interval(ttl)` until cancelled at release.
+
+        A failed renewal cannot stop the request already in flight. A row that is gone or owned by
+        someone else cannot be won back by renewing, so that is reported once and renewal stops; any
+        other error (a busy database, a dropped connection) is logged and the next interval retries.
+        No upper bound on the hold: a request that hangs keeps its slot in every process until it
+        ends (cpapi has no socket timeout of its own).
+        """
+        interval = self._slot_renew_interval(ttl)
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                if not await lock_manager.renew_lock(lock_key, owner_id, ttl):
+                    log().warning(f"RateLimiter slot {lock_key} lapsed while held; another process may take it")
+                    return
+            except LockOwnershipError:
+                log().warning(f"RateLimiter slot {lock_key} was taken by another owner while held")
+                return
+            except Exception as exc:  # noqa: BLE001 - renewal is best effort; the request continues
+                log().warning(f"RateLimiter could not renew slot {lock_key}: {type(exc).__name__}")
+                log().debug(f"RateLimiter renewal error for {lock_key}", exc_info=True)
 
     def _drop_reentrancy(self, reentrancy_key: str, task_key: str) -> None:
         """Undo one level of reentrancy bookkeeping; forget the task's slot at zero."""
@@ -233,14 +271,23 @@ class RateLimiter:
                 self._task_slot[task_key] = lock_key
                 span_attrs(slot=slot, attempts=attempt)
                 log().trace(f"RateLimiter ACQUIRED for {server_ip} (slot={slot})")
+                # A request can hold the slot longer than the row's TTL (a whole listing,
+                # a publish task); keep the row alive so no other process takes the slot.
+                renewer = asyncio.create_task(self._keep_slot(lock_manager, lock_key, lock.owner_id, ttl))
                 try:
                     yield
                 finally:
-                    self._drop_reentrancy(reentrancy_key, task_key)
+                    renewer.cancel()
+                    # Every step below runs even if this task is cancelled while it waits:
+                    # a skipped release would leave the slot taken for the life of the process.
                     try:
-                        await lock_manager.release_lock(lock_key, lock.owner_id)
+                        await asyncio.wait({renewer})
                     finally:
-                        in_process.release()
+                        self._drop_reentrancy(reentrancy_key, task_key)
+                        try:
+                            await lock_manager.release_lock(lock_key, lock.owner_id)
+                        finally:
+                            in_process.release()
                     log().trace(f"RateLimiter RELEASED for {server_ip} (slot={slot})")
                 return
 
