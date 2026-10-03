@@ -88,7 +88,7 @@ class SIDCache(SQLModel, table=True):
     def __repr__(self) -> str:
         """String representation."""
         uid_str = f", uid='{self.uid[:8]}...'" if self.uid else ""
-        return f"SIDCache(key='{self.mgmt_dmn_key}', sid='{self.sid[:8]}...'{uid_str}, server_ip='{self.server_ip}')"
+        return f"SIDCache(key='{self.mgmt_dmn_key}'{uid_str}, server_ip='{self.server_ip}')"  # never the SID
 
 
 class Asset(SQLModel, table=True):

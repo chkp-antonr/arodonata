@@ -1007,7 +1007,7 @@ async def test_login_with_apikey_log_sid_false_logs_no_sid_prefix(caplog):
 
 
 async def test_login_with_apikey_default_still_logs_sid_prefix(caplog):
-    assert f"SID={LOG_SID[:8]}..." in await _apikey_login_log(caplog)
+    assert f"SID=[{LOG_SID[:8]}...]" in await _apikey_login_log(caplog)
 
 
 @pytest.mark.parametrize("prefix_len", [8, 12, len(LOG_SID)])

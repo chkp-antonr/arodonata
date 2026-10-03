@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from ..config import FAILOVER_ERROR_CODES, SESSION_ERROR_CODES
 from ..logger import lazy_logger
 from ..utils.background_tasks import DEFAULT_CLOSE_GRACE_SECONDS, drain_background_tasks
+from ._sid import sid_prefix
 from .transport import RawApiResponse
 
 if TYPE_CHECKING:
@@ -176,9 +177,9 @@ class AMgmtClient:
                 session_description=session_description,
             )
             if attempt > 0:
-                log().trace(f"Retrying with SID [{sid[:8]}...] for '{mgmt_name}:{domain}'")
+                log().trace(f"Retrying with {sid_prefix(sid)} for '{mgmt_name}:{domain}'")
             else:
-                log().trace(f"Using SID [{sid[:8]}...] for '{mgmt_name}:{domain}'")
+                log().trace(f"Using {sid_prefix(sid)} for '{mgmt_name}:{domain}'")
 
             server_config = self._registry.get_server(mgmt_name)
             port = server_config.port if server_config else None

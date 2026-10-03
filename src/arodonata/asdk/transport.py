@@ -19,6 +19,7 @@ from pydantic import SecretStr
 from ..config.constants import DEFAULT_LOGIN_TIMEOUT, THROTTLE_ERROR_CODE
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
+from ._sid import redact_sid, sid_prefix
 from .task_waiter import TaskStatus, TaskWaiter, extract_task_ids
 
 log = lazy_logger("arodonata.asdk.transport")
@@ -38,18 +39,6 @@ def mask_secret(secret: SecretStr | str | None) -> str:
 
 # Type alias for raw API response
 RawApiResponse = dict[str, Any]
-
-
-def _redact_sid(text: str, sid: SecretStr | str | None) -> str:
-    """Remove the request's own SID, the full value and every prefix of 8+ characters, from a text about to be logged
-    (a server message or exception text can echo it, e.g. an expired-session error)."""
-    secret = sid.get_secret_value() if isinstance(sid, SecretStr) else (sid or "")
-    if not secret or not text:
-        return text
-    text = text.replace(secret, "***")
-    for n in range(len(secret) - 1, 7, -1):
-        text = text.replace(secret[:n], "***")
-    return text
 
 
 class ApiTransport:
@@ -246,11 +235,12 @@ class ApiTransport:
             return "", data
         return "", ""
 
-    def _convert_response_to_dict(self, response: Any) -> RawApiResponse:
+    def _convert_response_to_dict(self, response: Any, sid: str | None = None) -> RawApiResponse:
         """Convert APIResponse object to standardized dictionary format.
 
         Args:
             response: APIResponse object from SDK.
+            sid: The request's SID: redacted from the message, as is any SID a "session id [...]" phrase echoes.
 
         Returns:
             Standardized response dictionary.
@@ -273,7 +263,7 @@ class ApiTransport:
         return {
             "success": response.success,
             "data": response.data,
-            "message": message,
+            "message": redact_sid(str(message), sid),
             "code": code,
         }
 
@@ -339,12 +329,12 @@ class ApiTransport:
                     ),
                     timeout=timeout if timeout > 0 else None,
                 )
-            result = self._convert_response_to_dict(response)
+            result = self._convert_response_to_dict(response, sid)
             if result["success"]:
                 log().trace(f"API CALL SUCCESS: {command}")
             else:
                 log().trace(
-                    f"API CALL FAILED: {command} - {_redact_sid(str(result.get('message', 'Unknown error')), sid)}"
+                    f"API CALL FAILED: {command} - {redact_sid(str(result.get('message', 'Unknown error')), sid)}"
                 )
                 span_attrs(response_code=result.get("code"))
 
@@ -364,7 +354,7 @@ class ApiTransport:
             log().error(f"API CALL TIMEOUT: {command} (timeout={timeout}s)")
             raise
         except Exception as e:
-            log().error(f"API CALL ERROR: {command} - {_redact_sid(str(e), sid)}")
+            log().error(f"API CALL ERROR: {command} - {redact_sid(str(e), sid)}")
             raise
 
     async def _await_tasks(
@@ -495,7 +485,7 @@ class ApiTransport:
             if response is None:
                 raise ValueError(f"API query returned None response: {command}")
 
-            result = self._convert_response_to_dict(response)
+            result = self._convert_response_to_dict(response, sid)
             if result["success"]:
                 log().trace(f"API QUERY SUCCESS: {command}")
             else:
@@ -504,11 +494,11 @@ class ApiTransport:
 
             # Ensure proper error message if data is missing
             if not result["success"] and not result["message"]:
-                result["message"] = getattr(response, "error_message", "Unknown query error")
+                result["message"] = redact_sid(getattr(response, "error_message", "Unknown query error"), sid)
 
             return result
         except Exception as e:
-            log().error(f"API QUERY ERROR: {command} - {e}")
+            log().error(f"API QUERY ERROR: {command} - {redact_sid(str(e), sid)}")
             raise
 
     @traced
@@ -587,7 +577,7 @@ class ApiTransport:
 
             result = self._build_login_response(response)
             if result["success"]:
-                shown = f" -> SID={result['sid'][:8]}..." if log_sid else ""
+                shown = f" -> {sid_prefix(result['sid'])}" if log_sid else ""
                 log().debug(f"LOGIN (apikey) SUCCESS: {server_ip}{domain_context}{shown}")
             elif result["code"] == THROTTLE_ERROR_CODE:
                 # Expected pacing: the login gate reports it (one line, with the window); no dump here.
@@ -721,17 +711,17 @@ class ApiTransport:
             log().trace(f"LOGOUT from {server_ip}")
             async with self._client(server_ip, port, sid) as client:
                 response = await asyncio.to_thread(client.api_call, "logout")
-            result = self._convert_response_to_dict(response)
+            result = self._convert_response_to_dict(response, sid)
             if result["success"]:
                 log().trace(f"LOGOUT SUCCESS: {server_ip}")
             else:
                 log().trace(
-                    f"LOGOUT FAILED: {server_ip} - {_redact_sid(str(result.get('message', 'Unknown error')), sid)}"
+                    f"LOGOUT FAILED: {server_ip} - {redact_sid(str(result.get('message', 'Unknown error')), sid)}"
                 )
             return result
         except Exception as e:
-            log().error(f"LOGOUT ERROR: {server_ip} - {_redact_sid(str(e), sid)}")
-            return {"success": False, "message": str(e)}
+            log().error(f"LOGOUT ERROR: {server_ip} - {redact_sid(str(e), sid)}")
+            return {"success": False, "message": redact_sid(str(e), sid)}
 
     @traced
     async def keepalive(
@@ -755,14 +745,14 @@ class ApiTransport:
             log().trace(f"KEEPALIVE: {server_ip}")
             async with self._client(server_ip, port, sid) as client:
                 response = await asyncio.to_thread(client.api_call, "keepalive", {}, client.sid)
-            result = self._convert_response_to_dict(response)
+            result = self._convert_response_to_dict(response, sid)
             if result["success"]:
                 log().trace(f"KEEPALIVE SUCCESS: {server_ip}")
             else:
                 log().trace(f"KEEPALIVE FAILED: {server_ip} - {result.get('message', '')}")
             return result
         except Exception as e:
-            log().error(f"KEEPALIVE ERROR: {server_ip} - {e}")
+            log().error(f"KEEPALIVE ERROR: {server_ip} - {redact_sid(str(e), sid)}")
             raise
 
     @traced
@@ -792,14 +782,14 @@ class ApiTransport:
                     {"details-level": "full", "limit": 500},
                     client.sid,
                 )
-            result = self._convert_response_to_dict(response)
+            result = self._convert_response_to_dict(response, sid)
             if result["success"]:
                 log().trace(f"SHOW-SESSIONS SUCCESS: {server_ip}")
             else:
                 log().trace(f"SHOW-SESSIONS FAILED: {server_ip} - {result.get('message', '')}")
             return result
         except Exception as e:
-            log().error(f"SHOW-SESSIONS ERROR: {server_ip} - {e}")
+            log().error(f"SHOW-SESSIONS ERROR: {server_ip} - {redact_sid(str(e), sid)}")
             raise
 
     @traced
@@ -831,14 +821,14 @@ class ApiTransport:
                     {"uid": target_uid},
                     client.sid,
                 )
-            result = self._convert_response_to_dict(response)
+            result = self._convert_response_to_dict(response, sid)
             if result["success"]:
                 log().trace(f"DISCARD-SESSION SUCCESS: {server_ip} uid={target_uid}")
             else:
                 log().trace(f"DISCARD-SESSION FAILED: {server_ip} uid={target_uid} - {result.get('message', '')}")
             return result
         except Exception as e:
-            log().error(f"DISCARD-SESSION ERROR: {server_ip} uid={target_uid} - {e}")
+            log().error(f"DISCARD-SESSION ERROR: {server_ip} uid={target_uid} - {redact_sid(str(e), sid)}")
             raise
 
 
