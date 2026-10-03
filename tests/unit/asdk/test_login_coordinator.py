@@ -86,7 +86,7 @@ class FakeGate:
         if keepalive is not None and mds_host in self.closed:
             await keepalive()
 
-    async def close(self, mds_host, window=None):
+    async def close(self, mds_host, window=None, *, target=""):
         self.closed.append(mds_host)
 
 

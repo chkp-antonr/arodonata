@@ -166,3 +166,12 @@ async def test_refusal_during_the_wait_extends_it(gate: LoginGate, lm: FakeTtlLo
 async def test_close_with_explicit_window_uses_that_window(gate: LoginGate, lm: FakeTtlLockManager) -> None:
     await gate.close("mds", window=12)
     assert lm.rows["loginthrottle:mds"] == lm.now + timedelta(seconds=12)
+
+
+async def test_the_closed_line_names_the_login_target_and_the_window(
+    gate: LoginGate, lm: FakeTtlLockManager, caplog
+) -> None:
+    with caplog.at_level("WARNING"):
+        await gate.close("192.168.5.170", window=7, target="home/FPCR_TEST_A")
+    [line] = [r.getMessage() for r in caplog.records if "CLOSED" in r.getMessage()]
+    assert "192.168.5.170" in line and "7s" in line and "home/FPCR_TEST_A" in line

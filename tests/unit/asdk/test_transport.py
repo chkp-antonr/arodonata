@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1044,3 +1045,43 @@ async def test_logout_failure_and_error_logs_redact_the_request_sid(caplog):
     with caplog.at_level(1), p1, p2, p3:
         await transport.logout("10.0.0.1", LOG_SID)
     assert "LOGOUT ERROR" in _log_text(caplog) and LOG_SID[:8] not in _log_text(caplog)
+
+
+_THROTTLED = {"code": "err_too_many_requests", "message": "Too many requests in a given amount of time"}
+
+
+@pytest.mark.parametrize(
+    ("method_name", "sdk_attr", "args"),
+    [
+        ("login_with_apikey", "login_with_api_key", ("10.0.0.1", "key")),
+        ("login_with_credentials", "login", ("10.0.0.1", "svc", "pw")),
+    ],
+)
+async def test_a_throttled_login_logs_one_debug_line_not_an_error_dump(caplog, method_name, sdk_attr, args):
+    """err_too_many_requests is expected pacing: the login gate reports it; the transport must not shout."""
+    transport = ApiTransport()
+    mock_client = MagicMock()
+    getattr(mock_client, sdk_attr).return_value = _make_response(success=False, data=dict(_THROTTLED))
+
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with p1, p2, p3, caplog.at_level(1):
+        result = await getattr(transport, method_name)(*args, domain="Domain4")
+
+    assert result["success"] is False and result["code"] == "err_too_many_requests"
+    loud = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert loud == [], [r.getMessage() for r in loud]
+    assert any("throttled" in r.getMessage() and "Domain4" in r.getMessage() for r in caplog.records)
+
+
+async def test_other_apikey_login_failures_still_log_the_error_dump(caplog):
+    transport = ApiTransport()
+    mock_client = MagicMock()
+    mock_client.login_with_api_key.return_value = _make_response(
+        success=False, data={"code": "err_login_failed", "message": "Authentication to server failed."}
+    )
+
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with p1, p2, p3, caplog.at_level("ERROR"):
+        await transport.login_with_apikey("10.0.0.1", "key", domain="Domain4")
+
+    assert any("LOGIN (apikey) FAILED" in r.getMessage() for r in caplog.records if r.levelname == "ERROR")

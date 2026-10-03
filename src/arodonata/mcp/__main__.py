@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import functools
 import logging
 import os
 import sys
@@ -142,7 +144,7 @@ async def serve(args: argparse.Namespace) -> None:
                 timeout_graceful_shutdown=mcp_settings.shutdown_timeout,
             )
             log.info("arodonata-mcp listening on %s:%s%s", mcp_settings.host, mcp_settings.port, mcp_settings.path)
-            await uvicorn.Server(config).serve()
+            await _server_class()(config).serve()
     finally:
         # ``client.close()`` is idempotent (checks ``_closed``), so this is a no-op when the ``async with`` block
         # above already ran __aexit__; it is the only cleanup when construction failed before entering that block.
@@ -150,6 +152,28 @@ async def serve(args: argparse.Namespace) -> None:
             await client.close()
         await engine.dispose()
         await _release_sdk_pool(sdk_pool, mcp_settings.shutdown_timeout)
+
+
+@functools.cache
+def _server_class() -> type:  # -> type[uvicorn.Server]; uvicorn is imported lazily, like the rest of the SDK
+    import uvicorn
+
+    class _Server(uvicorn.Server):
+        """uvicorn.Server that does not re-raise the signal it stopped on.
+
+        uvicorn re-raises a caught SIGINT once `serve()` returns, so that its host stops too. Here the host is
+        `serve()` itself, which stops anyway; re-raised, the SIGINT makes `asyncio.run` cancel the main task in
+        the middle of its cleanup (client close, engine dispose), and SQLAlchemy logs a CancelledError traceback
+        for the connection it was closing.
+        """
+
+        @contextlib.contextmanager
+        def capture_signals(self):  # type: ignore[no-untyped-def]
+            with super().capture_signals():
+                yield
+                self._captured_signals.clear()
+
+    return _Server
 
 
 def _blocked_sdk_threads() -> list[threading.Thread]:

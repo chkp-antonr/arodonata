@@ -16,7 +16,7 @@ from arlogi.otel.decorator import traced
 from cpapi import APIClient, APIClientArgs
 from pydantic import SecretStr
 
-from ..config.constants import DEFAULT_LOGIN_TIMEOUT
+from ..config.constants import DEFAULT_LOGIN_TIMEOUT, THROTTLE_ERROR_CODE
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
 from .task_waiter import TaskStatus, TaskWaiter, extract_task_ids
@@ -589,6 +589,9 @@ class ApiTransport:
             if result["success"]:
                 shown = f" -> SID={result['sid'][:8]}..." if log_sid else ""
                 log().debug(f"LOGIN (apikey) SUCCESS: {server_ip}{domain_context}{shown}")
+            elif result["code"] == THROTTLE_ERROR_CODE:
+                # Expected pacing: the login gate reports it (one line, with the window); no dump here.
+                log().debug(f"LOGIN (apikey) throttled: {server_ip}{domain_context} ({THROTTLE_ERROR_CODE})")
             else:
                 log().error(
                     f"LOGIN (apikey) FAILED: {server_ip}{domain_context}\n"
@@ -684,6 +687,8 @@ class ApiTransport:
             result = self._build_login_response(response)
             if result["success"]:
                 log().debug(f"LOGIN (credentials) SUCCESS: {server_ip}{domain_context}")
+            elif result["code"] == THROTTLE_ERROR_CODE:
+                log().debug(f"LOGIN (credentials) throttled: {server_ip}{domain_context} ({THROTTLE_ERROR_CODE})")
             else:
                 log().warning(f"LOGIN (credentials) FAILED: {server_ip}{domain_context} - {result['message']}")
             return result

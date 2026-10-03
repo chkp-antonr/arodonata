@@ -152,12 +152,13 @@ class LoginGate:
         return f"loginthrottle:{mds_host}"
 
     @traced
-    async def close(self, mds_host: str, window: int | None = None) -> None:
+    async def close(self, mds_host: str, window: int | None = None, *, target: str = "") -> None:
         """Record that `mds_host` just refused a login: nobody tries again for one window.
 
         Upserts the row, or -- if another task already closed the gate -- pushes its
         expiry out, because the window that matters runs from the *last* refusal.
-        The row is never released; it lapses.
+        The row is never released; it lapses. `target` ("mgmt/domain") names the
+        refused login in the log line, the only one a throttle produces.
         """
         effective_window = self._window if window is None else window
         key = self._key(mds_host)
@@ -166,8 +167,8 @@ class LoginGate:
         if taken is None:
             await self._lock_manager.extend_lock(key, effective_window)
         log().warning(
-            f"Login gate CLOSED for {mds_host} for {effective_window}s: Check Point refused a login "
-            "(err_too_many_requests); every login to this server waits"
+            f"Login gate CLOSED for {mds_host} for {effective_window}s: Check Point refused a login"
+            f"{f' to {target}' if target else ''} (err_too_many_requests); every login to this server waits"
         )
 
     @traced

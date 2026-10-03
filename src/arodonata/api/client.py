@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Sequence
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from arlogi.otel.decorator import set_trace_modules, traced
@@ -22,7 +23,7 @@ from ..config.constants import TASK_QUERY_COMMANDS, TASK_QUERY_MAX_PAGE_SIZE, TA
 from ..core.exceptions import MissingConfigurationError
 from ..logger import lazy_logger
 from ..utils.background_tasks import DEFAULT_CLOSE_GRACE_SECONDS, drain_background_tasks
-from .schemas import ApiCallResult, ApiQueryResult, SSEEvent, SSEEventType
+from .schemas import ApiCallResult, ApiQueryResult, ObjectCacheWarmUp, SSEEvent, SSEEventType
 
 if TYPE_CHECKING:
     from ..cache.models import LastPublishedSession
@@ -143,6 +144,7 @@ class ArodonataClient:
         self._domain_list_refresh = DomainListRefreshTracker()
         self._object_warm_up_started: set[str] = set()
         self._warm_up_tasks: set[asyncio.Task[None]] = set()
+        self._warm_ups: dict[str, ObjectCacheWarmUp] = {}
         self._search_service_instance: SearchService | None = None
         log().trace(f"ArodonataClient initialized (auth_mode={settings.auth_mode})")
 
@@ -1440,11 +1442,27 @@ class ArodonataClient:
             self._object_warm_up_started.discard(mgmt_name)
             raise
         log().info(f"Object cache of {mgmt_name} is empty; loading every domain's objects in the background")
+        self._warm_ups[mgmt_name] = ObjectCacheWarmUp(state="running", started_at=datetime.now(UTC))
         task = asyncio.create_task(self._warm_object_cache(mgmt_name))
         self._warm_up_tasks.add(task)
         self._background_tasks.add(task)
         task.add_done_callback(self._warm_up_tasks.discard)
         task.add_done_callback(self._background_tasks.discard)
+
+    def object_cache_warm_up(self, mgmt_name: str) -> ObjectCacheWarmUp | None:
+        """The background object-cache load of `mgmt_name` started by this client, or None if none was started.
+
+        `get_domains` starts one, once per server, when it finds that server's object cache empty (see
+        `warm_object_cache_on_first_use`). Counts are known once it has finished.
+        """
+        return self._warm_ups.get(mgmt_name)
+
+    def _end_warm_up(self, mgmt_name: str, state: Literal["finished", "failed", "cancelled"], **counts: int) -> None:
+        started = self._warm_ups.get(mgmt_name)
+        started_at = started.started_at if started else datetime.now(UTC)
+        self._warm_ups[mgmt_name] = ObjectCacheWarmUp(
+            state=state, started_at=started_at, finished_at=datetime.now(UTC), **counts
+        )
 
     async def _warm_object_cache(self, mgmt_name: str) -> None:
         from ..core.cache_mode import CacheMode
@@ -1454,11 +1472,16 @@ class ArodonataClient:
         policy = CachePolicy(mode=CacheMode.SMART, ttl=self._refresh_coordinator.default_policy.ttl)
         try:
             outcome = await self._refresh_coordinator.ensure(RefreshScope(mgmt_names=[mgmt_name]), policy)
+        except asyncio.CancelledError:
+            self._end_warm_up(mgmt_name, "cancelled")
+            raise
         except Exception as exc:
+            self._end_warm_up(mgmt_name, "failed")
             log().warning(f"Background object cache warm-up of {mgmt_name} failed: {type(exc).__name__}")
             return
         refreshed = len(getattr(outcome, "refreshed_domains", []) or [])
         failed = len(getattr(outcome, "failed_domains", []) or [])
+        self._end_warm_up(mgmt_name, "finished", refreshed_domains=refreshed, failed_domains=failed)
         log().info(
             f"Background object cache warm-up of {mgmt_name} finished: {refreshed} domains refreshed, {failed} failed"
         )
