@@ -436,7 +436,7 @@ class LoginCoordinator:
             tmp_sid = await self._retry_with_backoff(
                 _temp_login,
                 "Cleanup login",
-                mds_host=await self._mds_host(mgmt_name, domain),
+                mds_host=await self.mds_host(mgmt_name, domain),
                 target=f"{mgmt_name}/{domain or 'system'}",
                 max_retries=1,
             )
@@ -636,7 +636,7 @@ class LoginCoordinator:
         Everything else is a failure: it gets the exponential ladder and is
         limited to `max_retries` attempts. See asdk/login_gate.py.
 
-        `mds_host` is the machine the login counts against (see `_mds_host`);
+        `mds_host` is the machine the login counts against (see `mds_host`);
         `target` ("mgmt/domain") only names the login in the gate's log line.
         """
         max_retries = max_retries or self._settings.login_max_retries
@@ -1005,7 +1005,7 @@ class LoginCoordinator:
             # Inside the try: a transient failure resolving the hosting member
             # (e.g. a cache lookup error) is a login failure like any other and
             # must come out as AuthenticationError, not propagate raw.
-            mds_host = await self._mds_host(mgmt_name, domain)
+            mds_host = await self.mds_host(mgmt_name, domain)
             result = await self._retry_with_backoff(
                 lambda: self._login_operation_for(
                     mgmt_name,
@@ -1315,7 +1315,7 @@ class LoginCoordinator:
         data = response.get("data")
         return extract_global_domain_mdss(data if isinstance(data, dict) else {})
 
-    async def _mds_host(self, mgmt_name: str, domain: str) -> str:
+    async def mds_host(self, mgmt_name: str, domain: str) -> str:
         """The machine Check Point rate-limits this login on: what the login gate keys on.
 
         A domain login goes to a domain server hosted on some MDS member -- and
@@ -1801,7 +1801,7 @@ class LoginCoordinator:
             # Inside the try along with the retry call, for the same reason as
             # _try_login_once: a failure resolving the hosting member is a login
             # failure like any other, not a raw exception past this method.
-            mds_host = await self._mds_host(mgmt_name, domain)
+            mds_host = await self.mds_host(mgmt_name, domain)
             # Each attempt takes the target's RateLimiter slot around its own HTTP call
             # (inside _execute_login_request); nothing is held across the ladder.
             result = await self._retry_with_backoff(

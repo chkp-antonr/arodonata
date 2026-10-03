@@ -1001,7 +1001,7 @@ async def test_mds_host_prefers_the_domain_rows_member_ip():
     cache.get_domain.return_value = MagicMock(active_mds_ip="10.0.0.2")
     coord = _make_coordinator(registry=registry, cache=cache)
 
-    assert await coord._mds_host("mgmt1", "General") == "10.0.0.2"
+    assert await coord.mds_host("mgmt1", "General") == "10.0.0.2"
     cache.get_domain.assert_awaited_once_with(mdm_dmn="mgmt1:General")
 
 
@@ -1012,13 +1012,13 @@ async def test_mds_host_falls_back_to_the_configured_host():
     coord = _make_coordinator(registry=registry, cache=cache)
 
     cache.get_domain.return_value = None
-    assert await coord._mds_host("mgmt1", "General") == "10.0.0.1"
+    assert await coord.mds_host("mgmt1", "General") == "10.0.0.1"
 
     cache.get_domain.return_value = MagicMock(active_mds_ip="")
-    assert await coord._mds_host("mgmt1", "General") == "10.0.0.1"
+    assert await coord.mds_host("mgmt1", "General") == "10.0.0.1"
 
     cache.get_domain.reset_mock()
-    assert await coord._mds_host("mgmt1", "") == "10.0.0.1"
+    assert await coord.mds_host("mgmt1", "") == "10.0.0.1"
     cache.get_domain.assert_not_awaited()
 
 
