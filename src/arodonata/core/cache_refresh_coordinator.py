@@ -48,8 +48,9 @@ class CacheRefreshCoordinator:
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self.max_incremental_changes = max_incremental_changes
         self._member_of = member_of
-        # Domain refreshes started at once per member. The member-keyed RateLimiter bounds the load on a
-        # member; this leaves a slot free for interactive calls during a warm-up (concurrent_limit - 1).
+        # Domain refreshes started at once per member *per ensure call* (concurrent_limit - 1 from the client).
+        # Overlapping ensure calls each get their own budget, so the member-keyed RateLimiter is the real bound
+        # on the load a member sees.
         self._domain_concurrency = max(1, domain_concurrency)
 
     # ---- public API ------------------------------------------------------
@@ -88,7 +89,7 @@ class CacheRefreshCoordinator:
         order = {pair: i for i, pair in enumerate(pairs)}
         outcome.refreshed_domains.sort(key=lambda pair: order.get(pair, len(order)))
         outcome.failed_domains.sort(key=lambda pair: order.get(pair, len(order)))
-        _raise_first(results)
+        _raise_first(results, [f"member {key}" for key in by_member])
 
     async def _ensure_member(self, pairs: list[tuple[str, str]], policy: CachePolicy, outcome: RefreshOutcome) -> None:
         slots = asyncio.Semaphore(self._domain_concurrency)
@@ -97,7 +98,8 @@ class CacheRefreshCoordinator:
             async with slots:
                 await self._ensure_one(mgmt, domain, policy, outcome)
 
-        _raise_first(await asyncio.gather(*(one(m, d) for m, d in pairs), return_exceptions=True))
+        results = await asyncio.gather(*(one(m, d) for m, d in pairs), return_exceptions=True)
+        _raise_first(results, [f"{m}/{d}" for m, d in pairs])
 
     async def _member_key(self, mgmt: str, domain: str) -> str:
         """The MDS member serving the domain; without a resolver, the management server stands in for it."""
@@ -233,8 +235,15 @@ class CacheRefreshCoordinator:
         self._checked_at[(mgmt, domain)] = self._clock.now()
 
 
-def _raise_first(results: list[Any]) -> None:
-    """Re-raise the first exception `asyncio.gather(..., return_exceptions=True)` collected."""
-    for result in results:
-        if isinstance(result, BaseException):
-            raise result
+def _raise_first(results: list[Any], labels: list[str]) -> None:
+    """Re-raise the first exception `asyncio.gather(..., return_exceptions=True)` collected.
+
+    Each further exception is logged with its label and type name (never its message) before the first is raised.
+    """
+    errors = [
+        (label, result) for label, result in zip(labels, results, strict=True) if isinstance(result, BaseException)
+    ]
+    for label, error in errors[1:]:
+        log().warning(f"Refresh of {label} also failed: {type(error).__name__}")
+    if errors:
+        raise errors[0][1]

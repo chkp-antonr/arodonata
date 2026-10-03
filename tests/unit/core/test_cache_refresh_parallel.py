@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from unittest.mock import patch
 
 import pytest
 
@@ -17,11 +18,16 @@ SMART = CachePolicy(CacheMode.SMART, 300)
 
 
 class GatedObjectService(FakeObjectService):
-    """Full reloads block until `release` is set; tracks in-flight reloads per member."""
+    """Full reloads block until `release` is set; tracks in-flight reloads per member.
 
-    def __init__(self, fail=(), raise_on=()) -> None:
+    Domains named in `gated` additionally wait for their own `gates[domain]` event after `release`, so a test
+    can finish domains in an order of its choosing.
+    """
+
+    def __init__(self, fail=(), raise_on=(), gated=()) -> None:
         super().__init__(stale=True)
         self.fail, self.raise_on = set(fail), set(raise_on)
+        self.gates = {domain: asyncio.Event() for domain in gated}
         self.in_flight: dict[str, int] = {}
         self.peak: dict[str, int] = {}
         self.completed: list[str] = []
@@ -35,6 +41,8 @@ class GatedObjectService(FakeObjectService):
         self.peak[member] = max(self.peak.get(member, 0), self.in_flight[member])
         try:
             await self.release.wait()
+            if domain in self.gates:
+                await self.gates[domain].wait()
             if domain in self.raise_on:
                 raise RuntimeError(f"boom {domain}")
             yield {"status": "domain_failed"} if domain in self.fail else {"status": "domain_complete"}
@@ -109,6 +117,35 @@ async def test_every_refreshed_and_failed_domain_is_recorded_in_scope_order():
     assert outcome.failed_domains == [("m1", "d2"), ("m1", "e1")]
 
 
+async def test_outcome_lists_keep_scope_order_when_a_later_domain_finishes_first():
+    obj = GatedObjectService(gated={"d1", "e1"})
+    obj.release.set()
+    task = asyncio.create_task(_coord(obj, concurrency=3).ensure(_scope("d1", "e1"), SMART))
+    await asyncio.sleep(0.05)
+    obj.gates["e1"].set()
+    await asyncio.sleep(0.05)
+    assert obj.completed == ["e1"]  # e1 (second in scope) is done before d1 starts to finish
+    obj.gates["d1"].set()
+    outcome = await task
+
+    assert obj.completed == ["e1", "d1"]
+    assert outcome.refreshed_domains == [("m1", "d1"), ("m1", "e1")]
+
+
+async def test_failed_domains_keep_scope_order_when_a_later_domain_finishes_first():
+    obj = GatedObjectService(fail={"d1", "e1"}, gated={"d1", "e1"})
+    obj.release.set()
+    task = asyncio.create_task(_coord(obj, concurrency=3).ensure(_scope("d1", "e1"), SMART))
+    await asyncio.sleep(0.05)
+    obj.gates["e1"].set()
+    await asyncio.sleep(0.05)
+    assert obj.completed == ["e1"]
+    obj.gates["d1"].set()
+    outcome = await task
+
+    assert outcome.failed_domains == [("m1", "d1"), ("m1", "e1")]
+
+
 async def test_a_raising_domain_does_not_stop_or_cancel_the_others():
     obj = GatedObjectService(raise_on={"d1"})
     obj.release.set()
@@ -117,6 +154,34 @@ async def test_a_raising_domain_does_not_stop_or_cancel_the_others():
         await _coord(obj, concurrency=3).ensure(_scope("d1", "d2", "d3", "e1"), SMART)
 
     assert sorted(obj.completed) == ["d2", "d3", "e1"]
+
+
+async def test_further_exceptions_are_logged_by_domain_and_type_while_the_first_is_raised():
+    obj = GatedObjectService(raise_on={"d1", "d2", "e1"})
+    obj.release.set()
+
+    with patch("arodonata.core.cache_refresh_coordinator.log") as mock_log:
+        with pytest.raises(RuntimeError, match="boom d1"):
+            await _coord(obj, concurrency=3).ensure(_scope("d1", "d2", "e1"), SMART)
+
+    warnings = [call.args[0] for call in mock_log.return_value.warning.call_args_list]
+    assert any("m1/d2" in w and "RuntimeError" in w for w in warnings)
+    assert not any("boom" in w for w in warnings)  # the type name only, never message text
+    assert not any("m1/d1" in w for w in warnings)  # the re-raised one is not logged twice
+
+
+async def test_cancelling_ensure_cancels_the_refreshes_in_flight():
+    obj = GatedObjectService()
+    task = asyncio.create_task(_coord(obj, concurrency=2).ensure(_scope("d1", "d2", "e1", "e2"), SMART))
+    await asyncio.sleep(0.05)
+    assert obj.in_flight == {"A": 2, "B": 2}
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert obj.in_flight == {"A": 0, "B": 0}
+    assert obj.completed == []
 
 
 async def test_without_a_member_resolver_one_servers_domains_refresh_one_at_a_time():

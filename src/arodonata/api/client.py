@@ -342,8 +342,8 @@ class ArodonataClient:
             default_mode=CacheMode(self._default_cache_mode),
             default_ttl=self._default_cache_ttl,
             max_incremental_changes=self._max_incremental_changes,
-            # Domains refresh concurrently, at most concurrent_limit - 1 per MDS member (one slot stays free
-            # for interactive calls); the member-keyed RateLimiter bounds the load itself.
+            # Domains refresh concurrently, at most concurrent_limit - 1 per MDS member per ensure call;
+            # overlapping calls each get that budget, so the member-keyed RateLimiter is the real bound.
             member_of=self._login_coordinator.mds_host if self._login_coordinator is not None else None,
             domain_concurrency=max(1, self._settings.concurrent_limit - 1),
         )
