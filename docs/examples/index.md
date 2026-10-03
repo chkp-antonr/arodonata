@@ -18,7 +18,7 @@ repo.
 | [Session Basics](07-session-basics.md) | `07_session_basics.py` | Raw session management: baseline, publish, revert |
 | [OTel-Traced Smart Refresh](08-otel-smart-refresh.md) | `08_otel_smart_refresh.py` | Same as Smart Refresh, with OTel tracing + a per-span timing breakdown |
 | [Embedded MCP](09-mcp-embedded.md) | `09_mcp_embedded.py` | Serve MCP from a FastAPI app with app-specific tools |
-| [Change Report Evidence](10-change-report-evidence.md) | `10_change_report_evidence.py` | Pending (live numbers) and published change evidence for one session |
+| [Change Report Evidence](10-change-report-evidence.md) | `10_change_report_evidence.py` | Pending (live numbers), provisional and published change evidence showing every rule and object status |
 
 Run [Smart Refresh](04-smart-refresh.md) first against a fresh database —
 every other example reads from a cache that needs to be populated first.

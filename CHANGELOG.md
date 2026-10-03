@@ -42,7 +42,7 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 - `arodonata.reports.changes`: evidence of Check Point policy sessions — `SessionScope`/`RangeScope` inputs across management servers and domains, `ArodonataClient.collect_change_report` / `build_change_report`, `render_change_report` to HTML (self-contained, `report` extra), JSON (`ChangeReport`, re-renderable) and markdown; SmartConsole rule numbers from the rulebase cache, or live through an app-owned session (`OwnedSession`) for unpublished sessions
 - MCP tool `change_report` (read-only, markdown)
 - `api/services/rulebase_reader.py` (read pipeline shared by the cache refresh and the live source) and `LiveRulebaseSource`; `RulePosition.section_uid`, `LayerPosition.has_sections`
-- Example `10_change_report_evidence.py` and the "Change Report" user guide
+- Example `10_change_report_evidence.py` (a setup session and a change session that adds, modifies, moves, disables and deletes rules and objects; pending, provisional and published evidence) and the "Change Report" user guide
 
 ### Changed (change report)
 
