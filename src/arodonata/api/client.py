@@ -595,6 +595,8 @@ class ArodonataClient:
         payload: dict[str, Any] | None = None,
         wait_for_task: bool = True,
         timeout: int = -1,
+        *,
+        domain: str | None = None,
     ) -> ApiCallResult:
         """Execute API call with an explicit SID (no auto-session management).
 
@@ -609,6 +611,9 @@ class ArodonataClient:
             payload: Additional command parameters.
             wait_for_task: Wait for task completion.
             timeout: Request timeout in seconds (-1 for default).
+            domain: The session's domain, if known: selects the RateLimiter slot of its hosting MDS member
+                (LoginCoordinator.mds_host). Without it the member is looked up by server_ip
+                (LoginCoordinator.mds_host_for_ip).
 
         Returns:
             Validated API call result.
@@ -626,6 +631,7 @@ class ArodonataClient:
             # A caller that named its own timeout means it as the total budget;
             # only the default path gets the separate, larger task allowance.
             task_timeout=-1 if timeout > 0 else self._settings.task_timeout,
+            domain=domain,
         )
 
         raw_data = response.get("data")

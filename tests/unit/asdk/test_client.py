@@ -460,6 +460,34 @@ async def test_api_call_with_sid_bypasses_login_coordinator():
     )
 
 
+async def test_explicit_sid_call_takes_the_members_slot_when_given_the_domain():
+    client, registry, transport, limiter, lc = _make_client()
+    registry.get_server.return_value = MagicMock(port=None)
+    lc.mds_host = AsyncMock(return_value="192.168.5.170")
+    transport.api_call.return_value = {"success": True, "data": {}}
+
+    await client.api_call_with_sid("home", "sid", "192.168.5.184", "show-session", domain="Domain4")
+
+    lc.mds_host.assert_awaited_once_with("home", "Domain4")
+    limiter.acquire.assert_called_once_with("192.168.5.170")
+    assert transport.api_call.await_args.kwargs["server_ip"] == "192.168.5.184"
+
+
+async def test_explicit_sid_call_without_domain_resolves_the_member_by_server_ip():
+    client, registry, transport, limiter, lc = _make_client()
+    registry.get_server.return_value = MagicMock(port=None)
+    lc.mds_host = AsyncMock()
+    lc.mds_host_for_ip = AsyncMock(return_value="192.168.5.170")
+    transport.api_call.return_value = {"success": True, "data": {}}
+
+    await client.api_call_with_sid("home", "sid", "192.168.5.184", "show-session")
+
+    lc.mds_host.assert_not_awaited()
+    lc.mds_host_for_ip.assert_awaited_once_with("home", "192.168.5.184")
+    limiter.acquire.assert_called_once_with("192.168.5.170")
+    assert transport.api_call.await_args.kwargs["server_ip"] == "192.168.5.184"
+
+
 async def test_api_call_with_sid_defaults_payload_and_port():
     transport = AsyncMock()
     transport.api_call.return_value = {"success": True, "data": {}, "message": "", "code": ""}

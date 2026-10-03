@@ -1348,6 +1348,18 @@ class LoginCoordinator:
         server = self._registry.get_server(mgmt_name)
         return server.server_ip if server else mgmt_name
 
+    async def mds_host_for_ip(self, mgmt_name: str, server_ip: str) -> str:
+        """The MDS member serving `server_ip`, for a call that knows only the address (an explicit SID).
+
+        The domain row whose active server is at `server_ip` names its member (`active_mds_ip`); without such a
+        row -- the system domain, a SmartCenter, a domain not cached yet -- the address itself is the key.
+        """
+        for row in await self._cache.get_domains(mgmt_names=[mgmt_name], include_global=True):
+            mds_ip = getattr(row, "active_mds_ip", "")
+            if getattr(row, "active_ip", None) == server_ip and isinstance(mds_ip, str) and mds_ip:
+                return mds_ip
+        return server_ip
+
     async def _cache_domain_active_ip(
         self,
         mgmt_name: str,

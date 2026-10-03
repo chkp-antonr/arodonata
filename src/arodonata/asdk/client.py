@@ -278,6 +278,8 @@ class AMgmtClient:
         wait_for_task: bool = True,
         timeout: int = -1,
         task_timeout: int = -1,
+        *,
+        domain: str | None = None,
     ) -> RawApiResponse:
         """Execute API call with an explicit SID (no auto-session management).
 
@@ -292,6 +294,9 @@ class AMgmtClient:
             payload: Additional command parameters.
             wait_for_task: Wait for task completion.
             timeout: Request timeout in seconds.
+            domain: The session's domain, if known: selects the RateLimiter slot of its hosting MDS member
+                (LoginCoordinator.mds_host). Without it the member is looked up by server_ip
+                (LoginCoordinator.mds_host_for_ip).
 
         Returns:
             API response dictionary.
@@ -306,7 +311,11 @@ class AMgmtClient:
         server_config = self._registry.get_server(mgmt_name)
         port = server_config.port if server_config else None
 
-        async with self._rate_limiter.acquire(server_ip):
+        if domain is None:
+            slot_host = await self._login_coordinator.mds_host_for_ip(mgmt_name, server_ip)
+        else:
+            slot_host = await self._login_coordinator.mds_host(mgmt_name, domain)
+        async with self._rate_limiter.acquire(slot_host):
             response = await self._transport.api_call(
                 server_ip=server_ip,
                 sid=sid,

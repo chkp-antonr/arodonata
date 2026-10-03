@@ -12,6 +12,7 @@ from arodonata.cpcrud.models import ActionResult, ApplyReport, DomainStamp, Obje
 class FakeClient:
     def __init__(self):
         self.calls = []
+        self.domains = []
         self._session_counter = 0
         self.invalidated = []
         self.refresh_calls = []
@@ -23,8 +24,11 @@ class FakeClient:
         self._session_counter += 1
         return (f"sid-{self._session_counter}", "1.1.1.1")
 
-    async def api_call_with_sid(self, mgmt_name, sid, server_ip, command, payload=None, wait_for_task=True, timeout=-1):
+    async def api_call_with_sid(
+        self, mgmt_name, sid, server_ip, command, payload=None, wait_for_task=True, timeout=-1, *, domain=None
+    ):
         self.calls.append((command, payload))
+        self.domains.append(domain)
         if command == "publish":
             return ApiCallResult(success=True, data={"tasks": [{"task-id": "task-1"}]}, message="OK")
         if command.startswith("add-"):
@@ -244,7 +248,7 @@ async def test_locked_object_yields_locked_outcome_with_session_info():
     client = AsyncMock()
     client.create_dedicated_session.return_value = ("sid", "ip")
 
-    async def api_with_sid(mgmt, sid, server_ip, command, payload=None, wait_for_task=True):
+    async def api_with_sid(mgmt, sid, server_ip, command, payload=None, wait_for_task=True, *, domain=None):
         if command == "set-host":
             return SimpleNamespace(success=False, data=None, message="Object is locked by other session", code="")
         if command == "show-sessions":
@@ -318,7 +322,7 @@ async def test_remaining_plan_contains_only_failures_with_fresh_stamp():
     client.invalidate_domain = MagicMock()
     client.create_dedicated_session.return_value = ("sid", "ip")
 
-    async def api_with_sid(mgmt, sid, server_ip, command, payload=None, wait_for_task=True):
+    async def api_with_sid(mgmt, sid, server_ip, command, payload=None, wait_for_task=True, *, domain=None):
         if command == "add-host" and payload.get("name") == "bad":
             return SimpleNamespace(success=False, data=None, message="Object is locked by other session", code="")
         if command == "show-sessions":
@@ -424,3 +428,41 @@ async def test_cpcrud_publish_invalidates_rulebase_memo():
     reader.get_last_publish_session.return_value = "sess-AFTER"
     await Executor(client, reader).execute(Plan(actions=[_action("act-0001")], stamps=[], template_hash="h"))
     assert client.invalidated == [("m", "d")]
+
+
+@pytest.mark.asyncio
+async def test_session_calls_carry_the_domain():
+    client = FakeClient()
+    reader = AsyncMock()
+    reader.get_last_publish_session.return_value = "sess-AFTER"
+    exe = Executor(client, reader)
+    plan = Plan(actions=[_action("act-0001")], stamps=[], template_hash="h")  # domain_name="d"
+    await exe.execute(plan)
+    assert [c[0] for c in client.calls] == ["add-host", "publish"]
+    assert client.domains == ["d", "d"]
+
+
+@pytest.mark.asyncio
+async def test_locked_lookup_carries_the_domain():
+    client = AsyncMock()
+    client.create_dedicated_session.return_value = ("sid", "ip")
+
+    async def api_with_sid(mgmt, sid, server_ip, command, payload=None, wait_for_task=True, *, domain=None):
+        if command == "set-host":
+            return SimpleNamespace(success=False, data=None, message="Object is locked by other session", code="")
+        return SimpleNamespace(success=True, data={"objects": []}, message="", code="")
+
+    client.api_call_with_sid.side_effect = api_with_sid
+    plan = Plan(
+        actions=[
+            _action(
+                "act-0001", op="update", outcome=Outcome.UPDATE, command="set-host", payload={"uid": "u1"}, uid="u1"
+            )
+        ],
+        stamps=[],
+        template_hash="h",
+    )
+    await Executor(client, AsyncMock()).execute(plan)
+    commands = {c.args[3]: c.kwargs["domain"] for c in client.api_call_with_sid.await_args_list}
+    assert commands["set-host"] == "d"
+    assert commands["show-sessions"] == "d"

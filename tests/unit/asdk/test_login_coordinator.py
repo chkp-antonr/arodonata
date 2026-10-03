@@ -1822,3 +1822,23 @@ async def test_system_domain_helper_calls_take_the_configured_hosts_slot():
     ]
     assert set(_slot_keys(rl)) == {CONFIGURED_IP}
     assert {c.kwargs["server_ip"] for c in transport.api_call.await_args_list} == {"10.9.9.9"}
+
+
+async def test_mds_host_for_ip_finds_the_member_of_the_domain_served_at_that_ip():
+    coord, _, _, cache = _member_setup()
+    cache.get_domains.return_value = [
+        MagicMock(active_ip="192.168.5.185", active_mds_ip="192.168.5.171"),
+        MagicMock(active_ip=DOMAIN_IP, active_mds_ip=MEMBER_IP),
+    ]
+
+    assert await coord.mds_host_for_ip("home", DOMAIN_IP) == MEMBER_IP
+    cache.get_domains.assert_awaited_once_with(mgmt_names=["home"], include_global=True)
+
+
+async def test_mds_host_for_ip_falls_back_to_the_ip_itself():
+    coord, _, _, cache = _member_setup()
+    cache.get_domains.return_value = [MagicMock(active_ip=DOMAIN_IP, active_mds_ip="")]
+    assert await coord.mds_host_for_ip("home", DOMAIN_IP) == DOMAIN_IP
+
+    cache.get_domains.return_value = []
+    assert await coord.mds_host_for_ip("home", "10.1.1.1") == "10.1.1.1"

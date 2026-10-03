@@ -286,6 +286,7 @@ class TestPublishSession:
             server_ip="10.0.0.1",
             command="publish",
             payload={},
+            domain="dmn1",
         )
         client._orchestration._session_tracker.clear_session.assert_called_once_with(mgmt_name="mgmt1", domain="dmn1")
         assert isinstance(result, dict)
@@ -375,6 +376,7 @@ class TestDiscardSession:
             server_ip="10.0.0.1",
             command="discard",
             payload={},
+            domain="dmn1",
         )
         client._orchestration._session_tracker.clear_session.assert_called_once_with(mgmt_name="mgmt1", domain="dmn1")
 
@@ -493,6 +495,7 @@ class TestAddObject:
             server_ip="10.0.0.1",
             command="add-host",
             payload={"name": "srv1", "ip-address": "1.2.3.4"},
+            domain="dmn1",
         )
         tracker = client._orchestration._session_tracker
         tracker.add_change.assert_called_once()
@@ -670,6 +673,7 @@ class TestSetObject:
             server_ip="10.0.0.1",
             command="set-host",
             payload={"uid": "uid-1", "type": "host", "name": "srv1", "ipv4-address": "1.2.3.4"},
+            domain="dmn1",
         )
         tracker = client._orchestration._session_tracker
         tracker.add_change.assert_called_once()
@@ -694,6 +698,7 @@ class TestSetObject:
             server_ip="10.0.0.1",
             command="set-network",
             payload={"uid": "uid-2", "name": "net1"},
+            domain="dmn1",
         )
 
     @pytest.mark.asyncio
@@ -767,6 +772,7 @@ class TestDeleteObject:
             server_ip="10.0.0.1",
             command="delete-host",
             payload={"uid": "uid-1"},
+            domain="dmn1",
         )
         tracker = client._orchestration._session_tracker
         tracker.add_change.assert_called_once()
