@@ -342,6 +342,10 @@ class ArodonataClient:
             default_mode=CacheMode(self._default_cache_mode),
             default_ttl=self._default_cache_ttl,
             max_incremental_changes=self._max_incremental_changes,
+            # Domains refresh concurrently, at most concurrent_limit - 1 per MDS member (one slot stays free
+            # for interactive calls); the member-keyed RateLimiter bounds the load itself.
+            member_of=self._login_coordinator.mds_host if self._login_coordinator is not None else None,
+            domain_concurrency=max(1, self._settings.concurrent_limit - 1),
         )
 
         # Rulebase refresh service and its coordinator (after the object service/adapters they depend on)
