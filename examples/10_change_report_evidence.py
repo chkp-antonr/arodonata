@@ -79,7 +79,9 @@ async def main() -> None:
                 try:
 
                     async def call(command: str, payload: dict[str, Any]) -> dict[str, Any]:
-                        result = await client.api_call_with_sid(mgmt, sid, server_ip, command, payload=payload)
+                        result = await client.api_call_with_sid(
+                            mgmt, sid, server_ip, command, payload=payload, domain=DOMAIN
+                        )
                         if not result.success:
                             raise RuntimeError(f"{command} failed: {result.code}")
                         return result.data or {}

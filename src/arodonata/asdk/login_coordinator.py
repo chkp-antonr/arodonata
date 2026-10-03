@@ -410,7 +410,7 @@ class LoginCoordinator:
 
         async def _temp_login() -> str:
             # Through the same path as every other login: the gate in front, the
-            # target's slot around the call. This login counts against the server's
+            # hosting member's slot around the call. This login counts against the member's
             # allowance like any other, so it must wait its turn and report a
             # refusal for everyone else's benefit.
             response = await self._execute_login_request(
@@ -434,7 +434,10 @@ class LoginCoordinator:
         try:
             member = await self.mds_host(mgmt_name, domain)
         except Exception as exc:  # noqa: BLE001 - cleanup is best effort; the caller's login proceeds regardless
-            log().warning(f"Could not acquire temp SID for cleanup: {exc}")
+            log().warning(
+                f"Could not resolve the MDS member for '{mgmt_name}:{domain}', skipping session cleanup: "
+                f"{type(exc).__name__}"
+            )
             return
 
         sub_token = _login_pacing.set(self._sub_deadline_pacing(self._throttle_window))
@@ -494,7 +497,9 @@ class LoginCoordinator:
         """Send a keepalive ping for one session. Never propagates exceptions.
 
         On success, updates last_keepalive in cache.
-        On failure, evicts the stale SID from cache so the next call re-authenticates.
+        If the keepalive request itself fails, evicts the stale SID from cache so the next call re-authenticates.
+        Local reasons never evict a healthy SID: if the hosting MDS member cannot be resolved, or no slot of that
+        member is free within the slot timeout, the keepalive is skipped and the next sweep retries.
 
         Args:
             mgmt_name: Management server name.
@@ -505,10 +510,23 @@ class LoginCoordinator:
             username: CP username when the cache key is user-scoped (credential mode).
         """
         try:
-            async with self._rate_limiter.acquire(await self.mds_host(mgmt_name, domain)):
+            slot_host = await self.mds_host(mgmt_name, domain)
+        except Exception as exc:  # noqa: BLE001 - a local resolver failure says nothing about the session
+            log().debug(
+                f"Keepalive for '{mgmt_name}:{domain}' skipped: could not resolve the MDS member "
+                f"({type(exc).__name__}); next sweep retries"
+            )
+            return
+
+        try:
+            async with self._rate_limiter.acquire(slot_host):
                 await self._transport.keepalive(server_ip, sid, port)
             await self._cache.update_keepalive(mgmt_name, domain, username=username)
             log().trace(f"Keepalive sent for '{mgmt_name}:{domain}'")
+        except LockAcquisitionError:
+            log().debug(
+                f"Keepalive for '{mgmt_name}:{domain}' skipped: no free slot on {slot_host}; next sweep retries"
+            )
         except Exception as exc:
             log().debug(f"Keepalive failed for '{mgmt_name}:{domain}': {exc} — evicting SID from cache")
             try:
@@ -643,7 +661,7 @@ class LoginCoordinator:
         Everything else is a failure: it gets the exponential ladder and is
         limited to `max_retries` attempts. See asdk/login_gate.py.
 
-        `mds_host` is the machine the login counts against (see `mds_host`);
+        `mds_host` is the machine the login counts against (see the `LoginCoordinator.mds_host` method);
         `target` ("mgmt/domain") only names the login in the gate's log line.
         """
         max_retries = max_retries or self._settings.login_max_retries
@@ -1005,7 +1023,7 @@ class LoginCoordinator:
     ) -> tuple[str, str | None]:
         """Run the retry-with-backoff sequence once; translate the outcome for `_acquire_new_sid`.
 
-        Takes no RateLimiter slot itself: each attempt takes the target server's
+        Takes no RateLimiter slot itself: each attempt takes the hosting MDS member's
         slot around its own HTTP call, inside `_execute_login_request`.
         """
         from ..core.exceptions import AuthenticationError, ServerUnreachableError
@@ -1351,13 +1369,14 @@ class LoginCoordinator:
     async def mds_host_for_ip(self, mgmt_name: str, server_ip: str) -> str:
         """The MDS member serving `server_ip`, for a call that knows only the address (an explicit SID).
 
-        The domain row whose active server is at `server_ip` names its member (`active_mds_ip`); without such a
-        row -- the system domain, a SmartCenter, a domain not cached yet -- the address itself is the key.
+        The domain row whose active server is at `server_ip` names the domain, and its member is whatever
+        `mds_host` says for that domain (the row's `active_mds_ip`, else the configured host, exactly as for a
+        call that names the domain). Without such a row -- the system domain, a SmartCenter, a domain not cached
+        yet -- the address itself is the key.
         """
         for row in await self._cache.get_domains(mgmt_names=[mgmt_name], include_global=True):
-            mds_ip = getattr(row, "active_mds_ip", "")
-            if getattr(row, "active_ip", None) == server_ip and isinstance(mds_ip, str) and mds_ip:
-                return mds_ip
+            if getattr(row, "active_ip", None) == server_ip:
+                return await self.mds_host(mgmt_name, row.domain_name)
         return server_ip
 
     async def _cache_domain_active_ip(
@@ -1830,7 +1849,7 @@ class LoginCoordinator:
             # _try_login_once: a failure resolving the hosting member is a login
             # failure like any other, not a raw exception past this method.
             mds_host = await self.mds_host(mgmt_name, domain)
-            # Each attempt takes the target's RateLimiter slot around its own HTTP call
+            # Each attempt takes the hosting member's RateLimiter slot around its own HTTP call
             # (inside _execute_login_request); nothing is held across the ladder.
             result = await self._retry_with_backoff(
                 _attempt, "Dedicated session login", mds_host=mds_host, target=f"{mgmt_name}/{domain or 'system'}"

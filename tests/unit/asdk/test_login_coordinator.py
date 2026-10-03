@@ -1791,6 +1791,62 @@ async def test_keepalive_takes_the_members_slot():
     transport.keepalive.assert_awaited_once_with(DOMAIN_IP, "s", None)
 
 
+async def test_keepalive_that_cannot_resolve_the_member_skips_without_evicting(caplog):
+    coord, rl, transport, cache = _member_setup()
+    cache.get_domain.side_effect = RuntimeError("db down")
+
+    with caplog.at_level(1):
+        await coord._fire_keepalive("home", "Domain4", "s", DOMAIN_IP, None)
+
+    cache.delete_sid.assert_not_called()
+    cache.update_keepalive.assert_not_called()
+    transport.keepalive.assert_not_called()
+    rl.acquire.assert_not_called()
+    assert any("RuntimeError" in r.getMessage() and "skipped" in r.getMessage() for r in caplog.records)
+
+
+async def test_keepalive_without_a_free_member_slot_skips_without_evicting(caplog):
+    from arodonata.cache.lock_manager import LockAcquisitionError
+
+    coord, rl, transport, cache = _member_setup()
+    rl.acquire.return_value.__aenter__.side_effect = LockAcquisitionError("ratelimit:x:slot_*", 90)
+
+    with caplog.at_level(1):
+        await coord._fire_keepalive("home", "Domain4", "s", DOMAIN_IP, None)
+
+    cache.delete_sid.assert_not_called()
+    cache.update_keepalive.assert_not_called()
+    transport.keepalive.assert_not_called()
+    assert any("no free slot" in r.getMessage() and "next sweep" in r.getMessage() for r in caplog.records)
+
+
+async def test_keepalive_request_failure_still_evicts_the_sid():
+    coord, rl, transport, cache = _member_setup()
+    transport.keepalive.side_effect = RuntimeError("Session expired")
+
+    await coord._fire_keepalive("home", "Domain4", "s", DOMAIN_IP, None)
+
+    assert _slot_keys(rl) == [MEMBER_IP]
+    cache.delete_sid.assert_awaited_once_with("home", "Domain4", username=None)
+    cache.update_keepalive.assert_not_called()
+
+
+async def test_cleanup_that_cannot_resolve_the_member_returns_without_a_temp_login(caplog):
+    coord, rl, transport, cache = _member_setup()
+    coord._session_cleaner = AsyncMock()
+    cache.get_domain.side_effect = RuntimeError("db down")
+
+    with caplog.at_level(1):
+        await coord._cleanup_for_max_sessions("home", "Domain4", DOMAIN_IP, SecretStr("k"), None, reason="test")
+
+    transport.login_with_apikey.assert_not_called()
+    coord._session_cleaner.cleanup_stale_sessions.assert_not_called()
+    rl.acquire.assert_not_called()
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("Could not resolve the MDS member" in m and "RuntimeError" in m for m in warnings)
+    assert not any("Could not acquire temp SID" in m for m in warnings)
+
+
 async def test_cleanup_discards_and_temp_logout_take_the_members_slot():
     from arodonata.asdk.session_cleaner import CleanupResult
 
@@ -1826,18 +1882,27 @@ async def test_system_domain_helper_calls_take_the_configured_hosts_slot():
 
 async def test_mds_host_for_ip_finds_the_member_of_the_domain_served_at_that_ip():
     coord, _, _, cache = _member_setup()
-    cache.get_domains.return_value = [
-        MagicMock(active_ip="192.168.5.185", active_mds_ip="192.168.5.171"),
-        MagicMock(active_ip=DOMAIN_IP, active_mds_ip=MEMBER_IP),
-    ]
+    other = MagicMock(active_ip="192.168.5.185", active_mds_ip="192.168.5.171", domain_name="Other")
+    match = MagicMock(active_ip=DOMAIN_IP, active_mds_ip=MEMBER_IP, domain_name="Domain4")
+    cache.get_domains.return_value = [other, match]
+    cache.get_domain.side_effect = lambda mdm_dmn: {"home:Other": other, "home:Domain4": match}[mdm_dmn]
 
     assert await coord.mds_host_for_ip("home", DOMAIN_IP) == MEMBER_IP
     cache.get_domains.assert_awaited_once_with(mgmt_names=["home"], include_global=True)
 
 
-async def test_mds_host_for_ip_falls_back_to_the_ip_itself():
+async def test_mds_host_for_ip_matching_row_without_a_member_gets_the_configured_host():
     coord, _, _, cache = _member_setup()
-    cache.get_domains.return_value = [MagicMock(active_ip=DOMAIN_IP, active_mds_ip="")]
+    row = MagicMock(active_ip=DOMAIN_IP, active_mds_ip="", domain_name="Domain4")
+    cache.get_domains.return_value = [row]
+    cache.get_domain.return_value = row
+
+    assert await coord.mds_host_for_ip("home", DOMAIN_IP) == CONFIGURED_IP
+
+
+async def test_mds_host_for_ip_without_a_matching_row_is_the_ip_itself():
+    coord, _, _, cache = _member_setup()
+    cache.get_domains.return_value = [MagicMock(active_ip="192.168.5.185", active_mds_ip=MEMBER_IP, domain_name="X")]
     assert await coord.mds_host_for_ip("home", DOMAIN_IP) == DOMAIN_IP
 
     cache.get_domains.return_value = []
