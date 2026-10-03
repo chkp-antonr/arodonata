@@ -12,6 +12,7 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 
 ### Fixed
 
+- `arodonata-mcp` no longer logs the SDK's `Terminating session: None` line on every request (stateless mode); at `--log-level debug` it still does
 - `get_domains` no longer refreshes every domain's objects before listing domains (on a large MDS this took minutes to hours and hit Check Point's login rate limit): it refreshes only the domain list (`show-domains`); `RulebaseRefreshService.refresh_all` no longer triggers an object refresh either
 - MCP `show_domains` returned an empty record per domain; records are now built from the cached domain fields
 - The cached Global domain row had an empty UID: it now carries the UID `show-global-domain` returns (a failed lookup keeps the UID already cached); docs and the MCP `show_domains` description no longer call Global "synthetic"
