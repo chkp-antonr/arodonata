@@ -13,7 +13,7 @@ from ...asdk.domain_servers import (
     extract_global_domain_mdss,
     mds_ip_map,
 )
-from ...config import GLOBAL_DOMAIN_NAME
+from ...config import CACHE_QUERY_PAGE_SIZE, GLOBAL_DOMAIN_NAME
 from ...logger import lazy_logger
 
 if TYPE_CHECKING:
@@ -174,6 +174,7 @@ class DomainService:
             mgmt_name=mgmt_name,
             command="show-domains",
             details_level="full",
+            payload={"limit": CACHE_QUERY_PAGE_SIZE},
             cache_mode=cache_mode,
         )
 
@@ -308,7 +309,11 @@ class DomainService:
         """
         try:
             mds_response = await self._api_client.api_query(
-                mgmt_name=mgmt_name, command="show-mdss", details_level="full", cache_mode=cache_mode
+                mgmt_name=mgmt_name,
+                command="show-mdss",
+                details_level="full",
+                payload={"limit": CACHE_QUERY_PAGE_SIZE},
+                cache_mode=cache_mode,
             )
         except Exception as exc:  # noqa: BLE001 - enrichment only; domain population must proceed
             log().debug(f"show-mdss failed for {mgmt_name}: {exc}; domain rows will not carry member IPs")

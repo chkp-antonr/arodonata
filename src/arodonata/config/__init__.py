@@ -1,6 +1,7 @@
 """Configuration management for Arodonata library."""
 
 from .constants import (
+    CACHE_QUERY_PAGE_SIZE,
     CREDENTIAL_REJECTION_MESSAGE,
     DEFAULT_API_TIMEOUT,
     DEFAULT_CONCURRENT_LIMIT,
@@ -29,6 +30,7 @@ __all__ = [
     "DEFAULT_SESSION_TIMEOUT",
     "DEFAULT_API_TIMEOUT",
     "DEFAULT_TASK_TIMEOUT",
+    "CACHE_QUERY_PAGE_SIZE",
     "DEFAULT_CONCURRENT_LIMIT",
     "DEFAULT_LOGIN_BACKOFF",
     "DEFAULT_LOGIN_MAX_WAIT",

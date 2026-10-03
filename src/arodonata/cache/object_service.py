@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 
-from ..config import GLOBAL_DOMAIN_NAME
+from ..config import CACHE_QUERY_PAGE_SIZE, GLOBAL_DOMAIN_NAME
 from ..core import RefreshMode
 from ..core.domain_list_refresh import DOMAIN_LIST_REFRESH_TTL_SECONDS, DomainListRefreshTracker
 from ..core.exceptions import InvalidCredentialsError, PublishedHeadError
@@ -1231,6 +1231,7 @@ class ObjectService:
                 command=command,
                 domain=domain_name,
                 details_level="full",
+                payload={"limit": CACHE_QUERY_PAGE_SIZE},  # fresh dict per call: cpapi mutates it
             )
         except Exception as e:  # noqa: BLE001 - any transport error aborts the domain
             log().exception(f"Error fetching {object_type}s for {mgmt_name}/{domain_name}")

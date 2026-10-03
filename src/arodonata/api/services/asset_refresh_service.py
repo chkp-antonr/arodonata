@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from arodonata.api.schemas import SSEEvent, SSEEventType
 from arodonata.cache.lock_manager import distributed_lock, get_current_lock_context
+from arodonata.config import CACHE_QUERY_PAGE_SIZE
 from arodonata.utils.helpers import normalize_input_to_list
 
 from ...logger import lazy_logger
@@ -415,6 +416,7 @@ class AssetRefreshService:
                 command="show-gateways-and-servers",
                 domain=domain_name,
                 details_level="full",
+                payload={"limit": CACHE_QUERY_PAGE_SIZE},
                 cache_mode=cache_mode,
             )
 
@@ -678,7 +680,7 @@ class AssetRefreshService:
                 mgmt_name=mgmt_name,
                 command="show-mdss",
                 details_level="full",
-                payload={"show-domains": False},
+                payload={"show-domains": False, "limit": CACHE_QUERY_PAGE_SIZE},
                 cache_mode=cache_mode,
             )
 

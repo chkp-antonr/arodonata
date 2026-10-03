@@ -96,6 +96,7 @@ async def test_refresh_domain_assets_upserts_and_yields_result(monkeypatch):
         command="show-gateways-and-servers",
         domain="domainA",
         details_level="full",
+        payload={"limit": 500},
         cache_mode="auto",
     )
     cache.upsert_assets.assert_awaited_once_with([fake_asset])
@@ -184,7 +185,7 @@ async def test_collect_mds_assets_upserts_with_domain_from_object(monkeypatch):
         mgmt_name="mgmt1",
         command="show-mdss",
         details_level="full",
-        payload={"show-domains": False},
+        payload={"show-domains": False, "limit": 500},
         cache_mode="auto",
     )
     transform_mock.assert_called_once_with(

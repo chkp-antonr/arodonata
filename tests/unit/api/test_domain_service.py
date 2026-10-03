@@ -307,6 +307,22 @@ async def test_mdm_domains_multiple_domains_all_upserted():
 
 
 @pytest.mark.asyncio
+async def test_domain_list_and_members_are_fetched_in_pages_of_500():
+    api_client = AsyncMock()
+    api_client.api_query = AsyncMock(
+        return_value=ApiQueryResult(success=True, objects=[{"name": "Domain4", "uid": "u4"}])
+    )
+    cache = AsyncMock()
+    service, _, _, _ = make_service(cache=cache, api_client=api_client)
+
+    await service._populate_mdm_domains("mgmt1", is_mdm=True)
+
+    by_command = {c.kwargs["command"]: c.kwargs.get("payload") for c in api_client.api_query.await_args_list}
+    assert by_command["show-domains"] == {"limit": 500}
+    assert by_command["show-mdss"] == {"limit": 500}
+
+
+@pytest.mark.asyncio
 async def test_mdm_domains_record_the_hosting_member():
     domains = ApiQueryResult(
         success=True,

@@ -73,6 +73,10 @@ DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS: Final[int] = 5  # seconds
 # ~200 objects/s, a member tops out at ~650-700 objects/s with 4-5 in flight, and more
 # adds nothing while taking headroom from SmartConsole and other clients of the member.
 DEFAULT_CONCURRENT_LIMIT: Final[int] = 4
+# Page size for the cache's list fetches (show-hosts, show-gateways-and-servers, show-domains, ...): Check
+# Point's maximum, instead of cpapi's api_query default of 50. Every page pays a round trip; on the home lab
+# a 12 150-object domain loaded in 68.4 s at 500 vs 79.1 s at 50 (findings 2026-10-03), more on remote labs.
+CACHE_QUERY_PAGE_SIZE: Final[int] = 500
 DEFAULT_LOGIN_BACKOFF: Final[int] = 5  # seconds
 DEFAULT_LOGIN_RETRIES: Final[int] = 8
 # How long a caller waits for a free RateLimiter concurrency slot (asdk/rate_limiter.py)
@@ -176,6 +180,7 @@ __all__ = [
     "LOGIN_THROTTLE_WINDOW_SECONDS",
     "DEFAULT_LOGIN_THROTTLE_INITIAL_SECONDS",
     "DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS",
+    "CACHE_QUERY_PAGE_SIZE",
     "DEFAULT_CONCURRENT_LIMIT",
     "DEFAULT_LOGIN_BACKOFF",
     "DEFAULT_LOGIN_RETRIES",
