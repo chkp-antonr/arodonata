@@ -5,6 +5,7 @@ Other modules MUST NOT access PostgreSQL directly.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -77,6 +78,7 @@ class CacheRepository:
             db_manager: DatabaseManager instance for database access.
         """
         self._db = db_manager
+        self._swap_lock = asyncio.Lock()  # see replace_domain_objects
         # Process-local write-through cache of SID records (detached copies).
         # DB stays the persistent store: a new process falls back to it on
         # first read, which is how a fresh run reuses the previous run's SIDs.
@@ -1060,7 +1062,8 @@ class CacheRepository:
         Delete + bulk insert run in ONE transaction, so concurrent readers
         never observe an empty/partial domain and a failure rolls back to
         the previous cache contents. Input is deduped by primary key (the
-        API occasionally returns duplicate uids within a page set).
+        API occasionally returns duplicate uids within a page set). Swaps of
+        one repository run one at a time (see the lock).
 
         Args:
             mgmt_name: Management server name.
@@ -1071,7 +1074,11 @@ class CacheRepository:
             (deleted_count, inserted_count).
         """
         deduped = list({obj.id: obj for obj in objects}.values())
-        async with self._db.session() as session:
+        # One swap at a time per repository. Domains refresh concurrently, and on SQLite a second writer
+        # waits only SQLite's busy timeout (5 s by default) for the first to commit before failing with
+        # "database is locked"; a large domain's swap can take longer. Swaps are short next to the fetch
+        # that precedes them, so serializing them costs nothing measurable, on any dialect.
+        async with self._swap_lock, self._db.session() as session:
             stmt = delete(CPObject).where(
                 CPObject.mgmt_name == mgmt_name,  # type: ignore[arg-type]
                 CPObject.domain_name == domain_name,  # type: ignore[arg-type]

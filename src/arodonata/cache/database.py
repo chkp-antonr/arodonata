@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlmodel import SQLModel
 
+from ..config import SQLITE_BUSY_TIMEOUT_SECONDS
 from ..logger import lazy_logger
 from .models import DistributedLock, SchemaVersion  # noqa: F401
 
@@ -68,6 +70,14 @@ def _build_schema_version_upsert_stmt(
     )
 
 
+def _default_sqlite_busy_timeout(engine: AsyncEngine) -> None:
+    """Make every new SQLite connection wait SQLITE_BUSY_TIMEOUT_SECONDS for a busy database, unless the engine set its own."""
+
+    @event.listens_for(engine.sync_engine, "do_connect")
+    def _busy_timeout(dialect: Any, conn_rec: Any, cargs: Any, cparams: dict[str, Any]) -> None:
+        cparams.setdefault("timeout", SQLITE_BUSY_TIMEOUT_SECONDS)
+
+
 class DatabaseManager:
     """Manages database sessions from pre-configured engine.
 
@@ -99,6 +109,8 @@ class DatabaseManager:
                    The application is responsible for disposing this engine.
         """
         self._engine = engine
+        if engine.dialect.name == "sqlite":
+            _default_sqlite_busy_timeout(engine)
         self._sessionmaker = async_sessionmaker(
             self._engine,
             class_=AsyncSession,

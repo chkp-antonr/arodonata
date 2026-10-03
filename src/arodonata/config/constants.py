@@ -115,6 +115,11 @@ TASK_QUERY_COMMANDS: Final[dict[str, str]] = {"show-changes": "changes"}
 TASK_QUERY_PAGE_SIZE: Final[int] = 50  # cpapi's api_query page size
 TASK_QUERY_MAX_PAGE_SIZE: Final[int] = 500  # show-changes `limit` accepts 1-500
 
+# How long a SQLite connection waits for another writer (several processes on one cache file, or a large
+# domain swap) before failing with "database is locked". SQLite's own default is 5 s. An engine created with
+# its own connect_args={"timeout": ...} keeps that value.
+SQLITE_BUSY_TIMEOUT_SECONDS: Final[float] = 30.0
+
 # Session error codes that trigger relogin
 SESSION_ERROR_CODES: Final[frozenset[str]] = frozenset(
     {
@@ -181,6 +186,7 @@ __all__ = [
     "DEFAULT_LOGIN_THROTTLE_INITIAL_SECONDS",
     "DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS",
     "CACHE_QUERY_PAGE_SIZE",
+    "SQLITE_BUSY_TIMEOUT_SECONDS",
     "DEFAULT_CONCURRENT_LIMIT",
     "DEFAULT_LOGIN_BACKOFF",
     "DEFAULT_LOGIN_RETRIES",
