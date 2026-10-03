@@ -18,6 +18,9 @@ DEFAULT_ENV_FILES = [".env.lib", ".env.secrets"]
 # Levels understood by both ``logging.basicConfig`` and uvicorn (uvicorn's extra "trace" is unknown to logging).
 LOG_LEVELS = ("critical", "error", "warning", "info", "debug")
 log = logging.getLogger("arodonata.mcp")
+# SDK loggers that only add noise at INFO: in stateless mode streamable_http logs "Terminating session: None" for
+# every request. Raised to WARNING unless --log-level debug, so their warnings and errors still show.
+QUIET_SDK_LOGGERS = ("mcp.server.streamable_http",)
 # Name prefix of the worker threads that run the synchronous Check Point SDK (``asyncio.to_thread``).
 SDK_THREAD_PREFIX = "arodonata-mcp-sdk"
 
@@ -212,6 +215,14 @@ def _exit_past_blocked_sdk_threads(code: int) -> None:
     _hard_exit(code)
 
 
+def configure_logging(level: str) -> None:
+    """Root logging at ``level``; the SDK loggers in QUIET_SDK_LOGGERS at WARNING unless ``level`` is debug."""
+    logging.basicConfig(level=level.upper())
+    if level != "debug":
+        for name in QUIET_SDK_LOGGERS:
+            logging.getLogger(name).setLevel(logging.WARNING)
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         from . import _sdk  # noqa: F401
@@ -223,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     except CLIArgumentError as exc:
         print(f"arodonata-mcp: configuration error: {exc}", file=sys.stderr)
         return 2
-    logging.basicConfig(level=args.log_level.upper())
+    configure_logging(args.log_level)
     loaded = load_env_files(args.env_file)
     log.info("loaded env files: %s", ", ".join(loaded) or "none")
     from pydantic import ValidationError

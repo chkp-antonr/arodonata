@@ -314,3 +314,26 @@ async def test_the_server_does_not_re_raise_the_caught_sigint_after_a_clean_shut
     await server.serve()
     assert raised == []
     assert server.should_exit is True
+
+
+def _sdk_session_logger():
+    import logging
+
+    return logging.getLogger("mcp.server.streamable_http")
+
+
+def test_info_log_level_quiets_the_sdk_per_request_session_log(monkeypatch):
+    """In stateless mode the SDK logs "Terminating session: None" at INFO on every request."""
+    from arodonata.mcp.__main__ import configure_logging
+
+    monkeypatch.setattr(_sdk_session_logger(), "level", 0)
+    configure_logging("info")
+    assert _sdk_session_logger().level == 30  # WARNING: warnings and errors still shown
+
+
+def test_debug_log_level_keeps_the_sdk_session_log(monkeypatch):
+    from arodonata.mcp.__main__ import configure_logging
+
+    monkeypatch.setattr(_sdk_session_logger(), "level", 0)
+    configure_logging("debug")
+    assert _sdk_session_logger().level == 0

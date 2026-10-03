@@ -18,7 +18,7 @@ It resolves API keys the same way the runnable examples do: `API_KEY_VARS` (a co
 arodonata-mcp --host 0.0.0.0 --port 8765
 ```
 
-Flags: `--env-file` (repeatable; default `.env.lib` then `.env.secrets`), `--host` (overrides `ARODONATA_MCP_HOST`), `--port` (overrides `ARODONATA_MCP_PORT`), `--ssl-certfile`, `--ssl-keyfile`, `--log-level` (one of `critical`, `error`, `warning`, `info`, `debug`; default `info`), `--shutdown-timeout` (overrides `ARODONATA_MCP_SHUTDOWN_TIMEOUT`). An invalid flag or an inconsistent configuration (for example a different number of `MGMT_NAMES`, `MGMT_SERVERS` and API keys) prints one `arodonata-mcp: configuration error: ...` line and exits with status 2.
+Flags: `--env-file` (repeatable; default `.env.lib` then `.env.secrets`), `--host` (overrides `ARODONATA_MCP_HOST`), `--port` (overrides `ARODONATA_MCP_PORT`), `--ssl-certfile`, `--ssl-keyfile`, `--log-level` (one of `critical`, `error`, `warning`, `info`, `debug`; default `info`; below `debug` the SDK's per-request `Terminating session: None` line from `mcp.server.streamable_http` is hidden, its warnings and errors still show), `--shutdown-timeout` (overrides `ARODONATA_MCP_SHUTDOWN_TIMEOUT`). An invalid flag or an inconsistent configuration (for example a different number of `MGMT_NAMES`, `MGMT_SERVERS` and API keys) prints one `arodonata-mcp: configuration error: ...` line and exits with status 2.
 
 The command refuses to start with `ARODONATA_MCP_AUTH_MODE=host` or `jwt` (exit code 2): `host` mode has no verifier at all and would serve every request anonymously if there is no authenticating host in front of it, and `jwt` is reserved and not implemented. See [Authentication](#authentication) below.
 
