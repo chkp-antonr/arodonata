@@ -99,10 +99,18 @@ class DatabaseManager:
 
         # Note: App is responsible for disposing the engine
         await engine.dispose()
+
+    For SQLite engines it registers a ``do_connect`` listener on the caller's engine that defaults the driver
+    timeout to ``SQLITE_BUSY_TIMEOUT_SECONDS`` (an explicit ``connect_args`` timeout wins), so concurrent writers
+    and several processes on one file wait for a busy database instead of failing with "database is locked".
     """
 
     def __init__(self, engine: AsyncEngine) -> None:
         """Initialize database manager with pre-configured engine.
+
+        For SQLite engines this registers a ``do_connect`` listener on ``engine`` (the caller's engine, not a copy)
+        that defaults the driver timeout to ``SQLITE_BUSY_TIMEOUT_SECONDS``; a ``timeout`` set through
+        ``connect_args`` wins. Other dialects are untouched.
 
         Args:
             engine: Pre-configured AsyncEngine instance owned by the application.

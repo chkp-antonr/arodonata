@@ -72,6 +72,11 @@ DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS: Final[int] = 5  # seconds
 # docs/_AI_/2610/261003-warmup-parallelism/findings.md): one request at a time gets
 # ~200 objects/s, a member tops out at ~650-700 objects/s with 4-5 in flight, and more
 # adds nothing while taking headroom from SmartConsole and other clients of the member.
+# A slot is held for one whole request (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT). One
+# `CacheRefreshCoordinator.ensure` call starts at most `concurrent_limit - 1` domain
+# refreshes per member, which leaves a slot for logins and keepalives *from that call's
+# point of view*; overlapping ensure calls, other processes, long tasks and keepalives
+# can still take every slot of a member.
 DEFAULT_CONCURRENT_LIMIT: Final[int] = 4
 # Page size for the cache's list fetches (show-hosts, show-gateways-and-servers, show-domains, ...): Check
 # Point's maximum, instead of cpapi's api_query default of 50. Every page pays a round trip; on the home lab
@@ -80,12 +85,15 @@ CACHE_QUERY_PAGE_SIZE: Final[int] = 500
 DEFAULT_LOGIN_BACKOFF: Final[int] = 5  # seconds
 DEFAULT_LOGIN_RETRIES: Final[int] = 8
 # How long a caller waits for a free RateLimiter concurrency slot (asdk/rate_limiter.py)
-# before giving up. A slot is held for one in-flight request. Since 2026-09-14 that
-# includes logins: a login takes the target server's slot for a single HTTP round
+# before giving up. A slot is held for one whole request: for `api_query` that is a
+# whole listing (cpapi fetches the pages inside that one call, so the slot is held
+# across all of them, not per page), and a call that waits for a task (`wait_for_task`,
+# e.g. publish or revert) holds it for the whole task. Since 2026-09-14 logins take
+# slots too: a login takes the hosting MDS member's slot for a single HTTP round
 # trip (bounded by DEFAULT_LOGIN_TIMEOUT), never across its retry ladder or a
 # throttle wait -- those happen outside the slot, and pacing belongs to the login
-# gate (asdk/login_gate.py). Long-running tasks (publish, revert) legitimately hold
-# a slot for their whole run, so this stays generous.
+# gate (asdk/login_gate.py). Long-running tasks legitimately hold a slot for their
+# whole run, so this stays generous.
 DEFAULT_RATE_LIMIT_SLOT_TIMEOUT: Final[int] = 90  # seconds
 
 # Total wall-clock one login() may spend waiting out Check Point's per-MDS login
