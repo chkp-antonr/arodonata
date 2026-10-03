@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from contextlib import asynccontextmanager
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from arodonata.asdk.rate_limiter import RateLimiter
-from arodonata.cache.lock_manager import LockAcquisitionError
+from arodonata.cache.lock_manager import LockAcquisitionError, LockOwnershipError
 
 
 class FakeLockManager:
@@ -27,6 +28,7 @@ class FakeLockManager:
         self._locks: dict[str, asyncio.Lock] = {}
         self.acquired_keys: list[str] = []
         self.acquired_timeouts: list[int] = []
+        self.renewals: list[tuple[str, str, int | None]] = []
         self.closed = False
         self.initialized = False
 
@@ -61,6 +63,16 @@ class FakeLockManager:
         lock = self._locks.get(lock_key)
         if lock is not None and lock.locked():
             lock.release()
+
+    # Renewal surface mirroring DatabaseLockManager.renew_lock. `renew_result` is what
+    # the next renewals return; an exception instance is raised instead.
+    renew_result: bool | BaseException = True
+
+    async def renew_lock(self, lock_key: str, owner_id: str, ttl: int | None = None) -> bool:
+        self.renewals.append((lock_key, owner_id, ttl))
+        if isinstance(self.renew_result, BaseException):
+            raise self.renew_result
+        return self.renew_result
 
 
 def _make_limiter(concurrent_limit: int = 1, lock_manager: FakeLockManager | None = None):
@@ -490,3 +502,169 @@ def test_default_limit_is_the_per_member_default():
     from arodonata.config.constants import DEFAULT_CONCURRENT_LIMIT
 
     assert RateLimiter(lock_manager=FakeLockManager())._concurrent_limit == DEFAULT_CONCURRENT_LIMIT == 4
+
+
+# --------------------------------------------------------------------------
+# A held slot's distributed row is renewed until release (Backlog item 20):
+# a request may hold a slot longer than DEFAULT_TTL_RATE_LIMIT (a whole listing,
+# a publish task), and a lapsed row lets another process take the same slot.
+# --------------------------------------------------------------------------
+
+
+async def test_a_held_slot_is_renewed_until_released():
+    lock_manager = FakeLockManager()
+    limiter = RateLimiter(concurrent_limit=1, lock_manager=lock_manager, slot_renew_interval=0.05)
+
+    async with limiter.acquire("192.168.5.170"):
+        await _until(lambda: len(lock_manager.renewals) >= 3)
+
+    assert len(lock_manager.renewals) >= 3
+    assert set(lock_manager.renewals) == {
+        ("ratelimit:192.168.5.170:slot_0", "fake-owner", FakeLockManager.DEFAULT_TTL_RATE_LIMIT)
+    }
+    renewed_while_held = len(lock_manager.renewals)
+    await asyncio.sleep(0.15)
+    assert len(lock_manager.renewals) == renewed_while_held  # nothing after release
+
+
+async def test_a_reentrant_acquire_does_not_start_a_second_renewal():
+    lock_manager = FakeLockManager()
+    limiter = RateLimiter(concurrent_limit=1, lock_manager=lock_manager, slot_renew_interval=0.05)
+
+    async with limiter.acquire("192.168.5.170"):
+        async with limiter.acquire("192.168.5.170"):
+            await asyncio.sleep(0.27)
+
+    # One renewer: ~5 renewals in 0.27 s at 0.05 s; two would give ~10.
+    assert 3 <= len(lock_manager.renewals) <= 6
+
+
+@pytest.mark.parametrize(
+    "failure", [False, LockOwnershipError("ratelimit:192.168.5.170:slot_0", "other-owner")], ids=["gone", "taken"]
+)
+async def test_a_lost_slot_row_is_reported_once_and_the_request_continues(failure):
+    # Row gone or owned by someone else: renewing again cannot help, so say it once and stop.
+    lock_manager = FakeLockManager()
+    lock_manager.renew_result = failure
+    limiter = RateLimiter(concurrent_limit=1, lock_manager=lock_manager, slot_renew_interval=0.05)
+
+    with patch("arodonata.asdk.rate_limiter.log") as log:
+        async with limiter.acquire("192.168.5.170"):
+            await asyncio.sleep(0.2)
+        warnings = [str(c.args[0]) for c in log.return_value.warning.call_args_list]
+
+    assert len(lock_manager.renewals) == 1
+    assert len(warnings) == 1 and "ratelimit:192.168.5.170:slot_0" in warnings[0]
+    assert not lock_manager._locks["ratelimit:192.168.5.170:slot_0"].locked()  # released normally
+
+
+async def test_a_transient_renewal_error_is_logged_and_retried():
+    lock_manager = FakeLockManager()
+    lock_manager.renew_result = RuntimeError("database is locked")
+    limiter = RateLimiter(concurrent_limit=1, lock_manager=lock_manager, slot_renew_interval=0.05)
+
+    with patch("arodonata.asdk.rate_limiter.log") as log:
+        async with limiter.acquire("192.168.5.170"):
+            await _until(lambda: len(lock_manager.renewals) >= 2)
+        warnings = [str(c.args[0]) for c in log.return_value.warning.call_args_list]
+
+    assert len(warnings) >= 2
+    assert all("ratelimit:192.168.5.170:slot_0" in w and "RuntimeError" in w for w in warnings)
+
+
+async def test_renewal_stops_when_the_holder_is_cancelled():
+    lock_manager = FakeLockManager()
+    limiter = RateLimiter(concurrent_limit=1, lock_manager=lock_manager, slot_renew_interval=0.05)
+
+    async def hold() -> None:
+        async with limiter.acquire("192.168.5.170"):
+            await asyncio.sleep(10)
+
+    holder = asyncio.create_task(hold())
+    await asyncio.sleep(0.12)
+    holder.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await holder
+
+    renewed = len(lock_manager.renewals)
+    assert renewed >= 1
+    await asyncio.sleep(0.15)
+    assert len(lock_manager.renewals) == renewed
+    assert not lock_manager._locks["ratelimit:192.168.5.170:slot_0"].locked()
+
+
+def test_slots_are_renewed_every_third_of_their_ttl_by_default():
+    limiter = RateLimiter(lock_manager=FakeLockManager())
+    assert limiter._slot_renew_interval(FakeLockManager.DEFAULT_TTL_RATE_LIMIT) == 100.0
+
+
+async def _until(condition, timeout: float = 5.0) -> None:
+    """Poll `condition` until true (fails the test after `timeout`): no fixed sleeps on slow runners."""
+    async with asyncio.timeout(timeout):
+        while not condition():
+            await asyncio.sleep(0.01)
+
+
+class _SlowUnwindLockManager(FakeLockManager):
+    """A renewal that takes a while to unwind when cancelled, like a DB call closing its session."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.renewing = asyncio.Event()
+        self.unwinding = asyncio.Event()
+
+    async def renew_lock(self, lock_key: str, owner_id: str, ttl: int | None = None) -> bool:
+        self.renewing.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            self.unwinding.set()
+            await asyncio.sleep(0.05)
+            raise
+        return True
+
+
+async def test_a_cancel_during_release_never_leaks_the_slot():
+    lock_manager = _SlowUnwindLockManager()
+    limiter = RateLimiter(concurrent_limit=1, lock_manager=lock_manager, slot_renew_interval=0.01, slot_timeout=1)
+
+    async def hold() -> None:
+        async with limiter.acquire("192.168.5.170"):
+            await lock_manager.renewing.wait()  # leave the body while a renewal is in flight
+
+    holder = asyncio.create_task(hold())
+    await asyncio.wait_for(lock_manager.unwinding.wait(), 2)  # release is waiting for the renewer
+    holder.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await holder
+
+    # The slot must be free again for this process and in the lock table.
+    async with asyncio.timeout(2), limiter.acquire("192.168.5.170", timeout=1):
+        pass
+    assert limiter._reentrancy_count == {}
+
+
+def test_a_non_positive_renew_interval_is_rejected():
+    with pytest.raises(ValueError, match="slot_renew_interval"):
+        RateLimiter(lock_manager=FakeLockManager(), slot_renew_interval=0)
+
+
+async def test_renewal_moves_the_rows_expiry_on_a_real_lock_table():
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from arodonata.cache.database import DatabaseManager
+    from arodonata.cache.lock_manager import DatabaseLockManager
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    manager = DatabaseLockManager(DatabaseManager(engine))
+    await manager.initialize()
+    limiter = RateLimiter(concurrent_limit=1, lock_manager=manager, slot_renew_interval=0.05)
+    try:
+        async with limiter.acquire("192.168.5.170"):
+            first = await manager.peek_expiry("ratelimit:192.168.5.170:slot_0")
+            await asyncio.sleep(1.2)  # expiry is stored at second resolution or finer; > 1 s keeps it visible
+            later = await manager.peek_expiry("ratelimit:192.168.5.170:slot_0")
+        assert first is not None and later is not None and later > first
+    finally:
+        await limiter.close()
+        await engine.dispose()

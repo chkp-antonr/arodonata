@@ -250,7 +250,7 @@ class DatabaseLockManager:
 
     # Default TTL values for different lock types
     DEFAULT_TTL_LOGIN = 90  # 90 seconds for login (with throttling/retries)
-    DEFAULT_TTL_RATE_LIMIT = 300  # 5 minutes for rate limiting
+    DEFAULT_TTL_RATE_LIMIT = 300  # 5 minutes for rate limiting; RateLimiter renews a held slot every TTL/3
     DEFAULT_TTL_ASSET_REFRESH = 300  # 5 minutes for asset refresh (with renewal)
 
     def __init__(self, db_manager: DatabaseManager) -> None:

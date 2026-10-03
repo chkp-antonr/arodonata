@@ -12,6 +12,7 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 
 ### Fixed
 
+- A RateLimiter slot held longer than its 5-minute lock TTL (a long listing or publish task) no longer lapses: the holder renews the slot's row every third of the TTL until release, so another process cannot take the same slot meanwhile
 - `arodonata-mcp` no longer logs the SDK's `Terminating session: None` line on every request (stateless mode); at `--log-level debug` it still does
 - `get_domains` no longer refreshes every domain's objects before listing domains (on a large MDS this took minutes to hours and hit Check Point's login rate limit): it refreshes only the domain list (`show-domains`); `RulebaseRefreshService.refresh_all` no longer triggers an object refresh either
 - MCP `show_domains` returned an empty record per domain; records are now built from the cached domain fields
