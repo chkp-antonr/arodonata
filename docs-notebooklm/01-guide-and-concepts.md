@@ -603,7 +603,7 @@ cache — they never make a live API call. For lower-level, filterable access,
 - **[`session_cleaner.py`](../api/arodonata/asdk/session_cleaner.md)** —
   background cleanup of stale sessions, so long-running processes don't leak
   SIDs on the management server.
-- **[`rate_limiter.py`](../api/arodonata/asdk/rate_limiter.md)** — per-server
+- **[`rate_limiter.py`](../api/arodonata/asdk/rate_limiter.md)** — per-MDS-member
   concurrency gating (`ArodonataSettings.concurrent_limit`), so a burst of
   cache-refresh work doesn't overload a single management server.
 
@@ -784,7 +784,7 @@ isn't special in this regard, it's just one field among many.
 | `mgmt_ip` | `str \| None` | `None` | Required when `username`/`password` are set. |
 | `session_expire_seconds` | `int` | see [`constants.py`](../api/arodonata/config/constants.md) | Cache freshness threshold in seconds. |
 | `session_timeout` | `int` | see `constants.py` | Session timeout passed to the Check Point login API. |
-| `concurrent_limit` | `int` (1-20) | see `constants.py` | Max concurrent API requests per server. |
+| `concurrent_limit` | `int` (1-20) | 4 | Max concurrent API requests per MDS member (logins and calls; per server for a SmartCenter). Object-cache refreshes use at most `concurrent_limit − 1` of a member's slots. |
 | `api_timeout` | `int` | see `constants.py` | Per-request API timeout in seconds. |
 | `login_retry_backoff` | `int` | see `constants.py` | Backoff (seconds) between login retries. |
 | `login_max_retries` | `int` | see `constants.py` | Maximum login retry attempts. |

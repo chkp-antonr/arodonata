@@ -22,6 +22,11 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 
 ### Changed
 
+- `ARODONATA_CONCURRENT_LIMIT` now caps requests in flight per MDS member (Check Point serves all domains of a member from one API server), keyed like the login gate; default 4 (was 3 per domain server IP)
+- The object cache refreshes a server's domains concurrently (at most `concurrent_limit − 1` per MDS member), so the first-use warm-up of a multi-domain server finishes several times faster
+- Cache listings (objects, gateways and servers, domains, MDS members) are fetched in pages of 500 instead of cpapi's default 50
+- `api_call_with_sid` accepts `domain=` to take the hosting member's slot (without it the member is looked up by the server IP)
+- SQLite connections wait up to 30 s for a busy cache database (was SQLite's 5 s) and one client's domain swaps run one at a time, so concurrent refreshes and several processes on one file no longer fail with "database is locked"
 - `get_domains` without `mgmt_names` still reads every cached server but refreshes only the first configured server's domain list (before, a cold call loaded every server); MCP `arodonata_init` passes all configured servers explicitly. `CacheOrchestrationService.get_domains` is a pure read and ignores its `cache_mode`/`cache_ttl` arguments
 
 ### Added
