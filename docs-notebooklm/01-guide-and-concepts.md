@@ -784,7 +784,7 @@ isn't special in this regard, it's just one field among many.
 | `mgmt_ip` | `str \| None` | `None` | Required when `username`/`password` are set. |
 | `session_expire_seconds` | `int` | see [`constants.py`](../api/arodonata/config/constants.md) | Cache freshness threshold in seconds. |
 | `session_timeout` | `int` | see `constants.py` | Session timeout passed to the Check Point login API. |
-| `concurrent_limit` | `int` (1-20) | 4 | Max concurrent API requests per MDS member (logins and calls; per server for a SmartCenter). Object-cache refreshes use at most `concurrent_limit − 1` of a member's slots. |
+| `concurrent_limit` | `int` (1-20) | 4 | Max concurrent API requests per MDS member (logins and calls; per server for a SmartCenter). Object-cache refreshes use at most `concurrent_limit − 1` (at least one) of a member's slots. |
 | `api_timeout` | `int` | see `constants.py` | Per-request API timeout in seconds. |
 | `login_retry_backoff` | `int` | see `constants.py` | Backoff (seconds) between login retries. |
 | `login_max_retries` | `int` | see `constants.py` | Maximum login retry attempts. |

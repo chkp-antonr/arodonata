@@ -13,7 +13,8 @@ Which server a login counts against is the caller's business (see
 LoginCoordinator.mds_host): the gate is keyed on whatever string it is given.
 
 This is a *rate* concern and deliberately separate from RateLimiter, which caps
-*concurrency* per target IP. Design: docs/superpowers/specs/2026-09-14-mds-login-gate-design.md
+*concurrency* per MDS member, keyed like the gate (LoginCoordinator.mds_host).
+Design: docs/superpowers/specs/2026-09-14-mds-login-gate-design.md
 """
 
 from __future__ import annotations

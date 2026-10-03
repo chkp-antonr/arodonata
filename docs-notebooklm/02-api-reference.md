@@ -1768,7 +1768,8 @@ Which server a login counts against is the caller's business (see
 LoginCoordinator.mds_host): the gate is keyed on whatever string it is given.
 
 This is a _rate_ concern and deliberately separate from RateLimiter, which caps
-_concurrency_ per MDS member. Design: docs/superpowers/specs/2026-09-14-mds-login-gate-design.md
+_concurrency_ per MDS member, keyed like the gate (LoginCoordinator.mds_host).
+Design: docs/superpowers/specs/2026-09-14-mds-login-gate-design.md
 
 #### class `LoginGateDeadlineError(ThrottlingError)`
 
@@ -4934,7 +4935,7 @@ Interface for rate limiting per MDS member.
 @asynccontextmanager
 ```
 
-Acquire rate limit slot for server.
+Acquire a rate limit slot; server_ip is the slot key (the MDS member hosting the target).
 
 #### class `ILoginCoordinator(Protocol)`
 
