@@ -36,6 +36,23 @@ class CacheRefreshCoordinator:
         member_of: MemberOf | None = None,
         domain_concurrency: int = 1,
     ) -> None:
+        """Create the coordinator.
+
+        Args:
+            cache: Cache repository.
+            api: API facade used for change and head lookups.
+            object_service: Object service that performs the reloads.
+            session_tracker: Optional session tracker.
+            default_mode: Cache mode used when a read names none.
+            default_ttl: Freshness window in seconds for the smart modes.
+            clock: Clock for freshness checks (tests inject one).
+            max_incremental_changes: Largest change set applied incrementally before a full reload.
+            member_of: Resolver `(mgmt, domain) -> MDS member`; `ensure` refreshes members in parallel and at most
+                `domain_concurrency` domains of one member at once. Without it, domains group by management server
+                name, so different servers refresh in parallel (previously they refreshed one after another) and
+                the domains of one server share one `domain_concurrency` budget.
+            domain_concurrency: Domain refreshes started at once per member per `ensure` call.
+        """
         self._cache = cache
         self._api = api
         self._object_service = object_service
@@ -146,7 +163,11 @@ class CacheRefreshCoordinator:
 
     async def _full_reload(self, mgmt: str, domain: str, outcome: RefreshOutcome) -> None:
         failed = False
-        async for event in self._object_service.refresh_objects(mgmt_names=[mgmt], domain_names=[domain], mode="force"):
+        # The coordinator already knows its domains, and many reloads run at once: without this every one of them
+        # would issue show-domains/show-mdss and rewrite every domain row of the server.
+        async for event in self._object_service.refresh_objects(
+            mgmt_names=[mgmt], domain_names=[domain], mode="force", refresh_domain_list=False
+        ):
             if event.get("status") == "domain_failed":
                 failed = True
 

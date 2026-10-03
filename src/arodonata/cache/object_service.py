@@ -472,6 +472,8 @@ class ObjectService:
         domain_names: list[str] | None = None,
         mode: str = "force",  # RefreshMode value
         include_global: bool = False,
+        *,
+        refresh_domain_list: bool = True,
     ) -> AsyncIterator[dict[str, Any]]:
         """Refresh object cache from API.
 
@@ -483,6 +485,15 @@ class ObjectService:
                 is excluded from the all-domains refresh path so existing
                 callers see today's behavior. An explicit ``domain_names``
                 request for "Global" is honored regardless of this flag.
+            refresh_domain_list: When True (default), a FORCE refresh (and a
+                smart refresh whose domain-list TTL ran out) re-reads the
+                server's domain list (show-domains/show-mdss) and rewrites
+                the domain rows. Pass False when the caller already knows
+                its domains, as ``CacheRefreshCoordinator`` does: with
+                several domains reloading at once every reload would
+                otherwise issue those calls and rewrite every domain row.
+                An empty domain table and a ``domain_names`` entry missing
+                from the table still trigger the re-read.
 
         Yields:
             Progress dictionaries with keys:
@@ -527,6 +538,7 @@ class ObjectService:
                 domain_names=domain_names,
                 mode=refresh_mode,
                 include_global=include_global,
+                refresh_domain_list=refresh_domain_list,
             ):
                 yield progress
 
@@ -536,6 +548,8 @@ class ObjectService:
         domain_names: list[str] | None,
         mode: RefreshMode,
         include_global: bool = False,
+        *,
+        refresh_domain_list: bool = True,
     ) -> AsyncIterator[dict[str, Any]]:
         """Refresh objects for a single management server.
 
@@ -545,6 +559,7 @@ class ObjectService:
             mode: Refresh mode.
             include_global: When False (default), the "Global" domain
                 is excluded from the all-domains refresh path.
+            refresh_domain_list: See `refresh_objects`; passed to `_get_domains_to_refresh`.
 
         Yields:
             Progress dictionaries.
@@ -561,6 +576,7 @@ class ObjectService:
             domain_names=domain_names,
             mode=mode,
             include_global=include_global,
+            refresh_domain_list=refresh_domain_list,
         )
 
         if not domains_to_refresh:
@@ -585,6 +601,8 @@ class ObjectService:
         domain_names: list[str] | None,
         mode: RefreshMode,
         include_global: bool = False,
+        *,
+        refresh_domain_list: bool = True,
     ) -> list[str]:
         """Get list of domains that need refreshing.
 
@@ -601,6 +619,14 @@ class ObjectService:
           `self._domain_list_refresh` (a `DomainListRefreshTracker`) - so a
           new domain surfaces within that window without hammering
           `show-domains` on every smart-refresh tick.
+
+        With ``refresh_domain_list=False`` the FORCE and TTL triggers are
+        off (the caller, e.g. ``CacheRefreshCoordinator``, already knows its
+        domains and runs many reloads at once; each would otherwise issue
+        show-domains/show-mdss and rewrite every domain row). The empty-table
+        floor stays, and so does one more trigger: a ``domain_names`` entry
+        missing from the table forces a re-read, so a domain created since
+        the last list read is still found.
 
         This single mechanism also covers what a separate "backfill a
         missing Global row" special case used to handle on its own: any
@@ -619,6 +645,7 @@ class ObjectService:
                 against the table rather than a pass-through - if the table
                 read excluded Global, an explicit request for it would be
                 filtered out before the intersection ever runs.
+            refresh_domain_list: See above; False turns off the FORCE and TTL re-fetch.
 
         Returns:
             List of domain names to refresh.
@@ -633,7 +660,15 @@ class ObjectService:
 
         # Floor: an empty table must always be populated, regardless of mode/TTL.
         table_was_empty = not all_domains
-        should_refetch = table_was_empty or mode == RefreshMode.FORCE or self._domain_list_refresh.is_stale(mgmt_name)
+        if refresh_domain_list:
+            should_refetch = (
+                table_was_empty or mode == RefreshMode.FORCE or self._domain_list_refresh.is_stale(mgmt_name)
+            )
+        else:
+            # The caller knows its domains; only a domain it names that the table lacks (created since the last
+            # list read) justifies the show-domains/show-mdss round trip.
+            known = {d.domain_name for d in all_domains}
+            should_refetch = table_was_empty or any(name not in known for name in (domain_names or []))
 
         if should_refetch:
             all_domains = await self._refetch_domain_list(

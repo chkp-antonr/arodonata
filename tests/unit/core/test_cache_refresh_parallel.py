@@ -33,7 +33,7 @@ class GatedObjectService(FakeObjectService):
         self.completed: list[str] = []
         self.release = asyncio.Event()
 
-    async def refresh_objects(self, mgmt_names=None, domain_names=None, mode="force"):
+    async def refresh_objects(self, mgmt_names=None, domain_names=None, mode="force", *, refresh_domain_list=True):
         domain = domain_names[0]
         self.full_reloads.append((mgmt_names[0], domain))
         member = MEMBER[domain]
