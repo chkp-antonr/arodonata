@@ -43,6 +43,12 @@ DEFAULT_TASK_TIMEOUT: Final[int] = 900  # seconds
 # ARODONATA_LOGIN_TIMEOUT without touching the API budget.
 DEFAULT_LOGIN_TIMEOUT: Final[int] = 120  # seconds
 
+# TCP connect + TLS handshake bound for every Check Point connection, and for the identity probe (spec D15).
+DEFAULT_CONNECT_TIMEOUT: Final[int] = 30  # seconds
+# Added to a call's own budget for the socket read timeout, so the socket never races asyncio.wait_for (spec D16).
+READ_TIMEOUT_MARGIN: Final[int] = 5  # seconds
+DEFAULT_TLS_TRUST: Final[str] = "tofu"
+
 # Check Point rate-limits logins per management server machine -- every domain
 # whose active server is hosted on a Multi-Domain Server member shares that
 # member's allowance -- over roughly a minute, to a server-configured count (3 by
@@ -190,6 +196,9 @@ __all__ = [
     "DEFAULT_SESSION_TIMEOUT",
     "DEFAULT_API_TIMEOUT",
     "DEFAULT_LOGIN_TIMEOUT",
+    "DEFAULT_CONNECT_TIMEOUT",
+    "READ_TIMEOUT_MARGIN",
+    "DEFAULT_TLS_TRUST",
     "LOGIN_THROTTLE_WINDOW_SECONDS",
     "DEFAULT_LOGIN_THROTTLE_INITIAL_SECONDS",
     "DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS",

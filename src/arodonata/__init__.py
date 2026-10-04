@@ -48,18 +48,23 @@ from .config import GLOBAL_DOMAIN_NAME, ArodonataSettings
 from .core import (
     ApiCallError,
     ApiError,
+    ApiTimeoutError,
     ArodonataError,
     AuthenticationError,
     CacheError,
+    CertificateMismatchError,
     ClientClosedError,
     ClientError,
     ConfigurationError,
     MissingConfigurationError,
     RefreshMode,
+    ServerIdentityError,
     ServerNotFoundError,
     SessionExpiredError,
     TaskPollError,
     TaskTimeoutError,
+    TrustStoreError,
+    UnknownServerCertificateError,
 )
 
 # CPCRUD (NAT write-payload constants other in-org consumers may need to reuse, e.g. MMP's
@@ -110,6 +115,11 @@ __all__ = [
     "ServerNotFoundError",
     "TaskTimeoutError",
     "TaskPollError",
+    "ServerIdentityError",
+    "CertificateMismatchError",
+    "UnknownServerCertificateError",
+    "TrustStoreError",
+    "ApiTimeoutError",
     # Enums
     "RefreshMode",
     # Utilities

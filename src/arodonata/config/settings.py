@@ -19,6 +19,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .constants import (
     DEFAULT_API_TIMEOUT,
     DEFAULT_CONCURRENT_LIMIT,
+    DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_LOGIN_BACKOFF,
     DEFAULT_LOGIN_MAX_WAIT,
     DEFAULT_LOGIN_RETRIES,
@@ -27,9 +28,12 @@ from .constants import (
     DEFAULT_SESSION_EXPIRE,
     DEFAULT_SESSION_TIMEOUT,
     DEFAULT_TASK_TIMEOUT,
+    DEFAULT_TLS_TRUST,
     LOG_LEVELS,
     LOGIN_THROTTLE_WINDOW_SECONDS,
+    READ_TIMEOUT_MARGIN,
 )
+from .tls import TrustMode, parse_fingerprints
 
 
 class ArodonataSettings(BaseSettings):
@@ -245,6 +249,29 @@ class ArodonataSettings(BaseSettings):
         validation_alias="ARODONATA_CPCRUD_SCHEMA_PATH",
     )
 
+    # ---- TLS verification of Check Point servers (asdk/tls.py, spec D6-D16) ----
+    tls_trust: str = Field(
+        default=DEFAULT_TLS_TRUST,
+        description="Certificate trust mode: 'tofu' (learn and persist) | 'pinned' | 'lab-memory' (lab runs only)",
+        validation_alias="ARODONATA_TLS_TRUST",
+    )
+    tls_fingerprints: str = Field(
+        default="",
+        description="Comma-separated SHA-256 fingerprints trusted at any address (from 'api fingerprint -f json')",
+        validation_alias="ARODONATA_TLS_FINGERPRINTS",
+    )
+    tls_known_hosts_path: str = Field(
+        default="",
+        description="Trust store file; empty means ${XDG_STATE_HOME:-~/.local/state}/arodonata/tls_known_hosts.json",
+        validation_alias="ARODONATA_TLS_KNOWN_HOSTS_PATH",
+    )
+    connect_timeout: int = Field(
+        default=DEFAULT_CONNECT_TIMEOUT,
+        ge=1,
+        description="Seconds for TCP connect plus TLS handshake to a Check Point server",
+        validation_alias="ARODONATA_CONNECT_TIMEOUT",
+    )
+
     def __init__(self, **data: Any) -> None:
         """Construct settings, allowing plain Python field names as kwargs.
 
@@ -306,6 +333,16 @@ class ArodonataSettings(BaseSettings):
             module, _, state = entry.partition(":")
             rules[module.strip()] = state.strip().lower() == "on"
         return rules
+
+    @property
+    def tls_fingerprints_list(self) -> list[str]:
+        """Normalised SHA-256 pins (64 lowercase hex digits each)."""
+        return parse_fingerprints(self.tls_fingerprints)
+
+    @property
+    def default_read_timeout(self) -> int:
+        """Socket read timeout for calls that carry no budget of their own (spec D16)."""
+        return max(self.api_timeout, self.login_timeout) + READ_TIMEOUT_MARGIN
 
     @property
     def api_keys_list(self) -> list[str]:
@@ -379,6 +416,22 @@ class ArodonataSettings(BaseSettings):
             module, sep, state = entry.partition(":")
             if not sep or not module.strip() or state.strip().lower() not in ("on", "off"):
                 raise ValueError(f"trace_modules entry '{entry}' is invalid; expected 'module:on' or 'module:off'")
+        return v
+
+    @field_validator("tls_trust", mode="before")
+    @classmethod
+    def validate_tls_trust(cls, v: Any) -> str:
+        """Must be one of the TrustMode values (case-insensitive)."""
+        value = str(v).strip().lower()
+        if value not in {mode.value for mode in TrustMode}:
+            raise ValueError(f"ARODONATA_TLS_TRUST must be one of {', '.join(m.value for m in TrustMode)}; got '{v}'")
+        return value
+
+    @field_validator("tls_fingerprints")
+    @classmethod
+    def validate_tls_fingerprints(cls, v: str) -> str:
+        """Every entry must be a SHA-256 fingerprint."""
+        parse_fingerprints(v)  # raises ValueError with the hint for SHA-1 / MD5 / ICA words
         return v
 
     @model_validator(mode="after")
