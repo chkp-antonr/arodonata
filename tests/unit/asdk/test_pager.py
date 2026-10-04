@@ -197,3 +197,24 @@ async def test_objects_without_uid_are_not_checked_for_duplicates():
 
     assert result["success"] is True
     assert len(result["data"]) == 3
+
+
+async def test_a_first_page_with_no_objects_is_returned_as_is():
+    page = {"success": True, "data": {"objects": [], "total": 7}}
+    script = Script(page)
+
+    result = await _run(script, offset=10)
+
+    assert result == page
+    assert len(script.calls) == 1
+
+
+async def test_a_later_page_that_is_not_a_dict_restarts_once_then_fails():
+    bad = {"success": True, "data": [{"uid": "x"}]}
+    script = Script(_page(0, 3, 7), bad, _page(0, 3, 7), bad)
+
+    result = await _run(script)
+
+    assert result["success"] is False
+    assert result["code"] == PAGING_INCONSISTENT_CODE
+    assert len(script.calls) == 4

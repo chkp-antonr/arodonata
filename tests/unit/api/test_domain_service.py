@@ -307,7 +307,7 @@ async def test_mdm_domains_multiple_domains_all_upserted():
 
 
 @pytest.mark.asyncio
-async def test_domain_list_and_members_are_fetched_in_pages_of_500():
+async def test_domain_list_and_members_are_fetched_in_cache_pages():
     api_client = AsyncMock()
     api_client.api_query = AsyncMock(
         return_value=ApiQueryResult(success=True, objects=[{"name": "Domain4", "uid": "u4"}])

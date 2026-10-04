@@ -37,7 +37,7 @@ async def fetch_all_pages(
     """Page `command` from `offset` to the end, `page_size` objects per call.
 
     Returns cpapi's api_query shape: on success `data` is the list of objects. An unsuccessful first page, or a first
-    page without a `container_key` list or a `total` (or with `total` 0), is returned as is, as cpapi does. An
+    page without a `container_key` list or a `total` (or with `total` 0 or no objects), is returned as is, as cpapi does. An
     unsuccessful later page fails the query with that page's code. Exceptions from `fetch_page` propagate untouched:
     nothing here retries a timeout or an identity error.
     """
@@ -65,6 +65,7 @@ async def _read(
         or not isinstance(data.get(container_key), list)
         or not isinstance(data.get("total"), int)
         or data["total"] == 0
+        or not data[container_key]
     ):
         return response
 
