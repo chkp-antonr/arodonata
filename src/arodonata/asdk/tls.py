@@ -9,26 +9,37 @@ Identity is a pinned SHA-256 certificate fingerprint per ``host:port`` (trust on
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import os
+import ssl
 import stat
 import tempfile
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows is not supported (spec D13)
     fcntl = None  # type: ignore[assignment]
 
-from ..config.tls import normalize_sha256
-from ..core.exceptions import TrustStoreError
+from ..config.tls import TrustMode, colon_hex, normalize_sha256, resolve_store_path
+from ..core.exceptions import (
+    CertificateMismatchError,
+    ConfigurationError,
+    TrustStoreError,
+    UnknownServerCertificateError,
+)
 from ..logger import lazy_logger
+
+if TYPE_CHECKING:
+    from ..config.settings import ArodonataSettings
 
 log = lazy_logger("arodonata.asdk.tls")
 
@@ -175,3 +186,163 @@ class TrustStore:
             raise TrustStoreError(
                 f"TLS trust store {self.path} cannot be written ({exc.strerror}); {_NOT_WRITABLE_HINT}"
             ) from exc
+
+
+_LAB_MEMORY: dict[Path, dict[str, TrustEntry]] = {}  # lab-memory: one map per process and store path (spec D9)
+_LAB_MEMORY_LOCK = threading.Lock()
+_REPORTED: set[tuple[str, str]] = set()  # (key, presented sha) already logged at ERROR / WARNING this process
+
+
+def reset_lab_memory() -> None:
+    """Forget everything lab-memory learned in this process (tests only)."""
+    with _LAB_MEMORY_LOCK:
+        _LAB_MEMORY.clear()
+    _REPORTED.clear()
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _once(key: str, sha: str) -> bool:
+    marker = (key, sha)
+    if marker in _REPORTED:
+        return False
+    _REPORTED.add(marker)
+    return True
+
+
+class TrustPolicy:
+    """Decides whether a presented certificate is the trusted one for ``host:port`` (spec D6)."""
+
+    def __init__(self, mode: TrustMode, store: TrustStore, pins: Iterable[str]) -> None:
+        self.mode = TrustMode(mode)
+        self.store = store
+        self._pins = frozenset(pins)
+        self._session: dict[str, TrustEntry] = {}
+        self._lock = threading.Lock()
+        if self.mode is TrustMode.LAB_MEMORY:
+            log().warning(
+                f"TLS trust mode lab-memory: certificates are learned in memory only, nothing is written ({store.path})"
+            )
+
+    @classmethod
+    def from_settings(cls, settings: ArodonataSettings) -> TrustPolicy:
+        mode = TrustMode(settings.tls_trust)
+        if mode is TrustMode.LAB_MEMORY and not os.environ.get("ARODONATA_LAB"):
+            raise ConfigurationError(
+                "ARODONATA_TLS_TRUST=lab-memory is honoured only in a lab run (ARODONATA_LAB set); "
+                "use tofu, or pinned with ARODONATA_TLS_FINGERPRINTS"
+            )
+        return cls(mode, TrustStore(resolve_store_path(settings.tls_known_hosts_path)), settings.tls_fingerprints_list)
+
+    def preflight(self) -> None:
+        """Fail at startup instead of at the first new host (spec D14)."""
+        if self.mode is TrustMode.TOFU:
+            self.store.ensure_writable()
+        else:
+            self.store.load()
+
+    def _memory(self) -> dict[str, TrustEntry]:
+        with _LAB_MEMORY_LOCK:
+            return _LAB_MEMORY.setdefault(self.store.path, {})
+
+    def _known(self) -> dict[str, TrustEntry]:
+        known = dict(self.store.load())
+        if self.mode is TrustMode.LAB_MEMORY:
+            for key, value in self._memory().items():
+                known.setdefault(key, value)
+        return known
+
+    def anchor_pems(self, host: str, port: int) -> list[str] | None:
+        key = host_key(host, port)
+        with self._lock:
+            hit = self._session.get(key)
+        if hit is not None and hit.pem:
+            return [hit.pem]
+        if self._pins:
+            return None
+        entry = self._known().get(key)
+        return [entry.pem] if entry is not None and entry.pem else None
+
+    def check(self, host: str, port: int, der: bytes) -> TrustEntry:
+        key = host_key(host, port)
+        sha = hashlib.sha256(der).hexdigest()
+        pem = ssl.DER_cert_to_PEM_cert(der)
+        with self._lock:
+            entry = self._decide(host, port, key, sha, pem, der)
+            self._session[key] = entry if entry.pem else replace(entry, pem=pem)
+            return self._session[key]
+
+    def _decide(self, host: str, port: int, key: str, sha: str, pem: str, der: bytes) -> TrustEntry:
+        known = self._known()
+        recorded = known.get(key)
+        if sha in self._pins:
+            if recorded is not None and recorded.sha256 != sha and _once(key, sha):
+                log().warning(
+                    f"TLS {key}: stale store entry in {self.store.path}; the env pin ARODONATA_TLS_FINGERPRINTS wins"
+                )
+            return TrustEntry(sha, pem, "env", _now())
+        if recorded is not None:
+            if recorded.sha256 == sha:
+                return recorded
+            raise self._mismatch(host, port, key, sha, der, recorded)
+        trusted = set(self._pins) | {value.sha256 for value in known.values()}
+        if sha in trusted:
+            entry = TrustEntry(sha, pem, "known-identity", _now())
+            log().info(f"TLS {key}: certificate {colon_hex(sha)} is already trusted for another address")
+            return self.store.record(key, entry) if self.mode is TrustMode.TOFU else entry
+        if self.mode is TrustMode.PINNED:
+            raise UnknownServerCertificateError(
+                f"TLS certificate of {key} is not trusted (ARODONATA_TLS_TRUST=pinned). No request was sent.\n"
+                f"  presented SHA-256: {colon_hex(sha)}\n"
+                "Check it on the management server ('api fingerprint -f json') and add it to ARODONATA_TLS_FINGERPRINTS.",
+                host=host,
+                port=port,
+                presented_sha256=sha,
+                presented_sha1=hashlib.sha1(der, usedforsecurity=False).hexdigest(),
+                source="pinned",
+            )
+        entry = TrustEntry(sha, pem, "tofu", _now())
+        if self.mode is TrustMode.LAB_MEMORY:
+            with _LAB_MEMORY_LOCK:
+                stored = _LAB_MEMORY.setdefault(self.store.path, {}).setdefault(key, replace(entry, source="memory"))
+            if stored.sha256 != sha:
+                raise self._mismatch(host, port, key, sha, der, stored)
+            log().warning(
+                f"TLS {key}: first contact, certificate {colon_hex(sha)} trusted for this process only (lab-memory)"
+            )
+            return stored
+        stored = self.store.record(key, entry)
+        if stored.sha256 != sha:
+            raise self._mismatch(host, port, key, sha, der, stored)
+        log().warning(
+            f"TLS {key}: first contact, certificate {colon_hex(sha)} trusted and recorded in {self.store.path}"
+        )
+        return stored
+
+    def _mismatch(
+        self, host: str, port: int, key: str, sha: str, der: bytes, expected: TrustEntry
+    ) -> CertificateMismatchError:
+        origin = "this process (lab-memory)" if expected.source == "memory" else str(self.store.path)
+        message = (
+            f"TLS certificate of {key} does not match the trusted one. No request was sent.\n"
+            f"  expected SHA-256:  {colon_hex(expected.sha256)} (from {origin})\n"
+            f"  presented SHA-256: {colon_hex(sha)}\n"
+            f"  presented SHA-1:   {colon_hex(hashlib.sha1(der, usedforsecurity=False).hexdigest())}\n"
+            "Check on the management server: 'api fingerprint -f json', or "
+            "'cpopenssl x509 -in /web/conf/server.crt -noout -fingerprint -sha256'.\n"
+            f"If the change is legitimate, replace the sha256 value of {key} in {self.store.path} "
+            "(do not delete the entry), or add the new value to ARODONATA_TLS_FINGERPRINTS."
+        )
+        if _once(key, sha):
+            log().error(message)
+        return CertificateMismatchError(
+            message,
+            host=host,
+            port=port,
+            presented_sha256=sha,
+            presented_sha1=hashlib.sha1(der, usedforsecurity=False).hexdigest(),
+            expected_sha256=expected.sha256,
+            source=origin,
+        )
