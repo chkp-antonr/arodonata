@@ -190,14 +190,23 @@ class TrustStore:
 
 _LAB_MEMORY: dict[Path, dict[str, TrustEntry]] = {}  # lab-memory: one map per process and store path (spec D9)
 _LAB_MEMORY_LOCK = threading.Lock()
-_REPORTED: set[tuple[str, str]] = set()  # (key, presented sha) already logged at ERROR / WARNING this process
+_MISMATCH_REPORTED: set[tuple[str, str]] = set()  # (key, presented sha) already logged at ERROR this process
+_STALE_REPORTED: set[str] = set()  # keys already warned about a stale store entry this process
 
 
 def reset_lab_memory() -> None:
     """Forget everything lab-memory learned in this process (tests only)."""
     with _LAB_MEMORY_LOCK:
         _LAB_MEMORY.clear()
-    _REPORTED.clear()
+    _MISMATCH_REPORTED.clear()
+    _STALE_REPORTED.clear()
+
+
+def _pem_matches(pem: str, sha: str) -> bool:
+    try:
+        return hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest() == sha
+    except ValueError:
+        return False
 
 
 def _now() -> str:
@@ -206,10 +215,24 @@ def _now() -> str:
 
 def _once(key: str, sha: str) -> bool:
     marker = (key, sha)
-    if marker in _REPORTED:
+    if marker in _MISMATCH_REPORTED:
         return False
-    _REPORTED.add(marker)
+    _MISMATCH_REPORTED.add(marker)
     return True
+
+
+def _stale_once(key: str) -> bool:
+    if key in _STALE_REPORTED:
+        return False
+    _STALE_REPORTED.add(key)
+    return True
+
+
+def _emit(level: str, message: str) -> None:
+    """Log ``message`` literally: arlogi's console handler renders Rich markup and emoji, which would eat
+    a bracketed IPv6 key and turn a fingerprint pair like ``:AB:`` into an emoji. ``markup=False`` makes
+    RichHandler build a plain ``Text`` (no markup, no emoji codes)."""
+    getattr(log(), level)(message, extra={"markup": False})
 
 
 class TrustPolicy:
@@ -222,8 +245,9 @@ class TrustPolicy:
         self._session: dict[str, TrustEntry] = {}
         self._lock = threading.Lock()
         if self.mode is TrustMode.LAB_MEMORY:
-            log().warning(
-                f"TLS trust mode lab-memory: certificates are learned in memory only, nothing is written ({store.path})"
+            _emit(
+                "warning",
+                f"TLS trust mode lab-memory: certificates are learned in memory only, nothing is written ({store.path})",
             )
 
     @classmethod
@@ -245,7 +269,12 @@ class TrustPolicy:
 
     def _memory(self) -> dict[str, TrustEntry]:
         with _LAB_MEMORY_LOCK:
-            return _LAB_MEMORY.setdefault(self.store.path, {})
+            return dict(_LAB_MEMORY.get(self.store.path, {}))
+
+    def _remember(self, key: str, entry: TrustEntry) -> TrustEntry:
+        """lab-memory counterpart of ``TrustStore.record``: an existing value wins."""
+        with _LAB_MEMORY_LOCK:
+            return _LAB_MEMORY.setdefault(self.store.path, {}).setdefault(key, replace(entry, source="memory"))
 
     def _known(self) -> dict[str, TrustEntry]:
         known = dict(self.store.load())
@@ -263,7 +292,9 @@ class TrustPolicy:
         if self._pins:
             return None
         entry = self._known().get(key)
-        return [entry.pem] if entry is not None and entry.pem else None
+        if entry is not None and entry.pem and _pem_matches(entry.pem, entry.sha256):
+            return [entry.pem]
+        return None  # no PEM, or one that is not the trusted certificate (stale after a manual re-trust): probe
 
     def check(self, host: str, port: int, der: bytes) -> TrustEntry:
         key = host_key(host, port)
@@ -271,16 +302,30 @@ class TrustPolicy:
         pem = ssl.DER_cert_to_PEM_cert(der)
         with self._lock:
             entry = self._decide(host, port, key, sha, pem, der)
-            self._session[key] = entry if entry.pem else replace(entry, pem=pem)
+            # the presented DER is by construction the accepted certificate, whatever PEM the entry carries
+            self._session[key] = replace(entry, pem=pem)
             return self._session[key]
+
+    def _learn(self, host: str, port: int, key: str, sha: str, der: bytes, entry: TrustEntry) -> TrustEntry:
+        """Remember ``entry`` (store in tofu, process map in lab-memory); an existing value wins and must match."""
+        if self.mode is TrustMode.TOFU:
+            stored = self.store.record(key, entry)
+        elif self.mode is TrustMode.LAB_MEMORY:
+            stored = self._remember(key, entry)
+        else:
+            return entry
+        if stored.sha256 != sha:  # another process (or this one) recorded a different value first
+            raise self._mismatch(host, port, key, sha, der, stored)
+        return stored
 
     def _decide(self, host: str, port: int, key: str, sha: str, pem: str, der: bytes) -> TrustEntry:
         known = self._known()
         recorded = known.get(key)
         if sha in self._pins:
-            if recorded is not None and recorded.sha256 != sha and _once(key, sha):
-                log().warning(
-                    f"TLS {key}: stale store entry in {self.store.path}; the env pin ARODONATA_TLS_FINGERPRINTS wins"
+            if recorded is not None and recorded.sha256 != sha and _stale_once(key):
+                _emit(
+                    "warning",
+                    f"TLS {key}: stale store entry in {self.store.path}; the env pin ARODONATA_TLS_FINGERPRINTS wins",
                 )
             return TrustEntry(sha, pem, "env", _now())
         if recorded is not None:
@@ -290,8 +335,8 @@ class TrustPolicy:
         trusted = set(self._pins) | {value.sha256 for value in known.values()}
         if sha in trusted:
             entry = TrustEntry(sha, pem, "known-identity", _now())
-            log().info(f"TLS {key}: certificate {colon_hex(sha)} is already trusted for another address")
-            return self.store.record(key, entry) if self.mode is TrustMode.TOFU else entry
+            _emit("info", f"TLS {key}: certificate {colon_hex(sha)} is already trusted for another address")
+            return self._learn(host, port, key, sha, der, entry)
         if self.mode is TrustMode.PINNED:
             raise UnknownServerCertificateError(
                 f"TLS certificate of {key} is not trusted (ARODONATA_TLS_TRUST=pinned). No request was sent.\n"
@@ -303,28 +348,26 @@ class TrustPolicy:
                 presented_sha1=hashlib.sha1(der, usedforsecurity=False).hexdigest(),
                 source="pinned",
             )
-        entry = TrustEntry(sha, pem, "tofu", _now())
-        if self.mode is TrustMode.LAB_MEMORY:
-            with _LAB_MEMORY_LOCK:
-                stored = _LAB_MEMORY.setdefault(self.store.path, {}).setdefault(key, replace(entry, source="memory"))
-            if stored.sha256 != sha:
-                raise self._mismatch(host, port, key, sha, der, stored)
-            log().warning(
-                f"TLS {key}: first contact, certificate {colon_hex(sha)} trusted for this process only (lab-memory)"
-            )
-            return stored
-        stored = self.store.record(key, entry)
-        if stored.sha256 != sha:
-            raise self._mismatch(host, port, key, sha, der, stored)
-        log().warning(
-            f"TLS {key}: first contact, certificate {colon_hex(sha)} trusted and recorded in {self.store.path}"
+        stored = self._learn(host, port, key, sha, der, TrustEntry(sha, pem, "tofu", _now()))
+        where = (
+            "trusted for this process only (lab-memory)"
+            if self.mode is TrustMode.LAB_MEMORY
+            else f"trusted and recorded in {self.store.path}"
         )
+        _emit("warning", f"TLS {key}: first contact, certificate {colon_hex(sha)} {where}")
         return stored
 
     def _mismatch(
         self, host: str, port: int, key: str, sha: str, der: bytes, expected: TrustEntry
     ) -> CertificateMismatchError:
-        origin = "this process (lab-memory)" if expected.source == "memory" else str(self.store.path)
+        in_memory = expected.source == "memory"
+        origin = "this process (lab-memory)" if in_memory else str(self.store.path)
+        remedy = (
+            "restart the process, or add the new value to ARODONATA_TLS_FINGERPRINTS."
+            if in_memory
+            else f"replace the sha256 value of {key} in {self.store.path} (do not delete the entry), "
+            "or add the new value to ARODONATA_TLS_FINGERPRINTS."
+        )
         message = (
             f"TLS certificate of {key} does not match the trusted one. No request was sent.\n"
             f"  expected SHA-256:  {colon_hex(expected.sha256)} (from {origin})\n"
@@ -332,11 +375,10 @@ class TrustPolicy:
             f"  presented SHA-1:   {colon_hex(hashlib.sha1(der, usedforsecurity=False).hexdigest())}\n"
             "Check on the management server: 'api fingerprint -f json', or "
             "'cpopenssl x509 -in /web/conf/server.crt -noout -fingerprint -sha256'.\n"
-            f"If the change is legitimate, replace the sha256 value of {key} in {self.store.path} "
-            "(do not delete the entry), or add the new value to ARODONATA_TLS_FINGERPRINTS."
+            f"If the change is legitimate, {remedy}"
         )
         if _once(key, sha):
-            log().error(message)
+            _emit("error", message)
         return CertificateMismatchError(
             message,
             host=host,
