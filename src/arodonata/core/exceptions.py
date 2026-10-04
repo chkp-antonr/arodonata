@@ -174,6 +174,73 @@ class TaskPollError(ApiCallError):
         super().__init__(message, *args, err_code=err_code, err_message=err_message)
 
 
+# TLS identity and socket timeouts (asdk/tls.py)
+class ServerIdentityError(ArodonataError):
+    """A Check Point server's TLS certificate is not the one trusted for that address. Nothing was sent.
+
+    Never retried: a different certificate does not fix itself. Deliberately not an ``OSError`` (cpapi would
+    re-send), an ``ApiConnectionError`` (login would re-resolve the domain) or an ``AuthenticationError`` (login
+    would wrap and retry it).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *args: object,
+        host: str = "",
+        port: int = 0,
+        presented_sha256: str = "",
+        presented_sha1: str = "",
+        expected_sha256: str = "",
+        source: str = "",
+    ) -> None:
+        self.host = host
+        self.port = port
+        self.presented_sha256 = presented_sha256
+        self.presented_sha1 = presented_sha1
+        self.expected_sha256 = expected_sha256
+        self.source = source
+        super().__init__(message, *args)
+
+
+class CertificateMismatchError(ServerIdentityError):
+    """The server presented a different certificate than the one recorded or pinned for it."""
+
+
+class UnknownServerCertificateError(ServerIdentityError):
+    """``ARODONATA_TLS_TRUST=pinned`` and the presented certificate is not trusted anywhere."""
+
+
+class TrustStoreError(ConfigurationError):
+    """The TLS trust store cannot be read, is unsafe (owner/permissions), is corrupt, or cannot be written."""
+
+
+class ApiTimeoutError(ArodonataError, TimeoutError):
+    """A socket connect or read to a Check Point server timed out. The request is never re-sent after a timeout.
+
+    (cpapi may already have re-sent it once after a dropped connection, before the timeout: Backlog #30.)
+    A ``TimeoutError`` subclass like ``TaskTimeoutError``, so existing ``except TimeoutError`` handlers keep working.
+    Every field has a default, so the error can be unpickled (the built-in reduce restores the fields).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *args: object,
+        phase: str = "",
+        host: str = "",
+        port: int = 0,
+        timeout: float = 0.0,
+        command: str = "",
+    ) -> None:
+        self.phase = phase
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.command = command
+        super().__init__(message, *args)
+
+
 # Cache Errors
 class CacheError(ArodonataError):
     """Cache-related errors."""

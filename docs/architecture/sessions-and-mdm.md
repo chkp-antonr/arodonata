@@ -25,3 +25,11 @@ every cache row and every helper-method result carries its owning
 `mgmt_name`/`domain_name` pair — letting callers filter
 (`client.get_hosts(domain_names=["Domain1"])`) without re-deriving domain
 membership themselves.
+
+## Server identity per member
+
+Each Gaia install, that is each MDS member (primary or secondary) and each SmartCenter, has its own self-signed API certificate, so the trusted identity is recorded per `host:port` and a standby member is a separate identity from the active one.
+A domain server IP hosted on a member most likely presents that member's certificate.
+When a new address presents a certificate that is already trusted for another address (in the trust store or in `ARODONATA_TLS_FINGERPRINTS`), it is accepted and, in `tofu` mode, recorded as `known-identity`; an unknown certificate at a new address is learned in `tofu` and refused in `pinned`.
+Identity failures are never retried by the login, keepalive or task-wait paths.
+See [TLS Verification](../configuration/tls-verification.md).

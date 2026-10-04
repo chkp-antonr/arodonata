@@ -110,6 +110,10 @@ async def wait_until_ready(
     Raises `LabNotReady`, chained onto the last probe failure, when no probe
     succeeded within the budget.
     """
+    from arodonata.asdk.tls import TrustPolicy
+    from arodonata.config import ArodonataSettings
+
+    TrustPolicy.from_settings(ArodonataSettings()).preflight()
     started = clock()
     attempt = 0
     while True:

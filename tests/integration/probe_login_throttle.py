@@ -51,7 +51,10 @@ from tests.integration.lab_env import load_lab_env  # noqa: E402 - needs the rep
 
 load_lab_env(_ROOT)  # same files and lab profile as the suite
 
-from cpapi import APIClient, APIClientArgs  # noqa: E402 - after dotenv, like conftest
+from arodonata.asdk.tls import VerifiedAPIClient, verified_api_client  # noqa: E402 - after dotenv, like conftest
+from tests.integration.probe_lab_domains import lab_policy  # noqa: E402 - one trust policy per process
+
+READ_TIMEOUT = 30.0  # seconds per read; main() sets it from --timeout
 
 SYSTEM_DOMAIN = ""  # "" and "System Data" are the same thing to the API
 
@@ -80,9 +83,9 @@ class Probe:
     attempts: list[Attempt] = field(default_factory=list)
     started: float = field(default_factory=time.monotonic)
 
-    def login(self, domain: str) -> tuple[APIClient | None, Attempt]:
+    def login(self, domain: str) -> tuple[VerifiedAPIClient | None, Attempt]:
         """One raw login. Returns (client, attempt); client is None on failure."""
-        client = APIClient(APIClientArgs(server=self.server, unsafe=True))
+        client = verified_api_client(self.server, read_timeout=READ_TIMEOUT, policy=lab_policy())
         t0 = time.monotonic()
         try:
             response = client.login_with_api_key(self.api_key, domain=domain or None)
@@ -105,7 +108,7 @@ class Probe:
         detail = " | ".join(part for part in (code, message) if part) or "unknown"
         return None, Attempt(t0 - self.started, domain, elapsed, False, detail)
 
-    def logout_quietly(self, client: APIClient) -> None:
+    def logout_quietly(self, client: VerifiedAPIClient) -> None:
         try:
             client.api_call("logout", {}, client.sid)
         except Exception:  # noqa: BLE001 - best effort; a failed logout is not the measurement
@@ -269,9 +272,9 @@ def main() -> None:
     if not args.server or not api_key:
         sys.exit(f"Need --server (or $API_MGMT) and ${args.api_key_env}")
 
-    # Bounds a hanging login: cpapi sets no timeout on its HTTPS connection, so
-    # without this a stalled login blocks the probe indefinitely.
-    socket.setdefaulttimeout(args.timeout)
+    # Bounds a hanging login: without it a stalled login blocks the probe indefinitely.
+    global READ_TIMEOUT
+    READ_TIMEOUT = float(args.timeout)
 
     print(f"Server: {args.server}   socket timeout: {args.timeout}s   logout: {not args.no_logout}\n")
     probe = Probe(server=args.server, api_key=api_key, timeout=args.timeout, logout=not args.no_logout)

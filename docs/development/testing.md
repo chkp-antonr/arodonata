@@ -71,6 +71,11 @@ root. See `.env.example` for the variable names; the important ones:
 Missing variables **skip** the affected tests, so a machine without lab
 access still runs everything else.
 
+Lab runs verify the server certificate like production does (see [TLS Verification](../configuration/tls-verification.md)).
+Pin the lab servers instead of learning them: put `ARODONATA_TLS_TRUST=pinned` and `ARODONATA_TLS_FINGERPRINTS=<one SHA-256 per member>` in `.env.lab.<profile>`, taking each value from `api fingerprint -f json` on the member.
+Fingerprints are public data, so they may live in that file.
+`ARODONATA_TLS_TRUST=lab-memory` is for a lab whose fingerprints are not harvested yet: it trusts each process's first contact in memory, writes nothing (it only reads an existing store) and is honoured only when `ARODONATA_LAB` is set.
+
 ### Mutation safety
 
 Tests that change server state are marked `cp_mutates` and confine

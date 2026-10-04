@@ -9,7 +9,13 @@ from __future__ import annotations
 import pytest
 
 from arodonata.asdk.task_waiter import TaskStatus, TaskWaiter, extract_task_ids, parse_task_statuses
-from arodonata.core.exceptions import TaskPollError, TaskTimeoutError
+from arodonata.core.exceptions import (
+    ApiTimeoutError,
+    CertificateMismatchError,
+    TaskPollError,
+    TaskTimeoutError,
+    TrustStoreError,
+)
 
 
 def _show_task_response(*tasks, success=True):
@@ -423,3 +429,50 @@ async def test_wait_backs_off_between_failed_polls_too():
     await _waiter(clock, poll_initial=2.0, poll_max=10.0).wait(show_task, ["01ab"], timeout=-1)
 
     assert clock.slept == [2.0, 4.0]
+
+
+async def test_wait_tolerates_a_socket_read_timeout_on_one_poll():
+    """A slow `show-task` (ApiTimeoutError is a TimeoutError) is one tolerated poll failure, not the end of the wait."""
+    clock = FakeClock()
+    calls = iter([ApiTimeoutError("slow", phase="read", host="h", port=443, timeout=5)])
+    done = _show_task_response(_task("01ab", "succeeded", 100))
+
+    async def show_task(payload):
+        for item in calls:
+            raise item
+        return done
+
+    statuses = await _waiter(clock).wait(show_task, ["01ab"], timeout=-1)
+
+    assert statuses[0].is_terminal
+
+
+async def test_wait_reraises_an_identity_error_at_once():
+    clock = FakeClock()
+    attempts = 0
+
+    async def show_task(payload):
+        nonlocal attempts
+        attempts += 1
+        raise CertificateMismatchError("changed", host="h", port=443)
+
+    with pytest.raises(CertificateMismatchError):
+        await _waiter(clock).wait(show_task, ["01ab"], timeout=-1)
+
+    assert attempts == 1
+
+
+async def test_wait_reraises_a_trust_store_error_at_once():
+    """A broken trust store is an operator fact, not a dropped poll: it keeps its type instead of a TaskPollError."""
+    clock = FakeClock()
+    attempts = 0
+
+    async def show_task(payload):
+        nonlocal attempts
+        attempts += 1
+        raise TrustStoreError("TLS trust store /x/t.json is world-writable; chmod 600 it")
+
+    with pytest.raises(TrustStoreError):
+        await _waiter(clock).wait(show_task, ["01ab"], timeout=-1)
+
+    assert attempts == 1

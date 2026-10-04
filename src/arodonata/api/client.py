@@ -237,7 +237,13 @@ class ArodonataClient:
             self._mgmt = _mgmt
         else:
             # Create ASDK components
-            transport = ApiTransport()
+            from ..asdk.tls import TrustPolicy
+
+            transport = ApiTransport(
+                tls_policy=TrustPolicy.from_settings(settings),
+                connect_timeout=settings.connect_timeout,
+                default_read_timeout=settings.default_read_timeout,
+            )
             rate_limiter = RateLimiter(settings.concurrent_limit, slot_timeout=settings.rate_limit_slot_timeout)
             server_registry = ServerRegistry(settings)
 
@@ -1427,7 +1433,10 @@ class ArodonataClient:
         try:
             await self._domain_service.populate_domain_cache(mgmt_name)
         except Exception as exc:
-            log().warning(f"Domain list refresh for {mgmt_name} failed ({type(exc).__name__}); cached list used")
+            from ..core.exceptions import ServerIdentityError
+
+            level = log().error if isinstance(exc, ServerIdentityError) else log().warning
+            level(f"Domain list refresh for {mgmt_name} failed ({type(exc).__name__}); cached list used")
             if await self._cache.get_domains(mgmt_names=[mgmt_name]):
                 self._domain_list_refresh.mark_checked(mgmt_name)
             return
@@ -1487,7 +1496,10 @@ class ArodonataClient:
             raise
         except Exception as exc:
             self._end_warm_up(mgmt_name, "failed")
-            log().warning(f"Background object cache warm-up of {mgmt_name} failed: {type(exc).__name__}")
+            from ..core.exceptions import ServerIdentityError
+
+            level = log().error if isinstance(exc, ServerIdentityError) else log().warning
+            level(f"Background object cache warm-up of {mgmt_name} failed: {type(exc).__name__}")
             return
         refreshed = len(getattr(outcome, "refreshed_domains", []) or [])
         failed = len(getattr(outcome, "failed_domains", []) or [])

@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 from pydantic import BaseModel, Field, SecretStr
 
 from ..api.schemas import ApiCallResult, ApiQueryResult
+from ..config.tls import colon_hex
+from ..core.exceptions import ApiTimeoutError, ServerIdentityError, TrustStoreError
 from ..logger import lazy_logger
 from ._sdk import AccessToken, CallToolResult, MCPServer, TextContent, ToolError, get_access_token
 
@@ -49,6 +51,59 @@ def log_tool_call(name: str, access_token: AccessToken | None) -> None:
     log().info("tool %s called by %s", name, client_id)
 
 
+def describe_for_model(exc: ServerIdentityError | TrustStoreError | ApiTimeoutError) -> str:
+    """Tool-facing text: the facts, never a ready-to-run command that would re-pin the presented certificate.
+
+    The MCP client may have a shell on the MCP host, so the text names no ``ARODONATA_TLS_FINGERPRINTS=<value>``
+    command; the operator gets the full message from the server log (spec D21). No SID or key either. The identity
+    text names where the expected value came from (``(from <store path>)``, or ``this process (lab-memory)``) so the
+    operator knows what to edit; trust-store and timeout texts carry no path.
+    """
+    if isinstance(exc, ServerIdentityError):
+        presented = colon_hex(exc.presented_sha256) if exc.presented_sha256 else "unknown"
+        text = f"TLS identity check failed for {exc.host}:{exc.port} ({type(exc).__name__}). No request was sent. "
+        if exc.expected_sha256:
+            text += f"Expected SHA-256 {colon_hex(exc.expected_sha256)}" + (
+                f" (from {exc.source}). " if exc.source else ". "
+            )
+        text += (
+            f"Presented SHA-256 {presented}. "
+            "The operator can check the real value on the management server with 'api fingerprint -f json'; "
+            "re-trusting is done on the MCP host by replacing the value in the trust store or by setting "
+            "ARODONATA_TLS_FINGERPRINTS. "
+            "Operator action required on the MCP host; retrying will not help."
+        )
+        return text
+    if isinstance(exc, TrustStoreError):
+        return (
+            "TLS trust store problem on the MCP host; see the server log. "
+            "Operator action required on the MCP host; retrying will not help."
+        )
+    text = f"Check Point server {exc.host}:{exc.port} did not answer within {exc.timeout:g}s ({exc.phase})."
+    if exc.phase == "read":
+        text += " The command may still have run on the server."
+    return text
+
+
+def _log_mapped_failure(name: str, exc: ServerIdentityError | TrustStoreError | ApiTimeoutError) -> None:
+    """Operator-side record of a mapped failure (markup off: paths and fingerprints must render literally).
+
+    Identity errors were already logged in full by ``TrustPolicy``; trust-store and timeout errors are logged
+    nowhere else, so their facts (no SID, no exception args beyond these fields) go here.
+    """
+    extra = {"markup": False}
+    if isinstance(exc, TrustStoreError):
+        log().error("tool %s failed: %s: %s", name, type(exc).__name__, exc, extra=extra)
+    elif isinstance(exc, ApiTimeoutError):
+        log().error(
+            "tool %s failed: %s on %s:%s phase=%s timeout=%gs command=%s",
+            name, type(exc).__name__, exc.host, exc.port, exc.phase, exc.timeout, exc.command,
+            extra=extra,
+        )  # fmt: skip
+    else:
+        log().error("tool %s failed: %s", name, type(exc).__name__, extra=extra)
+
+
 def add_guarded_tool(
     server: MCPServer, fn: Callable[..., Awaitable[Any]], *, name: str, description: str | None = None
 ) -> None:
@@ -71,6 +126,9 @@ def add_guarded_tool(
             return await fn(*args, **kwargs)
         except ToolError as exc:
             return CallToolResult(content=[TextContent(type="text", text=str(exc))], is_error=True)
+        except (ServerIdentityError, TrustStoreError, ApiTimeoutError) as exc:
+            _log_mapped_failure(name, exc)
+            return CallToolResult(content=[TextContent(type="text", text=describe_for_model(exc))], is_error=True)
         except Exception as exc:
             log().error("tool %s failed: %s", name, type(exc).__name__, exc_info=True)
             return CallToolResult(

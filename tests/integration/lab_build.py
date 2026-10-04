@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import os
-import socket
 import sys
 import time
 from dataclasses import dataclass, field
@@ -34,9 +33,10 @@ from typing import Any
 if __package__ in (None, ""):  # run as a script: make `tests.integration` importable
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from cpapi import APIClient, APIClientArgs
+from arodonata.asdk.tls import VerifiedAPIClient, verified_api_client
+from tests.integration.probe_lab_domains import THROTTLE_CODE, _close, _error_detail, _step, lab_policy
 
-from tests.integration.probe_lab_domains import THROTTLE_CODE, _close, _error_detail, _step
+READ_TIMEOUT = 180.0  # seconds per read; main() sets it from --timeout
 
 # ---------------------------------------------------------------------------
 # Wanted state
@@ -189,10 +189,12 @@ def plan(actual: Actual, domains: list[Domain]) -> list[Action]:
 # ---------------------------------------------------------------------------
 
 
-def login(server: str, api_key: str, *, domain: str | None, read_only: bool, throttle_wait: int = 70) -> APIClient:
+def login(
+    server: str, api_key: str, *, domain: str | None, read_only: bool, throttle_wait: int = 70
+) -> VerifiedAPIClient:
     """API-key login with a visible, throttle-tolerant wait. Exits the script on a real refusal."""
     for _ in range(4):
-        client = APIClient(APIClientArgs(server=server, unsafe=True))
+        client = verified_api_client(server, read_timeout=READ_TIMEOUT, policy=lab_policy())
         payload = {"session-name": "arodonata lab_build"} if not read_only else {}
         response, _s = _step(
             f"login {domain or 'MDS'}",
@@ -213,7 +215,7 @@ def login(server: str, api_key: str, *, domain: str | None, read_only: bool, thr
     sys.exit(f"\nlogin to {domain or 'MDS'} still throttled")
 
 
-def call(client: APIClient, command: str, payload: dict[str, Any], *, label: str | None = None) -> Any:
+def call(client: VerifiedAPIClient, command: str, payload: dict[str, Any], *, label: str | None = None) -> Any:
     """One API call with a heartbeat; exits the script on failure, printing the server's reason."""
     response, _s = _step(label or command, client.api_call, command, payload, client.sid)
     if not response.success:
@@ -223,7 +225,7 @@ def call(client: APIClient, command: str, payload: dict[str, Any], *, label: str
     return response
 
 
-def exists(client: APIClient, obj: Obj) -> bool:
+def exists(client: VerifiedAPIClient, obj: Obj) -> bool:
     response = client.api_call(obj.show_command, {"name": obj.name}, client.sid)
     if response.success:
         return True
@@ -348,7 +350,8 @@ def main() -> None:
     if not mds or not first_ip:
         sys.exit(f"Need {MDS_VAR} and {FIRST_IP_VAR} in the lab profile: where the domains' servers go")
     domains = wanted_domains(mds, first_ip)
-    socket.setdefaulttimeout(args.timeout)  # cpapi sets none: a hung request would block forever
+    global READ_TIMEOUT
+    READ_TIMEOUT = float(args.timeout)  # bounds every read: a hung request would block forever
     print(f"Lab profile: {profile or 'default (.env.test)'}   server: {args.server}\n")
 
     actions = plan(read_actual(args.server, api_key, args.gap), domains)

@@ -117,6 +117,7 @@ nav:
       - Change Report: user-guide/change-report.md
       - Configuration: configuration/index.md
       - Multi-Server Setup: configuration/multi-server.md
+      - TLS Verification: configuration/tls-verification.md
       - MCP Server: mcp/index.md
   - Architecture:
       - architecture/index.md

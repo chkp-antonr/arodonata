@@ -18,6 +18,8 @@ site.
 | `09_mcp_embedded.py` | Serving Arodonata as an MCP endpoint inside a FastAPI application |
 | `10_change_report_evidence.py` | Pending, provisional and published change evidence (HTML/JSON) showing every rule and object status |
 
+The examples verify the Check Point server certificate by default: the first contact with a server is trusted and recorded in a trust store, and a changed certificate is refused. See [TLS Verification](../docs/configuration/tls-verification.md) for the store location, `ARODONATA_TLS_KNOWN_HOSTS_PATH` and pinning with `ARODONATA_TLS_FINGERPRINTS`.
+
 ## Setup
 
 ```bash

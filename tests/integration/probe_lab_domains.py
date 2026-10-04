@@ -49,7 +49,28 @@ from typing import Any
 if __package__ in (None, ""):  # run as a script: make `tests.integration` importable
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from cpapi import APIClient, APIClientArgs
+from arodonata.asdk.tls import TrustPolicy, VerifiedAPIClient, verified_api_client
+
+READ_TIMEOUT = 120.0  # seconds per read; main() sets it from --timeout
+
+_POLICY: TrustPolicy | None = None
+_POLICY_LOCK = threading.Lock()
+
+
+def lab_policy() -> TrustPolicy:
+    """The one trust policy of this script process, built on first use (after main() loaded the lab env).
+
+    A policy per client would forget the anchors it learned: with env pins every connect would probe first (two
+    handshakes, skewing the timings) and lab-memory would log its policy WARNING once per client.
+    """
+    global _POLICY
+    with _POLICY_LOCK:  # probe_machines builds clients from a thread pool
+        if _POLICY is None:
+            from arodonata.config.settings import ArodonataSettings
+
+            _POLICY = TrustPolicy.from_settings(ArodonataSettings())
+        return _POLICY
+
 
 THROTTLE_CODE = "err_too_many_requests"
 
@@ -68,7 +89,7 @@ class Target:
 class Result:
     target: Target
     ok: bool
-    connect_s: float = 0.0  # TCP + TLS handshake: the network and the machine's web layer
+    connect_s: float = 0.0  # TCP + TLS handshake + TLS identity check: the network and the machine's web layer
     login_s: float = 0.0  # the login request itself: the domain's own management process
     call_s: float = 0.0
     logout_s: float = 0.0
@@ -115,7 +136,7 @@ def _error_detail(response: Any) -> tuple[str, str]:
     return code, " | ".join(p for p in (code, message) if p) or "unknown"
 
 
-def _close(client: APIClient, logout: bool) -> None:
+def _close(client: VerifiedAPIClient, logout: bool) -> None:
     try:
         if logout and client.sid:
             client.api_call("logout", {}, client.sid)
@@ -139,7 +160,7 @@ def _tcp(ip: str) -> str:
 
 def discover(server: str, api_key: str) -> list[Target]:
     print(f"Discovering domains via {server} (system-domain login):")
-    client = APIClient(APIClientArgs(server=server, unsafe=True))
+    client = verified_api_client(server, read_timeout=READ_TIMEOUT, policy=lab_policy())
     t0 = time.monotonic()
     try:
         response = client.login_with_api_key(api_key)
@@ -169,7 +190,7 @@ def probe_machines(server: str, targets: list[Target]) -> None:
             hosts.setdefault(t.ip, f"{t.domain} server (on {t.mds})")
 
     def one(ip: str) -> str:
-        client = APIClient(APIClientArgs(server=ip, unsafe=True))
+        client = verified_api_client(ip, read_timeout=READ_TIMEOUT, policy=lab_policy())
         t0 = time.monotonic()
         try:
             response = client.api_call("show-api-versions", {})
@@ -248,10 +269,10 @@ def wake_domain(target: Target, api_key: str, throttle_wait: int, throttle_retri
         return result
 
     for attempt in range(throttle_retries + 1):
-        client = APIClient(APIClientArgs(server=target.ip, unsafe=True))
+        client = verified_api_client(target.ip, read_timeout=READ_TIMEOUT, policy=lab_policy())
         login_started: float | None = None
         try:
-            client.conn, result.connect_s = _step("connect", client.create_https_connection)
+            client.conn, result.connect_s = _step("connect+identity", client.create_https_connection)
             login_started = time.monotonic()
             response, result.login_s = _step(
                 "login" if attempt == 0 else "retry login", client.login_with_api_key, api_key, domain=target.domain
@@ -297,12 +318,12 @@ def wake_domain(target: Target, api_key: str, throttle_wait: int, throttle_retri
 
 def summary_table(results: list[Result]) -> str:
     """Final per-domain table: where each domain's time went."""
-    head = f"  {'domain':12} {'server':15} {'mds':8} {'connect':>8} {'login':>8} {'call':>6} {'logout':>7} {'throttled':>9}  result"
+    head = f"  {'domain':12} {'server':15} {'mds':8} {'connect+id':>11} {'login':>8} {'call':>6} {'logout':>7} {'throttled':>9}  result"
     rows = [head, "  " + "-" * (len(head) - 2)]
     for r in results:
         t = r.target
         rows.append(
-            f"  {t.domain:12} {t.ip or '-':15} {t.mds:8} {r.connect_s:7.1f}s {r.login_s:7.1f}s {r.call_s:5.1f}s "
+            f"  {t.domain:12} {t.ip or '-':15} {t.mds:8} {r.connect_s:10.1f}s {r.login_s:7.1f}s {r.call_s:5.1f}s "
             f"{r.logout_s:6.1f}s {r.throttle_wait_s:8.0f}s  {'ok' if r.ok else 'FAIL: ' + r.detail}"
         )
     return "\n".join(rows)
@@ -341,8 +362,9 @@ def main() -> None:
     if not args.server or not api_key:
         sys.exit(f"Need --server (or $API_MGMT) and ${args.api_key_env}")
 
-    # cpapi sets no timeout of its own: without this a hung login blocks forever.
-    socket.setdefaulttimeout(args.timeout)
+    # Bounds every read: without it a hung login blocks forever.
+    global READ_TIMEOUT
+    READ_TIMEOUT = float(args.timeout)
     print(f"Server: {args.server}   socket timeout: {args.timeout}s\n")
 
     targets = discover(args.server, api_key)
@@ -355,6 +377,7 @@ def main() -> None:
     print("\n" + "=" * 72)
     print(f"{len(results) - len(failed)}/{len(results)} domains answered\n")
     print(summary_table(results))
+    print("  connect+id = TCP + TLS handshake + the certificate identity check (trust-store lookup, first-use probe).")
     sys.exit(1 if failed else 0)
 
 

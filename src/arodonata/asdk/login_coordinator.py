@@ -451,7 +451,15 @@ class LoginCoordinator:
                 max_retries=1,
             )
         except Exception as exc:  # noqa: BLE001 - cleanup is best effort; the caller's login proceeds regardless
-            log().warning(f"Could not acquire temp SID for cleanup: {exc}")
+            from ..core.exceptions import ServerIdentityError
+
+            if isinstance(exc, ServerIdentityError):
+                log().error(
+                    f"Cleanup login for '{mgmt_name}:{domain}' refused by the TLS identity check "
+                    f"({type(exc).__name__}); skipping session cleanup"
+                )
+            else:
+                log().warning(f"Could not acquire temp SID for cleanup: {exc}")
             return
         finally:
             _login_pacing.reset(sub_token)
@@ -529,7 +537,15 @@ class LoginCoordinator:
                 f"Keepalive for '{mgmt_name}:{domain}' skipped: no free slot on {slot_host}; next sweep retries"
             )
         except Exception as exc:
-            log().debug(f"Keepalive failed for '{mgmt_name}:{domain}': {exc} — evicting SID from cache")
+            from ..core.exceptions import ServerIdentityError
+
+            if isinstance(exc, ServerIdentityError):
+                log().error(
+                    f"Keepalive for '{mgmt_name}:{domain}' refused by the TLS identity check "
+                    f"({type(exc).__name__}) — evicting SID from cache"
+                )
+            else:
+                log().debug(f"Keepalive failed for '{mgmt_name}:{domain}': {exc} — evicting SID from cache")
             try:
                 await self._cache.delete_sid(mgmt_name, domain, username=username)
             except Exception as del_exc:
@@ -749,7 +765,18 @@ class LoginCoordinator:
         # failures (wrong password/domain) to avoid long hangs and server lockouts.
         # Transient login errors like server initialization or database revision
         # are surfaced as AuthenticationError and should be retried with backoff.
-        from ..core.exceptions import AuthenticationError, InvalidCredentialsError
+        from ..core.exceptions import (
+            AuthenticationError,
+            InvalidCredentialsError,
+            ServerIdentityError,
+            TrustStoreError,
+        )
+
+        # A certificate that does not match, or a trust store we cannot read, is not transient: another attempt hits
+        # the same wall, and a retry loop would bury the one line the operator needs (spec D20).
+        if isinstance(exc, (ServerIdentityError, TrustStoreError)):
+            log().error(f"{operation_name} failed: {type(exc).__name__} (TLS identity - not retrying)")
+            raise exc
 
         if isinstance(exc, (TypeError, InvalidCredentialsError)) or (
             CREDENTIAL_REJECTION_MESSAGE in str(exc) and type(exc) is not AuthenticationError
@@ -1027,7 +1054,7 @@ class LoginCoordinator:
         Takes no RateLimiter slot itself: each attempt takes the hosting MDS member's
         slot around its own HTTP call, inside `_execute_login_request`.
         """
-        from ..core.exceptions import AuthenticationError, ServerUnreachableError
+        from ..core.exceptions import AuthenticationError, ServerIdentityError, ServerUnreachableError, TrustStoreError
 
         try:
             # Inside the try: a transient failure resolving the hosting member
@@ -1075,7 +1102,7 @@ class LoginCoordinator:
             # waiting for our turn. Same type consumers already catch, a
             # message that says which it was.
             self._raise_gate_deadline_as_auth_error(e, mgmt_name, domain, "Login")
-        except AuthenticationError:
+        except (AuthenticationError, ServerIdentityError, TrustStoreError):
             raise
         except Exception as e:
             self._raise_as_auth_error(e, mgmt_name, domain)

@@ -17,10 +17,14 @@ from arodonata.asdk.session_cleaner import CleanupResult, SessionCleaner
 from arodonata.cache.lock_manager import LockAcquisitionError, LockOwnershipError
 from arodonata.config import CREDENTIAL_REJECTION_MESSAGE, LOGIN_THROTTLE_WINDOW_SECONDS
 from arodonata.core.exceptions import (
+    ApiTimeoutError,
     AuthenticationError,
+    CertificateMismatchError,
     InvalidCredentialsError,
     ServerUnreachableError,
     ThrottlingError,
+    TrustStoreError,
+    UnknownServerCertificateError,
 )
 
 # ---------------------------------------------------------------------------
@@ -1747,3 +1751,84 @@ async def test_login_hands_the_gate_mgmt_and_domain_as_the_target():
     coord._login_operation_for = op
     await coord._try_login_once("home", "FPCR_TEST_A", "10.0.0.7", "key", False, None, None, None)
     assert gate.targets == ["home/FPCR_TEST_A"]
+
+
+# ---------------------------------------------------------------------------
+# TLS identity errors: fatal, loud, never retried (spec D18, D20)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        CertificateMismatchError("changed", host="h", port=443),
+        UnknownServerCertificateError("unknown", host="h", port=443),
+        TrustStoreError("store unreadable"),
+    ],
+)
+async def test_identity_and_trust_store_errors_are_attempted_once_and_reach_the_caller(error):
+    coord = _make_coordinator(settings=_make_settings(max_retries=8))
+    attempts = 0
+
+    async def op():
+        nonlocal attempts
+        attempts += 1
+        raise error
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+        with pytest.raises(type(error)) as excinfo:
+            await coord._retry_with_backoff(op, "Login", mds_host="mds")
+
+    assert excinfo.value is error
+    assert attempts == 1
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [CertificateMismatchError("changed", host="h", port=443), TrustStoreError("store unreadable")],
+)
+async def test_try_login_once_does_not_wrap_identity_errors_as_authentication_errors(error):
+    coord = _make_coordinator(settings=_make_settings(max_retries=3))
+    coord._execute_login_request = AsyncMock(side_effect=error)
+
+    with pytest.raises(type(error)) as excinfo:
+        await coord._try_login_once("mgmt1", "", "10.0.0.1", SecretStr("key"), True, None, None, None)
+
+    assert excinfo.value is error
+    assert not isinstance(excinfo.value, AuthenticationError)
+
+
+def test_an_api_timeout_is_classified_as_a_timeout_not_as_unreachable():
+    from arodonata.asdk.login_coordinator import _login_failure_kind
+
+    exc = ApiTimeoutError("x", phase="connect", host="h", port=443, timeout=1)
+    assert _login_failure_kind(exc) == "timeout"
+
+
+async def test_keepalive_logs_an_identity_error_at_error_and_still_evicts_the_sid():
+    transport = AsyncMock()
+    transport.keepalive.side_effect = CertificateMismatchError("changed", host="h", port=443)
+    cache = AsyncMock()
+    coord = _make_coordinator(transport=transport, cache=cache)
+
+    with patch("arodonata.asdk.login_coordinator.log") as log:
+        await coord._fire_keepalive("mgmt1", "", "sid-x", "10.0.0.1", None)
+
+    log.return_value.error.assert_called_once()
+    assert "CertificateMismatchError" in log.return_value.error.call_args.args[0]
+    cache.delete_sid.assert_awaited_once_with("mgmt1", "", username=None)
+
+
+async def test_cleanup_login_logs_an_identity_error_at_error_and_skips_cleanup():
+    cleaner = AsyncMock(spec=SessionCleaner)
+    transport = AsyncMock()
+    transport.login_with_apikey.side_effect = CertificateMismatchError("changed", host="h", port=443)
+    coord = _make_coordinator(transport=transport, session_cleaner=cleaner)
+
+    with patch("arodonata.asdk.login_coordinator.log") as log:
+        await coord._cleanup_for_max_sessions("mgmt1", "", "10.0.0.1", "key", None)
+
+    errors = [c.args[0] for c in log.return_value.error.call_args_list]
+    assert any("Cleanup login" in m and "CertificateMismatchError" in m for m in errors)
+    cleaner.cleanup_stale_sessions.assert_not_called()

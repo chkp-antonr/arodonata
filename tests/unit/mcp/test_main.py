@@ -337,3 +337,43 @@ def test_debug_log_level_keeps_the_sdk_session_log(monkeypatch):
     monkeypatch.setattr(_sdk_session_logger(), "level", 0)
     configure_logging("debug")
     assert _sdk_session_logger().level == 0
+
+
+def test_main_exits_2_when_the_tofu_store_cannot_be_created(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    blocker = tmp_path / "file"
+    blocker.write_text("x")  # a parent that is a file: the store can never be created (also under root)
+    monkeypatch.setenv("ARODONATA_TLS_KNOWN_HOSTS_PATH", str(blocker / "sub" / "t.json"))
+    monkeypatch.delenv("ARODONATA_TLS_TRUST", raising=False)
+    monkeypatch.setenv("ARODONATA_MCP_TOKEN_VARS", "T")
+    monkeypatch.setenv("T", "x")
+    monkeypatch.setenv("MGMT_NAMES", "m1")
+    monkeypatch.setenv("MGMT_SERVERS", "10.0.0.1")
+    monkeypatch.setenv("API_KEYS", "k")
+    assert main(["--env-file", str(tmp_path / "none.env")]) == 2
+    assert "configuration error" in capsys.readouterr().err
+
+
+def test_main_exits_2_for_an_invalid_tls_trust_mode(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ARODONATA_TLS_TRUST", "bogus")
+    monkeypatch.setenv("ARODONATA_MCP_TOKEN_VARS", "T")
+    monkeypatch.setenv("T", "x")
+    monkeypatch.setenv("MGMT_NAMES", "m1")
+    monkeypatch.setenv("MGMT_SERVERS", "10.0.0.1")
+    monkeypatch.setenv("API_KEYS", "k")
+    assert main(["--env-file", str(tmp_path / "none.env")]) == 2
+    assert "configuration error" in capsys.readouterr().err
+
+
+def test_main_exits_2_for_lab_memory_without_arodonata_lab(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ARODONATA_TLS_TRUST", "lab-memory")
+    monkeypatch.delenv("ARODONATA_LAB", raising=False)
+    monkeypatch.setenv("ARODONATA_MCP_TOKEN_VARS", "T")
+    monkeypatch.setenv("T", "x")
+    monkeypatch.setenv("MGMT_NAMES", "m1")
+    monkeypatch.setenv("MGMT_SERVERS", "10.0.0.1")
+    monkeypatch.setenv("API_KEYS", "k")
+    assert main(["--env-file", str(tmp_path / "none.env")]) == 2
+    assert "ARODONATA_LAB" in capsys.readouterr().err
