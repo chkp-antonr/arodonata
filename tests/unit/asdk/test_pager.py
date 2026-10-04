@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pytest
@@ -111,16 +112,180 @@ async def test_the_callers_offset_is_the_start():
     assert script.calls == [(10, 3), (13, 3)]
 
 
-async def test_a_duplicate_uid_restarts_the_listing_once():
-    # An object inserted before the cursor between pages: the boundary object comes again on page 2.
+async def test_a_repeat_with_nothing_to_recover_restarts_the_listing_once():
+    # An object inserted before the cursor and one deleted after it between pages: total stays, the boundary object
+    # comes again on page 2, the window re-reads only objects already listed, and the final count is one short.
     shifted = _page(3, 3, 7, uid_base=2)
-    script = Script(_page(0, 3, 7), shifted, _page(0, 3, 7), _page(3, 3, 7), _page(6, 1, 7))
+    script = Script(
+        _page(0, 3, 7), shifted, _page(0, 3, 7), _page(6, 1, 7), _page(0, 3, 7), _page(3, 3, 7), _page(6, 1, 7)
+    )
 
     result = await _run(script)
 
     assert result["success"] is True
     assert [o["uid"] for o in result["data"]] == [f"u{i}" for i in range(7)]
-    assert script.calls[2] == (0, 3)  # the restart begins at the caller's offset
+    assert script.calls == [(0, 3), (3, 3), (0, 3), (6, 3), (0, 3), (3, 3), (6, 3)]  # the restart begins at offset 0
+
+
+def _explicit(uids: list[str], *, start: int, total: int) -> dict[str, Any]:
+    """A successful page holding `uids` in that order, from start + 1 to start + len(uids)."""
+    items = [{"uid": uid, "name": "Email" if uid in ("A", "B") else uid} for uid in uids]
+    data = {"objects": items, "total": total, "from": start + 1, "to": start + len(uids)}
+    return {"success": True, "data": data, "message": "", "code": ""}
+
+
+async def test_equal_names_swapped_at_a_boundary_are_recovered_without_a_restart():
+    # A and B share a name; the second request put B before A, so page 2 repeats A and B sat where no page asked.
+    page1 = _explicit(["u0", "u1", "A"], start=0, total=6)
+    page2 = _explicit(["A", "u4", "u5"], start=3, total=6)
+    window = _explicit(["u0", "u1", "B"], start=0, total=6)
+    script = Script(page1, page2, window)
+
+    result = await _run(script)
+
+    assert result["success"] is True
+    assert [o["uid"] for o in result["data"]] == ["u0", "u1", "A", "B", "u4", "u5"]
+    assert script.calls == [(0, 3), (3, 3), (0, 3)]
+
+
+async def test_the_window_is_the_ten_objects_just_before_the_page():
+    page1 = _page(0, 15, 20)
+    page2 = _explicit(["u14", "u16", "u17", "u18", "u19"], start=15, total=20)
+    window = _explicit([f"u{i}" for i in range(5, 14)] + ["u15"], start=5, total=20)
+    script = Script(page1, page2, window)
+
+    result = await _run(script, page_size=15)
+
+    assert result["success"] is True
+    assert [o["uid"] for o in result["data"]] == [f"u{i}" for i in range(20)]
+    assert script.calls == [(0, 15), (15, 15), (5, 10)]
+
+
+async def test_the_window_starts_at_the_callers_offset():
+    page1 = _explicit(["u10", "u11", "A"], start=10, total=16)
+    page2 = _explicit(["A", "u14", "u15"], start=13, total=16)
+    window = _explicit(["u10", "u11", "B"], start=10, total=16)
+    script = Script(page1, page2, window)
+
+    result = await _run(script, offset=10)
+
+    assert result["success"] is True
+    assert [o["uid"] for o in result["data"]] == ["u10", "u11", "A", "B", "u14", "u15"]
+    assert script.calls == [(10, 3), (13, 3), (10, 3)]
+
+
+async def test_a_swap_wider_than_the_window_is_caught_by_the_count_and_restarts():
+    # The window brings back only objects already listed (B sat further back than it reaches): one object short.
+    page1 = _explicit(["u0", "u1", "A"], start=0, total=6)
+    page2 = _explicit(["A", "u4", "u5"], start=3, total=6)
+    window = _explicit(["u0", "u1", "A"], start=0, total=6)
+    clean2 = _explicit(["B", "u4", "u5"], start=3, total=6)
+    script = Script(page1, page2, window, page1, clean2)
+
+    result = await _run(script)
+
+    assert result["success"] is True
+    assert [o["uid"] for o in result["data"]] == ["u0", "u1", "A", "B", "u4", "u5"]
+    assert script.calls == [(0, 3), (3, 3), (0, 3), (0, 3), (3, 3)]
+
+
+async def test_a_swap_that_hides_an_object_twice_fails_as_paging_inconsistent():
+    page1 = _explicit(["u0", "u1", "A"], start=0, total=6)
+    page2 = _explicit(["A", "u4", "u5"], start=3, total=6)
+    script = Script(page1, page2, page1, page1, page2, page1)
+
+    result = await _run(script)
+
+    assert result["success"] is False
+    assert result["code"] == PAGING_INCONSISTENT_CODE
+    assert "show-hosts" in result["message"]
+    assert "listed 5 distinct objects, expected 6" in result["message"]
+    assert len(script.calls) == 6
+
+
+async def test_a_repeat_on_the_first_page_reads_no_window_and_restarts():
+    doubled = {"success": True, "data": {"objects": [{"uid": "u0"}, {"uid": "u0"}], "total": 2, "from": 1, "to": 2}}
+    script = Script(doubled, _page(0, 2, 2))
+
+    result = await _run(script)
+
+    assert result["success"] is True
+    assert [o["uid"] for o in result["data"]] == ["u0", "u1"]
+    assert script.calls == [(0, 3), (0, 3)]
+
+
+async def test_a_failed_window_read_fails_the_query_with_its_offset_and_code():
+    page1 = _explicit(["u0", "u1", "A"], start=0, total=6)
+    page2 = _explicit(["A", "u4", "u5"], start=3, total=6)
+    failed = {"success": False, "data": None, "message": "busy", "code": "generic_error"}
+    script = Script(page1, page2, failed)
+
+    result = await _run(script)
+
+    assert result["success"] is False
+    assert result["code"] == "generic_error"
+    assert result["message"] == "show-hosts page at offset 0: busy"
+    assert len(script.calls) == 3  # no extra retry
+
+
+async def test_a_window_with_a_changed_total_restarts():
+    page1 = _explicit(["u0", "u1", "A"], start=0, total=6)
+    page2 = _explicit(["A", "u4", "u5"], start=3, total=6)
+    window = _explicit(["u0", "u1", "B"], start=0, total=7)
+    clean2 = _explicit(["B", "u4", "u5"], start=3, total=6)
+    script = Script(page1, page2, window, page1, clean2)
+
+    result = await _run(script)
+
+    assert result["success"] is True
+    assert [o["uid"] for o in result["data"]] == ["u0", "u1", "A", "B", "u4", "u5"]
+    assert script.calls == [(0, 3), (3, 3), (0, 3), (0, 3), (3, 3)]
+
+
+@pytest.mark.parametrize("window_data", [[{"uid": "B"}], {"total": 6}])
+async def test_a_window_without_the_container_list_restarts(window_data):
+    page1 = _explicit(["u0", "u1", "A"], start=0, total=6)
+    page2 = _explicit(["A", "u4", "u5"], start=3, total=6)
+    window = {"success": True, "data": window_data, "message": "", "code": ""}
+    clean2 = _explicit(["B", "u4", "u5"], start=3, total=6)
+    script = Script(page1, page2, window, page1, clean2)
+
+    result = await _run(script)
+
+    assert result["success"] is True
+    assert script.calls == [(0, 3), (3, 3), (0, 3), (0, 3), (3, 3)]
+
+
+async def test_the_window_recovers_only_objects_with_a_uid_not_listed_yet():
+    # An object without a uid in the window cannot be told apart from the one already listed; it is not added again.
+    page1 = _explicit(["u0", "u1", "A"], start=0, total=6)
+    page1["data"]["objects"][0] = {"name": "x"}
+    page2 = _explicit(["A", "u4", "u5"], start=3, total=6)
+    window = _explicit(["u0", "u1", "B"], start=0, total=6)
+    window["data"]["objects"][0] = {"name": "x"}
+    script = Script(page1, page2, window)
+
+    result = await _run(script)
+
+    assert result["success"] is True
+    assert [o.get("uid", o.get("name")) for o in result["data"]] == ["x", "u1", "A", "B", "u4", "u5"]
+    assert script.calls == [(0, 3), (3, 3), (0, 3)]
+
+
+async def test_a_swap_is_logged_at_debug_without_names_or_uids(caplog):
+    page1 = _explicit(["u0", "u1", "A"], start=0, total=6)
+    page2 = _explicit(["A", "u4", "u5"], start=3, total=6)
+    window = _explicit(["u0", "u1", "B"], start=0, total=6)
+    script = Script(page1, page2, window)
+
+    with caplog.at_level(logging.DEBUG, logger="arodonata.asdk.pager"):
+        await _run(script)
+
+    swap = [r for r in caplog.records if "equal names swapped" in r.getMessage()]
+    assert [r.levelno for r in swap] == [logging.DEBUG]
+    assert swap[0].getMessage() == (
+        "show-hosts: equal names swapped at the page boundary at offset 3; re-read 3 objects before it"
+    )
 
 
 async def test_a_restart_begins_at_the_callers_offset():
