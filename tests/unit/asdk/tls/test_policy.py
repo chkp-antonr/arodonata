@@ -257,3 +257,11 @@ def test_log_messages_render_literally_on_the_console(tmp_path):
         target.removeHandler(handler)
         target.setLevel(old_level)
     assert "TLS [fe80::1]:443 certificate 2E:AB:C1 trusted" in buf.getvalue()
+
+
+def test_log_records_point_at_the_real_call_site(tmp_path, caplog):
+    with caplog.at_level(logging.WARNING):
+        policy(tmp_path).check("10.0.0.1", 443, DER_A)
+    (record,) = [r for r in caplog.records if "first contact" in r.getMessage()]
+    assert record.funcName == "_decide" and record.filename == "tls.py"
+    assert record.markup is False

@@ -146,3 +146,13 @@ def test_two_processes_one_key_first_writer_wins(tmp_path):
     results = {out.get(timeout=5), out.get(timeout=5)}
     assert len(results) == 1  # both see the same winner; the loser's caller turns that into a mismatch
     assert json.loads(Path(path).read_text())["hosts"]["h:443"]["sha256"] in (A, B)
+
+
+def test_group_writable_warning_is_literal_and_points_at_the_reader(tmp_path, caplog):
+    path = tmp_path / "[x]" / "t.json"  # a bracketed path segment would be eaten as Rich markup
+    path.parent.mkdir()
+    path.write_text(json.dumps({"version": 1, "hosts": {}}))
+    path.chmod(0o660)
+    TrustStore(path).load()
+    (record,) = [r for r in caplog.records if "group-writable" in r.getMessage()]
+    assert record.markup is False and record.funcName == "_read_raw"
