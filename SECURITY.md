@@ -19,3 +19,11 @@ disclosure timeline.
 ## Supported Versions
 
 Only the latest released version is actively supported with security fixes.
+
+## Server identity verification
+
+Arodonata verifies the Check Point management servers it connects to by the SHA-256 fingerprint of their certificate, checked after the TLS handshake and before any request is sent (TLS 1.2 or later).
+By default (`ARODONATA_TLS_TRUST=tofu`) the first certificate seen at an address is trusted and recorded in a trust store file readable only by its owner, and a different certificate is refused; `pinned` accepts only fingerprints from the store or `ARODONATA_TLS_FINGERPRINTS`.
+Trust on first use does not protect the very first connection, so use `pinned` where that matters.
+Certificate verification cannot be switched off, and every connection has a connect and a read timeout.
+Details: [TLS Verification](docs/configuration/tls-verification.md).

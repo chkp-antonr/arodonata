@@ -22,6 +22,10 @@ isn't special in this regard, it's just one field among many.
 | `session_timeout` | `int` | see `constants.py` | Session timeout passed to the Check Point login API. |
 | `concurrent_limit` | `int` (1-20) | 4 | Max concurrent API requests per MDS member (logins and calls; per server for a SmartCenter). A slot is held for one whole request (a cache listing or a task wait holds it until it is done). One cache-refresh call starts at most `concurrent_limit − 1` (at least one) domain refreshes per member; overlapping calls, other processes and long tasks can still use every slot. |
 | `api_timeout` | `int` | see `constants.py` | Per-request API timeout in seconds. |
+| `connect_timeout` | `int` | `30` | Seconds for TCP connect plus TLS handshake to a Check Point server (`ARODONATA_CONNECT_TIMEOUT`). See [TLS Verification](tls-verification.md#timeouts). |
+| `tls_trust` | `str` | `"tofu"` | Certificate trust mode: `'tofu'` \| `'pinned'` \| `'lab-memory'` (lab runs only). Settable via `ARODONATA_TLS_TRUST`. See [TLS Verification](tls-verification.md). |
+| `tls_fingerprints` | `str` | `""` | Comma-separated SHA-256 fingerprints trusted at any address, from `api fingerprint -f json` (`ARODONATA_TLS_FINGERPRINTS`). |
+| `tls_known_hosts_path` | `str` | `""` | Trust store file; empty means `${XDG_STATE_HOME:-~/.local/state}/arodonata/tls_known_hosts.json` (`ARODONATA_TLS_KNOWN_HOSTS_PATH`). |
 | `login_retry_backoff` | `int` | see `constants.py` | Backoff (seconds) between login retries. |
 | `login_max_retries` | `int` | see `constants.py` | Maximum login retry attempts. |
 | `warm_object_cache_on_first_use` | `bool` | `True` | When `get_domains` finds a management server's object cache empty, load every domain's objects in the background (`get_domains` returns the domain list at once). Settable via `ARODONATA_WARM_OBJECT_CACHE_ON_FIRST_USE`; set `false` where a full background load (hours on a large MDS) is unwanted. |

@@ -49,3 +49,10 @@ it yet on a fresh database, so the first run against an empty cache returns
 an empty list. See
 [`build_refresh_assets_cache`](../api/arodonata/api/client.md) and the
 [Examples](../examples/index.md) section for how to populate it.
+
+## First run against a server
+
+The first time the script connects to a management server, Arodonata trusts the certificate that server presents and records its SHA-256 fingerprint in a trust store, `${XDG_STATE_HOME:-~/.local/state}/arodonata/tls_known_hosts.json` by default (set `ARODONATA_TLS_KNOWN_HOSTS_PATH` to put it elsewhere, for example in a container with a read-only home).
+You will see one WARNING per server, `TLS <host>:<port>: first contact, certificate <fingerprint> trusted and recorded in <path>`.
+From then on a different certificate at that address is refused before anything is sent.
+To pin fingerprints you took from the server yourself instead of trusting the first contact, see [TLS Verification](../configuration/tls-verification.md).
