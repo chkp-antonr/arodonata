@@ -1015,7 +1015,6 @@ async def test_collect_objects_by_type_pages_by_the_cache_page_size(db):
 
     payloads = [c.kwargs["payload"] for c in client.api_query.await_args_list]
     assert payloads == [{"limit": 300}] * 4
-    assert len({id(p) for p in payloads}) == 4  # a fresh dict per call: cpapi mutates the payload
 
 
 async def test_collect_objects_by_type_api_error(db):

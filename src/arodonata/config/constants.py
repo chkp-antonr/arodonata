@@ -97,7 +97,7 @@ DEFAULT_LOGIN_BACKOFF: Final[int] = 5  # seconds
 DEFAULT_LOGIN_RETRIES: Final[int] = 8
 # How long a caller waits for a free RateLimiter concurrency slot (asdk/rate_limiter.py)
 # before giving up. A listing (`api_query`) takes a slot per page and releases it between
-# pages (asdk/pager.py), and waiters are served in arrival order within a process; a call
+# pages (asdk/pager.py), and waiters are served in arrival order within one client; a call
 # that waits for a task (`wait_for_task`, e.g. publish or revert) holds it for the whole task. Since 2026-09-14 logins take
 # slots too: a login takes the hosting MDS member's slot for a single HTTP round
 # trip (bounded by DEFAULT_LOGIN_TIMEOUT), never across its retry ladder or a

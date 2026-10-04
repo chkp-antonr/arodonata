@@ -506,8 +506,8 @@ def test_default_limit_is_the_per_member_default():
 
 # --------------------------------------------------------------------------
 # A held slot's distributed row is renewed until release (Backlog item 20):
-# a request may hold a slot longer than DEFAULT_TTL_RATE_LIMIT (a whole listing,
-# a publish task), and a lapsed row lets another process take the same slot.
+# a request may hold a slot longer than DEFAULT_TTL_RATE_LIMIT (a publish task
+# or a long single call), and a lapsed row lets another process take the same slot.
 # --------------------------------------------------------------------------
 
 

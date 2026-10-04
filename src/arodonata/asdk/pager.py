@@ -36,9 +36,9 @@ async def fetch_all_pages(
 ) -> RawApiResponse:
     """Page `command` from `offset` to the end, `page_size` objects per call.
 
-    Returns cpapi's api_query shape: on success `data` is the list of objects. An unsuccessful first page, or a first
-    page without a `container_key` list or a `total` (or with `total` 0 or no objects), is returned as is, as cpapi does. An
-    unsuccessful later page fails the query with that page's code. Exceptions from `fetch_page` propagate untouched:
+    Returns cpapi's api_query shape: on success `data` is the list of objects. A first page that is unsuccessful, not a
+    dict or without a `container_key` list is returned as is; one with the list but no paging (no `total`, `total` 0 or
+    an empty list) comes back with `data` replaced by that list, as cpapi does. An unsuccessful later page fails the query with that page's code. Exceptions from `fetch_page` propagate untouched:
     nothing here retries a timeout or an identity error.
     """
     try:
@@ -60,14 +60,10 @@ async def _read(
     if not response.get("success"):
         return response
     data = response.get("data")
-    if (
-        not isinstance(data, dict)
-        or not isinstance(data.get(container_key), list)
-        or not isinstance(data.get("total"), int)
-        or data["total"] == 0
-        or not data[container_key]
-    ):
+    if not isinstance(data, dict) or not isinstance(data.get(container_key), list):
         return response
+    if not isinstance(data.get("total"), int) or data["total"] == 0 or not data[container_key]:
+        return {**response, "data": data[container_key]}
 
     total: int = data["total"]
     objects: list[Any] = []
@@ -110,6 +106,6 @@ def _check_page(page: Any, container_key: str, offset: int, prev_to: int, total:
         uid = item.get("uid") if isinstance(item, dict) else None
         if isinstance(uid, str):
             if uid in seen:
-                raise _Shifted(f"page at offset {offset} repeats an object seen on an earlier page")
+                raise _Shifted(f"page at offset {offset} repeats an object already listed")
             seen.add(uid)
     return page_to

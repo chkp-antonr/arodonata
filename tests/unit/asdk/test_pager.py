@@ -59,13 +59,15 @@ async def test_a_listing_that_fits_one_page_is_one_call():
     assert script.calls == [(0, 3)]
 
 
-async def test_an_empty_listing_returns_the_first_page_as_is():
+async def test_an_empty_listing_returns_an_empty_list():
     empty = _page(0, 0, 0)
     script = Script(empty)
 
     result = await _run(script)
 
-    assert result == empty
+    assert result["success"] is True
+    assert result["data"] == []
+    assert script.calls == [(0, 3)]
 
 
 async def test_a_first_page_without_the_container_list_is_returned_as_is():
@@ -199,13 +201,25 @@ async def test_objects_without_uid_are_not_checked_for_duplicates():
     assert len(result["data"]) == 3
 
 
-async def test_a_first_page_with_no_objects_is_returned_as_is():
+async def test_a_first_page_with_no_objects_returns_an_empty_list():
     page = {"success": True, "data": {"objects": [], "total": 7}}
     script = Script(page)
 
     result = await _run(script, offset=10)
 
-    assert result == page
+    assert result["success"] is True
+    assert result["data"] == []
+    assert len(script.calls) == 1
+
+
+async def test_a_first_page_with_items_but_no_total_returns_them_as_a_list_in_one_call():
+    page = {"success": True, "data": {"objects": [{"uid": "a"}, {"uid": "b"}]}}
+    script = Script(page)
+
+    result = await _run(script)
+
+    assert result["success"] is True
+    assert result["data"] == [{"uid": "a"}, {"uid": "b"}]
     assert len(script.calls) == 1
 
 

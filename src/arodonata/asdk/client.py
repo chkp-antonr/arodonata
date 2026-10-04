@@ -399,14 +399,15 @@ class AMgmtClient:
         Each page runs through _execute_with_retry like any api_call: it takes its own RateLimiter slot
         and releases it after the page, so other callers of the member get in between pages; a session
         that expires mid-listing re-logs in and retries that page only. The caller's `limit` is the page
-        size (QUERY_PAGE_SIZE when absent, at most QUERY_MAX_PAGE_SIZE) and `offset` the starting point;
+        size (QUERY_PAGE_SIZE when absent or below 1, at most QUERY_MAX_PAGE_SIZE) and `offset` the starting point;
         the caller's payload is not modified. On success `data` is the list of objects, as with cpapi's
         api_query.
         """
         self._ensure_not_closed()
 
         base = dict(payload or {})
-        page_size = max(1, min(int(base.pop("limit", QUERY_PAGE_SIZE)), QUERY_MAX_PAGE_SIZE))
+        requested = int(base.pop("limit", QUERY_PAGE_SIZE))
+        page_size = min(requested if requested >= 1 else QUERY_PAGE_SIZE, QUERY_MAX_PAGE_SIZE)
         start = int(base.pop("offset", 0))
 
         async def page(offset: int, limit: int) -> RawApiResponse:

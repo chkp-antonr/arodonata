@@ -475,7 +475,10 @@ async def test_a_session_error_mid_listing_retries_that_page_only():
     assert [c.kwargs["force"] for c in lc.login.await_args_list] == [False, False, False, True]
 
 
-@pytest.mark.parametrize(("given", "sent"), [({}, 300), ({"limit": 50}, 50), ({"limit": 900}, 500)])
+@pytest.mark.parametrize(
+    ("given", "sent"),
+    [({}, 300), ({"limit": 50}, 50), ({"limit": 900}, 500), ({"limit": 0}, 300), ({"limit": -5}, 300)],
+)
 async def test_page_size_defaults_to_300_honours_the_callers_limit_and_caps_at_500(given, sent):
     transport = AsyncMock()
     transport.api_call.return_value = _page(0, 1, 1)
@@ -485,6 +488,36 @@ async def test_page_size_defaults_to_300_honours_the_callers_limit_and_caps_at_5
     await client.close()
 
     assert transport.api_call.await_args.kwargs["payload"]["limit"] == sent
+
+
+async def test_the_slot_is_released_before_the_next_page_is_requested():
+    events: list[str] = []
+    limiter = MagicMock()
+
+    async def _enter(*_):
+        events.append("enter")
+
+    async def _exit(*_):
+        events.append("exit")
+        return False
+
+    limiter.acquire.return_value.__aenter__ = _enter
+    limiter.acquire.return_value.__aexit__ = _exit
+    pages = [_page(0, 300, 400), _page(300, 100, 400)]
+
+    async def _api_call(**_):
+        events.append("call")
+        return pages.pop(0)
+
+    transport = AsyncMock()
+    transport.api_call.side_effect = _api_call
+    client, *_ = _query_client(transport)
+    client._rate_limiter = limiter
+
+    await client.api_query("mgmt1", "show-hosts")
+    await client.close()
+
+    assert events == ["enter", "call", "exit", "enter", "call", "exit"]
 
 
 async def test_the_callers_payload_is_not_mutated():
