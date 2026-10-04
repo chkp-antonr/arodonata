@@ -8,6 +8,28 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 via [commitizen](https://commitizen-tools.github.io/commitizen/) — do not
 hand-edit released sections, only the `[Unreleased]` section above them.
 
+## v1.13.0 (2026-10-04)
+
+### Feat
+
+- **asdk**: verify Check Point servers by TLS certificate fingerprint (TOFU) and bound every socket (#24)
+
+### Security
+
+- Check Point management servers are now verified by the SHA-256 fingerprint of their certificate, checked after the TLS handshake and before any request is sent. The previous behaviour (no verification, `unsafe=True`) is gone.
+- The default mode is trust on first use (`ARODONATA_TLS_TRUST=tofu`): the first certificate seen at a `host:port` is recorded in a trust store and a different one is refused. `pinned` accepts only recorded or `ARODONATA_TLS_FINGERPRINTS` values; `lab-memory` (lab runs only) keeps what it learns in memory.
+- Every connection has a connect timeout (`ARODONATA_CONNECT_TIMEOUT`, default 30 s) and a read timeout. A request that timed out while waiting for the answer is never sent a second time; the error says the command may still have run on the server.
+- MCP tool errors for identity, trust-store and timeout failures give the model the facts but never a ready-to-run re-trust command; no MCP tool can change trust.
+
+### Upgrade notes
+
+- A trust store file appears at `${XDG_STATE_HOME:-~/.local/state}/arodonata/tls_known_hosts.json` (mode 0600 in a 0700 directory). Move it with `ARODONATA_TLS_KNOWN_HOSTS_PATH`; this is required for read-only home directories and containers.
+- A changed server certificate is now refused with an actionable message. To accept a legitimate change, replace the `sha256` value of that host in the store (do not delete the entry) or add the new value to `ARODONATA_TLS_FINGERPRINTS`.
+- An unwritable state directory stops `arodonata-mcp` at startup with exit code 2; so do a corrupt or unsafe store and `lab-memory` without `ARODONATA_LAB`. Point `ARODONATA_TLS_KNOWN_HOSTS_PATH` at a writable file or use `ARODONATA_TLS_TRUST=pinned` with `ARODONATA_TLS_FINGERPRINTS`.
+- MMP must set `ARODONATA_TLS_KNOWN_HOSTS_PATH` to a file on a read-write mount before it upgrades to 1.13.0.
+- Lab runs should pin: `ARODONATA_TLS_TRUST=pinned` and `ARODONATA_TLS_FINGERPRINTS=<one SHA-256 per member>` in `.env.lab.<profile>`.
+- `cpapi` is now bounded to `>=1.9.0,<1.10`, because the connection handling relies on its internals.
+
 ## v1.12.0 (2026-10-03)
 
 ### Feat
