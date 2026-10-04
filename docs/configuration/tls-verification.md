@@ -37,7 +37,7 @@ A relative value is resolved against the current directory.
 {
   "version": 1,
   "hosts": {
-    "192.168.5.140:443": {
+    "192.0.2.10:443": {
       "sha256": "<64 lowercase hex digits>",
       "pem": "<the certificate in PEM form>",
       "first_seen": "2026-10-04T10:45:08+00:00",
@@ -92,19 +92,19 @@ The server certificate changes when an administrator regenerates or replaces it,
 Arodonata then refuses the connection (see [What a mismatch looks like](#what-a-mismatch-looks-like)); an unexpected change is exactly what the check exists to catch, so confirm it on the management server first.
 
 If the change is legitimate, either replace the `sha256` value of that host in the store file (keep the entry, do not delete it: a deleted entry would let `tofu` trust whatever answers next) or add the new fingerprint to `ARODONATA_TLS_FINGERPRINTS`, which takes precedence over the store.
-A running process picks the new value up without a restart: the next connection attempt to that host is refused once with "changed during the connection", and the one after it uses the new value.
+After a store edit a running process needs no restart: the store is re-read on every check, so the next connection attempt to that host is refused once with "changed during the connection", and the one after it uses the new value. `ARODONATA_TLS_FINGERPRINTS` is read from the environment when the process starts, so a running process (for example `arodonata-mcp`) needs a restart after that value changes.
 
 ## What a mismatch looks like
 
 The message names the address, both fingerprints in colon form and the way to check on the server, and says that no request was sent:
 
 ```text
-TLS certificate of 192.168.5.140:443 does not match the trusted one. No request was sent.
+TLS certificate of 192.0.2.10:443 does not match the trusted one. No request was sent.
   expected SHA-256:  AB:CD:...:EF (from /home/user/.local/state/arodonata/tls_known_hosts.json)
   presented SHA-256: 12:34:...:90
   presented SHA-1:   ...
 Check on the management server: 'api fingerprint -f json', or 'cpopenssl x509 -in /web/conf/server.crt -noout -fingerprint -sha256'.
-If the change is legitimate, replace the sha256 value of 192.168.5.140:443 in /home/user/.local/state/arodonata/tls_known_hosts.json (do not delete the entry), or add the new value to ARODONATA_TLS_FINGERPRINTS.
+If the change is legitimate, replace the sha256 value of 192.0.2.10:443 in /home/user/.local/state/arodonata/tls_known_hosts.json (do not delete the entry), or add the new value to ARODONATA_TLS_FINGERPRINTS.
 ```
 
 In `pinned` mode an unknown certificate is reported as "is not trusted" with the presented fingerprint.
