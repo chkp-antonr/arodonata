@@ -364,3 +364,16 @@ def test_main_exits_2_for_an_invalid_tls_trust_mode(monkeypatch, tmp_path, capsy
     monkeypatch.setenv("API_KEYS", "k")
     assert main(["--env-file", str(tmp_path / "none.env")]) == 2
     assert "configuration error" in capsys.readouterr().err
+
+
+def test_main_exits_2_for_lab_memory_without_arodonata_lab(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ARODONATA_TLS_TRUST", "lab-memory")
+    monkeypatch.delenv("ARODONATA_LAB", raising=False)
+    monkeypatch.setenv("ARODONATA_MCP_TOKEN_VARS", "T")
+    monkeypatch.setenv("T", "x")
+    monkeypatch.setenv("MGMT_NAMES", "m1")
+    monkeypatch.setenv("MGMT_SERVERS", "10.0.0.1")
+    monkeypatch.setenv("API_KEYS", "k")
+    assert main(["--env-file", str(tmp_path / "none.env")]) == 2
+    assert "ARODONATA_LAB" in capsys.readouterr().err

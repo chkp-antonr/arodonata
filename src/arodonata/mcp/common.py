@@ -59,11 +59,19 @@ def describe_for_model(exc: ServerIdentityError | TrustStoreError | ApiTimeoutEr
     """
     if isinstance(exc, ServerIdentityError):
         presented = colon_hex(exc.presented_sha256) if exc.presented_sha256 else "unknown"
-        return (
-            f"TLS identity check failed for {exc.host}:{exc.port} ({type(exc).__name__}); no request was sent. "
+        text = f"TLS identity check failed for {exc.host}:{exc.port} ({type(exc).__name__}). No request was sent. "
+        if exc.expected_sha256:
+            text += f"Expected SHA-256 {colon_hex(exc.expected_sha256)}" + (
+                f" (from {exc.source}). " if exc.source else ". "
+            )
+        text += (
             f"Presented SHA-256 {presented}. "
+            "The operator can check the real value on the management server with 'api fingerprint -f json'; "
+            "re-trusting is done on the MCP host by replacing the value in the trust store or by setting "
+            "ARODONATA_TLS_FINGERPRINTS. "
             "Operator action required on the MCP host; retrying will not help."
         )
+        return text
     if isinstance(exc, TrustStoreError):
         return (
             "TLS trust store problem on the MCP host; see the server log. "
@@ -73,6 +81,25 @@ def describe_for_model(exc: ServerIdentityError | TrustStoreError | ApiTimeoutEr
     if exc.phase == "read":
         text += " The command may still have run on the server."
     return text
+
+
+def _log_mapped_failure(name: str, exc: ServerIdentityError | TrustStoreError | ApiTimeoutError) -> None:
+    """Operator-side record of a mapped failure (markup off: paths and fingerprints must render literally).
+
+    Identity errors were already logged in full by ``TrustPolicy``; trust-store and timeout errors are logged
+    nowhere else, so their facts (no SID, no exception args beyond these fields) go here.
+    """
+    extra = {"markup": False}
+    if isinstance(exc, TrustStoreError):
+        log().error("tool %s failed: %s: %s", name, type(exc).__name__, exc, extra=extra)
+    elif isinstance(exc, ApiTimeoutError):
+        log().error(
+            "tool %s failed: %s on %s:%s phase=%s timeout=%gs command=%s",
+            name, type(exc).__name__, exc.host, exc.port, exc.phase, exc.timeout, exc.command,
+            extra=extra,
+        )  # fmt: skip
+    else:
+        log().error("tool %s failed: %s", name, type(exc).__name__, extra=extra)
 
 
 def add_guarded_tool(
@@ -98,8 +125,7 @@ def add_guarded_tool(
         except ToolError as exc:
             return CallToolResult(content=[TextContent(type="text", text=str(exc))], is_error=True)
         except (ServerIdentityError, TrustStoreError, ApiTimeoutError) as exc:
-            # the operator already has the full message from TrustPolicy's ERROR log line; log only the type here
-            log().error("tool %s failed: %s", name, type(exc).__name__)
+            _log_mapped_failure(name, exc)
             return CallToolResult(content=[TextContent(type="text", text=describe_for_model(exc))], is_error=True)
         except Exception as exc:
             log().error("tool %s failed: %s", name, type(exc).__name__, exc_info=True)

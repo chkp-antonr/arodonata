@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from arodonata.config.tls import colon_hex
 from arodonata.mcp.common import (
     ToolFailure,
     add_guarded_tool,
@@ -158,7 +159,12 @@ async def test_guarded_tool_maps_identity_error_without_sid_or_re_pin_command(ca
 
     async def tool() -> dict:
         raise CertificateMismatchError(
-            "internal text with SIDSENTINEL-0123456789abcdef", host="10.0.0.1", port=443, presented_sha256=presented
+            "internal text with SIDSENTINEL-0123456789abcdef",
+            host="10.0.0.1",
+            port=443,
+            presented_sha256=presented,
+            expected_sha256="a1" * 32,
+            source="/x/trust.json",
         )
 
     server = MCPServer("t")
@@ -169,7 +175,11 @@ async def test_guarded_tool_maps_identity_error_without_sid_or_re_pin_command(ca
     assert res.is_error is True
     assert "10.0.0.1:443" in out and "CertificateMismatchError" in out
     assert "Operator action required on the MCP host; retrying will not help." in out
-    assert "SIDSENTI" not in out and "ARODONATA_TLS_FINGERPRINTS" not in out and presented not in out
+    assert colon_hex(presented) in out and presented not in out
+    assert "No request was sent." in out and "api fingerprint -f json" in out
+    assert "ARODONATA_TLS_FINGERPRINTS" in out and "ARODONATA_TLS_FINGERPRINTS=" not in out
+    assert "SIDSENTI" not in out
+    assert colon_hex("a1" * 32) in out and "(from /x/trust.json)" in out
     assert "SIDSENTI" not in caplog.text
     assert "tool tool failed: CertificateMismatchError" in caplog.text
 
@@ -208,3 +218,55 @@ async def test_guarded_tool_maps_timeout_error_with_the_read_caveat():
     read, connect = await call_tool(server, "read"), await call_tool(server, "connect")
     assert read.is_error is True and "10.0.0.1:443" in text(read) and "35s" in text(read)
     assert "may still have run" in text(read) and "may still have run" not in text(connect)
+
+
+async def test_guarded_tool_logs_the_full_trust_store_error_for_the_operator(caplog):
+    import logging
+
+    from arodonata.core.exceptions import TrustStoreError
+    from arodonata.mcp._sdk import MCPServer
+
+    from .helpers import call_tool
+
+    async def tool() -> dict:
+        raise TrustStoreError("cannot write /srv/[x]/tls_known_hosts.json: :AB: denied")
+
+    server = MCPServer("t")
+    add_guarded_tool(server, tool, name="tool")
+    with caplog.at_level(logging.ERROR):
+        await call_tool(server, "tool")
+    assert "cannot write /srv/[x]/tls_known_hosts.json: :AB: denied" in caplog.text
+
+
+async def test_guarded_tool_logs_timeout_facts_for_the_operator(caplog):
+    import logging
+
+    from arodonata.core.exceptions import ApiTimeoutError
+    from arodonata.mcp._sdk import MCPServer
+
+    from .helpers import call_tool
+
+    async def tool() -> dict:
+        raise ApiTimeoutError("x", phase="read", host="10.0.0.1", port=443, timeout=35.0, command="set-host")
+
+    server = MCPServer("t")
+    add_guarded_tool(server, tool, name="tool")
+    with caplog.at_level(logging.ERROR):
+        await call_tool(server, "tool")
+    for fact in ("10.0.0.1:443", "phase=read", "timeout=35s", "command=set-host"):
+        assert fact in caplog.text
+
+
+async def test_guarded_tool_keeps_generic_handling_for_unmapped_exceptions():
+    from arodonata.core.exceptions import ConfigurationError
+    from arodonata.mcp._sdk import MCPServer
+
+    from .helpers import call_tool, text
+
+    async def tool() -> dict:
+        raise ConfigurationError("other config problem")
+
+    server = MCPServer("t")
+    add_guarded_tool(server, tool, name="tool")
+    res = await call_tool(server, "tool")
+    assert res.is_error is True and text(res) == "internal error: ConfigurationError"
