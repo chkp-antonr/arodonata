@@ -106,7 +106,6 @@ def test_cache_repository_rejects_non_conforming():
 def test_api_transport_structural_conformance():
     class Conforming:
         async def api_call(self, *a, **k): ...
-        async def api_query(self, *a, **k): ...
 
     assert isinstance(Conforming(), IApiTransport)
     assert not isinstance(object(), IApiTransport)
@@ -165,7 +164,6 @@ async def test_api_transport_default_method_bodies_return_none():
 
     transport = Concrete()
     assert await transport.api_call("ip", "sid", "cmd") is None
-    assert await transport.api_query("ip", "sid", "cmd") is None
 
 
 def test_server_registry_default_method_bodies_return_none():
