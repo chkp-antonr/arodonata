@@ -2,8 +2,8 @@
 
 cpapi's api_query fetched every page inside one call and checked nothing across pages. Here every page is checked
 against the previous one. An object can come twice for two reasons: Check Point swapped two objects with equal names
-at a page boundary between requests, which hides the other one, so the repeat is dropped and the few objects just
-before the page are read again to recover it (spec D3a); or a publish between pages shifted offsets. A changed
+at a page boundary between requests, which hides the other one, so the repeat is dropped and a few objects on both
+sides of the boundary are read again in one request to recover it (spec D3a); or a publish between pages shifted offsets. A changed
 `total` or a final count of distinct objects other than `total` catches the publishes that shift the boundary. An
 insert and a delete before the cursor that cancel out shift nothing and read like a slightly older snapshot; the
 cache's freshness stamp is taken before the listing, so the next incremental refresh picks them up. A failed check
@@ -34,7 +34,8 @@ PAGING_INCONSISTENT_CODE = "paging_inconsistent"
 # With pages of 50, page one (offset 3900) ends at 3949 and page two (offset 3950) starts at 3950. The first request
 # put ...405b at 3949; the second swapped the two and put ...405b at 3950 as well. So ...405b came twice and ...416f
 # never: it sat at 3949 in the second request's order, a position no page asked for. Dropping the repeat is not
-# enough to get it back, so the few objects just before the page are read again.
+# enough to get it back, so a few objects on both sides of the boundary are read again in one request: within one
+# request the two sit next to each other, whichever order it picks.
 _TIE_WINDOW = 10
 
 
@@ -55,8 +56,8 @@ async def fetch_all_pages(
     Returns cpapi's api_query shape: on success `data` is the list of objects. A first page that is unsuccessful, not a
     dict or without a `container_key` list is returned as is; one with the list but no paging (no `total`, `total` 0 or
     an empty list) comes back with `data` replaced by that list, as cpapi does. An unsuccessful later page (or window
-    re-read) fails the query with that page's code. A repeated uid on a later page is dropped and the `_TIE_WINDOW`
-    objects before that page are re-read to recover the object an equal-name swap hid; the listing must end with
+    re-read) fails the query with that page's code. A repeated uid on a later page is dropped and up to `_TIE_WINDOW`
+    objects on each side of that page's start are re-read in one request to recover the object an equal-name swap hid; the listing must end with
     `total - offset` distinct objects, or it is restarted once. Exceptions from `fetch_page` propagate untouched:
     nothing here retries a timeout or an identity error.
     """
@@ -94,7 +95,9 @@ async def _read(
         prev_to = _check_page(page, container_key, page_offset, prev_to, total)
         new, repeated = _split_new(page[container_key], seen)
         if repeated and page_offset > offset:
-            recovered = await _reread_window(fetch_page, command, container_key, offset, page_offset, total, seen)
+            recovered = await _reread_window(
+                fetch_page, command, container_key, offset, page_offset, prev_to, total, seen
+            )
             if isinstance(recovered, dict):
                 return recovered
             objects.extend(recovered)
@@ -160,10 +163,16 @@ async def _reread_window(
     container_key: str,
     offset: int,
     page_offset: int,
+    page_to: int,
     total: int,
     seen: set[str],
 ) -> list[Any] | RawApiResponse:
-    """Re-read the objects just before `page_offset` and return those whose uid is not in `seen` (spec D3a).
+    """Re-read the objects around `page_offset` in one request and return those whose uid is not in `seen` (spec D3a).
+
+    The window spans the boundary, up to `_TIE_WINDOW` positions before it and as many after it, not past the page's
+    own `to`: Check Point orders equal names by the request, so a window ending at the boundary would order them like
+    the previous page and never return the hidden one. The page's own objects are already in `seen`, so those after
+    the boundary are not added twice.
 
     An unsuccessful read is returned as the failed query (a dict); a read that is not a listing page or has another
     `total` raises _Shifted. A window that would start at or before a caller's offset above 0 is not read (no
@@ -174,16 +183,18 @@ async def _reread_window(
         # as the one at the window's start; a window starting at the caller's offset could "recover" it in place of
         # the hidden one: a success with the wrong set. Read nothing; if an object is missing, the final count
         # restarts the listing. A window starting later only borders positions already read, and from offset 0
-        # there is nothing before the window.
+        # there is nothing before the window. At its end the window borders positions after the caller's offset: an
+        # object a tie brings in from there belongs to the listing, and the page that returns it later drops it as
+        # a repeat.
         log().debug(
             f"{command}: equal names swapped at the page boundary at offset {page_offset}; the window would start "
             f"at the caller's offset {offset}, not re-read"
         )
         return []
     w_offset = max(offset, page_offset - _TIE_WINDOW)
-    limit = page_offset - w_offset
+    limit = min(page_offset + _TIE_WINDOW, page_to) - w_offset
     log().debug(
-        f"{command}: equal names swapped at the page boundary at offset {page_offset}; re-read {limit} objects before it"
+        f"{command}: equal names swapped at the page boundary at offset {page_offset}; re-read {limit} objects around it"
     )
     response = await fetch_page(w_offset, limit)
     if not response.get("success"):
