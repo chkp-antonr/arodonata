@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -25,10 +25,10 @@ async def _fake_to_thread(func, *args, **kwargs):
 
 
 def _patch_sdk(mock_client):
-    """Patch APIClient/APIClientArgs/to_thread so ApiTransport uses mock_client."""
+    """Patch the verified client factory and to_thread so ApiTransport uses mock_client."""
     return (
-        patch("arodonata.asdk.transport.APIClient", return_value=mock_client),
-        patch("arodonata.asdk.transport.APIClientArgs"),
+        patch("arodonata.asdk.transport.verified_api_client", return_value=mock_client),
+        patch("arodonata.asdk.transport.TrustPolicy"),
         patch("arodonata.asdk.transport.asyncio.to_thread", side_effect=_fake_to_thread),
     )
 
@@ -301,12 +301,14 @@ async def test_client_context_manager_creates_and_closes_apiclient():
     mock_client.close_connection = MagicMock()
 
     p1, p2, p3 = _patch_sdk(mock_client)
-    with p1, p2 as mock_args, p3:
+    with p1 as mock_factory, p2, p3:
         async with transport._client("10.0.0.1", 4434, "sid-abc") as client:
             assert client is mock_client
             mock_client.close_connection.assert_not_called()
 
-    mock_args.assert_called_once_with(server="10.0.0.1", port=4434, sid="sid-abc", unsafe=True)
+    mock_factory.assert_called_once_with(
+        "10.0.0.1", 4434, sid="sid-abc", policy=ANY, connect_timeout=ANY, read_timeout=ANY
+    )
     mock_client.close_connection.assert_called_once()
 
 
@@ -315,11 +317,11 @@ async def test_client_context_manager_defaults_sid_to_none():
     mock_client = MagicMock()
 
     p1, p2, p3 = _patch_sdk(mock_client)
-    with p1, p2 as mock_args, p3:
+    with p1 as mock_factory, p2, p3:
         async with transport._client("10.0.0.1", None):
             pass
 
-    mock_args.assert_called_once_with(server="10.0.0.1", port=None, sid=None, unsafe=True)
+    mock_factory.assert_called_once_with("10.0.0.1", None, sid=None, policy=ANY, connect_timeout=ANY, read_timeout=ANY)
 
 
 async def test_client_context_manager_closes_connection_even_on_exception():
@@ -732,10 +734,12 @@ async def test_keepalive_calls_correct_command():
     mock_client.sid = "test-sid"
 
     p1, p2, p3 = _patch_sdk(mock_client)
-    with p1, p2 as mock_args, p3:
+    with p1 as mock_factory, p2, p3:
         result = await transport.keepalive("10.0.0.1", "test-sid")
 
-    mock_args.assert_called_once_with(server="10.0.0.1", port=None, sid="test-sid", unsafe=True)
+    mock_factory.assert_called_once_with(
+        "10.0.0.1", None, sid="test-sid", policy=ANY, connect_timeout=ANY, read_timeout=ANY
+    )
     mock_client.api_call.assert_called_once_with("keepalive", {}, "test-sid")
     assert result["success"] is True
 
@@ -773,10 +777,12 @@ async def test_show_sessions_calls_correct_command():
     mock_client.sid = "test-sid"
 
     p1, p2, p3 = _patch_sdk(mock_client)
-    with p1, p2 as mock_args, p3:
+    with p1 as mock_factory, p2, p3:
         await transport.show_sessions("10.0.0.1", "test-sid")
 
-    mock_args.assert_called_once_with(server="10.0.0.1", port=None, sid="test-sid", unsafe=True)
+    mock_factory.assert_called_once_with(
+        "10.0.0.1", None, sid="test-sid", policy=ANY, connect_timeout=ANY, read_timeout=ANY
+    )
     mock_client.api_call.assert_called_once_with("show-sessions", {"details-level": "full", "limit": 500}, "test-sid")
 
 
@@ -803,10 +809,12 @@ async def test_discard_session_sends_uid():
     mock_client.sid = "test-sid"
 
     p1, p2, p3 = _patch_sdk(mock_client)
-    with p1, p2 as mock_args, p3:
+    with p1 as mock_factory, p2, p3:
         await transport.discard_session("10.0.0.1", "test-sid", "target-uid-123")
 
-    mock_args.assert_called_once_with(server="10.0.0.1", port=None, sid="test-sid", unsafe=True)
+    mock_factory.assert_called_once_with(
+        "10.0.0.1", None, sid="test-sid", policy=ANY, connect_timeout=ANY, read_timeout=ANY
+    )
     mock_client.api_call.assert_called_once_with("discard", {"uid": "target-uid-123"}, "test-sid")
 
 
@@ -1085,3 +1093,62 @@ async def test_other_apikey_login_failures_still_log_the_error_dump(caplog):
         await transport.login_with_apikey("10.0.0.1", "key", domain="Domain4")
 
     assert any("LOGIN (apikey) FAILED" in r.getMessage() for r in caplog.records if r.levelname == "ERROR")
+
+
+async def test_api_call_read_timeout_is_budget_plus_margin():
+    transport = ApiTransport(tls_policy=MagicMock(), connect_timeout=3, default_read_timeout=125)
+    mock_client = MagicMock()
+    mock_client.api_call.return_value = _make_response(success=True, data={})
+    seen = {}
+
+    def record(*args, **kwargs):
+        seen["read_timeout"] = mock_client.read_timeout
+        return mock_client.api_call.return_value
+
+    mock_client.api_call.side_effect = record
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with p1, p2, p3:
+        await transport.api_call("10.0.0.1", "sid", "show-hosts", wait_for_task=False, timeout=40)
+    assert seen["read_timeout"] == 45
+
+
+async def test_unbudgeted_calls_use_the_default_read_timeout():
+    transport = ApiTransport(tls_policy=MagicMock(), connect_timeout=3, default_read_timeout=125)
+    mock_client = MagicMock()
+    mock_client.read_timeout = None
+    mock_client.api_query.return_value = _make_response(success=True, data={"objects": []})
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with p1 as factory, p2, p3:
+        await transport.api_query("10.0.0.1", "sid", "show-hosts")
+    assert factory.call_args.kwargs["read_timeout"] == 125
+
+
+@pytest.mark.parametrize("method", ["login_with_apikey", "login_with_credentials"])
+async def test_login_keeps_api_timeout_error_type(method):
+    from arodonata.core.exceptions import ApiTimeoutError
+
+    transport = ApiTransport(tls_policy=MagicMock(), connect_timeout=3, default_read_timeout=125)
+    mock_client = MagicMock()
+    err = ApiTimeoutError("slow", phase="read", host="10.0.0.1", port=443, timeout=125)
+    mock_client.login_with_api_key.side_effect = err
+    mock_client.login.side_effect = err
+    p1, p2, p3 = _patch_sdk(mock_client)
+    args = ("k" * 20,) if method == "login_with_apikey" else ("user", "p" * 12)
+    with p1, p2, p3, pytest.raises(ApiTimeoutError):
+        await getattr(transport, method)("10.0.0.1", *args)
+
+
+async def test_login_read_timeout_is_login_budget_plus_margin():
+    transport = ApiTransport(tls_policy=MagicMock(), connect_timeout=3, default_read_timeout=125)
+    mock_client = MagicMock()
+    seen = {}
+
+    def record(*args, **kwargs):
+        seen["read_timeout"] = mock_client.read_timeout
+        return _make_response(success=True, data={"sid": "s"})
+
+    mock_client.login_with_api_key.side_effect = record
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with p1, p2, p3:
+        await transport.login_with_apikey("10.0.0.1", "k" * 20, timeout=20)
+    assert seen["read_timeout"] == 25

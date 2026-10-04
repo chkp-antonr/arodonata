@@ -69,8 +69,8 @@ async def test_transport_result_message_never_carries_a_sid(method, args):
         f"Wrong session id [{SID}]. Session may be expired (also {OTHER})."
     )
     with (
-        patch("arodonata.asdk.transport.APIClient", return_value=sdk),
-        patch("arodonata.asdk.transport.APIClientArgs"),
+        patch("arodonata.asdk.transport.verified_api_client", return_value=sdk),
+        patch("arodonata.asdk.transport.TrustPolicy"),
         patch("arodonata.asdk.transport.asyncio.to_thread", side_effect=_fake_to_thread),
     ):
         transport = ApiTransport()
@@ -83,8 +83,8 @@ async def test_logout_exception_message_never_carries_the_sid():
     sdk = MagicMock()
     sdk.api_call.side_effect = RuntimeError(f"connection reset while sending {SID}")
     with (
-        patch("arodonata.asdk.transport.APIClient", return_value=sdk),
-        patch("arodonata.asdk.transport.APIClientArgs"),
+        patch("arodonata.asdk.transport.verified_api_client", return_value=sdk),
+        patch("arodonata.asdk.transport.TrustPolicy"),
         patch("arodonata.asdk.transport.asyncio.to_thread", side_effect=_fake_to_thread),
     ):
         result = await ApiTransport().logout("10.0.0.1", SID)

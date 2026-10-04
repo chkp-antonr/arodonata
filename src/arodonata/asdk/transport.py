@@ -13,14 +13,15 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from arlogi.otel.decorator import traced
-from cpapi import APIClient, APIClientArgs
 from pydantic import SecretStr
 
-from ..config.constants import DEFAULT_LOGIN_TIMEOUT, THROTTLE_ERROR_CODE
+from ..config.constants import DEFAULT_LOGIN_TIMEOUT, READ_TIMEOUT_MARGIN, THROTTLE_ERROR_CODE
+from ..core.exceptions import ApiTimeoutError
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
 from ._sid import redact_sid, sid_prefix
 from .task_waiter import TaskStatus, TaskWaiter, extract_task_ids
+from .tls import TrustPolicy, VerifiedAPIClient, verified_api_client
 
 log = lazy_logger("arodonata.asdk.transport")
 
@@ -56,24 +57,85 @@ class ApiTransport:
         )
     """
 
-    def __init__(self, task_waiter: TaskWaiter | None = None) -> None:
+    def __init__(
+        self,
+        task_waiter: TaskWaiter | None = None,
+        *,
+        tls_policy: TrustPolicy | None = None,
+        connect_timeout: float | None = None,
+        default_read_timeout: float | None = None,
+    ) -> None:
         """Initialize API transport.
 
         Args:
-            task_waiter: Optional TaskWaiter for polling async tasks. If None,
-                a default TaskWaiter will be instantiated.
+            task_waiter: Optional TaskWaiter for polling async tasks.
+            tls_policy: Certificate trust policy; None builds it from ArodonataSettings() on first use.
+            connect_timeout: TCP connect + TLS handshake bound; None means settings.connect_timeout.
+            default_read_timeout: Socket read bound for calls without a budget; None means
+                settings.default_read_timeout.
         """
         self._task_waiter = task_waiter or TaskWaiter()
+        self._tls_policy = tls_policy
+        self._connect_timeout = connect_timeout
+        self._default_read_timeout = default_read_timeout
+
+    def _tls(self) -> tuple[TrustPolicy, float, float]:
+        if self._tls_policy is None or self._connect_timeout is None or self._default_read_timeout is None:
+            from ..config import ArodonataSettings
+
+            settings = ArodonataSettings()
+            self._tls_policy = self._tls_policy or TrustPolicy.from_settings(settings)
+            self._connect_timeout = self._connect_timeout or settings.connect_timeout
+            self._default_read_timeout = self._default_read_timeout or settings.default_read_timeout
+        return self._tls_policy, float(self._connect_timeout), float(self._default_read_timeout)
 
     @asynccontextmanager
-    async def _client(self, server_ip: str, port: int | None, sid: str | None = None) -> AsyncGenerator[APIClient]:
-        """Create an APIClient, yield it, then close the connection on exit."""
-        client_args = APIClientArgs(server=server_ip, port=port, sid=sid, unsafe=True)
-        client = APIClient(client_args)
+    async def _client(
+        self, server_ip: str, port: int | None, sid: str | None = None
+    ) -> AsyncGenerator[VerifiedAPIClient]:
+        """Create a verified client, yield it, then close the connection on exit."""
+        policy, connect_timeout, read_timeout = self._tls()
+        client = verified_api_client(
+            server_ip, port, sid=sid, policy=policy, connect_timeout=connect_timeout, read_timeout=read_timeout
+        )
         try:
             yield client
         finally:
             await asyncio.to_thread(client.close_connection)
+
+    @staticmethod
+    def _apply_budget(client: VerifiedAPIClient, timeout: float) -> None:
+        """Bound the socket read by the call's own budget plus a margin; no budget keeps the default (spec D16)."""
+        if timeout > 0:
+            client.read_timeout = timeout + READ_TIMEOUT_MARGIN
+
+    @staticmethod
+    def _log_credentials_login(result: RawApiResponse, where: str) -> None:
+        if result["success"]:
+            log().debug(f"LOGIN (credentials) SUCCESS: {where}")
+        elif result["code"] == THROTTLE_ERROR_CODE:
+            log().debug(f"LOGIN (credentials) throttled: {where} ({THROTTLE_ERROR_CODE})")
+        else:
+            log().warning(f"LOGIN (credentials) FAILED: {where} - {result['message']}")
+
+    @staticmethod
+    def _log_apikey_login(response: Any, result: RawApiResponse, where: str, log_sid: bool) -> None:
+        if result["success"]:
+            shown = f" -> {sid_prefix(result['sid'])}" if log_sid else ""
+            log().debug(f"LOGIN (apikey) SUCCESS: {where}{shown}")
+            return
+        if result["code"] == THROTTLE_ERROR_CODE:
+            # Expected pacing: the login gate reports it (one line, with the window); no dump here.
+            log().debug(f"LOGIN (apikey) throttled: {where} ({THROTTLE_ERROR_CODE})")
+            return
+        log().error(
+            f"LOGIN (apikey) FAILED: {where}\n"
+            f"  error_msg: {result['message']}\n"
+            f"  response.success: {response.success}\n"
+            f"  response.data keys: {list(response.data.keys()) if response.data else 'None'}\n"
+            f"  response.data: {response.data}\n"
+            f"  response.error_message: {getattr(response, 'error_message', 'N/A')}\n"
+        )
 
     @classmethod
     def _build_login_response(cls, response: Any) -> RawApiResponse:
@@ -313,6 +375,7 @@ class ApiTransport:
         try:
             log().trace(f"API CALL: {command}")
             async with self._client(server_ip, port, sid) as client:
+                self._apply_budget(client, timeout)
                 response = await asyncio.wait_for(
                     asyncio.to_thread(
                         client.api_call,
@@ -556,6 +619,7 @@ class ApiTransport:
 
         try:
             async with self._client(server_ip, port) as client:
+                self._apply_budget(client, timeout)
                 response = await asyncio.wait_for(
                     # Unwrap inside the lambda, which runs on the worker thread: passed
                     # as a to_thread argument the plain key would sit in asyncio's
@@ -576,22 +640,11 @@ class ApiTransport:
                 raise ValueError("API login returned None response")
 
             result = self._build_login_response(response)
-            if result["success"]:
-                shown = f" -> {sid_prefix(result['sid'])}" if log_sid else ""
-                log().debug(f"LOGIN (apikey) SUCCESS: {server_ip}{domain_context}{shown}")
-            elif result["code"] == THROTTLE_ERROR_CODE:
-                # Expected pacing: the login gate reports it (one line, with the window); no dump here.
-                log().debug(f"LOGIN (apikey) throttled: {server_ip}{domain_context} ({THROTTLE_ERROR_CODE})")
-            else:
-                log().error(
-                    f"LOGIN (apikey) FAILED: {server_ip}{domain_context}\n"
-                    f"  error_msg: {result['message']}\n"
-                    f"  response.success: {response.success}\n"
-                    f"  response.data keys: {list(response.data.keys()) if response.data else 'None'}\n"
-                    f"  response.data: {response.data}\n"
-                    f"  response.error_message: {getattr(response, 'error_message', 'N/A')}\n"
-                )
+            self._log_apikey_login(response, result, f"{server_ip}{domain_context}", log_sid)
             return result
+        except ApiTimeoutError:
+            log().error(f"LOGIN (apikey) TIMEOUT: {server_ip}{domain_context} (socket, timeout={timeout}s)")
+            raise
         except TimeoutError as e:
             # `e` is asyncio.wait_for's bare TimeoutError and stringifies to "";
             # say how long we waited instead (int-4, 2026-09-13, logged an empty reason).
@@ -656,6 +709,7 @@ class ApiTransport:
 
         try:
             async with self._client(server_ip, port) as client:
+                self._apply_budget(client, timeout)
                 response = await asyncio.wait_for(
                     # Unwrapped on the worker thread, as for the API key above.
                     asyncio.to_thread(
@@ -675,13 +729,11 @@ class ApiTransport:
                 raise ValueError("API credential login returned None response")
 
             result = self._build_login_response(response)
-            if result["success"]:
-                log().debug(f"LOGIN (credentials) SUCCESS: {server_ip}{domain_context}")
-            elif result["code"] == THROTTLE_ERROR_CODE:
-                log().debug(f"LOGIN (credentials) throttled: {server_ip}{domain_context} ({THROTTLE_ERROR_CODE})")
-            else:
-                log().warning(f"LOGIN (credentials) FAILED: {server_ip}{domain_context} - {result['message']}")
+            self._log_credentials_login(result, f"{server_ip}{domain_context}")
             return result
+        except ApiTimeoutError:
+            log().error(f"LOGIN (credentials) TIMEOUT: {server_ip}{domain_context} (socket, timeout={timeout}s)")
+            raise
         except TimeoutError as e:
             log().error(f"LOGIN (credentials) TIMEOUT: {server_ip}{domain_context} (timeout={timeout}s)")
             raise TimeoutError(f"Credential login timed out after {timeout}s") from e

@@ -237,7 +237,13 @@ class ArodonataClient:
             self._mgmt = _mgmt
         else:
             # Create ASDK components
-            transport = ApiTransport()
+            from ..asdk.tls import TrustPolicy
+
+            transport = ApiTransport(
+                tls_policy=TrustPolicy.from_settings(settings),
+                connect_timeout=settings.connect_timeout,
+                default_read_timeout=settings.default_read_timeout,
+            )
             rate_limiter = RateLimiter(settings.concurrent_limit, slot_timeout=settings.rate_limit_slot_timeout)
             server_registry = ServerRegistry(settings)
 
