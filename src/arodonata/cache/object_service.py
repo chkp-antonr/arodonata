@@ -974,10 +974,14 @@ class ObjectService:
         record = await self.fetch_last_published_session(mgmt_name, domain_name)
         if record is None:
             return None
+        return await self._store_last_published_session(record)
+
+    async def _store_last_published_session(self, record: LastPublishedSession) -> LastPublishedSession | None:
+        """Upsert a last-published-session record; None (logged) if the cache write fails."""
         try:
             await self._cache.upsert_last_published_session(record)
         except Exception as e:
-            log().warning(f"Failed to store LastPublishedSession for {mgmt_name}/{domain_name}: {e}")
+            log().warning(f"Failed to store LastPublishedSession for {record.mgmt_name}/{record.domain_name}: {e}")
             return None
         return record
 
@@ -1180,7 +1184,7 @@ class ObjectService:
         touched after every type succeeded, via one atomic
         replace_domain_objects transaction. Any API failure aborts the
         domain refresh, leaving the previous cache contents and freshness
-        stamp intact.
+        stamp intact. The stamp stored on success is the one read before the listing.
         """
         log().info(f"Refreshing objects for {mgmt_name}/{domain_name}")
 
@@ -1190,6 +1194,10 @@ class ObjectService:
             "domain_name": domain_name,
             "status": "refreshing_domain",
         }
+
+        # Read the stamp BEFORE the listing and store it after the swap: a publish while the pages are read
+        # then stays after the stamp, and the next incremental refresh picks it up (own-pagination spec D6).
+        head = await self.fetch_last_published_session(mgmt_name, domain_name)
 
         collected: list[CPObject] = []
         for object_type in self.OBJECT_TYPES:
@@ -1239,7 +1247,8 @@ class ObjectService:
         }
 
         # Only a fully successful refresh may advance the freshness stamp.
-        await self.refresh_last_published_session(mgmt_name, domain_name)
+        if head is not None:
+            await self._store_last_published_session(head)
 
     async def _collect_objects_by_type(
         self,
