@@ -78,7 +78,7 @@ DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS: Final[int] = 5  # seconds
 # docs/_AI_/2610/261003-warmup-parallelism/findings.md): one request at a time gets
 # ~200 objects/s, a member tops out at ~650-700 objects/s with 4-5 in flight, and more
 # adds nothing while taking headroom from SmartConsole and other clients of the member.
-# A slot is held for one whole request (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT). One
+# A listing holds a slot for one page, a task wait for the whole task (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT). One
 # `CacheRefreshCoordinator.ensure` call starts at most `concurrent_limit - 1` domain
 # refreshes per member, which leaves a slot for logins and keepalives *from that call's
 # point of view*; overlapping ensure calls, other processes, long tasks and keepalives
@@ -96,10 +96,9 @@ CACHE_QUERY_PAGE_SIZE: Final[int] = QUERY_PAGE_SIZE
 DEFAULT_LOGIN_BACKOFF: Final[int] = 5  # seconds
 DEFAULT_LOGIN_RETRIES: Final[int] = 8
 # How long a caller waits for a free RateLimiter concurrency slot (asdk/rate_limiter.py)
-# before giving up. A slot is held for one whole request: for `api_query` that is a
-# whole listing (cpapi fetches the pages inside that one call, so the slot is held
-# across all of them, not per page), and a call that waits for a task (`wait_for_task`,
-# e.g. publish or revert) holds it for the whole task. Since 2026-09-14 logins take
+# before giving up. A listing (`api_query`) takes a slot per page and releases it between
+# pages (asdk/pager.py), and waiters are served in arrival order within a process; a call
+# that waits for a task (`wait_for_task`, e.g. publish or revert) holds it for the whole task. Since 2026-09-14 logins take
 # slots too: a login takes the hosting MDS member's slot for a single HTTP round
 # trip (bounded by DEFAULT_LOGIN_TIMEOUT), never across its retry ladder or a
 # throttle wait -- those happen outside the slot, and pacing belongs to the login
@@ -128,10 +127,10 @@ DEFAULT_TASK_POLL_FAILURE_TOLERANCE: Final[int] = 5
 
 # Query commands that answer with a task. The finished `show-task` response nests
 # the paging fields (from/to/total) and the items under `tasks[].task-details[]`,
-# where cpapi's api_query never looks -- it returns page one and stops. Command ->
+# where a plain listing never looks (asdk/pager.py pages `objects`-style containers). Command ->
 # the item key inside task-details. ArodonataClient.api_query pages these itself.
 TASK_QUERY_COMMANDS: Final[dict[str, str]] = {"show-changes": "changes"}
-TASK_QUERY_PAGE_SIZE: Final[int] = 50  # cpapi's api_query page size
+TASK_QUERY_PAGE_SIZE: Final[int] = 50  # Check Point's default page size for show-changes
 TASK_QUERY_MAX_PAGE_SIZE: Final[int] = 500  # show-changes `limit` accepts 1-500
 
 # How long a SQLite connection waits for another writer (several processes on one cache file, or a large

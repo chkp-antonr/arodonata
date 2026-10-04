@@ -1275,7 +1275,7 @@ class ObjectService:
                 command=command,
                 domain=domain_name,
                 details_level="full",
-                payload={"limit": CACHE_QUERY_PAGE_SIZE},  # fresh dict per call: cpapi mutates it
+                payload={"limit": CACHE_QUERY_PAGE_SIZE},
             )
         except Exception as e:  # noqa: BLE001 - any transport error aborts the domain
             log().exception(f"Error fetching {object_type}s for {mgmt_name}/{domain_name}")

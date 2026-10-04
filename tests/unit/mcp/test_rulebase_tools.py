@@ -136,7 +136,7 @@ def _serve_network(payload):
 async def test_live_rulebase_keeps_objects_dictionary():
     fake = FakeArodonataClient()
     fake.responses["api_call"] = _serve_network
-    # What today's api_query path receives: include_container_key=False turns data into the bare rule list.
+    # api_query's result: data is the bare list of the container's items.
     fake.responses["api_query"] = ApiQueryResult(
         success=True, data=NETWORK["rulebase"], objects=NETWORK["rulebase"], total=6
     )

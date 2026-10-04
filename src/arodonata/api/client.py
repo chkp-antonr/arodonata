@@ -807,7 +807,7 @@ class ArodonataClient:
 
         Each page goes through `api_call`, so arodonata's TaskWaiter awaits the
         task under the configured budgets. The caller's `limit` is the page size
-        and `offset` the starting point, as with cpapi's api_query. A failed page
+        and `offset` the starting point, as with api_query. A failed page
         fails the whole query -- never a silently partial result.
         """
         base = dict(payload or {})
