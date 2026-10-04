@@ -327,6 +327,20 @@ async def test_api_query_falls_back_to_any_list():
 
 
 @pytest.mark.asyncio
+async def test_api_query_explicit_key_missing_does_not_fall_back_to_any_list():
+    mgmt = AsyncMock()
+    mgmt.api_query.return_value = {
+        "success": True,
+        "data": {"total": 1, "widgets": [{"n": 1}]},
+    }
+    client = make_client(mgmt=mgmt)
+
+    result = await client.api_query("mgmt1", "show-widgets", container_key="packages")
+
+    assert result.objects == []
+
+
+@pytest.mark.asyncio
 async def test_api_query_data_is_list():
     mgmt = AsyncMock()
     mgmt.api_query.return_value = {"success": True, "data": [{"n": 1}]}

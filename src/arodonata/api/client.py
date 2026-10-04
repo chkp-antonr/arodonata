@@ -750,6 +750,7 @@ class ArodonataClient:
             return await self._task_query(
                 mgmt_name, command, domain, details_level, payload, TASK_QUERY_COMMANDS[command], cache_mode
             )
+        requested_key = container_key
         if container_key == "objects":
             container_key = _LAYER_CONTAINER_KEYS.get(command, container_key)
         response = await self._mgmt.api_query(
@@ -769,7 +770,8 @@ class ArodonataClient:
             objects = data.get(container_key, [])
 
             # Unknown commands whose list is under another key: take the first list that is not paging metadata.
-            if not objects:
+            # Only for the default key; an explicit key missing from the response yields no objects.
+            if not objects and requested_key == "objects":
                 for key, val in data.items():
                     if isinstance(val, list) and key not in ("meta-info", "from", "to", "total"):
                         objects = val
