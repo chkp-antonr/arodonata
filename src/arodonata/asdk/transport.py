@@ -25,6 +25,10 @@ from .tls import TrustPolicy, VerifiedAPIClient, verified_api_client
 
 log = lazy_logger("arodonata.asdk.transport")
 
+# Error lines carry an exception's text: an identity or timeout error names a bracketed IPv6 key, a store path and
+# colon-separated fingerprints, which arlogi's Rich console handler would eat as markup or turn into emoji.
+_LITERAL = {"markup": False}
+
 
 def mask_secret(secret: SecretStr | str | None) -> str:
     """Log-safe stand-in for a credential: its last four characters at most.
@@ -417,7 +421,7 @@ class ApiTransport:
             log().error(f"API CALL TIMEOUT: {command} (timeout={timeout}s)")
             raise
         except Exception as e:
-            log().error(f"API CALL ERROR: {command} - {redact_sid(str(e), sid)}")
+            log().error(f"API CALL ERROR: {command} - {redact_sid(str(e), sid)}", extra=_LITERAL)
             raise
 
     async def _await_tasks(
@@ -561,7 +565,7 @@ class ApiTransport:
 
             return result
         except Exception as e:
-            log().error(f"API QUERY ERROR: {command} - {redact_sid(str(e), sid)}")
+            log().error(f"API QUERY ERROR: {command} - {redact_sid(str(e), sid)}", extra=_LITERAL)
             raise
 
     @traced
@@ -651,7 +655,7 @@ class ApiTransport:
             log().error(f"LOGIN (apikey) TIMEOUT: {server_ip}{domain_context} (timeout={timeout}s)")
             raise TimeoutError(f"Login timed out after {timeout}s") from e
         except Exception as e:
-            log().error(f"LOGIN (apikey) ERROR: {server_ip}{domain_context} - {e}")
+            log().error(f"LOGIN (apikey) ERROR: {server_ip}{domain_context} - {e}", extra=_LITERAL)
             raise
 
     @traced
@@ -738,7 +742,7 @@ class ApiTransport:
             log().error(f"LOGIN (credentials) TIMEOUT: {server_ip}{domain_context} (timeout={timeout}s)")
             raise TimeoutError(f"Credential login timed out after {timeout}s") from e
         except Exception as e:
-            log().error(f"LOGIN (credentials) ERROR: {server_ip}{domain_context} - {e}")
+            log().error(f"LOGIN (credentials) ERROR: {server_ip}{domain_context} - {e}", extra=_LITERAL)
             raise
 
     @traced
@@ -772,7 +776,7 @@ class ApiTransport:
                 )
             return result
         except Exception as e:
-            log().error(f"LOGOUT ERROR: {server_ip} - {redact_sid(str(e), sid)}")
+            log().error(f"LOGOUT ERROR: {server_ip} - {redact_sid(str(e), sid)}", extra=_LITERAL)
             return {"success": False, "message": redact_sid(str(e), sid)}
 
     @traced
@@ -804,7 +808,7 @@ class ApiTransport:
                 log().trace(f"KEEPALIVE FAILED: {server_ip} - {result.get('message', '')}")
             return result
         except Exception as e:
-            log().error(f"KEEPALIVE ERROR: {server_ip} - {redact_sid(str(e), sid)}")
+            log().error(f"KEEPALIVE ERROR: {server_ip} - {redact_sid(str(e), sid)}", extra=_LITERAL)
             raise
 
     @traced
@@ -841,7 +845,7 @@ class ApiTransport:
                 log().trace(f"SHOW-SESSIONS FAILED: {server_ip} - {result.get('message', '')}")
             return result
         except Exception as e:
-            log().error(f"SHOW-SESSIONS ERROR: {server_ip} - {redact_sid(str(e), sid)}")
+            log().error(f"SHOW-SESSIONS ERROR: {server_ip} - {redact_sid(str(e), sid)}", extra=_LITERAL)
             raise
 
     @traced
@@ -880,7 +884,9 @@ class ApiTransport:
                 log().trace(f"DISCARD-SESSION FAILED: {server_ip} uid={target_uid} - {result.get('message', '')}")
             return result
         except Exception as e:
-            log().error(f"DISCARD-SESSION ERROR: {server_ip} uid={target_uid} - {redact_sid(str(e), sid)}")
+            log().error(
+                f"DISCARD-SESSION ERROR: {server_ip} uid={target_uid} - {redact_sid(str(e), sid)}", extra=_LITERAL
+            )
             raise
 
 

@@ -52,6 +52,7 @@ from tests.integration.lab_env import load_lab_env  # noqa: E402 - needs the rep
 load_lab_env(_ROOT)  # same files and lab profile as the suite
 
 from arodonata.asdk.tls import VerifiedAPIClient, verified_api_client  # noqa: E402 - after dotenv, like conftest
+from tests.integration.probe_lab_domains import lab_policy  # noqa: E402 - one trust policy per process
 
 READ_TIMEOUT = 30.0  # seconds per read; main() sets it from --timeout
 
@@ -84,7 +85,7 @@ class Probe:
 
     def login(self, domain: str) -> tuple[VerifiedAPIClient | None, Attempt]:
         """One raw login. Returns (client, attempt); client is None on failure."""
-        client = verified_api_client(self.server, read_timeout=READ_TIMEOUT)
+        client = verified_api_client(self.server, read_timeout=READ_TIMEOUT, policy=lab_policy())
         t0 = time.monotonic()
         try:
             response = client.login_with_api_key(self.api_key, domain=domain or None)

@@ -1152,3 +1152,39 @@ async def test_login_read_timeout_is_login_budget_plus_margin():
     with p1, p2, p3:
         await transport.login_with_apikey("10.0.0.1", "k" * 20, timeout=20)
     assert seen["read_timeout"] == 25
+
+
+_IDENTITY_TEXT = "TLS certificate of [fe80::1]:443 does not match. expected SHA-256: AB:CD:EF (from /x/[y]/t.json)"
+
+
+@pytest.mark.parametrize(
+    ("label", "sdk_attr", "call"),
+    [
+        ("API CALL ERROR", "api_call", lambda t: t.api_call("fe80::1", LOG_SID, "show-hosts", wait_for_task=False)),
+        ("API QUERY ERROR", "api_query", lambda t: t.api_query("fe80::1", LOG_SID, "show-hosts")),
+        ("LOGIN (apikey) ERROR", "login_with_api_key", lambda t: t.login_with_apikey("fe80::1", "key")),
+        ("LOGIN (credentials) ERROR", "login", lambda t: t.login_with_credentials("fe80::1", "svc", "pw")),
+        ("LOGOUT ERROR", "api_call", lambda t: t.logout("fe80::1", LOG_SID)),
+        ("KEEPALIVE ERROR", "api_call", lambda t: t.keepalive("fe80::1", LOG_SID)),
+        ("SHOW-SESSIONS ERROR", "api_call", lambda t: t.show_sessions("fe80::1", LOG_SID)),
+        ("DISCARD-SESSION ERROR", "api_call", lambda t: t.discard_session("fe80::1", LOG_SID, "uid-1")),
+    ],
+)
+async def test_error_lines_log_the_exception_text_literally(caplog, label, sdk_attr, call):
+    """arlogi's console handler renders Rich markup and emoji: '[fe80::1]' and ':AB:' in an identity or timeout
+    error's text must reach the operator literally (markup off), and the line still carries no SID."""
+    from arodonata.core.exceptions import CertificateMismatchError
+
+    transport = ApiTransport()
+    mock_client = MagicMock()
+    mock_client.sid = LOG_SID
+    getattr(mock_client, sdk_attr).side_effect = CertificateMismatchError(_IDENTITY_TEXT, host="fe80::1", port=443)
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with caplog.at_level("ERROR"), p1, p2, p3:
+        try:
+            await call(transport)
+        except CertificateMismatchError:
+            pass  # logout reports instead of raising
+    (record,) = [r for r in caplog.records if label in r.getMessage()]
+    assert record.levelname == "ERROR" and getattr(record, "markup", None) is False
+    assert _IDENTITY_TEXT in record.getMessage() and LOG_SID[:8] not in record.getMessage()

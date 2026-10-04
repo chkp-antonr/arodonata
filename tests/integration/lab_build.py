@@ -34,7 +34,7 @@ if __package__ in (None, ""):  # run as a script: make `tests.integration` impor
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from arodonata.asdk.tls import VerifiedAPIClient, verified_api_client
-from tests.integration.probe_lab_domains import THROTTLE_CODE, _close, _error_detail, _step
+from tests.integration.probe_lab_domains import THROTTLE_CODE, _close, _error_detail, _step, lab_policy
 
 READ_TIMEOUT = 180.0  # seconds per read; main() sets it from --timeout
 
@@ -194,7 +194,7 @@ def login(
 ) -> VerifiedAPIClient:
     """API-key login with a visible, throttle-tolerant wait. Exits the script on a real refusal."""
     for _ in range(4):
-        client = verified_api_client(server, read_timeout=READ_TIMEOUT)
+        client = verified_api_client(server, read_timeout=READ_TIMEOUT, policy=lab_policy())
         payload = {"session-name": "arodonata lab_build"} if not read_only else {}
         response, _s = _step(
             f"login {domain or 'MDS'}",

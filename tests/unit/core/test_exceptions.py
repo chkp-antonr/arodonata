@@ -157,3 +157,46 @@ def test_task_errors_are_exported_from_package_roots():
 
     assert arodonata.TaskTimeoutError is TaskTimeoutError is exc.TaskTimeoutError
     assert arodonata.TaskPollError is TaskPollError is exc.TaskPollError
+
+
+def test_api_timeout_error_fields_default_like_server_identity_error():
+    err = exc.ApiTimeoutError("slow")
+    assert (err.phase, err.host, err.port, err.timeout, err.command) == ("", "", 0, 0.0, "")
+
+
+@pytest.mark.parametrize(
+    ("err", "fields"),
+    [
+        pytest.param(
+            exc.ApiTimeoutError("slow", phase="read", host="h", port=443, timeout=5.0, command="publish"),
+            ("message", "phase", "host", "port", "timeout", "command"),
+            id="ApiTimeoutError",
+        ),
+        pytest.param(
+            exc.CertificateMismatchError(
+                "changed",
+                host="h",
+                port=443,
+                presented_sha256="a1" * 32,
+                presented_sha1="b2" * 20,
+                expected_sha256="c3" * 32,
+                source="/x/t.json",
+            ),
+            ("message", "host", "port", "presented_sha256", "presented_sha1", "expected_sha256", "source"),
+            id="CertificateMismatchError",
+        ),
+        pytest.param(
+            exc.UnknownServerCertificateError("unknown", host="h", port=443, presented_sha256="a1" * 32),
+            ("message", "host", "port", "presented_sha256", "source"),
+            id="UnknownServerCertificateError",
+        ),
+    ],
+)
+def test_tls_errors_pickle_round_trip_their_fields(err, fields):
+    """Errors cross process boundaries (multiprocessing, concurrent.futures): the keyword fields must survive."""
+    import pickle
+
+    back = pickle.loads(pickle.dumps(err))
+    assert type(back) is type(err) and str(back) == str(err) and back.args == err.args
+    for name in fields:
+        assert getattr(back, name) == getattr(err, name), name

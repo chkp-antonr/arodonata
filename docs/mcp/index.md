@@ -53,7 +53,7 @@ Every field below is read from an environment variable named `ARODONATA_MCP_<FIE
 This section is about the MCP server's own inbound TLS, the connection from MCP clients to `arodonata-mcp`.
 The connections from Arodonata to the Check Point management servers are verified separately, by certificate fingerprint; see [TLS Verification](../configuration/tls-verification.md).
 `arodonata-mcp` checks the trust store at startup: with the default `tofu` mode and a store that cannot be created or written, a corrupt or unsafe store, `lab-memory` without `ARODONATA_LAB`, or an invalid `ARODONATA_TLS_TRUST` or fingerprint value, it exits with status 2 and a message naming the cause (for an unwritable store, a hint to set `ARODONATA_TLS_KNOWN_HOSTS_PATH` or use `pinned`).
-When a tool hits an identity or timeout failure, the model gets the facts and "Operator action required on the MCP host; retrying will not help."; no MCP tool can change trust.
+When a tool hits an identity failure or a trust-store problem, the model gets the facts and "Operator action required on the MCP host; retrying will not help."; on a timeout it gets the server, the timeout and the phase (`connect` or `read`), and after a read timeout that the command may still have run on the server. No MCP tool can change trust.
 
 For inbound TLS, either pass `--ssl-certfile`/`--ssl-keyfile` to `arodonata-mcp`, or terminate TLS at a reverse proxy in front of it. Binding to a non-loopback address without `--ssl-certfile` logs a warning: org policy requires TLS 1.2+ for all data in transit, and bearer tokens travel in the `Authorization` header on every request.
 

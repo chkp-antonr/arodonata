@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import multiprocessing
 import os
@@ -11,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from arodonata.asdk.tls import TrustEntry, TrustStore, host_key
+from arodonata.asdk.tls import TrustEntry, TrustStore, host_key, reset_lab_memory
 from arodonata.core.exceptions import TrustStoreError
 
 A = "a1" * 32
@@ -108,6 +109,59 @@ def test_group_writable_file_warns(tmp_path, caplog):
     path.chmod(0o660)
     TrustStore(path).load()
     assert "group-writable" in caplog.text
+
+
+def test_group_writable_warning_is_logged_once_per_store_path(tmp_path, caplog):
+    # load() runs in every check() and anchor_pems(): one WARNING per store path per process, not one per connection
+    reset_lab_memory()
+    path = tmp_path / "t.json"
+    path.write_text(json.dumps({"version": 1, "hosts": {}}))
+    path.chmod(0o660)
+    TrustStore(path).load()
+    TrustStore(path).load()
+
+    def warnings() -> int:
+        return len([r for r in caplog.records if "group-writable" in r.getMessage()])
+
+    assert warnings() == 1
+    reset_lab_memory()  # the test reset forgets it too
+    TrustStore(path).load()
+    assert warnings() == 2
+    reset_lab_memory()
+
+
+@pytest.mark.parametrize("call", ["record", "ensure_writable"])
+def test_a_failing_flock_is_a_trust_store_error(tmp_path, monkeypatch, call):
+    # ENOLCK / EOPNOTSUPP on some network or FUSE mounts: a configuration fact, never a raw OSError (which login
+    # would classify as "unreachable", and which would kill the MCP preflight with a traceback)
+    from arodonata.asdk import tls
+
+    real_flock = tls.fcntl.flock
+    calls: list[int] = []
+
+    def failing_flock(fd: int, operation: int) -> None:
+        calls.append(operation)
+        if operation == tls.fcntl.LOCK_EX:
+            raise OSError(errno.ENOLCK, os.strerror(errno.ENOLCK))
+        real_flock(fd, operation)
+
+    closed: list[int] = []
+    real_close = os.close
+    monkeypatch.setattr(tls.fcntl, "flock", failing_flock)
+    monkeypatch.setattr(tls.os, "close", lambda fd: (closed.append(fd), real_close(fd))[1])
+    store = TrustStore(tmp_path / "s" / "t.json")
+    with pytest.raises(TrustStoreError) as info:
+        if call == "record":
+            store.record("h:443", entry())
+        else:
+            store.ensure_writable()
+    text = str(info.value)
+    assert str(store.lock_path) in text and os.strerror(errno.ENOLCK) in text
+    assert "ARODONATA_TLS_KNOWN_HOSTS_PATH" in text  # the _NOT_WRITABLE_HINT
+    assert isinstance(info.value.__cause__, OSError)
+    assert calls == [tls.fcntl.LOCK_EX]  # never unlocked: the lock was not taken
+    assert len(closed) == 1  # the lock file descriptor is closed
+    assert not store.path.exists()
 
 
 def test_unwritable_directory_raises_with_hint(tmp_path):

@@ -216,19 +216,21 @@ class TrustStoreError(ConfigurationError):
 
 
 class ApiTimeoutError(ArodonataError, TimeoutError):
-    """A socket connect or read to a Check Point server timed out. The request was sent at most once.
+    """A socket connect or read to a Check Point server timed out. The request is never re-sent after a timeout.
 
+    (cpapi may already have re-sent it once after a dropped connection, before the timeout: Backlog #30.)
     A ``TimeoutError`` subclass like ``TaskTimeoutError``, so existing ``except TimeoutError`` handlers keep working.
+    Every field has a default, so the error can be unpickled (the built-in reduce restores the fields).
     """
 
     def __init__(
         self,
         message: str,
         *args: object,
-        phase: str,
-        host: str,
-        port: int,
-        timeout: float,
+        phase: str = "",
+        host: str = "",
+        port: int = 0,
+        timeout: float = 0.0,
         command: str = "",
     ) -> None:
         self.phase = phase

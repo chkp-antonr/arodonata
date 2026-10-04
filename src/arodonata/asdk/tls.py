@@ -147,7 +147,7 @@ class TrustStore:
             raise TrustStoreError(f"TLS trust store {self.path} is owned by uid {st.st_uid}, not by this user")
         if st.st_mode & stat.S_IWOTH:
             raise TrustStoreError(f"TLS trust store {self.path} is world-writable; chmod 600 it")
-        if st.st_mode & stat.S_IWGRP:
+        if st.st_mode & stat.S_IWGRP and _group_writable_once(self.path):
             _emit("warning", f"TLS trust store {self.path} is group-writable; chmod 600 it")
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
@@ -176,6 +176,12 @@ class TrustStore:
             ) from exc
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError as exc:  # ENOLCK / EOPNOTSUPP on some network and FUSE mounts: a configuration fact
+            os.close(fd)
+            raise TrustStoreError(
+                f"TLS trust store lock {self.lock_path} cannot be taken ({exc.strerror}); {_NOT_WRITABLE_HINT}"
+            ) from exc
+        try:
             yield
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -210,6 +216,7 @@ _LAB_MEMORY: dict[Path, dict[str, TrustEntry]] = {}  # lab-memory: one map per p
 _LAB_MEMORY_LOCK = threading.Lock()
 _MISMATCH_REPORTED: set[tuple[str, str]] = set()  # (key, presented sha) already logged at ERROR this process
 _STALE_REPORTED: set[str] = set()  # keys already warned about a stale store entry this process
+_GROUP_WRITABLE_REPORTED: set[Path] = set()  # store paths already warned about as group-writable this process
 
 
 def reset_lab_memory() -> None:
@@ -218,6 +225,7 @@ def reset_lab_memory() -> None:
         _LAB_MEMORY.clear()
     _MISMATCH_REPORTED.clear()
     _STALE_REPORTED.clear()
+    _GROUP_WRITABLE_REPORTED.clear()
 
 
 def _pem_matches(pem: str, sha: str) -> bool:
@@ -236,6 +244,13 @@ def _once(key: str, sha: str) -> bool:
     if marker in _MISMATCH_REPORTED:
         return False
     _MISMATCH_REPORTED.add(marker)
+    return True
+
+
+def _group_writable_once(path: Path) -> bool:
+    if path in _GROUP_WRITABLE_REPORTED:
+        return False
+    _GROUP_WRITABLE_REPORTED.add(path)
     return True
 
 
@@ -628,6 +643,22 @@ class VerifiedAPIClient(APIClient):  # type: ignore[misc]
         except ServerIdentityError:
             self._drop_connection()  # the cached conn anchors on the old PEMs: the next call re-runs anchor_pems
             raise
+        except ApiTimeoutError:
+            raise
+        except TimeoutError as exc:
+            # cpapi re-sent after a dropped connection (not a timeout, so the guard let it through) and that read
+            # timed out inside cpapi's own except block, where nothing folds it: same facts as the guard's error
+            self._drop_connection()  # a late reply must never be read as the answer to a later request
+            host, port = self.server, self.get_port()
+            raise ApiTimeoutError(
+                f"{command or 'request'} to {host_key(host, port)}: no response within "
+                f"{self.read_timeout}s; the command may still have run on the server",
+                phase="read",
+                host=host,
+                port=port,
+                timeout=self.read_timeout,
+                command=command,
+            ) from exc
         finally:
             # spec D22: every identity and timeout error passes through this frame, and tracebacks rendered with
             # locals (pytest --showlocals) show its final state: no full SID, credentials or login response here

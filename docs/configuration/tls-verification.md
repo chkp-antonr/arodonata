@@ -49,8 +49,8 @@ A relative value is resolved against the current directory.
 
 - The key is `host:port` exactly as dialled, with the port always explicit (443 by default). IP addresses are normalised, IPv6 addresses are bracketed and host names are lowercased.
 - `source` is `tofu` (learned on first use), `known-identity` (accepted for a new address because the same certificate was already trusted elsewhere) or `manual` (written by hand). A hand-written entry may omit `pem`; the certificate is then fetched from the server and must match `sha256`.
-- The file is created with mode 0600 inside a directory created with mode 0700. Writes are atomic and serialised across processes with a lock file next to it (`<name>.lock`).
-- A file owned by another user, or writable by everyone, is refused. A group-writable file works but logs a warning. A file that is not valid JSON or has a malformed entry is refused with an error naming the file and is never rewritten.
+- The file is created with mode 0600 inside a directory created with mode 0700. Writes are atomic and serialised across processes with a lock file next to it (`<name>.lock`). A file system that cannot lock it (some network and FUSE mounts) is a trust-store error naming the lock file; point `ARODONATA_TLS_KNOWN_HOSTS_PATH` at a local file.
+- A file owned by another user, or writable by everyone, is refused. A group-writable file works but logs a warning (once per file per process). A file that is not valid JSON or has a malformed entry is refused with an error naming the file and is never rewritten.
 - In `tofu`, a store whose directory cannot be created or written is an error at the moment Arodonata would learn a certificate, before anything is sent. It never falls back to memory silently.
 
 ## Getting a fingerprint
@@ -92,7 +92,7 @@ The server certificate changes when an administrator regenerates or replaces it,
 Arodonata then refuses the connection (see [What a mismatch looks like](#what-a-mismatch-looks-like)); an unexpected change is exactly what the check exists to catch, so confirm it on the management server first.
 
 If the change is legitimate, either replace the `sha256` value of that host in the store file (keep the entry, do not delete it: a deleted entry would let `tofu` trust whatever answers next) or add the new fingerprint to `ARODONATA_TLS_FINGERPRINTS`, which takes precedence over the store.
-After a store edit a running process needs no restart: the store is re-read on every check, so the next connection attempt to that host is refused once with "changed during the connection", and the one after it uses the new value. `ARODONATA_TLS_FINGERPRINTS` is read from the environment when the process starts, so a running process (for example `arodonata-mcp`) needs a restart after that value changes.
+After a store edit a running process needs no restart: the store is re-read on every check. A process that has not yet connected to that host accepts the new value at once. A process that has already connected to it anchors its next connection on the old certificate, so that one attempt is refused with "changed during the connection", and the attempt after it uses the new value. `ARODONATA_TLS_FINGERPRINTS` is read from the environment when the process starts, so a running process (for example `arodonata-mcp`) needs a restart after that value changes.
 
 ## What a mismatch looks like
 
@@ -142,7 +142,7 @@ Two timeouts now apply to every connection:
 `asyncio.wait_for` stays the overall deadline of a call.
 Long operations such as publish and install-policy return a task ID at once and are then polled, so they are not affected by the read timeout.
 
-A timeout raises `ApiTimeoutError` (a `TimeoutError`) whose `phase` is `connect` or `read`.
+A socket timeout (connect, handshake or read) raises `ApiTimeoutError` (a `TimeoutError`) whose `phase` is `connect` or `read`; it names the server and, when a request was under way, the command. The overall deadline of a call (`asyncio.wait_for`) still raises a plain `TimeoutError`; for logins its message is "Login timed out after <N>s" or "Credential login timed out after <N>s". `except TimeoutError` catches both.
 A request that has been sent is never sent a second time after a read timeout; the message says the command may still have run on the server, so check the server before repeating a change.
 For logins a timeout counts as "slow", not "unreachable", and one slow `show-task` poll no longer ends a publish or install wait.
 
@@ -152,6 +152,7 @@ For logins a timeout counts as "slow", not "unreachable", and one slow `show-tas
 - **New addresses.** A new address with an unknown certificate is learned in `tofu`, so a changed IP in `MGMT_SERVERS` is trusted on first contact like a new server.
 - **`lab-memory`.** Each process trusts its first contact and forgets it on exit. Use it only for labs, and prefer pins.
 - **Endpoint management.** Servers that present `sic_cert.pem` change certificate when SIC renews; expect a refusal and re-trust as described under [rotation](#certificate-rotation).
+- **Re-send after a dropped connection.** When the server drops the connection after receiving a request (not after a timeout), cpapi sends the request again on a new connection. That connection is verified like every other, so the request only ever reaches the trusted server, but the command can run twice. This is an integrity issue, not an identity one; refusing every re-send is Backlog item 30.
 - **The store is a trust root.** Whoever can write the store file can change who is trusted. Keep it owned by the service user with mode 0600.
 - **Not covered.** The check authenticates the server, not the network path; DNS is not involved because IP addresses are dialled. The MCP server's own inbound TLS (`--ssl-certfile`) is a separate matter, see [MCP Server](../mcp/index.md#tls).
 

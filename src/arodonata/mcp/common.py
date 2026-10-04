@@ -55,7 +55,9 @@ def describe_for_model(exc: ServerIdentityError | TrustStoreError | ApiTimeoutEr
     """Tool-facing text: the facts, never a ready-to-run command that would re-pin the presented certificate.
 
     The MCP client may have a shell on the MCP host, so the text names no ``ARODONATA_TLS_FINGERPRINTS=<value>``
-    command; the operator gets the full message from the server log (spec D21). No SID, key or store path either.
+    command; the operator gets the full message from the server log (spec D21). No SID or key either. The identity
+    text names where the expected value came from (``(from <store path>)``, or ``this process (lab-memory)``) so the
+    operator knows what to edit; trust-store and timeout texts carry no path.
     """
     if isinstance(exc, ServerIdentityError):
         presented = colon_hex(exc.presented_sha256) if exc.presented_sha256 else "unknown"

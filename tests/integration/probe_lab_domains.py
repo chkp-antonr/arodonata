@@ -49,9 +49,28 @@ from typing import Any
 if __package__ in (None, ""):  # run as a script: make `tests.integration` importable
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from arodonata.asdk.tls import VerifiedAPIClient, verified_api_client
+from arodonata.asdk.tls import TrustPolicy, VerifiedAPIClient, verified_api_client
 
 READ_TIMEOUT = 120.0  # seconds per read; main() sets it from --timeout
+
+_POLICY: TrustPolicy | None = None
+_POLICY_LOCK = threading.Lock()
+
+
+def lab_policy() -> TrustPolicy:
+    """The one trust policy of this script process, built on first use (after main() loaded the lab env).
+
+    A policy per client would forget the anchors it learned: with env pins every connect would probe first (two
+    handshakes, skewing the timings) and lab-memory would log its policy WARNING once per client.
+    """
+    global _POLICY
+    with _POLICY_LOCK:  # probe_machines builds clients from a thread pool
+        if _POLICY is None:
+            from arodonata.config.settings import ArodonataSettings
+
+            _POLICY = TrustPolicy.from_settings(ArodonataSettings())
+        return _POLICY
+
 
 THROTTLE_CODE = "err_too_many_requests"
 
@@ -141,7 +160,7 @@ def _tcp(ip: str) -> str:
 
 def discover(server: str, api_key: str) -> list[Target]:
     print(f"Discovering domains via {server} (system-domain login):")
-    client = verified_api_client(server, read_timeout=READ_TIMEOUT)
+    client = verified_api_client(server, read_timeout=READ_TIMEOUT, policy=lab_policy())
     t0 = time.monotonic()
     try:
         response = client.login_with_api_key(api_key)
@@ -171,7 +190,7 @@ def probe_machines(server: str, targets: list[Target]) -> None:
             hosts.setdefault(t.ip, f"{t.domain} server (on {t.mds})")
 
     def one(ip: str) -> str:
-        client = verified_api_client(ip, read_timeout=READ_TIMEOUT)
+        client = verified_api_client(ip, read_timeout=READ_TIMEOUT, policy=lab_policy())
         t0 = time.monotonic()
         try:
             response = client.api_call("show-api-versions", {})
@@ -250,7 +269,7 @@ def wake_domain(target: Target, api_key: str, throttle_wait: int, throttle_retri
         return result
 
     for attempt in range(throttle_retries + 1):
-        client = verified_api_client(target.ip, read_timeout=READ_TIMEOUT)
+        client = verified_api_client(target.ip, read_timeout=READ_TIMEOUT, policy=lab_policy())
         login_started: float | None = None
         try:
             client.conn, result.connect_s = _step("connect+identity", client.create_https_connection)

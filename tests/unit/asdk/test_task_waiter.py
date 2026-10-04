@@ -9,7 +9,13 @@ from __future__ import annotations
 import pytest
 
 from arodonata.asdk.task_waiter import TaskStatus, TaskWaiter, extract_task_ids, parse_task_statuses
-from arodonata.core.exceptions import ApiTimeoutError, CertificateMismatchError, TaskPollError, TaskTimeoutError
+from arodonata.core.exceptions import (
+    ApiTimeoutError,
+    CertificateMismatchError,
+    TaskPollError,
+    TaskTimeoutError,
+    TrustStoreError,
+)
 
 
 def _show_task_response(*tasks, success=True):
@@ -451,6 +457,22 @@ async def test_wait_reraises_an_identity_error_at_once():
         raise CertificateMismatchError("changed", host="h", port=443)
 
     with pytest.raises(CertificateMismatchError):
+        await _waiter(clock).wait(show_task, ["01ab"], timeout=-1)
+
+    assert attempts == 1
+
+
+async def test_wait_reraises_a_trust_store_error_at_once():
+    """A broken trust store is an operator fact, not a dropped poll: it keeps its type instead of a TaskPollError."""
+    clock = FakeClock()
+    attempts = 0
+
+    async def show_task(payload):
+        nonlocal attempts
+        attempts += 1
+        raise TrustStoreError("TLS trust store /x/t.json is world-writable; chmod 600 it")
+
+    with pytest.raises(TrustStoreError):
         await _waiter(clock).wait(show_task, ["01ab"], timeout=-1)
 
     assert attempts == 1

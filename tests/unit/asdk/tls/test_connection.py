@@ -107,6 +107,28 @@ def test_read_timeout_sends_publish_exactly_once(server_factory, tofu, mode):
     assert [line for _, line in server.request_lines] == ["POST /web_api/publish HTTP/1.1"]
 
 
+def test_read_timeout_after_cpapis_own_resend_is_an_api_timeout(server_factory, tofu):
+    # 0: probe; 1: the request is dropped (RemoteDisconnected, not a timeout) -> cpapi re-sends on a new verified
+    # connection inside its `except` block; 2: that re-sent request is never answered. The read timeout is raised
+    # from inside cpapi's except block, so the re-send guard never sees it: api_call itself must translate it.
+    server = server_factory("a", modes=["answer", "drop_after_request", "never_answer"])
+    client = client_for(server, tofu, read_timeout=1.0)
+    started = time.monotonic()
+    with pytest.raises(ApiTimeoutError) as info:
+        client.api_call("publish", {}, SID, False, -1)
+    assert info.value.phase == "read" and info.value.command == "publish"
+    assert info.value.host == "127.0.0.1" and info.value.port == server.port and info.value.timeout == 1.0
+    assert "may still have run on the server" in str(info.value)
+    assert isinstance(info.value.__cause__, TimeoutError)
+    assert client.conn is None  # dropped: a late reply can never answer a later request
+    assert time.monotonic() - started < 5
+    for name, local_reprs in _tls_frame_locals(info.value):
+        assert SID not in local_reprs, name
+    # Known residual (out of scope, spec D5 / docs "Security residuals"): cpapi re-sends a request after a dropped
+    # connection -- the peer is verified, but the command reached the server twice.
+    assert server.request_lines == [(1, "POST /web_api/publish HTTP/1.1"), (2, "POST /web_api/publish HTTP/1.1")]
+
+
 def test_connect_timeout_on_a_server_that_never_handshakes(server_factory, tofu):
     server = server_factory("a", mode="never_handshake")
     started = time.monotonic()
