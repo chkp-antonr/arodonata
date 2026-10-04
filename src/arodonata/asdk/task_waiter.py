@@ -38,7 +38,7 @@ from ..config.constants import (
     DEFAULT_TASK_POLL_INITIAL_SECONDS,
     DEFAULT_TASK_POLL_MAX_SECONDS,
 )
-from ..core.exceptions import TaskPollError, TaskTimeoutError
+from ..core.exceptions import ApiTimeoutError, ServerIdentityError, TaskPollError, TaskTimeoutError
 from ..logger import lazy_logger
 from ..telemetry import span_attrs
 
@@ -274,15 +274,19 @@ class TaskWaiter:
     ) -> tuple[list[TaskStatus], str | None]:
         """One `show-task` round trip: (statuses, None) or ([], why_it_failed).
 
-        Only a `TimeoutError` escapes -- and only from the budget guard, never from
-        `show_task` itself, which is wrapped so that a dropped connection or an
-        unsuccessful response counts as one tolerated poll failure.
+        Only a `TimeoutError` from the budget guard escapes, plus a `ServerIdentityError` (a changed certificate is
+        not a dropped poll and waiting longer will not fix it). Anything else from `show_task` -- a dropped connection,
+        an unsuccessful response, one slow read (`ApiTimeoutError`) -- counts as one tolerated poll failure.
         """
         try:
             if remaining is None:
                 response = await show_task(payload)
             else:
                 response = await asyncio.wait_for(show_task(payload), timeout=remaining)
+        except ServerIdentityError:
+            raise
+        except ApiTimeoutError as exc:
+            return [], f"{type(exc).__name__}: {exc}"  # one slow show-task is a tolerated poll failure (spec D18)
         except TimeoutError:
             raise
         except Exception as exc:  # noqa: BLE001 - a dropped poll says nothing about the task

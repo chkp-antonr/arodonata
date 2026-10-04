@@ -19,7 +19,7 @@ import pytest
 from arodonata.api.client import ArodonataClient
 from arodonata.api.schemas import SSEEventType
 from arodonata.config import ArodonataSettings
-from arodonata.core.exceptions import ClientError, MissingConfigurationError
+from arodonata.core.exceptions import CertificateMismatchError, ClientError, MissingConfigurationError
 
 from .client_test_helpers import (
     CLOSED_CLIENT_MATCH,
@@ -721,3 +721,45 @@ async def test_refresh_coordinator_runs_concurrent_limit_minus_one_domains_per_m
         assert coord._member_of == client._login_coordinator.mds_host
     finally:
         await client.close()
+
+
+# --------------------------------------------------------------------------- #
+# TLS identity errors are logged loudly by the background paths (spec D20)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_domain_list_refresh_logs_an_identity_error_at_error():
+    from unittest.mock import patch
+
+    client = make_client()
+    client._domain_list_refresh = MagicMock()
+    client._domain_list_refresh.is_stale.return_value = True
+    client._cache = AsyncMock()
+    client._cache.get_domains.return_value = []
+    client._domain_service = AsyncMock()
+    client._domain_service.populate_domain_cache.side_effect = CertificateMismatchError("changed", host="h", port=443)
+
+    with patch("arodonata.api.client.log") as log:
+        await client._refresh_domain_list("mgmt1", force=True)
+
+    log.return_value.error.assert_called_once()
+    assert "CertificateMismatchError" in log.return_value.error.call_args.args[0]
+    log.return_value.warning.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_warm_up_logs_an_identity_error_at_error():
+    from unittest.mock import patch
+
+    client = make_client()
+    client._refresh_coordinator = MagicMock()
+    client._refresh_coordinator.default_policy.ttl = 60
+    client._refresh_coordinator.ensure = AsyncMock(side_effect=CertificateMismatchError("changed", host="h", port=443))
+    client._warm_ups = {}
+
+    with patch("arodonata.api.client.log") as log:
+        await client._warm_object_cache("mgmt1")
+
+    log.return_value.error.assert_called_once()
+    assert client._warm_ups["mgmt1"].state == "failed"
