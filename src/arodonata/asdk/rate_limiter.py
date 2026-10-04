@@ -7,8 +7,10 @@ preventing overload of management servers across multiple workers.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import itertools
+from collections import deque
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -37,7 +39,12 @@ class RateLimiter:
     where host is the MDS member hosting the target (LoginCoordinator.mds_host)
     and n is determined by hashing the operation ID to distribute load.
     A held slot's row is renewed every third of its TTL until release, so a
-    request that outlasts the TTL (a whole listing, a publish task) keeps it.
+    request that outlasts the TTL (a publish task, a long single call) keeps it.
+
+    Waiters for one host are served in arrival order within this process: a caller that finds others
+    waiting queues behind them, only the longest waiter sweeps the slots, and a release wakes it at
+    once. A caller that releases after a page and asks again (asdk/pager.py) therefore lets the waiter
+    in first. Slots freed by other processes are found by the longest waiter's polling sweep.
 
     Example:
         limiter = RateLimiter(concurrent_limit=4)
@@ -74,6 +81,7 @@ class RateLimiter:
         self._in_process_locks: dict[str, asyncio.Lock] = {}  # For in-process synchronization
         self._reentrancy_count: dict[str, int] = {}  # Track reentrant locks per task, keyed by held slot
         self._task_slot: dict[str, str] = {}  # (server_ip, task) -> lock_key of the slot actually held
+        self._waiters: dict[str, deque[asyncio.Event]] = {}  # host -> callers waiting for a slot, oldest first
         self._lock_init_lock = asyncio.Lock()  # Protection for lock manager initialization
         self._closed = False
         log().debug(f"RateLimiter initialized with limit={concurrent_limit}, slot_timeout={slot_timeout}")
@@ -87,6 +95,7 @@ class RateLimiter:
             self._in_process_locks.clear()
             self._reentrancy_count.clear()
             self._task_slot.clear()
+            self._waiters.clear()
             log().debug("RateLimiter closed")
 
     async def _get_lock_manager(self) -> DatabaseLockManager:
@@ -167,6 +176,85 @@ class RateLimiter:
             return None
         return in_process, lock
 
+    async def _sweep(
+        self, lock_manager: DatabaseLockManager, server_ip: str, base_slot: int, ttl: int
+    ) -> tuple[int, str, asyncio.Lock, LockContext] | None:
+        """One pass over the host's slots, starting at the hashed one: the first free slot, or None if all are busy."""
+        for offset in range(self._concurrent_limit):
+            slot = (base_slot + offset) % self._concurrent_limit
+            lock_key = f"ratelimit:{server_ip}:slot_{slot}"
+            taken = await self._try_take_slot(lock_manager, lock_key, ttl)
+            if taken is not None:
+                return slot, lock_key, taken[0], taken[1]
+        return None
+
+    def _wake_head(self, server_ip: str) -> None:
+        """Tell the longest waiter for `server_ip` to sweep now."""
+        queue = self._waiters.get(server_ip)
+        if queue:
+            queue[0].set()
+
+    async def _take_in_turn(
+        self,
+        lock_manager: DatabaseLockManager,
+        server_ip: str,
+        base_slot: int,
+        ttl: int,
+        timeout: int,
+    ) -> tuple[int, str, asyncio.Lock, LockContext]:
+        """Take a slot in arrival order, or raise LockAcquisitionError after `timeout` seconds.
+
+        Nobody waiting: sweep at once. Otherwise queue at the tail; only the head sweeps. The head
+        re-sweeps when a release in this process wakes it, or after its backoff (0.1 s doubling to
+        2 s) for slots other processes free; everyone behind it waits to become head. Leaving the
+        queue for any reason (slot taken, timeout, cancellation) wakes the next head, which may find
+        another free slot.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        if not self._waiters.get(server_ip):
+            taken = await self._sweep(lock_manager, server_ip, base_slot, ttl)
+            if taken is not None:
+                span_attrs(attempts=0)
+                return taken
+        # No await between looking the queue up and joining it: an emptied queue is dropped from
+        # _waiters in the finally below, and joining a dropped one would never be woken.
+        queue = self._waiters.setdefault(server_ip, deque())
+        me = asyncio.Event()
+        queue.append(me)
+        attempt = 0
+        try:
+            while True:
+                is_head = queue[0] is me
+                me.clear()  # before the sweep: a release during the sweep must not be lost
+                if is_head:
+                    taken = await self._sweep(lock_manager, server_ip, base_slot, ttl)
+                    if taken is not None:
+                        span_attrs(attempts=attempt)
+                        return taken
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    span_attrs(attempts=attempt)
+                    raise LockAcquisitionError(f"ratelimit:{server_ip}:slot_*", timeout)
+                if is_head:
+                    wait = min(2**attempt * 0.1, 2.0, remaining)
+                    attempt += 1
+                    log().trace(
+                        f"RateLimiter all {self._concurrent_limit} slots busy for {server_ip}; first in line, retry in {wait:.1f}s"
+                    )
+                else:
+                    wait = remaining
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(me.wait(), wait)
+        finally:
+            was_head = bool(queue) and queue[0] is me
+            with contextlib.suppress(ValueError):
+                queue.remove(me)
+            if was_head and queue:
+                queue[0].set()
+            if not queue and self._waiters.get(server_ip) is queue:
+                del self._waiters[server_ip]
+
     async def _keep_slot(self, lock_manager: DatabaseLockManager, lock_key: str, owner_id: str, ttl: int) -> None:
         """Renew the held slot's distributed row every `_slot_renew_interval(ttl)` until cancelled at release.
 
@@ -245,60 +333,40 @@ class RateLimiter:
 
         # The limiter is a semaphore over `concurrent_limit` slots, not a set of
         # pinned locks: start at the hashed slot (spreads load), but take ANY free
-        # slot. A caller only waits when every slot is busy, and only up to
-        # `timeout`. Pinning to one slot starved callers for the full timeout
-        # while other slots sat idle (seen as 90 s login stalls behind keepalives).
+        # slot. Pinning to one slot starved callers for the full timeout while other
+        # slots sat idle (seen as 90 s login stalls behind keepalives). Waiters are
+        # served in arrival order (_take_in_turn), so a caller that releases after a
+        # page and asks again does not overtake one that is already waiting.
         lock_manager = await self._get_lock_manager()
         ttl = lock_manager.DEFAULT_TTL_RATE_LIMIT
         base_slot = self._get_slot_number(server_ip)
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
-        attempt = 0
         log().trace(f"RateLimiter WAITING for {server_ip} (preferred slot={base_slot})")
+        slot, lock_key, in_process, lock = await self._take_in_turn(lock_manager, server_ip, base_slot, ttl, timeout)
 
-        while True:
-            for offset in range(self._concurrent_limit):
-                slot = (base_slot + offset) % self._concurrent_limit
-                lock_key = f"ratelimit:{server_ip}:slot_{slot}"
-
-                taken = await self._try_take_slot(lock_manager, lock_key, ttl)
-                if taken is None:
-                    continue
-                in_process, lock = taken
-
-                reentrancy_key = f"{lock_key}:{task_id}"
-                self._reentrancy_count[reentrancy_key] = 1
-                self._task_slot[task_key] = lock_key
-                span_attrs(slot=slot, attempts=attempt)
-                log().trace(f"RateLimiter ACQUIRED for {server_ip} (slot={slot})")
-                # A request can hold the slot longer than the row's TTL (a whole listing,
-                # a publish task); keep the row alive so no other process takes the slot.
-                renewer = asyncio.create_task(self._keep_slot(lock_manager, lock_key, lock.owner_id, ttl))
+        reentrancy_key = f"{lock_key}:{task_id}"
+        self._reentrancy_count[reentrancy_key] = 1
+        self._task_slot[task_key] = lock_key
+        span_attrs(slot=slot)
+        log().trace(f"RateLimiter ACQUIRED for {server_ip} (slot={slot})")
+        # A request can hold the slot longer than the row's TTL (a publish task, a long
+        # single call); keep the row alive so no other process takes the slot.
+        renewer = asyncio.create_task(self._keep_slot(lock_manager, lock_key, lock.owner_id, ttl))
+        try:
+            yield
+        finally:
+            renewer.cancel()
+            # Every step below runs even if this task is cancelled while it waits:
+            # a skipped release would leave the slot taken for the life of the process.
+            try:
+                await asyncio.wait({renewer})
+            finally:
+                self._drop_reentrancy(reentrancy_key, task_key)
                 try:
-                    yield
+                    await lock_manager.release_lock(lock_key, lock.owner_id)
                 finally:
-                    renewer.cancel()
-                    # Every step below runs even if this task is cancelled while it waits:
-                    # a skipped release would leave the slot taken for the life of the process.
-                    try:
-                        await asyncio.wait({renewer})
-                    finally:
-                        self._drop_reentrancy(reentrancy_key, task_key)
-                        try:
-                            await lock_manager.release_lock(lock_key, lock.owner_id)
-                        finally:
-                            in_process.release()
-                    log().trace(f"RateLimiter RELEASED for {server_ip} (slot={slot})")
-                return
-
-            # Every slot busy: give up at the deadline, otherwise back off and re-sweep.
-            if loop.time() >= deadline:
-                span_attrs(attempts=attempt)
-                raise LockAcquisitionError(f"ratelimit:{server_ip}:slot_*", timeout)
-            backoff = min(2**attempt * 0.1, 2.0)
-            attempt += 1
-            log().trace(f"RateLimiter all {self._concurrent_limit} slots busy for {server_ip}; retry in {backoff}s")
-            await asyncio.sleep(min(backoff, max(deadline - loop.time(), 0)))
+                    in_process.release()
+                    self._wake_head(server_ip)
+            log().trace(f"RateLimiter RELEASED for {server_ip} (slot={slot})")
 
 
 __all__ = ["RateLimiter"]
