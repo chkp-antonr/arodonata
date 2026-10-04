@@ -11,9 +11,11 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from ..config import FAILOVER_ERROR_CODES, SESSION_ERROR_CODES
+from ..config.constants import QUERY_MAX_PAGE_SIZE, QUERY_PAGE_SIZE
 from ..logger import lazy_logger
 from ..utils.background_tasks import DEFAULT_CLOSE_GRACE_SECONDS, drain_background_tasks
 from ._sid import sid_prefix
+from .pager import fetch_all_pages
 from .transport import RawApiResponse
 
 if TYPE_CHECKING:
@@ -392,24 +394,41 @@ class AMgmtClient:
         container_key: str = "objects",
         cache_mode: str = "auto",
     ) -> RawApiResponse:
-        """Execute API query with automatic session management."""
+        """Page a listing command to the end, one call per page (asdk/pager.py).
+
+        Each page runs through _execute_with_retry like any api_call: it takes its own RateLimiter slot
+        and releases it after the page, so other callers of the member get in between pages; a session
+        that expires mid-listing re-logs in and retries that page only. The caller's `limit` is the page
+        size (QUERY_PAGE_SIZE when absent or below 1, at most QUERY_MAX_PAGE_SIZE) and `offset` the starting point;
+        the caller's payload is not modified. On success `data` is the list of objects, as with cpapi's
+        api_query.
+        """
         self._ensure_not_closed()
 
-        if payload is None:
-            payload = {}
+        base = dict(payload or {})
+        requested = int(base.pop("limit", QUERY_PAGE_SIZE))
+        page_size = min(requested if requested >= 1 else QUERY_PAGE_SIZE, QUERY_MAX_PAGE_SIZE)
+        start = int(base.pop("offset", 0))
 
-        async def _call(*, server_ip: str, sid: str, port: int | None) -> RawApiResponse:
-            return await self._transport.api_query(
-                server_ip=server_ip,
-                sid=sid,
-                command=command,
-                details_level=details_level,
-                payload=payload,
-                container_key=container_key,
-                port=port,
-            )
+        async def page(offset: int, limit: int) -> RawApiResponse:
+            page_payload = {**base, "limit": limit, "offset": offset, "details-level": details_level}
 
-        return await self._execute_with_retry(mgmt_name, domain, cache_mode, _call)
+            async def _call(*, server_ip: str, sid: str, port: int | None) -> RawApiResponse:
+                return await self._transport.api_call(
+                    server_ip=server_ip,
+                    sid=sid,
+                    command=command,
+                    payload=page_payload,
+                    wait_for_task=False,
+                    timeout=-1,
+                    port=port,
+                )
+
+            return await self._execute_with_retry(mgmt_name, domain, cache_mode, _call)
+
+        return await fetch_all_pages(
+            page, command=command, container_key=container_key, offset=start, page_size=page_size
+        )
 
 
 __all__ = ["AMgmtClient"]

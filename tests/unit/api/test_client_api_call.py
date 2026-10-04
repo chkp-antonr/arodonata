@@ -281,6 +281,38 @@ async def test_api_query_guesses_layer_container_key():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command", "key"),
+    [
+        ("show-access-layers", "access-layers"),
+        ("show-nat-layers", "nat-layers"),
+        ("show-https-layers", "https-layers"),
+        ("show-threat-layers", "threat-layers"),
+    ],
+)
+async def test_api_query_pages_layer_commands_by_their_container_key(command, key):
+    mgmt = AsyncMock()
+    mgmt.api_query.return_value = {"success": True, "data": [{"name": "Network"}]}
+    client = make_client(mgmt=mgmt)
+
+    result = await client.api_query("mgmt1", command)
+
+    assert mgmt.api_query.await_args.kwargs["container_key"] == key
+    assert result.objects == [{"name": "Network"}]
+
+
+@pytest.mark.asyncio
+async def test_api_query_keeps_an_explicit_container_key_for_layer_commands():
+    mgmt = AsyncMock()
+    mgmt.api_query.return_value = {"success": True, "data": []}
+    client = make_client(mgmt=mgmt)
+
+    await client.api_query("mgmt1", "show-access-layers", container_key="custom")
+
+    assert mgmt.api_query.await_args.kwargs["container_key"] == "custom"
+
+
+@pytest.mark.asyncio
 async def test_api_query_falls_back_to_any_list():
     mgmt = AsyncMock()
     mgmt.api_query.return_value = {
@@ -292,6 +324,20 @@ async def test_api_query_falls_back_to_any_list():
     result = await client.api_query("mgmt1", "show-widgets")
 
     assert result.objects == [{"n": 1}, {"n": 2}]
+
+
+@pytest.mark.asyncio
+async def test_api_query_explicit_key_missing_does_not_fall_back_to_any_list():
+    mgmt = AsyncMock()
+    mgmt.api_query.return_value = {
+        "success": True,
+        "data": {"total": 1, "widgets": [{"n": 1}]},
+    }
+    client = make_client(mgmt=mgmt)
+
+    result = await client.api_query("mgmt1", "show-widgets", container_key="packages")
+
+    assert result.objects == []
 
 
 @pytest.mark.asyncio

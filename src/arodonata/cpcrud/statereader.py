@@ -43,8 +43,8 @@ async def _paginate_rulebase(
     breaking traffic-tuple matching (duplicate creation on re-apply), key-based lookup (a real
     rule wrongly reported "not found"), and last-rule/cleanup-rule detection.
 
-    This deliberately does NOT reuse the codebase's `client.api_query()` wrapper: its transport
-    layer hardcodes `include_container_key=False`, which discards every OTHER top-level response
+    This deliberately does NOT reuse the codebase's `client.api_query()` wrapper: its result keeps
+    only the container list (`data` is the list of objects), which discards every OTHER top-level response
     key (`objects-dictionary`, used by `_dereference_rule`/`_dereference_nat_rule`) and keeps only
     the container_key's own list -- exactly the data this dereferencing logic also needs. Looping
     `api_call` directly with explicit `offset`/`limit` (mirroring the official Check Point SDK's

@@ -55,7 +55,6 @@ async def _fake_to_thread(func, *args, **kwargs):
     ("method", "args"),
     [
         ("api_call", ("show-hosts",)),
-        ("api_query", ("show-hosts",)),
         ("logout", ()),
         ("keepalive", ()),
         ("show_sessions", ()),
@@ -65,9 +64,7 @@ async def _fake_to_thread(func, *args, **kwargs):
 async def test_transport_result_message_never_carries_a_sid(method, args):
     sdk = MagicMock()
     sdk.sid = SID
-    sdk.api_call.return_value = sdk.api_query.return_value = _response(
-        f"Wrong session id [{SID}]. Session may be expired (also {OTHER})."
-    )
+    sdk.api_call.return_value = _response(f"Wrong session id [{SID}]. Session may be expired (also {OTHER}).")
     with (
         patch("arodonata.asdk.transport.verified_api_client", return_value=sdk),
         patch("arodonata.asdk.transport.TrustPolicy"),

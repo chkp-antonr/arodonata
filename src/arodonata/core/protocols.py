@@ -116,18 +116,6 @@ class IApiTransport(Protocol):
         """Execute API call."""
         ...
 
-    async def api_query(
-        self,
-        server_ip: str,
-        sid: str,
-        command: str,
-        details_level: str = "standard",
-        payload: dict[str, Any] | None = None,
-        container_key: str = "objects",
-    ) -> RawApiResponse:
-        """Execute API query."""
-        ...
-
 
 @runtime_checkable
 class IServerRegistry(Protocol):

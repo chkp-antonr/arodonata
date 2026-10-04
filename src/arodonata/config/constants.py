@@ -78,23 +78,27 @@ DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS: Final[int] = 5  # seconds
 # docs/_AI_/2610/261003-warmup-parallelism/findings.md): one request at a time gets
 # ~200 objects/s, a member tops out at ~650-700 objects/s with 4-5 in flight, and more
 # adds nothing while taking headroom from SmartConsole and other clients of the member.
-# A slot is held for one whole request (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT). One
+# A listing holds a slot for one page, a task wait for the whole task (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT). One
 # `CacheRefreshCoordinator.ensure` call starts at most `concurrent_limit - 1` domain
 # refreshes per member, which leaves a slot for logins and keepalives *from that call's
 # point of view*; overlapping ensure calls, other processes, long tasks and keepalives
 # can still take every slot of a member.
 DEFAULT_CONCURRENT_LIMIT: Final[int] = 4
-# Page size for the cache's list fetches (show-hosts, show-gateways-and-servers, show-domains, ...): Check
-# Point's maximum, instead of cpapi's api_query default of 50. Every page pays a round trip; on the home lab
-# a 12 150-object domain loaded in 68.4 s at 500 vs 79.1 s at 50 (findings 2026-10-03), more on remote labs.
-CACHE_QUERY_PAGE_SIZE: Final[int] = 500
+# Page size of every api_query listing (asdk/pager.py) when the caller sends no `limit`; a caller's `limit` is
+# honoured up to QUERY_MAX_PAGE_SIZE, Check Point's maximum. Each page is its own call and holds a RateLimiter slot
+# only for that page, so other callers of the member get in between pages. 300, not 500: at `details-level full`
+# a page of 500 already takes several seconds (Anton, 2026-10-04, Backlog #21); every page pays a round trip, so
+# far below that (cpapi's 50) costs time (home lab: a 12 150-object domain in 68.4 s at 500 vs 79.1 s at 50).
+QUERY_PAGE_SIZE: Final[int] = 300
+QUERY_MAX_PAGE_SIZE: Final[int] = 500
+# The page size the caches pass explicitly (objects, gateways and servers, domains, MDS members).
+CACHE_QUERY_PAGE_SIZE: Final[int] = QUERY_PAGE_SIZE
 DEFAULT_LOGIN_BACKOFF: Final[int] = 5  # seconds
 DEFAULT_LOGIN_RETRIES: Final[int] = 8
 # How long a caller waits for a free RateLimiter concurrency slot (asdk/rate_limiter.py)
-# before giving up. A slot is held for one whole request: for `api_query` that is a
-# whole listing (cpapi fetches the pages inside that one call, so the slot is held
-# across all of them, not per page), and a call that waits for a task (`wait_for_task`,
-# e.g. publish or revert) holds it for the whole task. Since 2026-09-14 logins take
+# before giving up. A listing (`api_query`) takes a slot per page and releases it between
+# pages (asdk/pager.py), and waiters are served in arrival order within one client; a call
+# that waits for a task (`wait_for_task`, e.g. publish or revert) holds it for the whole task. Since 2026-09-14 logins take
 # slots too: a login takes the hosting MDS member's slot for a single HTTP round
 # trip (bounded by DEFAULT_LOGIN_TIMEOUT), never across its retry ladder or a
 # throttle wait -- those happen outside the slot, and pacing belongs to the login
@@ -123,10 +127,10 @@ DEFAULT_TASK_POLL_FAILURE_TOLERANCE: Final[int] = 5
 
 # Query commands that answer with a task. The finished `show-task` response nests
 # the paging fields (from/to/total) and the items under `tasks[].task-details[]`,
-# where cpapi's api_query never looks -- it returns page one and stops. Command ->
+# where a plain listing never looks (asdk/pager.py pages `objects`-style containers). Command ->
 # the item key inside task-details. ArodonataClient.api_query pages these itself.
 TASK_QUERY_COMMANDS: Final[dict[str, str]] = {"show-changes": "changes"}
-TASK_QUERY_PAGE_SIZE: Final[int] = 50  # cpapi's api_query page size
+TASK_QUERY_PAGE_SIZE: Final[int] = 50  # Check Point's default page size for show-changes
 TASK_QUERY_MAX_PAGE_SIZE: Final[int] = 500  # show-changes `limit` accepts 1-500
 
 # How long a SQLite connection waits for another writer (several processes on one cache file, or a large
@@ -203,6 +207,8 @@ __all__ = [
     "DEFAULT_LOGIN_THROTTLE_INITIAL_SECONDS",
     "DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS",
     "CACHE_QUERY_PAGE_SIZE",
+    "QUERY_MAX_PAGE_SIZE",
+    "QUERY_PAGE_SIZE",
     "SQLITE_BUSY_TIMEOUT_SECONDS",
     "DEFAULT_CONCURRENT_LIMIT",
     "DEFAULT_LOGIN_BACKOFF",

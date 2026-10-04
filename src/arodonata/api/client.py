@@ -10,7 +10,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from arlogi.otel.decorator import set_trace_modules, traced
 from pydantic import ValidationError
@@ -44,6 +44,15 @@ if TYPE_CHECKING:
     from ..rulebase.source import CachedRulebaseSource, LayerRulebase, PackageRulebase, RuleLocations
 
 log = lazy_logger("arodonata.api.client")
+
+# Listing commands whose objects are not under "objects". Mapped before the call, so the pager
+# (asdk/pager.py) pages them fully; a dict response without the key used to yield page one only.
+_LAYER_CONTAINER_KEYS: Final[dict[str, str]] = {
+    "show-access-layers": "access-layers",
+    "show-nat-layers": "nat-layers",
+    "show-https-layers": "https-layers",
+    "show-threat-layers": "threat-layers",
+}
 
 
 class ArodonataClient:
@@ -741,6 +750,9 @@ class ArodonataClient:
             return await self._task_query(
                 mgmt_name, command, domain, details_level, payload, TASK_QUERY_COMMANDS[command], cache_mode
             )
+        requested_key = container_key
+        if container_key == "objects":
+            container_key = _LAYER_CONTAINER_KEYS.get(command, container_key)
         response = await self._mgmt.api_query(
             mgmt_name=mgmt_name,
             command=command,
@@ -757,24 +769,13 @@ class ArodonataClient:
             # Try provided container_key first
             objects = data.get(container_key, [])
 
-            # If empty and using default 'objects', try to guess
-            if not objects and container_key == "objects":
-                guesses = {
-                    "show-access-layers": "access-layers",
-                    "show-nat-layers": "nat-layers",
-                    "show-https-layers": "https-layers",
-                    "show-threat-layers": "threat-layers",
-                }
-                if command in guesses:
-                    guess_key = guesses[command]
-                    objects = data.get(guess_key, [])
-
-                # Ultimate fallback: find any list
-                if not objects:
-                    for key, val in data.items():
-                        if isinstance(val, list) and key not in ("meta-info", "from", "to", "total"):
-                            objects = val
-                            break
+            # Unknown commands whose list is under another key: take the first list that is not paging metadata.
+            # Only for the default key; an explicit key missing from the response yields no objects.
+            if not objects and requested_key == "objects":
+                for key, val in data.items():
+                    if isinstance(val, list) and key not in ("meta-info", "from", "to", "total"):
+                        objects = val
+                        break
         elif isinstance(data, list):
             objects = data
 
@@ -806,7 +807,7 @@ class ArodonataClient:
 
         Each page goes through `api_call`, so arodonata's TaskWaiter awaits the
         task under the configured budgets. The caller's `limit` is the page size
-        and `offset` the starting point, as with cpapi's api_query. A failed page
+        and `offset` the starting point, as with api_query. A failed page
         fails the whole query -- never a silently partial result.
         """
         base = dict(payload or {})

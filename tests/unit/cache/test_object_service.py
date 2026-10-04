@@ -1005,7 +1005,7 @@ async def test_collect_objects_by_type_success(db):
     assert client.api_query.await_args.kwargs["command"] == "show-hosts"
 
 
-async def test_collect_objects_by_type_pages_by_500(db):
+async def test_collect_objects_by_type_pages_by_the_cache_page_size(db):
     client = make_client()
     client.api_query.return_value = ApiQueryResult(success=True, objects=[])
     service = make_service(db, client)
@@ -1014,8 +1014,7 @@ async def test_collect_objects_by_type_pages_by_500(db):
         await service._collect_objects_by_type("mgmt1", "dmn1", object_type)
 
     payloads = [c.kwargs["payload"] for c in client.api_query.await_args_list]
-    assert payloads == [{"limit": 500}] * 4
-    assert len({id(p) for p in payloads}) == 4  # a fresh dict per call: cpapi mutates the payload
+    assert payloads == [{"limit": 300}] * 4
 
 
 async def test_collect_objects_by_type_api_error(db):
@@ -1112,17 +1111,66 @@ async def test_refresh_domain_failure_keeps_old_cache_and_no_session_stamp(db):
     await service._cache.upsert_objects([cpobj("old", "stale-obj", "host")])
     service._cache.replace_domain_objects = AsyncMock()
     service._cache.delete_domain_objects = AsyncMock()
-    service.refresh_last_published_session = AsyncMock()
+    service._cache.upsert_last_published_session = AsyncMock()
 
     events = await collect(service._refresh_domain("m1", "d1"))
 
     service._cache.replace_domain_objects.assert_not_awaited()
     service._cache.delete_domain_objects.assert_not_awaited()
-    service.refresh_last_published_session.assert_not_awaited()
+    service._cache.upsert_last_published_session.assert_not_awaited()
     assert events[-1]["status"] == "domain_failed"
     # old cache contents untouched
     remaining = await service._cache.get_objects_by_name("stale-obj", mgmt_names=["mgmt1"])
     assert remaining
+
+
+async def test_refresh_domain_stamps_the_session_read_before_the_listing(db):
+    """A publish during the listing must stay after the stamp, so the next incremental refresh sees it (spec D6)."""
+    client = make_client(mgmt_names=["mgmt1"])
+    order: list[str] = []
+    before = ApiCallResult(
+        success=True,
+        data={"uid": "s-before", "meta-info": {"last-modify-time": {"iso-8601": "2026-10-04T10:00:00+0000"}}},
+    )
+    during = ApiCallResult(
+        success=True,
+        data={"uid": "s-during", "meta-info": {"last-modify-time": {"iso-8601": "2026-10-04T10:05:00+0000"}}},
+    )
+    sessions = [before, during]
+
+    async def api_call(*args, **kwargs):
+        order.append("stamp")
+        return sessions.pop(0)
+
+    async def api_query(**kwargs):
+        order.append(kwargs["command"])
+        return ApiQueryResult(success=True, objects=[])
+
+    client.api_call.side_effect = api_call
+    client.api_query.side_effect = api_query
+    service = make_service(db, client)
+
+    events = await collect(service._refresh_domain("mgmt1", "dmn1"))
+
+    assert events[-1]["status"] == "domain_complete"
+    assert order[0] == "stamp"
+    assert order.count("stamp") == 1
+    stored = await service._cache.get_last_published_session("mgmt1", "dmn1")
+    assert stored is not None and stored.uid == "s-before"
+
+
+async def test_refresh_domain_swaps_without_a_stamp_when_the_session_read_fails(db):
+    client = make_client(mgmt_names=["mgmt1"])
+    client.api_call.return_value = ApiCallResult(success=False, message="nope")
+    _stub_api_success_for_all_types(client)
+    service = make_service(db, client)
+    service._cache.replace_domain_objects = AsyncMock(wraps=service._cache.replace_domain_objects)
+
+    events = await collect(service._refresh_domain("mgmt1", "dmn1"))
+
+    assert events[-1]["status"] == "domain_complete"
+    service._cache.replace_domain_objects.assert_awaited_once()
+    assert await service._cache.get_last_published_session("mgmt1", "dmn1") is None
 
 
 # ---------------------------------------------------------------------------

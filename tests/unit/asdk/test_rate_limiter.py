@@ -506,8 +506,8 @@ def test_default_limit_is_the_per_member_default():
 
 # --------------------------------------------------------------------------
 # A held slot's distributed row is renewed until release (Backlog item 20):
-# a request may hold a slot longer than DEFAULT_TTL_RATE_LIMIT (a whole listing,
-# a publish task), and a lapsed row lets another process take the same slot.
+# a request may hold a slot longer than DEFAULT_TTL_RATE_LIMIT (a publish task
+# or a long single call), and a lapsed row lets another process take the same slot.
 # --------------------------------------------------------------------------
 
 
@@ -670,3 +670,343 @@ async def test_renewal_moves_the_rows_expiry_on_a_real_lock_table(tmp_path):
     finally:
         await limiter.close()
         await engine.dispose()
+
+
+# --------------------------------------------------------------------------
+# FIFO hand-off (own-pagination spec D1)
+# --------------------------------------------------------------------------
+
+
+def _queued(limiter: RateLimiter, host: str = "10.0.0.1") -> int:
+    return len(limiter._waiters.get(host, ()))
+
+
+async def test_a_caller_that_releases_and_reacquires_does_not_overtake_a_waiter():
+    """A pager releases after a page and asks again at once; the queued waiter must get the slot first."""
+    limiter, _ = _make_limiter(concurrent_limit=1)
+    order: list[str] = []
+    page_done = asyncio.Event()
+
+    async def pager():
+        async with limiter.acquire("10.0.0.1"):
+            order.append("page-1")
+            await page_done.wait()
+        async with limiter.acquire("10.0.0.1"):
+            order.append("page-2")
+
+    async def waiter():
+        async with limiter.acquire("10.0.0.1"):
+            order.append("waiter")
+
+    pager_task = asyncio.create_task(pager())
+    await _until(lambda: order == ["page-1"])
+    waiter_task = asyncio.create_task(waiter())
+    await _until(lambda: _queued(limiter) == 1)
+    page_done.set()
+    async with asyncio.timeout(5):
+        await asyncio.gather(pager_task, waiter_task)
+
+    assert order == ["page-1", "waiter", "page-2"]
+
+
+async def test_waiters_get_the_slot_in_arrival_order():
+    limiter, _ = _make_limiter(concurrent_limit=1)
+    holder, release = await _hold_only_slot(limiter)
+    order: list[int] = []
+
+    async def waiter(i: int):
+        async with limiter.acquire("10.0.0.1"):
+            order.append(i)
+
+    tasks = []
+    for i in range(3):
+        tasks.append(asyncio.create_task(waiter(i)))
+        await _until(lambda n=i + 1: _queued(limiter) == n)
+    release.set()
+    async with asyncio.timeout(5):
+        await asyncio.gather(holder, *tasks)
+
+    assert order == [0, 1, 2]
+    assert limiter._waiters == {}
+
+
+async def test_a_release_wakes_the_head_without_waiting_out_its_backoff():
+    limiter, _ = _make_limiter(concurrent_limit=1)
+    holder, release = await _hold_only_slot(limiter)
+    got_at: list[float] = []
+    loop = asyncio.get_running_loop()
+
+    async def waiter():
+        async with limiter.acquire("10.0.0.1"):
+            got_at.append(loop.time())
+
+    task = asyncio.create_task(waiter())
+    # Hold long enough for the waiter's backoff to grow (0.1 + 0.2 + 0.4 s): its next poll is ~0.8 s away.
+    await asyncio.sleep(0.75)
+    released_at = loop.time()
+    release.set()
+    async with asyncio.timeout(5):
+        await asyncio.gather(holder, task)
+
+    assert got_at[0] - released_at < 0.3
+
+
+async def test_two_freed_slots_serve_two_waiters():
+    limiter, _ = _make_limiter(concurrent_limit=2)
+    release = asyncio.Event()
+    ready = [asyncio.Event(), asyncio.Event()]
+
+    async def holder(i: int):
+        async with limiter.acquire("10.0.0.1"):
+            ready[i].set()
+            await release.wait()
+
+    holders = [asyncio.create_task(holder(0)), asyncio.create_task(holder(1))]
+    await asyncio.gather(ready[0].wait(), ready[1].wait())
+    inside = 0
+    both_inside = asyncio.Event()
+    leave = asyncio.Event()
+
+    async def waiter():
+        nonlocal inside
+        async with limiter.acquire("10.0.0.1"):
+            inside += 1
+            if inside == 2:
+                both_inside.set()
+            await leave.wait()
+
+    waiters = [asyncio.create_task(waiter()), asyncio.create_task(waiter())]
+    await _until(lambda: _queued(limiter) == 2)
+    release.set()
+    async with asyncio.timeout(1):
+        await both_inside.wait()
+    leave.set()
+    await asyncio.gather(*holders, *waiters)
+
+
+async def test_a_cancelled_head_hands_the_turn_to_the_next_waiter():
+    limiter, _ = _make_limiter(concurrent_limit=1)
+    holder, release = await _hold_only_slot(limiter)
+    got: list[str] = []
+
+    async def waiter(name: str):
+        async with limiter.acquire("10.0.0.1"):
+            got.append(name)
+
+    first = asyncio.create_task(waiter("first"))
+    await _until(lambda: _queued(limiter) == 1)
+    second = asyncio.create_task(waiter("second"))
+    await _until(lambda: _queued(limiter) == 2)
+    first.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await first
+    assert _queued(limiter) == 1
+    release.set()
+    async with asyncio.timeout(1):
+        await asyncio.gather(holder, second)
+
+    assert got == ["second"]
+    assert limiter._waiters == {}
+
+
+async def test_a_timed_out_head_leaves_the_queue_and_the_next_waiter_still_gets_the_slot():
+    limiter, _ = _make_limiter(concurrent_limit=1)
+    holder, release = await _hold_only_slot(limiter)
+    got: list[str] = []
+
+    async def impatient():
+        with pytest.raises(LockAcquisitionError):
+            async with limiter.acquire("10.0.0.1", timeout=0.2):
+                got.append("impatient")
+
+    async def patient():
+        async with limiter.acquire("10.0.0.1", timeout=5):
+            got.append("patient")
+
+    first = asyncio.create_task(impatient())
+    await _until(lambda: _queued(limiter) == 1)
+    second = asyncio.create_task(patient())
+    await first
+    assert _queued(limiter) == 1
+    release.set()
+    async with asyncio.timeout(1):
+        await asyncio.gather(holder, second)
+
+    assert got == ["patient"]
+
+
+async def test_a_slot_freed_by_another_process_is_found_by_the_heads_sweep():
+    limiter, lm = _make_limiter(concurrent_limit=1)
+    other_process = lm._locks.setdefault("ratelimit:10.0.0.1:slot_0", asyncio.Lock())
+    await other_process.acquire()  # the distributed row is held elsewhere; this process's lock is free
+    got = asyncio.Event()
+
+    async def waiter():
+        async with limiter.acquire("10.0.0.1", timeout=5):
+            got.set()
+
+    task = asyncio.create_task(waiter())
+    await _until(lambda: _queued(limiter) == 1)
+    other_process.release()  # no wake-up in this process: only the head's polling sweep can see it
+    async with asyncio.timeout(3):
+        await got.wait()
+    await task
+
+
+async def test_a_reentrant_acquire_never_queues_behind_waiters():
+    limiter, _ = _make_limiter(concurrent_limit=1)
+    nested_done = asyncio.Event()
+    waiter_queued = asyncio.Event()
+
+    async def holder():
+        async with limiter.acquire("10.0.0.1"):
+            await waiter_queued.wait()
+            async with asyncio.timeout(1), limiter.acquire("10.0.0.1"):
+                nested_done.set()
+
+    async def waiter():
+        async with limiter.acquire("10.0.0.1"):
+            pass
+
+    holder_task = asyncio.create_task(holder())
+    await _until(lambda: bool(limiter._task_slot))
+    waiter_task = asyncio.create_task(waiter())
+    await _until(lambda: _queued(limiter) == 1)
+    waiter_queued.set()
+    async with asyncio.timeout(5):
+        await asyncio.gather(holder_task, waiter_task)
+    assert nested_done.is_set()
+
+
+async def test_a_short_call_gets_a_slot_while_long_listings_page_through_every_slot():
+    """Four paging tasks keep all four slots busy, page after page; a fifth caller must not wait for a listing to end."""
+    limiter, _ = _make_limiter(concurrent_limit=4)
+    pages_per_listing = 20
+    finished_listings = 0
+    started = asyncio.Event()
+
+    async def listing():
+        nonlocal finished_listings
+        for _ in range(pages_per_listing):
+            async with limiter.acquire("10.0.0.1"):
+                started.set()
+                await asyncio.sleep(0.02)  # one page
+        finished_listings += 1
+
+    listings = [asyncio.create_task(listing()) for _ in range(4)]
+    await started.wait()
+    await asyncio.sleep(0.05)
+    finished_when_served: list[int] = []
+    async with limiter.acquire("10.0.0.1", timeout=5):
+        finished_when_served.append(finished_listings)
+    await asyncio.gather(*listings)
+
+    assert finished_when_served == [0]
+
+
+class _FailOnceLockManager(FakeLockManager):
+    """The first slot attempt fails like a busy or dropped database; later ones behave normally."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed = False
+
+    async def try_acquire_lock(self, lock_key: str, ttl: int):
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("database is locked")
+        return await super().try_acquire_lock(lock_key, ttl)
+
+
+async def test_a_failed_slot_attempt_does_not_leave_the_slot_taken_in_this_process():
+    limiter, _ = _make_limiter(concurrent_limit=1, lock_manager=_FailOnceLockManager())
+
+    with pytest.raises(RuntimeError, match="database is locked"):
+        async with limiter.acquire("10.0.0.1", timeout=1):
+            pass
+
+    async with asyncio.timeout(2), limiter.acquire("10.0.0.1", timeout=1):
+        pass
+    assert limiter._waiters == {}
+
+
+class _HangOnceLockManager(FakeLockManager):
+    """The first slot attempt hangs in the database until its task is cancelled."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hanging = asyncio.Event()
+
+    async def try_acquire_lock(self, lock_key: str, ttl: int):
+        if not self.hanging.is_set():
+            self.hanging.set()
+            await asyncio.Event().wait()  # only cancellation ends this
+        return await super().try_acquire_lock(lock_key, ttl)
+
+
+async def test_a_cancel_during_a_slot_attempt_does_not_leave_the_slot_taken_in_this_process():
+    lm = _HangOnceLockManager()
+    limiter, _ = _make_limiter(concurrent_limit=1, lock_manager=lm)
+
+    async def acquire_once():
+        async with limiter.acquire("10.0.0.1", timeout=5):
+            pass
+
+    task = asyncio.create_task(acquire_once())
+    await lm.hanging.wait()
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    async with asyncio.timeout(2), limiter.acquire("10.0.0.1", timeout=1):
+        pass
+    assert limiter._waiters == {}
+
+
+class _OtherProcessHoldsSlot1(FakeLockManager):
+    """slot_1's row is held by another process (always busy); one chosen attempt on it stalls on `gate`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.slot_1_calls = 0
+        self.stall_on_call = 0
+        self.stalled = asyncio.Event()
+        self.gate = asyncio.Event()
+
+    async def try_acquire_lock(self, lock_key: str, ttl: int):
+        if lock_key.endswith(":slot_1"):
+            self.slot_1_calls += 1
+            if self.slot_1_calls == self.stall_on_call:
+                self.stalled.set()
+                await self.gate.wait()
+            return None
+        return await super().try_acquire_lock(lock_key, ttl)
+
+
+async def test_a_release_during_the_heads_sweep_is_not_lost(monkeypatch):
+    """The head has already passed the freed slot when the release lands; it must re-sweep at once, not after its backoff."""
+    lm = _OtherProcessHoldsSlot1()
+    limiter, _ = _make_limiter(concurrent_limit=2, lock_manager=lm)
+    monkeypatch.setattr(limiter, "_get_slot_number", lambda server_ip: 0)  # every sweep: slot_0, then slot_1
+    # slot_1 attempts: 1 fast path, 2 head at once, 3/4/5 after 0.1/0.2/0.4 s backoff. Stall the 5th:
+    # the head's next backoff is then 0.8 s, so only the wake-up can explain a prompt acquisition.
+    lm.stall_on_call = 5
+    holder, release = await _hold_only_slot(limiter)  # takes slot_0 (free, first in the sweep)
+    loop = asyncio.get_running_loop()
+    got_at: list[float] = []
+
+    async def waiter():
+        async with limiter.acquire("10.0.0.1", timeout=10):
+            got_at.append(loop.time())
+
+    task = asyncio.create_task(waiter())
+    async with asyncio.timeout(5):
+        await lm.stalled.wait()  # the head is mid-sweep: slot_0 seen busy, now on slot_1
+    release.set()
+    await holder  # slot_0 released and the head woken while its sweep is still running
+    sweep_ends_at = loop.time()
+    lm.gate.set()
+    async with asyncio.timeout(5):
+        await task
+
+    assert got_at[0] - sweep_ends_at < 0.4

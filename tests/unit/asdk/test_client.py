@@ -11,6 +11,7 @@ from pydantic import SecretStr
 from arodonata.asdk.client import AMgmtClient
 from arodonata.asdk.server_registry import ServerConfig
 from arodonata.config import FAILOVER_ERROR_CODES, SESSION_ERROR_CODES
+from arodonata.core.exceptions import ApiTimeoutError, CertificateMismatchError
 
 
 def _cm_rate_limiter():
@@ -403,29 +404,167 @@ async def test_api_call_spawns_background_keepalive_task():
     login_coordinator.maintain_keepalives.assert_awaited_once_with(exclude_key="mgmt1:domA:svc-user")
 
 
-async def test_api_query_delegates_to_transport_api_query():
+def _page(start: int, count: int, total: int) -> dict:
+    items = [{"uid": f"u{start + i}"} for i in range(count)]
+    return {
+        "success": True,
+        "data": {"objects": items, "from": start + 1, "to": start + count, "total": total},
+        "message": "",
+        "code": "",
+    }
+
+
+def _query_client(transport):
     login_coordinator = AsyncMock()
-    login_coordinator.login.return_value = ("sid-1", "10.0.0.1")
-    transport = AsyncMock()
-    transport.api_query.return_value = {"success": True, "data": {"objects": []}, "message": "", "code": ""}
+    login_coordinator.login.return_value = ("sid-1", "192.168.5.184")
+    login_coordinator.mds_host = AsyncMock(return_value="192.168.5.170")
     registry = MagicMock()
     registry.get_server.return_value = None
+    return _make_client(registry=registry, transport=transport, login_coordinator=login_coordinator)
 
-    client, _, _, _, _ = _make_client(registry=registry, transport=transport, login_coordinator=login_coordinator)
 
-    result = await client.api_query("mgmt1", "show-hosts", details_level="full", container_key="objects")
+async def test_api_query_reads_every_page_with_its_own_call():
+    transport = AsyncMock()
+    transport.api_call.side_effect = [_page(0, 300, 650), _page(300, 300, 650), _page(600, 50, 650)]
+    client, _, _, _, _ = _query_client(transport)
+
+    result = await client.api_query("mgmt1", "show-hosts", details_level="full", payload={"filter": "x"})
     await client.close()
 
     assert result["success"] is True
-    transport.api_query.assert_awaited_once_with(
-        server_ip="10.0.0.1",
-        sid="sid-1",
-        command="show-hosts",
-        details_level="full",
-        payload={},
-        container_key="objects",
-        port=None,
-    )
+    assert len(result["data"]) == 650
+    calls = transport.api_call.await_args_list
+    assert [c.kwargs["payload"] for c in calls] == [
+        {"filter": "x", "limit": 300, "offset": 0, "details-level": "full"},
+        {"filter": "x", "limit": 300, "offset": 300, "details-level": "full"},
+        {"filter": "x", "limit": 300, "offset": 600, "details-level": "full"},
+    ]
+    assert all(c.kwargs["command"] == "show-hosts" for c in calls)
+    assert all(c.kwargs["wait_for_task"] is False for c in calls)
+    assert all(c.kwargs["server_ip"] == "192.168.5.184" for c in calls)
+
+
+async def test_each_page_takes_and_releases_the_members_slot():
+    transport = AsyncMock()
+    transport.api_call.side_effect = [_page(0, 300, 400), _page(300, 100, 400)]
+    client, _, _, limiter, _ = _query_client(transport)
+
+    await client.api_query("home", "show-hosts", domain="Domain4")
+    await client.close()
+
+    assert [c.args[0] for c in limiter.acquire.call_args_list] == ["192.168.5.170", "192.168.5.170"]
+    assert limiter.acquire.return_value.__aexit__.await_count == 2  # released after each page
+
+
+async def test_a_session_error_mid_listing_retries_that_page_only():
+    session_error_code = next(iter(SESSION_ERROR_CODES))
+    transport = AsyncMock()
+    transport.api_call.side_effect = [
+        _page(0, 300, 700),
+        _page(300, 300, 700),
+        {"success": False, "data": None, "message": "expired", "code": session_error_code},
+        _page(600, 100, 700),
+    ]
+    client, _, _, _, lc = _query_client(transport)
+
+    result = await client.api_query("mgmt1", "show-hosts")
+    await client.close()
+
+    assert result["success"] is True
+    assert [c.kwargs["payload"]["offset"] for c in transport.api_call.await_args_list] == [0, 300, 600, 600]
+    assert [c.kwargs["force"] for c in lc.login.await_args_list] == [False, False, False, True]
+
+
+@pytest.mark.parametrize(
+    ("given", "sent"),
+    [({}, 300), ({"limit": 50}, 50), ({"limit": 900}, 500), ({"limit": 0}, 300), ({"limit": -5}, 300)],
+)
+async def test_page_size_defaults_to_300_honours_the_callers_limit_and_caps_at_500(given, sent):
+    transport = AsyncMock()
+    transport.api_call.return_value = _page(0, 1, 1)
+    client, _, _, _, _ = _query_client(transport)
+
+    await client.api_query("mgmt1", "show-hosts", payload=given)
+    await client.close()
+
+    assert transport.api_call.await_args.kwargs["payload"]["limit"] == sent
+
+
+async def test_the_slot_is_released_before_the_next_page_is_requested():
+    events: list[str] = []
+    limiter = MagicMock()
+
+    async def _enter(*_):
+        events.append("enter")
+
+    async def _exit(*_):
+        events.append("exit")
+        return False
+
+    limiter.acquire.return_value.__aenter__ = _enter
+    limiter.acquire.return_value.__aexit__ = _exit
+    pages = [_page(0, 300, 400), _page(300, 100, 400)]
+
+    async def _api_call(**_):
+        events.append("call")
+        return pages.pop(0)
+
+    transport = AsyncMock()
+    transport.api_call.side_effect = _api_call
+    client, *_ = _query_client(transport)
+    client._rate_limiter = limiter
+
+    await client.api_query("mgmt1", "show-hosts")
+    await client.close()
+
+    assert events == ["enter", "call", "exit", "enter", "call", "exit"]
+
+
+async def test_the_callers_payload_is_not_mutated():
+    transport = AsyncMock()
+    transport.api_call.side_effect = [_page(5, 300, 400), _page(305, 95, 400)]
+    client, _, _, _, _ = _query_client(transport)
+    payload = {"limit": 300, "offset": 5, "filter": "web"}
+
+    await client.api_query("mgmt1", "show-hosts", payload=payload)
+    await client.close()
+
+    assert payload == {"limit": 300, "offset": 5, "filter": "web"}
+    assert transport.api_call.await_args_list[0].kwargs["payload"]["offset"] == 5
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        CertificateMismatchError(
+            "certificate mismatch",
+            host="192.168.5.184",
+            port=443,
+            presented_sha256="bb" * 32,
+            expected_sha256="aa" * 32,
+        ),
+        ApiTimeoutError(
+            "read timed out", phase="read", host="192.168.5.184", port=443, timeout=125, command="show-hosts"
+        ),
+    ],
+)
+async def test_identity_and_timeout_errors_on_a_page_propagate_without_a_retry(error):
+    transport = AsyncMock()
+    transport.api_call.side_effect = [_page(0, 300, 400), error]
+    client, _, _, _, lc = _query_client(transport)
+
+    with pytest.raises(type(error)):
+        await client.api_query("mgmt1", "show-hosts")
+    await client.close()
+
+    assert transport.api_call.await_count == 2
+    assert lc.login.await_count == 2  # one per page, no forced re-login
+
+
+async def test_the_transport_has_no_api_query_any_more():
+    from arodonata.asdk.transport import ApiTransport
+
+    assert not hasattr(ApiTransport, "api_query")
 
 
 # --------------------------------------------------------------------------
@@ -597,19 +736,6 @@ async def test_session_call_takes_the_members_slot_and_calls_the_domain_server()
     lc.mds_host.assert_awaited_with("home", "Domain4")
     limiter.acquire.assert_called_once_with("192.168.5.170")
     assert transport.api_call.await_args.kwargs["server_ip"] == "192.168.5.184"
-
-
-async def test_query_takes_the_members_slot():
-    client, registry, transport, limiter, lc = _make_client()
-    registry.get_server.return_value = MagicMock(port=None)
-    lc.login = AsyncMock(return_value=("sid", "192.168.5.184"))
-    lc.mds_host = AsyncMock(return_value="192.168.5.170")
-    transport.api_query.return_value = {"success": True, "data": []}
-
-    await client.api_query("home", "show-hosts", domain="Domain4")
-
-    limiter.acquire.assert_called_once_with("192.168.5.170")
-    assert transport.api_query.await_args.kwargs["server_ip"] == "192.168.5.184"
 
 
 async def test_failover_retry_takes_the_slot_of_the_new_member():

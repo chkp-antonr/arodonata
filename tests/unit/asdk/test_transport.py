@@ -416,61 +416,6 @@ async def test_api_call_generic_exception_propagates():
 
 
 # --------------------------------------------------------------------------
-# api_query
-# --------------------------------------------------------------------------
-
-
-async def test_api_query_success_passes_expected_args():
-    transport = ApiTransport()
-    mock_response = _make_response(success=True, data={"objects": [1, 2]})
-    mock_client = MagicMock()
-    mock_client.api_query.return_value = mock_response
-
-    p1, p2, p3 = _patch_sdk(mock_client)
-    with p1, p2, p3:
-        result = await transport.api_query(
-            "10.0.0.1", "sid-1", "show-hosts", details_level="full", container_key="objects"
-        )
-
-    mock_client.api_query.assert_called_once_with("show-hosts", "full", "objects", False, {})
-    assert result["success"] is True
-
-
-async def test_api_query_none_response_raises_value_error():
-    transport = ApiTransport()
-    mock_client = MagicMock()
-    mock_client.api_query.return_value = None
-
-    p1, p2, p3 = _patch_sdk(mock_client)
-    with p1, p2, p3, pytest.raises(ValueError, match="API query returned None response"):
-        await transport.api_query("10.0.0.1", "sid-1", "show-hosts")
-
-
-async def test_api_query_failure_without_message_falls_back_to_error_message_attr():
-    transport = ApiTransport()
-    mock_response = _make_response(success=False, data=None, error_message="deep failure")
-    mock_client = MagicMock()
-    mock_client.api_query.return_value = mock_response
-
-    p1, p2, p3 = _patch_sdk(mock_client)
-    with p1, p2, p3:
-        result = await transport.api_query("10.0.0.1", "sid-1", "show-hosts")
-
-    assert result["success"] is False
-    assert result["message"] == "deep failure"
-
-
-async def test_api_query_exception_propagates():
-    transport = ApiTransport()
-    mock_client = MagicMock()
-    mock_client.api_query.side_effect = RuntimeError("boom")
-
-    p1, p2, p3 = _patch_sdk(mock_client)
-    with p1, p2, p3, pytest.raises(RuntimeError, match="boom"):
-        await transport.api_query("10.0.0.1", "sid-1", "show-hosts")
-
-
-# --------------------------------------------------------------------------
 # login timeout: its own budget, and a log line that says what it was
 # --------------------------------------------------------------------------
 
@@ -1116,10 +1061,10 @@ async def test_unbudgeted_calls_use_the_default_read_timeout():
     transport = ApiTransport(tls_policy=MagicMock(), connect_timeout=3, default_read_timeout=125)
     mock_client = MagicMock()
     mock_client.read_timeout = None
-    mock_client.api_query.return_value = _make_response(success=True, data={"objects": []})
+    mock_client.api_call.return_value = _make_response(success=True, data={"objects": []})
     p1, p2, p3 = _patch_sdk(mock_client)
     with p1 as factory, p2, p3:
-        await transport.api_query("10.0.0.1", "sid", "show-hosts")
+        await transport.api_call("10.0.0.1", "sid", "show-hosts", wait_for_task=False)
     assert factory.call_args.kwargs["read_timeout"] == 125
 
 
@@ -1161,7 +1106,6 @@ _IDENTITY_TEXT = "TLS certificate of [fe80::1]:443 does not match. expected SHA-
     ("label", "sdk_attr", "call"),
     [
         ("API CALL ERROR", "api_call", lambda t: t.api_call("fe80::1", LOG_SID, "show-hosts", wait_for_task=False)),
-        ("API QUERY ERROR", "api_query", lambda t: t.api_query("fe80::1", LOG_SID, "show-hosts")),
         ("LOGIN (apikey) ERROR", "login_with_api_key", lambda t: t.login_with_apikey("fe80::1", "key")),
         ("LOGIN (credentials) ERROR", "login", lambda t: t.login_with_credentials("fe80::1", "svc", "pw")),
         ("LOGOUT ERROR", "api_call", lambda t: t.logout("fe80::1", LOG_SID)),
