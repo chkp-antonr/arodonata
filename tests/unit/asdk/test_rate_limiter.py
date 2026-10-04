@@ -649,13 +649,15 @@ def test_a_non_positive_renew_interval_is_rejected():
         RateLimiter(lock_manager=FakeLockManager(), slot_renew_interval=0)
 
 
-async def test_renewal_moves_the_rows_expiry_on_a_real_lock_table():
+async def test_renewal_moves_the_rows_expiry_on_a_real_lock_table(tmp_path):
     from sqlalchemy.ext.asyncio import create_async_engine
 
     from arodonata.cache.database import DatabaseManager
     from arodonata.cache.lock_manager import DatabaseLockManager
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    # A file, not :memory:: release cancels the renewer, often mid-statement; SQLAlchemy then
+    # invalidates the connection, and a reconnect to :memory: opens a new, empty database.
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'locks.db'}")
     manager = DatabaseLockManager(DatabaseManager(engine))
     await manager.initialize()
     limiter = RateLimiter(concurrent_limit=1, lock_manager=manager, slot_renew_interval=0.05)
