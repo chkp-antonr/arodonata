@@ -349,10 +349,15 @@ class TrustPolicy:
             _emit("info", f"TLS {key}: certificate {colon_hex(sha)} is already trusted for another address")
             return self._learn(host, port, key, sha, der, entry)
         if self.mode is TrustMode.PINNED:
-            raise UnknownServerCertificateError(
+            message = (
                 f"TLS certificate of {key} is not trusted (ARODONATA_TLS_TRUST=pinned). No request was sent.\n"
                 f"  presented SHA-256: {colon_hex(sha)}\n"
-                "Check it on the management server ('api fingerprint -f json') and add it to ARODONATA_TLS_FINGERPRINTS.",
+                "Check it on the management server ('api fingerprint -f json') and add it to ARODONATA_TLS_FINGERPRINTS."
+            )
+            if _once(key, sha):
+                _emit("error", message)
+            raise UnknownServerCertificateError(
+                message,
                 host=host,
                 port=port,
                 presented_sha256=sha,
@@ -532,12 +537,18 @@ class PinnedHTTPSConnection(_CpapiHTTPSConnection):  # type: ignore[misc]
         client.policy.check(host, port, der)  # raises the precise identity error
         # accepted: the trusted value changed since this connection's anchor was chosen (an operator re-trust in a
         # running process); refuse this attempt, the next one anchors on the accepted certificate
-        return CertificateMismatchError(
+        sha = hashlib.sha256(der).hexdigest()
+        message = (
             f"TLS certificate of {key} changed during the connection (anchored verification: "
-            f"{cause.verify_message}). No request was sent.",
+            f"{cause.verify_message}). No request was sent."
+        )
+        if _once(key, sha):
+            _emit("error", message)
+        return CertificateMismatchError(
+            message,
             host=host,
             port=port,
-            presented_sha256=hashlib.sha256(der).hexdigest(),
+            presented_sha256=sha,
             presented_sha1=hashlib.sha1(der, usedforsecurity=False).hexdigest(),
             source="anchor",
         )

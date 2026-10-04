@@ -11,7 +11,7 @@ import pytest
 
 from arodonata.asdk.tls import TrustEntry, TrustPolicy, TrustStore, reset_lab_memory
 from arodonata.config import ArodonataSettings
-from arodonata.config.tls import TrustMode
+from arodonata.config.tls import TrustMode, colon_hex
 from arodonata.core.exceptions import (
     CertificateMismatchError,
     ConfigurationError,
@@ -213,6 +213,17 @@ def test_mismatch_error_logged_once_per_key_and_presented(tmp_path, caplog):
             with pytest.raises(CertificateMismatchError):
                 policy(tmp_path).check("10.0.0.1", 443, DER_B)
     assert [r.levelno for r in caplog.records].count(logging.ERROR) == 1
+
+
+def test_pinned_refusal_logged_once_at_error_with_the_presented_fingerprint(tmp_path, caplog):
+    p = policy(tmp_path, mode=TrustMode.PINNED, pins=[SHA_A])
+    with caplog.at_level(logging.ERROR):
+        for _ in range(3):
+            with pytest.raises(UnknownServerCertificateError):
+                p.check("10.0.0.3", 443, DER_B)
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert colon_hex(hashlib.sha256(DER_B).hexdigest()) in errors[0].getMessage()
 
 
 def test_stale_warning_once_and_not_suppressing_mismatch_error(tmp_path, caplog):

@@ -144,3 +144,67 @@ def test_log_tool_call_uses_access_token_client_id_never_the_token(caplog):
     messages = [r.getMessage() for r in caplog.records if r.name == "arodonata.mcp.common"]
     assert messages == ["tool show_hosts called by MCP_TOKEN_ALICE", "tool show_hosts called by anonymous"]
     assert "s3cr3t-token-value" not in caplog.text
+
+
+async def test_guarded_tool_maps_identity_error_without_sid_or_re_pin_command(caplog):
+    import logging
+
+    from arodonata.core.exceptions import CertificateMismatchError
+    from arodonata.mcp._sdk import MCPServer
+
+    from .helpers import call_tool, text
+
+    presented = "b2" * 32
+
+    async def tool() -> dict:
+        raise CertificateMismatchError(
+            "internal text with SIDSENTINEL-0123456789abcdef", host="10.0.0.1", port=443, presented_sha256=presented
+        )
+
+    server = MCPServer("t")
+    add_guarded_tool(server, tool, name="tool")
+    with caplog.at_level(logging.ERROR):
+        res = await call_tool(server, "tool")
+    out = text(res)
+    assert res.is_error is True
+    assert "10.0.0.1:443" in out and "CertificateMismatchError" in out
+    assert "Operator action required on the MCP host; retrying will not help." in out
+    assert "SIDSENTI" not in out and "ARODONATA_TLS_FINGERPRINTS" not in out and presented not in out
+    assert "SIDSENTI" not in caplog.text
+    assert "tool tool failed: CertificateMismatchError" in caplog.text
+
+
+async def test_guarded_tool_maps_trust_store_error_without_the_path():
+    from arodonata.core.exceptions import TrustStoreError
+    from arodonata.mcp._sdk import MCPServer
+
+    from .helpers import call_tool, text
+
+    async def tool() -> dict:
+        raise TrustStoreError("cannot write /home/x/.local/state/arodonata/tls_known_hosts.json")
+
+    server = MCPServer("t")
+    add_guarded_tool(server, tool, name="tool")
+    res = await call_tool(server, "tool")
+    assert res.is_error is True and "server log" in text(res) and "/home/x" not in text(res)
+    assert "retrying will not help" in text(res)
+
+
+async def test_guarded_tool_maps_timeout_error_with_the_read_caveat():
+    from arodonata.core.exceptions import ApiTimeoutError
+    from arodonata.mcp._sdk import MCPServer
+
+    from .helpers import call_tool, text
+
+    def make(phase: str):
+        async def tool() -> dict:
+            raise ApiTimeoutError("x", phase=phase, host="10.0.0.1", port=443, timeout=35.0, command="show-hosts")
+
+        return tool
+
+    server = MCPServer("t")
+    add_guarded_tool(server, make("read"), name="read")
+    add_guarded_tool(server, make("connect"), name="connect")
+    read, connect = await call_tool(server, "read"), await call_tool(server, "connect")
+    assert read.is_error is True and "10.0.0.1:443" in text(read) and "35s" in text(read)
+    assert "may still have run" in text(read) and "may still have run" not in text(connect)

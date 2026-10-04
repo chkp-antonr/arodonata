@@ -101,10 +101,12 @@ async def serve(args: argparse.Namespace) -> None:
     from sqlalchemy.ext.asyncio import create_async_engine
 
     from ..api.client import ArodonataClient
+    from ..asdk.tls import TrustPolicy
     from .app import create_asgi_app, create_mcp_server
     from .settings import ArodonataMCPConfigError
 
     mcp_settings, lib_settings = build_settings(args)
+    TrustPolicy.from_settings(lib_settings).preflight()  # tofu + unusable store -> exit 2 now, not at first host
     if mcp_settings.auth_mode == "host":
         raise ArodonataMCPConfigError(
             "auth_mode=host is only for embedding create_asgi_app behind an authenticating ASGI host; the "
@@ -239,12 +241,12 @@ def main(argv: list[str] | None = None) -> int:
     log.info("loaded env files: %s", ", ".join(loaded) or "none")
     from pydantic import ValidationError
 
-    from ..core.exceptions import MissingConfigurationError
+    from ..core.exceptions import ConfigurationError, MissingConfigurationError
     from .settings import ArodonataMCPConfigError
 
     try:
         asyncio.run(serve(args))
-    except (ArodonataMCPConfigError, MissingConfigurationError, ValidationError) as exc:
+    except (ArodonataMCPConfigError, MissingConfigurationError, ConfigurationError, ValidationError) as exc:
         print(f"arodonata-mcp: configuration error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:

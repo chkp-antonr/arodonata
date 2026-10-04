@@ -5,6 +5,7 @@ from __future__ import annotations
 import builtins
 import hashlib
 import json
+import logging
 import socket
 import time
 
@@ -148,7 +149,9 @@ def test_verification_failure_with_a_failing_probe_is_still_an_identity_error(se
     assert server.bytes_on(2) == 0
 
 
-def test_operator_retrust_refuses_one_attempt_then_anchors_on_the_new_pem(server_factory, tofu, certs, tmp_path):
+def test_operator_retrust_refuses_one_attempt_then_anchors_on_the_new_pem(
+    server_factory, tofu, certs, tmp_path, caplog
+):
     # 0: probe (A); 1: data (A), every answer closes the connection; then the certificate legitimately changes to B
     server = server_factory("a", "a", "b", mode="close")
     client = client_for(server, tofu)  # one long-lived client, like a lab script
@@ -157,8 +160,10 @@ def test_operator_retrust_refuses_one_attempt_then_anchors_on_the_new_pem(server
     data = json.loads(store.read_text())
     data["hosts"][f"127.0.0.1:{server.port}"]["sha256"] = hashlib.sha256(certs["b"][2]).hexdigest()  # re-trust
     store.write_text(json.dumps(data))
-    with pytest.raises(CertificateMismatchError, match="changed during the connection"):
+    with caplog.at_level(logging.ERROR), pytest.raises(CertificateMismatchError, match="changed during the connection"):
         client.api_call("show-hosts", {})  # 2: auto-reopen anchored on A, refused; 3: probe sees B, accepted
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1 and "changed during the connection" in errors[0]
     assert server.bytes_on(2) == 0
     # the cached connection anchored on A is dropped, so the retry re-runs anchor_pems instead of auto-reopening it
     # (http.client's CannotSendRequest after the failed send would mask this in the behaviour alone)
