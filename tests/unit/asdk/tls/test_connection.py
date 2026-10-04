@@ -12,9 +12,10 @@ import pytest
 
 from arodonata.asdk.tls import TrustPolicy, TrustStore, probe_certificate, verified_api_client
 from arodonata.config.tls import TrustMode
-from arodonata.core.exceptions import ApiTimeoutError, CertificateMismatchError
+from arodonata.core.exceptions import ApiTimeoutError, CertificateMismatchError, ConfigurationError
 
 SID = "SIDSENTINEL-0123456789abcdef"
+SECRET = "SECRETSENTINEL-fedcba9876543210"
 
 
 def client_for(server, policy, *, read_timeout=5.0, connect_timeout=2.0, sid=SID):
@@ -70,7 +71,6 @@ def test_resend_branch_cannot_reach_an_unverified_peer(server_factory, tofu):
 def test_connection_close_reopen_raises_instead_of_folding(server_factory, tofu):
     server = server_factory("a", "a", "b", mode="close")  # 0: probe (A); 1: data (A), then closed; 2: reopen (B)
     client = client_for(server, tofu)
-    client.single_conn = True
     assert client.api_call("show-hosts", {}).success  # conn 1, cert A learned
     with pytest.raises(CertificateMismatchError):
         client.api_call("show-hosts", {})  # http.client auto-reopens conn 2 with cert B
@@ -112,6 +112,7 @@ def test_connect_timeout_on_a_server_that_never_handshakes(server_factory, tofu)
     with pytest.raises(ApiTimeoutError) as info:
         client_for(server, tofu, connect_timeout=1.0).api_call("show-hosts", {})
     assert info.value.phase == "connect" and time.monotonic() - started < 5
+    assert "TLS probe of" in str(info.value)
 
 
 def test_anchored_handshake_timeout_is_a_connect_timeout(server_factory, tofu):
@@ -148,17 +149,21 @@ def test_verification_failure_with_a_failing_probe_is_still_an_identity_error(se
 
 
 def test_operator_retrust_refuses_one_attempt_then_anchors_on_the_new_pem(server_factory, tofu, certs, tmp_path):
-    # 0: probe (A); 1: data (A); then the server's certificate legitimately changes to B
-    server = server_factory("a", "a", "b")
-    assert client_for(server, tofu).api_call("show-hosts", {}).success
+    # 0: probe (A); 1: data (A), every answer closes the connection; then the certificate legitimately changes to B
+    server = server_factory("a", "a", "b", mode="close")
+    client = client_for(server, tofu)  # one long-lived client, like a lab script
+    assert client.api_call("show-hosts", {}).success
     store = tmp_path / "trust.json"
     data = json.loads(store.read_text())
     data["hosts"][f"127.0.0.1:{server.port}"]["sha256"] = hashlib.sha256(certs["b"][2]).hexdigest()  # re-trust
     store.write_text(json.dumps(data))
     with pytest.raises(CertificateMismatchError, match="changed during the connection"):
-        client_for(server, tofu).api_call("show-hosts", {})  # 2: anchored on A, refused; 3: probe sees B, accepted
+        client.api_call("show-hosts", {})  # 2: auto-reopen anchored on A, refused; 3: probe sees B, accepted
     assert server.bytes_on(2) == 0
-    assert client_for(server, tofu).api_call("show-hosts", {}).success  # 4: anchored on B
+    # the cached connection anchored on A is dropped, so the retry re-runs anchor_pems instead of auto-reopening it
+    # (http.client's CannotSendRequest after the failed send would mask this in the behaviour alone)
+    assert client.conn is None
+    assert client.api_call("show-hosts", {}).success  # 4: a new connection, anchored on B
     assert [index for index, _ in server.request_lines] == [1, 4]
 
 
@@ -235,3 +240,62 @@ def test_a_failed_tcp_connect_never_leaves_a_plaintext_socket(certs, tofu, monke
     with pytest.raises(OSError, match="setsockopt"):
         conn.connect()
     assert conn.sock is None and plain.closed
+
+
+def _tls_frame_locals(exc):
+    """(function, repr of final locals) for every tls.py frame in the tracebacks of exc and its causes."""
+    found, seen, pending = [], set(), [exc]
+    while pending:
+        current = pending.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        tb = current.__traceback__
+        while tb is not None:
+            if tb.tb_frame.f_code.co_filename.endswith("asdk/tls.py"):
+                found.append((tb.tb_frame.f_code.co_name, repr(dict(tb.tb_frame.f_locals))))
+            tb = tb.tb_next
+        pending += [current.__cause__, current.__context__]
+    return found
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(("show-hosts", {}, SID, False, -1), id="transport-shaped"),  # transport.py passes client.sid
+        pytest.param(("login", {"user": "admin", "password": SECRET}), id="login-password"),
+        pytest.param(("login", {"api-key": SECRET}), id="login-api-key"),
+    ],
+)
+def test_identity_error_frames_in_tls_hold_no_sid_or_credentials(server_factory, tofu, call):
+    first = server_factory("a")
+    client_for(first, tofu).api_call("show-hosts", {})
+    impostor = server_factory("b")
+    tofu.store.record(f"127.0.0.1:{impostor.port}", tofu.store.load()[f"127.0.0.1:{first.port}"])
+    with pytest.raises(CertificateMismatchError) as info:
+        client_for(impostor, tofu).api_call(*call)
+    frames = _tls_frame_locals(info.value)
+    assert "api_call" in [name for name, _ in frames] and "connect" in [name for name, _ in frames]
+    for name, local_reprs in frames:
+        assert SID not in local_reprs and SECRET not in local_reprs, name
+
+
+def test_read_timeout_frames_in_tls_hold_no_sid(server_factory, tofu):
+    server = server_factory("a", mode="never_answer")
+    with pytest.raises(ApiTimeoutError) as info:
+        client_for(server, tofu, read_timeout=1.0).api_call("show-hosts", {}, SID, False, -1)
+    frames = _tls_frame_locals(info.value)
+    assert {"api_call", "create_https_connection"} <= {name for name, _ in frames}
+    for name, local_reprs in frames:
+        assert SID not in local_reprs, name
+
+
+def test_single_conn_false_is_refused(tofu):
+    from cpapi import APIClientArgs
+
+    from arodonata.asdk.tls import VerifiedAPIClient
+
+    with pytest.raises(ConfigurationError, match="re-send guard"):
+        VerifiedAPIClient(
+            APIClientArgs(server="127.0.0.1", single_conn=False), policy=tofu, connect_timeout=1, read_timeout=1
+        )

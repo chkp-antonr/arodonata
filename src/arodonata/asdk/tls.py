@@ -25,7 +25,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 try:
     import fcntl
@@ -42,6 +42,7 @@ from ..core.exceptions import (
     ArodonataError,
     CertificateMismatchError,
     ConfigurationError,
+    ServerIdentityError,
     TrustStoreError,
     UnknownServerCertificateError,
 )
@@ -433,7 +434,7 @@ def probe_certificate(host: str, port: int, timeout: float) -> bytes:
             der = tls.getpeercert(binary_form=True)
     except TimeoutError as exc:
         raise ApiTimeoutError(
-            f"TLS handshake with {host_key(host, port)} did not complete within {timeout}s",
+            f"TLS probe of {host_key(host, port)} (TCP connect and handshake) did not complete within {timeout}s",
             phase="connect",
             host=host,
             port=port,
@@ -545,9 +546,17 @@ class PinnedHTTPSConnection(_CpapiHTTPSConnection):  # type: ignore[misc]
 class VerifiedAPIClient(APIClient):  # type: ignore[misc]
     """cpapi client whose every connection is verified and time-bounded (spec D5)."""
 
+    conn: PinnedHTTPSConnection | None  # cpapi's cached connection (single_conn); the base class is untyped
+
     def __init__(
         self, args: APIClientArgs, *, policy: TrustPolicy, connect_timeout: float, read_timeout: float
     ) -> None:
+        if not args.single_conn:
+            # the re-send guard in create_https_connection recognises cpapi's re-send branch by a cached self.conn
+            raise ConfigurationError(
+                "VerifiedAPIClient needs single_conn=True: without a cached connection the re-send guard (spec D5) "
+                "cannot stop cpapi from sending a timed-out request a second time"
+            )
         super().__init__(args)
         self.policy = policy
         self.connect_timeout = connect_timeout
@@ -584,7 +593,7 @@ class VerifiedAPIClient(APIClient):  # type: ignore[misc]
         pems = self.policy.anchor_pems(host, port)
         if not pems:
             entry = self.policy.check(host, port, probe_certificate(host, port, self.connect_timeout))
-            pems = [entry.pem] if entry.pem else []
+            pems = [cast(str, entry.pem)]  # check() always returns the presented certificate's PEM
         conn = PinnedHTTPSConnection(self, pems)
         conn.set_debuglevel(0)
         conn.connect()
@@ -596,13 +605,28 @@ class VerifiedAPIClient(APIClient):  # type: ignore[misc]
         sock = getattr(self.conn, "sock", None)
         if sock is not None:
             sock.settimeout(self.read_timeout)  # read_timeout is set per call (spec D16); the connection is cached
-        response = super().api_call(command, payload, sid, wait_for_task, timeout, method)
-        if self._failure is not None:
-            raise self._failure  # folded into a generic APIResponse by cpapi's `except Exception` (auto-reopen path)
-        folded = getattr(response, "error_message", None)
-        if isinstance(folded, ArodonataError):
-            raise folded
-        return response
+        response = None
+        try:
+            response = super().api_call(command, payload, sid, wait_for_task, timeout, method)
+            if self._failure is not None:
+                raise self._failure  # folded into a generic APIResponse by cpapi's `except Exception` (auto-reopen)
+            folded = getattr(response, "error_message", None)
+            if isinstance(folded, ArodonataError):
+                raise folded
+            return response
+        except ServerIdentityError:
+            self._drop_connection()  # the cached conn anchors on the old PEMs: the next call re-runs anchor_pems
+            raise
+        finally:
+            # spec D22: every identity and timeout error passes through this frame, and tracebacks rendered with
+            # locals (pytest --showlocals) show its final state: no full SID, credentials or login response here
+            del payload, sid, response
+
+    def _drop_connection(self) -> None:
+        conn, self.conn = self.conn, None
+        if conn is not None:
+            with suppress(Exception):
+                conn.close()
 
 
 def verified_api_client(

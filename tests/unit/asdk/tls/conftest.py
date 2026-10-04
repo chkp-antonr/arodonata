@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+from contextlib import ExitStack
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -61,8 +62,9 @@ def server_factory(certs):
         return server
 
     yield make
-    for server in servers:
-        server.close()
+    with ExitStack() as stack:  # every server is closed even if one close() fails its thread assertion
+        for server in servers:
+            stack.callback(server.close)
 
 
 @pytest.fixture
