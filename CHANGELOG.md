@@ -8,7 +8,25 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 via [commitizen](https://commitizen-tools.github.io/commitizen/) — do not
 hand-edit released sections, only the `[Unreleased]` section above them.
 
-## [Unreleased]
+## v1.12.0 (2026-10-03)
+
+### Feat
+
+- **asdk**: key the RateLimiter by MDS member, refresh domains in parallel, page cache listings by 500 (#19)
+- **reports**: change report evidence with SmartConsole numbering, live numbering for owned sessions and MCP change_report (#14)
+- **rulebase**: RulebaseSource read contract, SmartConsole-numbered facade and MCP cache path (v2 phase 3) (#13)
+- **rulebase**: per-domain snapshot, session-aware refresh, SmartConsole numbering (v2 phase 2) (#12)
+- **rulebase**: complete, named, atomic rulebase cache (v2 phase 1) (#11)
+- **api**: page task-based query commands (show-changes) in api_query (#10)
+
+### Fix
+
+- **asdk**: SID prefix at DEBUG only; mask SIDs in Check Point messages (#22)
+- **asdk**: renew a held RateLimiter slot's lock row until release (#20)
+- **mcp**: hide the SDK's per-request "Terminating session" log below debug (#18)
+- report the object-cache warm-up in arodonata_init; quieter throttled-login logs; clean Ctrl+C (#17)
+- cache the Global domain UID; bound arodonata-mcp shutdown (#16)
+- **cache**: get_domains refreshes only the domain list; warm an empty object cache in the background (#15)
 
 ### Fixed
 

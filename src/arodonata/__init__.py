@@ -25,7 +25,7 @@ Example:
     await engine.dispose()
 """
 
-__version__ = "1.11.0"
+__version__ = "1.12.0"
 __author__ = "Anton Razumov"
 __license__ = "MIT"
 
