@@ -3,10 +3,12 @@
 cpapi's api_query fetched every page inside one call and checked nothing across pages. Here every page is checked
 against the previous one. An object can come twice for two reasons: Check Point swapped two objects with equal names
 at a page boundary between requests, which hides the other one, so the repeat is dropped and the few objects just
-before the page are read again to recover it (spec D3a); or a publish between pages shifted offsets (an insert or a
-delete before the cursor), which a changed `total` or a final count other than `total` catches. A failed check restarts
-the listing once from the caller's offset, and a second failure fails the query instead of returning duplicates or
-gaps.
+before the page are read again to recover it (spec D3a); or a publish between pages shifted offsets. A changed
+`total` or a final count of distinct objects other than `total` catches the publishes that shift the boundary. An
+insert and a delete before the cursor that cancel out shift nothing and read like a slightly older snapshot; the
+cache's freshness stamp is taken before the listing, so the next incremental refresh picks them up. A failed check
+restarts the listing once from the caller's offset, and a second failure fails the query instead of returning
+duplicates or gaps.
 """
 
 from __future__ import annotations
@@ -164,8 +166,20 @@ async def _reread_window(
     """Re-read the objects just before `page_offset` and return those whose uid is not in `seen` (spec D3a).
 
     An unsuccessful read is returned as the failed query (a dict); a read that is not a listing page or has another
-    `total` raises _Shifted.
+    `total` raises _Shifted. A window that would start at or before a caller's offset above 0 is not read (no
+    objects recovered), so the final count decides.
     """
+    if offset > 0 and page_offset - _TIE_WINDOW <= offset:
+        # The position just before the caller's offset was never read and can hold another object with the same name
+        # as the one at the window's start; a window starting at the caller's offset could "recover" it in place of
+        # the hidden one: a success with the wrong set. Read nothing; if an object is missing, the final count
+        # restarts the listing. A window starting later only borders positions already read, and from offset 0
+        # there is nothing before the window.
+        log().debug(
+            f"{command}: equal names swapped at the page boundary at offset {page_offset}; the window would start "
+            f"at the caller's offset {offset}, not re-read"
+        )
+        return []
     w_offset = max(offset, page_offset - _TIE_WINDOW)
     limit = page_offset - w_offset
     log().debug(

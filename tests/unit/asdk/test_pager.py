@@ -161,21 +161,52 @@ async def test_the_window_is_the_ten_objects_just_before_the_page():
     assert script.calls == [(0, 15), (15, 15), (5, 10)]
 
 
-async def test_the_window_starts_at_the_callers_offset():
-    page1 = _explicit(["u10", "u11", "A"], start=10, total=16)
-    page2 = _explicit(["A", "u14", "u15"], start=13, total=16)
-    window = _explicit(["u10", "u11", "B"], start=10, total=16)
+async def test_with_a_callers_offset_the_window_still_reads_the_ten_objects_before_the_page():
+    # Caller offset 10, page two at 21: the window (11..20) starts after the caller's offset, so it is read.
+    page1 = _page(10, 11, 24)
+    page2 = _explicit(["u20", "u22", "u23"], start=21, total=24)
+    window = _explicit([f"u{i}" for i in range(11, 20)] + ["u21"], start=11, total=24)
     script = Script(page1, page2, window)
+
+    result = await _run(script, offset=10, page_size=11)
+
+    assert result["success"] is True
+    assert [o["uid"] for o in result["data"]] == [f"u{i}" for i in range(10, 24)]
+    assert script.calls == [(10, 11), (21, 11), (11, 10)]
+
+
+async def test_a_window_that_would_start_exactly_at_the_callers_offset_is_not_read():
+    # Caller offset 10, page two at 20: the window would be 10..19, and a tie between 9 (never read) and 10 could
+    # bring in the object at 9. So nothing is re-read: the count is one short and the listing restarts.
+    page1 = _page(10, 10, 23)
+    page2 = _explicit(["u19", "u21", "u22"], start=20, total=23)
+    script = Script(page1, page2, page1, _page(20, 3, 23))
+
+    result = await _run(script, offset=10, page_size=10)
+
+    assert result["success"] is True
+    assert [o["uid"] for o in result["data"]] == [f"u{i}" for i in range(10, 23)]
+    assert script.calls == [(10, 10), (20, 10), (10, 10), (20, 10)]  # no window call, then the restart
+
+
+async def test_a_window_that_would_reach_before_the_callers_offset_is_not_read():
+    # Clamped to the caller's offset, the window would hold G from before that offset in place of the hidden B and
+    # "recover" G, a success with the wrong set. So nothing is re-read: the count is one short and the listing restarts.
+    page1 = _explicit(["H", "u11", "A"], start=10, total=16)
+    page2 = _explicit(["A", "u14", "u15"], start=13, total=16)
+    clean2 = _explicit(["B", "u14", "u15"], start=13, total=16)
+    script = Script(page1, page2, page1, clean2)
 
     result = await _run(script, offset=10)
 
     assert result["success"] is True
-    assert [o["uid"] for o in result["data"]] == ["u10", "u11", "A", "B", "u14", "u15"]
-    assert script.calls == [(10, 3), (13, 3), (10, 3)]
+    assert [o["uid"] for o in result["data"]] == ["H", "u11", "A", "B", "u14", "u15"]
+    assert script.calls == [(10, 3), (13, 3), (10, 3), (13, 3)]  # no window call, then the restart
 
 
-async def test_a_swap_wider_than_the_window_is_caught_by_the_count_and_restarts():
-    # The window brings back only objects already listed (B sat further back than it reaches): one object short.
+async def test_a_window_that_swaps_back_is_caught_by_the_count_and_restarts():
+    # The window request puts A before B again, so B stays hidden and the window brings back only objects already
+    # listed: the final count is one short.
     page1 = _explicit(["u0", "u1", "A"], start=0, total=6)
     page2 = _explicit(["A", "u4", "u5"], start=3, total=6)
     window = _explicit(["u0", "u1", "A"], start=0, total=6)
