@@ -1243,38 +1243,17 @@ class LoginCoordinator:
         system_sid, system_ip = await self.login(mgmt_name, "", force=False, _skip_prefetch=True)
         system_slot = await self.mds_host(mgmt_name, "")
 
-        # Fetch domain info using system login
-        # Retry once if session expired during the fetch
-        max_attempts = 2
-        for attempt in range(max_attempts):
-            async with self._rate_limiter.acquire(system_slot):
-                response = await self._transport.api_call(
-                    server_ip=system_ip,
-                    sid=system_sid,
-                    command="show-domains",
-                    payload={"details-level": "full"},
-                    port=server_config.port,
-                )
-
-            # Check for session errors - retry with fresh login
-            if response.get("code") in SESSION_ERROR_CODES and attempt < max_attempts - 1:
-                log().debug(f"Session expired while fetching domains for '{mgmt_name}:{domain}', retrying...")
-                system_sid, system_ip = await self.login(mgmt_name, "", force=True, _skip_prefetch=True)
-                continue
-
-            break
-
-        # response always assigned due to max_attempts=2
-        if not response.get("success"):  # type: ignore
-            log().warning(f"API call failed for '{mgmt_name}:{domain}': {response.get('message', 'Unknown error')}")  # type: ignore
-            return server_config.server_ip
-
-        response_data = response.get("data")  # type: ignore
-        if response_data is None:
-            log().warning(f"No data in response for '{mgmt_name}:{domain}', using primary IP")
-            return server_config.server_ip
-
-        domains_data = self._domains_objects_from_response(response_data)
+        # Ask for this one domain by name (`show-domain`), never for the whole list: an unpaged `show-domains`
+        # sees only the first 50 domains (Backlog #19). Global is never a `show-domain(s)` object; its layout
+        # comes from `show-global-domain` below.
+        domains_data: list[Any] = []
+        if domain != GLOBAL_DOMAIN_NAME:
+            fetched, system_sid, system_ip = await self._fetch_domain_object(
+                mgmt_name, domain, system_sid, system_ip, server_config.port, system_slot
+            )
+            if fetched is None:
+                return server_config.server_ip
+            domains_data = fetched
 
         # Which member hosts each server matters to the login gate; a SmartCenter
         # has no members and would just refuse the command.
@@ -1300,13 +1279,54 @@ class LoginCoordinator:
             global_mdss=global_mdss,
         )
 
+    async def _fetch_domain_object(
+        self,
+        mgmt_name: str,
+        domain: str,
+        system_sid: str,
+        system_ip: str,
+        port: int | None,
+        system_slot: str,
+    ) -> tuple[list[Any] | None, str, str]:
+        """`show-domain` for one domain on the system session: (objects, sid, ip), objects None on failure.
+
+        Retries once with a fresh system login if the session expired; returns the SID and IP in use afterwards.
+        """
+        max_attempts = 2
+        response: dict[str, Any] = {}
+        for attempt in range(max_attempts):
+            async with self._rate_limiter.acquire(system_slot):
+                response = await self._transport.api_call(
+                    server_ip=system_ip,
+                    sid=system_sid,
+                    command="show-domain",
+                    payload={"name": domain, "details-level": "full"},
+                    port=port,
+                )
+            if response.get("code") in SESSION_ERROR_CODES and attempt < max_attempts - 1:
+                log().debug(f"Session expired while fetching domain '{mgmt_name}:{domain}', retrying...")
+                system_sid, system_ip = await self.login(mgmt_name, "", force=True, _skip_prefetch=True)
+                continue
+            break
+
+        if not response.get("success"):
+            log().warning(f"API call failed for '{mgmt_name}:{domain}': {response.get('message', 'Unknown error')}")
+            return None, system_sid, system_ip
+        response_data = response.get("data")
+        if response_data is None:
+            log().warning(f"No data in response for '{mgmt_name}:{domain}', using primary IP")
+            return None, system_sid, system_ip
+        return self._domains_objects_from_response(response_data), system_sid, system_ip
+
     @staticmethod
     def _domains_objects_from_response(response_data: Any) -> list[Any]:
-        """`show-domains` returns {"objects": [...], "total": N, ...}; tolerate a bare list too."""
+        """Domain objects from `show-domain` (one object) or `show-domains` ({"objects": [...]}, or a bare list)."""
         if isinstance(response_data, list):
             return response_data
         if isinstance(response_data, dict):
-            return response_data.get("objects", [])
+            if "objects" in response_data:
+                return response_data["objects"]
+            return [response_data] if "name" in response_data else []
         return []
 
     async def _fetch_mds_ips(

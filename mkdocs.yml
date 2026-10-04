@@ -2,7 +2,7 @@ site_name: Arodonata docs
 site_url: https://chkp-antonr.github.io/arodonata/
 repo_url: https://github.com/chkp-antonr/arodonata
 repo_name: chkp-antonr/arodonata
-edit_uri: blob/master/docs/
+edit_uri: blob/master_v1/docs/
 
 exclude_docs: |
   _*_/*
