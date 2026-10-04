@@ -1005,7 +1005,7 @@ async def test_collect_objects_by_type_success(db):
     assert client.api_query.await_args.kwargs["command"] == "show-hosts"
 
 
-async def test_collect_objects_by_type_pages_by_500(db):
+async def test_collect_objects_by_type_pages_by_the_cache_page_size(db):
     client = make_client()
     client.api_query.return_value = ApiQueryResult(success=True, objects=[])
     service = make_service(db, client)
@@ -1014,7 +1014,7 @@ async def test_collect_objects_by_type_pages_by_500(db):
         await service._collect_objects_by_type("mgmt1", "dmn1", object_type)
 
     payloads = [c.kwargs["payload"] for c in client.api_query.await_args_list]
-    assert payloads == [{"limit": 500}] * 4
+    assert payloads == [{"limit": 300}] * 4
     assert len({id(p) for p in payloads}) == 4  # a fresh dict per call: cpapi mutates the payload
 
 

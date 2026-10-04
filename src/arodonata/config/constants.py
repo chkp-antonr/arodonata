@@ -84,10 +84,15 @@ DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS: Final[int] = 5  # seconds
 # point of view*; overlapping ensure calls, other processes, long tasks and keepalives
 # can still take every slot of a member.
 DEFAULT_CONCURRENT_LIMIT: Final[int] = 4
-# Page size for the cache's list fetches (show-hosts, show-gateways-and-servers, show-domains, ...): Check
-# Point's maximum, instead of cpapi's api_query default of 50. Every page pays a round trip; on the home lab
-# a 12 150-object domain loaded in 68.4 s at 500 vs 79.1 s at 50 (findings 2026-10-03), more on remote labs.
-CACHE_QUERY_PAGE_SIZE: Final[int] = 500
+# Page size of every api_query listing (asdk/pager.py) when the caller sends no `limit`; a caller's `limit` is
+# honoured up to QUERY_MAX_PAGE_SIZE, Check Point's maximum. Each page is its own call and holds a RateLimiter slot
+# only for that page, so other callers of the member get in between pages. 300, not 500: at `details-level full`
+# a page of 500 already takes several seconds (Anton, 2026-10-04, Backlog #21); every page pays a round trip, so
+# far below that (cpapi's 50) costs time (home lab: a 12 150-object domain in 68.4 s at 500 vs 79.1 s at 50).
+QUERY_PAGE_SIZE: Final[int] = 300
+QUERY_MAX_PAGE_SIZE: Final[int] = 500
+# The page size the caches pass explicitly (objects, gateways and servers, domains, MDS members).
+CACHE_QUERY_PAGE_SIZE: Final[int] = QUERY_PAGE_SIZE
 DEFAULT_LOGIN_BACKOFF: Final[int] = 5  # seconds
 DEFAULT_LOGIN_RETRIES: Final[int] = 8
 # How long a caller waits for a free RateLimiter concurrency slot (asdk/rate_limiter.py)
@@ -203,6 +208,8 @@ __all__ = [
     "DEFAULT_LOGIN_THROTTLE_INITIAL_SECONDS",
     "DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS",
     "CACHE_QUERY_PAGE_SIZE",
+    "QUERY_MAX_PAGE_SIZE",
+    "QUERY_PAGE_SIZE",
     "SQLITE_BUSY_TIMEOUT_SECONDS",
     "DEFAULT_CONCURRENT_LIMIT",
     "DEFAULT_LOGIN_BACKOFF",

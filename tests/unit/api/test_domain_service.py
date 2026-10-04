@@ -318,8 +318,8 @@ async def test_domain_list_and_members_are_fetched_in_pages_of_500():
     await service._populate_mdm_domains("mgmt1", is_mdm=True)
 
     by_command = {c.kwargs["command"]: c.kwargs.get("payload") for c in api_client.api_query.await_args_list}
-    assert by_command["show-domains"] == {"limit": 500}
-    assert by_command["show-mdss"] == {"limit": 500}
+    assert by_command["show-domains"] == {"limit": 300}
+    assert by_command["show-mdss"] == {"limit": 300}
 
 
 @pytest.mark.asyncio
