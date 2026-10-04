@@ -41,10 +41,11 @@ class RateLimiter:
     A held slot's row is renewed every third of its TTL until release, so a
     request that outlasts the TTL (a publish task, a long single call) keeps it.
 
-    Waiters for one host are served in arrival order within this process: a caller that finds others
-    waiting queues behind them, only the longest waiter sweeps the slots, and a release wakes it at
-    once. A caller that releases after a page and asks again (asdk/pager.py) therefore lets the waiter
-    in first. Slots freed by other processes are found by the longest waiter's polling sweep.
+    Waiters for one host are served in arrival order within this limiter (one per client): a caller
+    that finds others waiting queues behind them, only the longest waiter sweeps the slots, and a
+    release wakes it at once. A caller that releases after a page and asks again (asdk/pager.py)
+    therefore lets the waiter in first. Slots freed by other processes or other limiters are found by
+    the longest waiter's polling sweep.
 
     Example:
         limiter = RateLimiter(concurrent_limit=4)
@@ -170,7 +171,12 @@ class RateLimiter:
             return None
         await in_process.acquire()  # unlocked -> returns without suspending
 
-        lock = await lock_manager.try_acquire_lock(lock_key, ttl)
+        try:
+            lock = await lock_manager.try_acquire_lock(lock_key, ttl)
+        except BaseException:
+            # A database error or a cancel mid-attempt must not leave the slot taken in this process.
+            in_process.release()
+            raise
         if lock is None:
             in_process.release()
             return None

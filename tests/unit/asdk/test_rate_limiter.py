@@ -902,3 +902,111 @@ async def test_a_short_call_gets_a_slot_while_long_listings_page_through_every_s
     await asyncio.gather(*listings)
 
     assert finished_when_served == [0]
+
+
+class _FailOnceLockManager(FakeLockManager):
+    """The first slot attempt fails like a busy or dropped database; later ones behave normally."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed = False
+
+    async def try_acquire_lock(self, lock_key: str, ttl: int):
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("database is locked")
+        return await super().try_acquire_lock(lock_key, ttl)
+
+
+async def test_a_failed_slot_attempt_does_not_leave_the_slot_taken_in_this_process():
+    limiter, _ = _make_limiter(concurrent_limit=1, lock_manager=_FailOnceLockManager())
+
+    with pytest.raises(RuntimeError, match="database is locked"):
+        async with limiter.acquire("10.0.0.1", timeout=1):
+            pass
+
+    async with asyncio.timeout(2), limiter.acquire("10.0.0.1", timeout=1):
+        pass
+    assert limiter._waiters == {}
+
+
+class _HangOnceLockManager(FakeLockManager):
+    """The first slot attempt hangs in the database until its task is cancelled."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hanging = asyncio.Event()
+
+    async def try_acquire_lock(self, lock_key: str, ttl: int):
+        if not self.hanging.is_set():
+            self.hanging.set()
+            await asyncio.Event().wait()  # only cancellation ends this
+        return await super().try_acquire_lock(lock_key, ttl)
+
+
+async def test_a_cancel_during_a_slot_attempt_does_not_leave_the_slot_taken_in_this_process():
+    lm = _HangOnceLockManager()
+    limiter, _ = _make_limiter(concurrent_limit=1, lock_manager=lm)
+
+    async def acquire_once():
+        async with limiter.acquire("10.0.0.1", timeout=5):
+            pass
+
+    task = asyncio.create_task(acquire_once())
+    await lm.hanging.wait()
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    async with asyncio.timeout(2), limiter.acquire("10.0.0.1", timeout=1):
+        pass
+    assert limiter._waiters == {}
+
+
+class _OtherProcessHoldsSlot1(FakeLockManager):
+    """slot_1's row is held by another process (always busy); one chosen attempt on it stalls on `gate`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.slot_1_calls = 0
+        self.stall_on_call = 0
+        self.stalled = asyncio.Event()
+        self.gate = asyncio.Event()
+
+    async def try_acquire_lock(self, lock_key: str, ttl: int):
+        if lock_key.endswith(":slot_1"):
+            self.slot_1_calls += 1
+            if self.slot_1_calls == self.stall_on_call:
+                self.stalled.set()
+                await self.gate.wait()
+            return None
+        return await super().try_acquire_lock(lock_key, ttl)
+
+
+async def test_a_release_during_the_heads_sweep_is_not_lost(monkeypatch):
+    """The head has already passed the freed slot when the release lands; it must re-sweep at once, not after its backoff."""
+    lm = _OtherProcessHoldsSlot1()
+    limiter, _ = _make_limiter(concurrent_limit=2, lock_manager=lm)
+    monkeypatch.setattr(limiter, "_get_slot_number", lambda server_ip: 0)  # every sweep: slot_0, then slot_1
+    # slot_1 attempts: 1 fast path, 2 head at once, 3/4/5 after 0.1/0.2/0.4 s backoff. Stall the 5th:
+    # the head's next backoff is then 0.8 s, so only the wake-up can explain a prompt acquisition.
+    lm.stall_on_call = 5
+    holder, release = await _hold_only_slot(limiter)  # takes slot_0 (free, first in the sweep)
+    loop = asyncio.get_running_loop()
+    got_at: list[float] = []
+
+    async def waiter():
+        async with limiter.acquire("10.0.0.1", timeout=10):
+            got_at.append(loop.time())
+
+    task = asyncio.create_task(waiter())
+    async with asyncio.timeout(5):
+        await lm.stalled.wait()  # the head is mid-sweep: slot_0 seen busy, now on slot_1
+    release.set()
+    await holder  # slot_0 released and the head woken while its sweep is still running
+    sweep_ends_at = loop.time()
+    lm.gate.set()
+    async with asyncio.timeout(5):
+        await task
+
+    assert got_at[0] - sweep_ends_at < 0.4
