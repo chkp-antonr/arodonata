@@ -56,3 +56,16 @@ def otel_spans():
     exporter.clear()
     yield exporter
     set_trace_modules(None)
+
+
+@pytest.fixture(autouse=True)
+def isolate_tls_state(monkeypatch, tmp_path):
+    """No unit test reads or writes the real ~/.local/state trust store or inherits TLS env vars."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    for name in (
+        "ARODONATA_TLS_TRUST",
+        "ARODONATA_TLS_FINGERPRINTS",
+        "ARODONATA_TLS_KNOWN_HOSTS_PATH",
+        "ARODONATA_LAB",
+    ):
+        monkeypatch.delenv(name, raising=False)
