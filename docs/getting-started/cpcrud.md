@@ -7,8 +7,8 @@ same template is safe and converges to a no-op (`unchanged`/`reuse`, zero
 `create`).
 
 See [`CPCRUDService`](../api/arodonata/cpcrud/service.md) for the full API
-surface, and [`examples/06_crud_operations.py`](https://github.com/chkp-antonr/arodonata/blob/master/examples/06_crud_operations.py)
-/ [`examples/README_CRUD.md`](https://github.com/chkp-antonr/arodonata/blob/master/examples/README_CRUD.md)
+surface, and [`examples/06_crud_operations.py`](https://github.com/chkp-antonr/arodonata/blob/master_v1/examples/06_crud_operations.py)
+/ [`examples/README_CRUD.md`](https://github.com/chkp-antonr/arodonata/blob/master_v1/examples/README_CRUD.md)
 for a runnable end-to-end script.
 
 ## Template format

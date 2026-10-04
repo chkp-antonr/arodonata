@@ -838,6 +838,51 @@ async def test_prefetch_fetches_from_api_and_caches():
     coord.login.assert_awaited()
 
 
+async def test_prefetch_asks_only_for_the_one_domain_by_name():
+    """Backlog #19: the cache-miss path needs one domain, so it asks `show-domain` for it by name.
+
+    `show-domains` without paging returned only the first 50 domains; a domain past them fell back to the
+    configured server IP, and a login through the wrong MDS member is refused (lab, 2026-10-04: HTTP 400).
+    """
+    cache = AsyncMock()
+    cache.get_domain.return_value = None
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", port=None, is_mdm=False)
+    transport = AsyncMock()
+    transport.api_call.return_value = {
+        "success": True,
+        "data": {"name": "Domain77", "uid": "u77", "servers": [{"active": True, "ipv4-address": "10.0.0.77"}]},
+    }
+    coord = _make_coordinator(cache=cache, registry=registry, transport=transport)
+    coord.login = AsyncMock(return_value=("sys-sid", "10.0.0.1"))
+
+    ip = await coord._prefetch_domain_server_ip("mgmt1", "Domain77")
+
+    assert ip == "10.0.0.77"
+    (call,) = transport.api_call.await_args_list
+    assert call.kwargs["command"] == "show-domain"
+    assert call.kwargs["payload"] == {"name": "Domain77", "details-level": "full"}
+    assert cache.upsert_domain.await_args.args[0].active_ip == "10.0.0.77"
+
+
+async def test_prefetch_unknown_domain_falls_back_to_the_configured_ip():
+    cache = AsyncMock()
+    cache.get_domain.return_value = None
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", port=None, is_mdm=False)
+    transport = AsyncMock()
+    transport.api_call.return_value = {
+        "success": False,
+        "code": "generic_err_object_not_found",
+        "message": "Requested object [Nope] not found",
+    }
+    coord = _make_coordinator(cache=cache, registry=registry, transport=transport)
+    coord.login = AsyncMock(return_value=("sys-sid", "10.0.0.1"))
+
+    assert await coord._prefetch_domain_server_ip("mgmt1", "Nope") == "10.0.0.1"
+    cache.upsert_domain.assert_not_awaited()
+
+
 async def test_prefetch_api_failure_returns_primary_ip():
     cache = AsyncMock()
     cache.get_domain.return_value = None
@@ -955,7 +1000,7 @@ async def test_prefetch_records_the_hosting_member_from_show_domains_and_show_md
     ip = await coord._prefetch_domain_server_ip("mgmt1", "General")
 
     assert ip == "10.0.0.9"
-    assert [c.kwargs["command"] for c in transport.api_call.await_args_list] == ["show-domains", "show-mdss"]
+    assert [c.kwargs["command"] for c in transport.api_call.await_args_list] == ["show-domain", "show-mdss"]
     saved = cache.upsert_domain.await_args.args[0]
     assert (saved.active_mds, saved.active_mds_ip, saved.active_server) == ("mds2", "10.0.0.2", "General_srv")
     assert (saved.standby_mdss, saved.standby_ips, saved.standby_servers) == ("mds1", "10.0.0.8", "General_sby")
@@ -973,7 +1018,7 @@ async def test_prefetch_skips_show_mdss_on_a_smartcenter():
 
     await coord._prefetch_domain_server_ip("mgmt1", "General")
 
-    assert [c.kwargs["command"] for c in transport.api_call.await_args_list] == ["show-domains"]
+    assert [c.kwargs["command"] for c in transport.api_call.await_args_list] == ["show-domain"]
 
 
 async def test_prefetch_tolerates_a_failed_show_mdss():
@@ -1589,7 +1634,6 @@ async def test_prefetch_global_resolves_active_mds_ip():
     cache.get_domain.return_value = None
     transport = AsyncMock()
     transport.api_call.side_effect = [
-        {"success": True, "data": {"objects": []}},  # show-domains (Global is never here)
         _mdss_response(),  # show-mdss: mds1 -> 10.0.0.1, mds2 -> 10.0.0.2
         {
             "success": True,
@@ -1608,10 +1652,9 @@ async def test_prefetch_global_resolves_active_mds_ip():
 
     assert ip == "10.0.0.2", "Must resolve to active MDS IP (mds2) for read-write, not configured standby (10.0.0.1)"
     assert [c.kwargs["command"] for c in transport.api_call.await_args_list] == [
-        "show-domains",
         "show-mdss",
         "show-global-domain",
-    ]
+    ]  # Global is never a `show-domain(s)` object: no call for it
     saved = cache.upsert_domain.await_args.args[0]
     assert saved.domain_name == GLOBAL_DOMAIN_NAME
     assert saved.active_ip == "10.0.0.2"
@@ -1872,10 +1915,9 @@ async def test_system_domain_helper_calls_take_the_configured_hosts_slot():
     await coord._prefetch_domain_server_ip("home", GLOBAL_DOMAIN_NAME)
 
     assert [c.kwargs["command"] for c in transport.api_call.await_args_list] == [
-        "show-domains",
         "show-mdss",
         "show-global-domain",
-    ]
+    ]  # Global is never a `show-domain(s)` object: no call for it
     assert set(_slot_keys(rl)) == {CONFIGURED_IP}
     assert {c.kwargs["server_ip"] for c in transport.api_call.await_args_list} == {"10.9.9.9"}
 

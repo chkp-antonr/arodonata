@@ -1,7 +1,7 @@
 # Examples
 
 Narrated walkthroughs of the runnable scripts in the top-level
-[`examples/`](https://github.com/chkp-antonr/arodonata/tree/master/examples)
+[`examples/`](https://github.com/chkp-antonr/arodonata/tree/master_v1/examples)
 directory. Each page below embeds the actual current script contents via
 `pymdownx.snippets`, so what you read here always matches what's in the
 repo.

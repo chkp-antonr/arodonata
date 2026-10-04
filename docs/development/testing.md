@@ -55,7 +55,7 @@ assignment is an estimate — publishes, `revert-to-revision` and whole-server
 rebuilds dominate, not test count — so when the numbers say a bucket is
 lopsided, rebalance with a `git mv`; the marker follows the directory.
 
-Only one integration run at a time: see [Contributing](../../CONTRIBUTING.md)
+Only one integration run at a time: see [Contributing](https://github.com/chkp-antonr/arodonata/blob/master_v1/CONTRIBUTING.md)
 for the run lock and the reasons behind it.
 
 ### Configuration
