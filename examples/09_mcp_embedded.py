@@ -31,8 +31,8 @@ from arodonata.mcp import ArodonataMCPSettings, create_asgi_app, create_mcp_serv
 
 
 def _settings_from_env() -> ArodonataSettings:
-    # ArodonataSettings() only auto-reads plain env vars; API_KEY_VARS indirection (like
-    # examples/04_smart_refresh.py) must be resolved by the caller before construction.
+    # API_KEY_VARS indirection resolved explicitly, like examples/04_smart_refresh.py (a bare
+    # ArodonataSettings() resolves it too, when API_KEYS is not set).
     api_key_vars = os.getenv("API_KEY_VARS", "").split(",")
     api_keys = ",".join(os.getenv(var, "") for var in api_key_vars)
     return ArodonataSettings(

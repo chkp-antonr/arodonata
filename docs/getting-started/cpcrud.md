@@ -65,9 +65,7 @@ Supported `type` values: `host`, `network`, `address-range`,
 `https-rule`. Rule types need `layer` (or `package` for `nat-rule`); non-rule
 types don't.
 
-The full JSON Schema lives at `ops/checkpoint_ops_schema.json` and is what
-`validate()` (see [Embedding in applications](#embedding-in-applications))
-checks templates against.
+The full JSON Schema ships with the package as `arodonata/cpcrud/checkpoint_ops_schema.json` (`src/arodonata/cpcrud/` in the repo) and is what `validate()` (see [Embedding in applications](#embedding-in-applications)) checks templates against.
 
 ## Conflict policies
 
@@ -172,7 +170,7 @@ files itself — see the [Configuration Guide](../configuration/index.md)).
 | `ARODONATA_CPCRUD_AUTO_NAME_PREFIX_SVC_UDP` | `cpcrud_auto_name_prefix_svc_udp` | `"UDP_"` | Naming prefix for auto-created UDP service dependencies |
 | `ARODONATA_CPCRUD_AUTO_NAME_PREFIX_SVC_ICMP` | `cpcrud_auto_name_prefix_svc_icmp` | `"ICMP_"` | Naming prefix for auto-created ICMP service dependencies |
 | `ARODONATA_CPCRUD_REFRESH_MODE` | `cpcrud_refresh_mode` | `"invalidate"` | Post-publish cache refresh: `invalidate` \| `force` |
-| `ARODONATA_CPCRUD_SCHEMA_PATH` | `cpcrud_schema_path` | `""` (bundled schema) | Override path to `checkpoint_ops_schema.json` |
+| `ARODONATA_CPCRUD_SCHEMA_PATH` | `cpcrud_schema_path` | `""` (schema shipped in the package) | Override path to `checkpoint_ops_schema.json` |
 
 `cpcrud_refresh_mode` is also overridable per call via `apply(..., refresh=...)`.
 

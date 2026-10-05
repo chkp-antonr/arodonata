@@ -23,6 +23,7 @@ _ENV_VARS = [
     "MGMT_NAMES",
     "MGMT_SERVERS",
     "API_KEYS",
+    "API_KEY_VARS",
     "USERNAME",
     "PASSWORD",
     "MGMT_IP",
@@ -101,6 +102,31 @@ class TestCommaSeparatedParsing:
     def test_api_keys_list_empty(self):
         settings = ArodonataSettings(api_keys="")
         assert settings.api_keys_list == []
+
+
+class TestApiKeyVarsIndirection:
+    def test_bare_construction_resolves_api_key_vars_in_order(self, monkeypatch):
+        monkeypatch.setenv("API_KEY_VARS", "A_KEY, B_KEY")
+        monkeypatch.setenv("A_KEY", "val-a")
+        monkeypatch.setenv("B_KEY", "val-b")
+        assert ArodonataSettings().api_keys_list == ["val-a", "val-b"]
+
+    def test_api_keys_env_wins_over_api_key_vars(self, monkeypatch):
+        monkeypatch.setenv("API_KEYS", "direct")
+        monkeypatch.setenv("API_KEY_VARS", "A_KEY")
+        monkeypatch.setenv("A_KEY", "val-a")
+        assert ArodonataSettings().api_keys_list == ["direct"]
+
+    def test_explicit_kwarg_wins_over_api_key_vars(self, monkeypatch):
+        monkeypatch.setenv("API_KEY_VARS", "A_KEY")
+        monkeypatch.setenv("A_KEY", "val-a")
+        assert ArodonataSettings(api_keys="explicit").api_keys_list == ["explicit"]
+
+    def test_unset_named_var_is_dropped(self, monkeypatch):
+        monkeypatch.setenv("API_KEY_VARS", "A_KEY,B_KEY")
+        monkeypatch.setenv("A_KEY", "val-a")
+        monkeypatch.delenv("B_KEY", raising=False)
+        assert ArodonataSettings().api_keys_list == ["val-a"]
 
 
 class TestCredentialModeValidation:
