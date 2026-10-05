@@ -309,6 +309,30 @@ class LiveStateReader:
                 return SectionInfo(uid=item.get("uid", ""), name=item.get("name", ""), layer_uid=layer_uid)
         return None
 
+    async def get_last_rule_in_section(
+        self, layer_uid: str, section_uid: str, layer_type: str, *, mgmt: str, domain: str
+    ) -> RuleMatch | None:
+        """The last rule of a section, from a read of its LAYER: show-*-rulebase refuses a section uid (Backlog #40).
+
+        A section split across pages comes once per page here, so the last part holds its last rule.
+        """
+        command = _RULEBASE_SHOW_COMMAND[layer_type]
+        data = await _paginate_rulebase(
+            self._client,
+            mgmt,
+            command,
+            domain,
+            {"uid": layer_uid, "details-level": "full", "use-object-dictionary": True},
+        )
+        parts = [i for i in data.get("rulebase", []) if isinstance(i, dict) and i.get("uid") == section_uid]
+        rules = _flatten_rulebase(parts[-1].get("rulebase", []) or []) if parts else []
+        if not rules:
+            return None
+        last = _dereference_rule(rules[-1], _uid_to_name_map(data))
+        return RuleMatch(
+            uid=last.get("uid", ""), name=last.get("name", ""), rule_number=last.get("rule-number", 0), raw=last
+        )
+
     async def get_last_rule(self, scope_uid: str, layer_type: str, *, mgmt: str, domain: str) -> RuleMatch | None:
         command = _RULEBASE_SHOW_COMMAND[layer_type]
         data = await _paginate_rulebase(
@@ -703,6 +727,11 @@ class HybridStateReader:
 
     async def get_last_rule(self, scope_uid: str, layer_type: str, *, mgmt: str, domain: str) -> RuleMatch | None:
         return await self._live.get_last_rule(scope_uid, layer_type, mgmt=mgmt, domain=domain)
+
+    async def get_last_rule_in_section(
+        self, layer_uid: str, section_uid: str, layer_type: str, *, mgmt: str, domain: str
+    ) -> RuleMatch | None:
+        return await self._live.get_last_rule_in_section(layer_uid, section_uid, layer_type, mgmt=mgmt, domain=domain)
 
     async def find_rules_by_traffic(
         self,

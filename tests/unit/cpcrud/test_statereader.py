@@ -1810,3 +1810,87 @@ async def test_hybrid_get_nat_rule_by_key_always_delegates_to_live():
     rule = await reader.get_nat_rule_by_key("Standard", {"name": "hide-nat"}, mgmt="m", domain="d")
     assert rule is not None and rule.uid == "n1"
     client.cache.get_objects_by_name.assert_not_awaited()
+
+
+def _section_page(items, total):
+    return ApiCallResult(
+        success=True,
+        data={
+            "rulebase": items,
+            "total": total,
+            "to": total,
+            "objects-dictionary": [{"uid": "any-u", "name": "Any"}],
+        },
+        message="",
+        code="",
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_last_rule_in_section_reads_the_layer_and_dereferences():
+    """Backlog #40: the section's rules come from the LAYER read (Check Point refuses a section uid)."""
+    rules = [
+        {"type": "access-rule", "uid": "r5", "name": "web", "rule-number": 5, "source": ["u1"]},
+        {
+            "type": "access-rule",
+            "uid": "r6",
+            "name": "Cleanup rule",
+            "rule-number": 6,
+            "source": ["any-u"],
+            "destination": ["any-u"],
+            "service": ["any-u"],
+        },
+    ]
+    items = [
+        {"type": "access-section", "uid": "s-1", "name": "S1", "rulebase": [rules[0]]},
+        {"type": "access-section", "uid": "s-c", "name": "Cleanup", "rulebase": [rules[1]]},
+    ]
+    client = FakeClient({"show-access-rulebase": _section_page(items, 6)})
+    last = await LiveStateReader(client).get_last_rule_in_section("layer-u1", "s-c", "access", mgmt="m", domain="d")
+    assert last is not None and (last.uid, last.rule_number) == ("r6", 6)
+    assert last.raw["source"] == ["Any"]  # dereferenced through the objects dictionary
+    assert client.calls[0][1]["uid"] == "layer-u1"
+
+
+@pytest.mark.asyncio
+async def test_get_last_rule_in_section_takes_the_last_part_of_a_split_section():
+    items_p1 = [
+        {
+            "type": "access-section",
+            "uid": "s-4",
+            "name": "S4",
+            "rulebase": [{"type": "access-rule", "uid": "r1", "rule-number": 1}],
+        }
+    ]
+    items_p2 = [
+        {
+            "type": "access-section",
+            "uid": "s-4",
+            "name": "S4",
+            "rulebase": [{"type": "access-rule", "uid": "r2", "rule-number": 2}],
+        }
+    ]
+    page1 = ApiCallResult(success=True, data={"rulebase": items_p1, "total": 2, "to": 1}, message="", code="")
+    page2 = ApiCallResult(success=True, data={"rulebase": items_p2, "total": 2, "to": 2}, message="", code="")
+    client = FakeClient({"show-access-rulebase": [page1, page2]})
+    last = await LiveStateReader(client).get_last_rule_in_section("layer-u1", "s-4", "access", mgmt="m", domain="d")
+    assert last is not None and last.uid == "r2"
+
+
+@pytest.mark.asyncio
+async def test_get_last_rule_in_section_of_an_empty_section_is_none():
+    items = [{"type": "access-section", "uid": "s-e", "name": "E", "rulebase": []}]
+    client = FakeClient({"show-access-rulebase": _section_page(items, 0)})
+    assert await LiveStateReader(client).get_last_rule_in_section("l", "s-e", "access", mgmt="m", domain="d") is None
+
+
+@pytest.mark.asyncio
+async def test_get_last_rule_in_section_failed_read_raises():
+    with pytest.raises(StateReadError):
+        await LiveStateReader(FakeClient({})).get_last_rule_in_section("l", "s", "access", mgmt="m", domain="d")
+
+
+@pytest.mark.asyncio
+async def test_hybrid_get_last_rule_in_section_delegates_to_live():
+    client = FakeClient({"show-access-rulebase": _section_page([], 0)})
+    assert await HybridStateReader(client).get_last_rule_in_section("l", "s", "access", mgmt="m", domain="d") is None

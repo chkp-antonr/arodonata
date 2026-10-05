@@ -61,6 +61,9 @@ class StateReader(Protocol):
         self, section_ref: str, layer_uid: str, layer_type: str, *, mgmt: str, domain: str
     ) -> SectionInfo | None: ...
     async def get_last_rule(self, scope_uid: str, layer_type: str, *, mgmt: str, domain: str) -> RuleMatch | None: ...
+    async def get_last_rule_in_section(
+        self, layer_uid: str, section_uid: str, layer_type: str, *, mgmt: str, domain: str
+    ) -> RuleMatch | None: ...
     async def find_rules_by_traffic(
         self,
         scope_uid: str,

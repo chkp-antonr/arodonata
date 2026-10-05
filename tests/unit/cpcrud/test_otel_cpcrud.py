@@ -31,8 +31,7 @@ def cpcrud_service():
     client = FakeClient()
     client.settings = types.SimpleNamespace()
     service = CPCRUDService(client)
-    service._reader = FakeReader()  # plan() must not hit the API
-    service._planner._reader = service._reader
+    service._new_reader = FakeReader  # plan() must not hit the API
     return service
 
 

@@ -55,6 +55,9 @@ class FakeReader:
     async def get_last_rule(self, scope_uid, layer_type, *, mgmt, domain):
         return None
 
+    async def get_last_rule_in_section(self, layer_uid, section_uid, layer_type, *, mgmt, domain):
+        return None
+
     async def find_nat_rules_by_tuple(self, package, tup, *, mgmt, domain):
         return []
 
