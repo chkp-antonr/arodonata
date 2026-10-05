@@ -83,6 +83,7 @@ class ArodonataSettings(BaseSettings):
     api_keys: SecretStr = Field(
         default_factory=lambda: SecretStr(""),
         description="Comma-separated API keys (actual values)",
+        validate_default=True,
     )
 
     # Credential-based authentication (alternative to api_keys)
@@ -364,12 +365,13 @@ class ArodonataSettings(BaseSettings):
     @field_validator("api_keys", mode="before")
     @classmethod
     def resolve_api_keys(cls, v: Any, info: ValidationInfo) -> SecretStr:
-        """Resolve API keys with priority: explicit parameter > API_KEY_VARS > API_KEYS > default.
+        """Resolve API keys with priority: explicit parameter or API_KEYS > API_KEY_VARS > default.
 
         This allows both automatic environment reading AND explicit override support,
-        plus support for the API_KEY_VARS indirection pattern.
+        plus support for the API_KEY_VARS indirection pattern. The field validates its
+        default too, so a bare ``ArodonataSettings()`` resolves API_KEY_VARS.
         """
-        if isinstance(v, SecretStr):
+        if isinstance(v, SecretStr) and v.get_secret_value().strip():
             return v
 
         # If explicit value provided (non-empty string), use it

@@ -17,8 +17,8 @@ _SCHEMA_FILENAME = "checkpoint_ops_schema.json"
 
 
 def _default_schema_path() -> Path:
-    # ops/checkpoint_ops_schema.json relative to the package root (src/arodonata)
-    return Path(__file__).resolve().parents[3] / "ops" / _SCHEMA_FILENAME
+    # Shipped next to this module, inside the wheel
+    return Path(__file__).resolve().parent / _SCHEMA_FILENAME
 
 
 @lru_cache(maxsize=1)

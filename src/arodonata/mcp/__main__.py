@@ -80,10 +80,8 @@ def build_settings(args: argparse.Namespace):  # -> tuple[ArodonataMCPSettings, 
         if v is not None
     }
 
-    # ArodonataSettings.api_keys has no validation_alias, so pydantic-settings only ever populates it from a
-    # bare (case-insensitive) "API_KEYS" env var or an explicit constructor kwarg -- never from API_KEY_VARS,
-    # because its own before-validator (which does know about API_KEY_VARS) only runs when the field is given
-    # some value. Resolve the indirection ourselves, the way examples/05_rulebase_queries.py does, and only pass
+    # ArodonataSettings resolves API_KEY_VARS itself, but a bare (case-insensitive) "API_KEYS" env var wins
+    # there. The server gives API_KEY_VARS precedence: resolve the indirection ourselves and only pass
     # api_keys= when API_KEY_VARS is actually set; otherwise pass nothing so a bare API_KEYS env var (or
     # credential-mode login, which does not need api_keys at all) keeps working exactly as it does today. Never
     # log the resolved key values.

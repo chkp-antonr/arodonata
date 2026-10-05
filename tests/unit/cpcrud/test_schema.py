@@ -220,3 +220,15 @@ def test_access_rule_add_with_section_relative_position_valid():
         },
     ]
     assert validate_template(doc) == []
+
+
+def test_default_schema_ships_inside_the_package():
+    """The wheel packages only src/arodonata, so the default schema must live there."""
+    from pathlib import Path
+
+    import arodonata
+    from arodonata.cpcrud.schema import _default_schema_path
+
+    path = _default_schema_path()
+    assert path.is_file()
+    assert path.resolve().is_relative_to(Path(arodonata.__file__).resolve().parent)
