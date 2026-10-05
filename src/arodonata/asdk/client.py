@@ -401,9 +401,18 @@ class AMgmtClient:
         Each page runs through _execute_with_retry like any api_call: it takes its own RateLimiter slot
         and releases it after the page, so other callers of the member get in between pages; a session
         that expires mid-listing re-logs in and retries that page only. The caller's `limit` is the page
-        size (QUERY_PAGE_SIZE when absent or below 1, at most QUERY_MAX_PAGE_SIZE) and `offset` the starting point;
-        the caller's payload is not modified. On success `data` is the list of objects, as with cpapi's
-        api_query.
+        size (QUERY_PAGE_SIZE, 300, when absent or below 1, at most QUERY_MAX_PAGE_SIZE, 500) and `offset` the
+        starting point; the caller's payload is not modified. On success `data` is the list of objects, as with
+        cpapi's api_query.
+
+        show-access-rulebase, show-nat-rulebase, show-https-rulebase and show-threat-rulebase are paged by rules
+        instead, through rulebase/pager.py: pages of the caller's `limit` rules (RULEBASE_PAGE_SIZE, 100, when
+        absent or below 1, and at most that), `offset` the starting rule; a section split by a page boundary is
+        merged into one entry with all its rules, and on success `data` is the list of top-level rulebase entries
+        (sections, rules, place-holders).
+
+        A listing that keeps changing under the cursor is restarted once from `offset`, then fails with code
+        `paging_inconsistent` instead of returning duplicates or gaps.
         """
         self._ensure_not_closed()
         if command in _RULEBASE_QUERY_COMMANDS:

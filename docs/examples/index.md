@@ -8,7 +8,7 @@ repo.
 
 | Page | Script | Covers |
 |---|---|---|
-| [Basic Queries](01-basic-queries.md) | `01_basic_queries.py` | Domains, gateways, hosts, networks |
+| [Basic Queries](01-basic-queries.md) | `01_basic_queries.py` | Domains, hosts, networks |
 | [Search](02-search.md) | `02_search.py` | Name-pattern search, IP lookup |
 | [Gateway Relationships](03-gateway-relationships.md) | `03_gateway_relationships.py` | Cluster topology |
 | [Smart Refresh](04-smart-refresh.md) | `04_smart_refresh.py` | Populating/refreshing the cache — run this first |
@@ -20,5 +20,4 @@ repo.
 | [Embedded MCP](09-mcp-embedded.md) | `09_mcp_embedded.py` | Serve MCP from a FastAPI app with app-specific tools |
 | [Change Report Evidence](10-change-report-evidence.md) | `10_change_report_evidence.py` | Pending (live numbers), provisional and published change evidence showing every rule and object status |
 
-Run [Smart Refresh](04-smart-refresh.md) first against a fresh database —
-every other example reads from a cache that needs to be populated first.
+Run [Smart Refresh](04-smart-refresh.md) first against a fresh database to warm the cache. The other examples don't strictly need it: with the client's default `cache_mode="smart"` a read loads any domain that has nothing cached yet, but that first read then pays for the full load.

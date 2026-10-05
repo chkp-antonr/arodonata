@@ -1,11 +1,6 @@
 # Architecture Overview
 
-Arodonata uses a **ports-and-adapters** (hexagonal) architecture: business
-logic in `arodonata.core` and `arodonata.api` never imports a database driver or
-an HTTP client directly — it depends on `Port` protocols
-([`ApiPort`](../api/arodonata/ports/api_port.md),
-[`CachePort`](../api/arodonata/ports/cache_port.md)), and concrete
-`arodonata.adapters` implementations are wired in at construction time.
+Arodonata uses a **ports-and-adapters** (hexagonal) architecture: business logic in `arodonata.core` never imports a database driver or an HTTP client directly — it depends on `Port` protocols ([`ApiPort`](../api/arodonata/ports/api_port.md), [`CachePort`](../api/arodonata/ports/cache_port.md)), and concrete `arodonata.adapters` implementations are wired in at construction time. `ArodonataClient` (`arodonata.api.client`) is the composition root: it takes the application's SQLAlchemy `AsyncEngine` and builds the concrete `asdk` and `cache` classes itself.
 
 ```mermaid
 flowchart TB

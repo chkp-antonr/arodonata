@@ -34,8 +34,9 @@ management_servers:
 
           - type: "access-rule"
             layer: "Network"
-            position: "bottom"         # int (absolute), "top"/"bottom", or
-                                        # {top|bottom|above|below: "rule-name"}
+            position: "bottom"         # int (absolute), "top"/"bottom",
+                                        # {top|bottom: "section name or uid"}, or
+                                        # {above|below: "rule name or uid"}
             data:
               name: "cpcrud-example-rule"
               source: ["example-host-1"]
@@ -97,23 +98,18 @@ print(report.summary)                                # {"create": 2, "unchanged"
   applies conflict policy, and computes each action's `Outcome`
   (`create`/`update`/`reuse`/`unchanged`/`delete`/`conflict`/`error`) without
   writing anything.
+- A lookup that fails while planning (an API or cache read error, not "not found") never reads as "absent": that operation becomes one `error` action with no command, message `lookup failed, nothing planned (re-plan to retry): …`. If the domain's head (its last published session) can't be read, every operation in that domain becomes such an `error` action, since the plan couldn't be checked for staleness later.
 - `apply()` accepts either a `Plan` (from `plan()`) or a template directly
   (in which case it plans first). It always yields `SSEEvent`s as it works,
   followed by a final `ApplyReport` as the last item.
 - `apply(..., dry_run=True)` walks the plan and yields the same shape of
   events/report without calling any write API — useful for previewing what
   would happen.
-- Other `apply()` flags: `force` (skip the "domain published since plan"
-  staleness guard), `no_publish`/`discard` (control end-of-session publish
-  behavior), `session_name`/`session_description` (label the dedicated
-  session cpcrud opens per domain).
+- Other `apply()` flags: `force` (skip the staleness guard, which otherwise refuses a domain with `plan_stale` when it was published since the plan or its head can't be read at apply), `no_publish`/`discard` (control end-of-session publish behavior), `session_name`/`session_description` (label the dedicated session cpcrud opens per domain).
 
 ## Retrying partial failures
 
-Some outcomes are retryable: `locked` (session lock held by someone else),
-`error` (a write failed), and `skipped_dependency` (an action's dependency
-failed first). After a pass, `ApplyReport.remaining` holds a `Plan` scoped to
-just those actions (actions in domains whose plan went stale are excluded).
+Some outcomes are retryable: `locked` (session lock held by someone else), `error` (a write failed, or a delete was blocked because its where-used check failed or found references), and `skipped_dependency` (an action's dependency failed first). After a pass, `ApplyReport.remaining` holds a `Plan` scoped to just those actions (actions in domains whose plan went stale are excluded).
 
 Pass `retry_remaining=N` to `apply()` to retry automatically, up to `N`
 extra passes, invalidating each affected domain's cache before every retry:
@@ -123,6 +119,8 @@ async for event in client.cpcrud.apply(template, retry_remaining=2):
     ...
 report = event
 ```
+
+A plan-time `error` (`lookup failed, nothing planned …`) carries no command, so `retry_remaining` replays it unchanged and it fails the same way on every pass; call `plan()` again to retry the lookup.
 
 Passes are merged with `fold_reports()`: the final report's `results` and
 `summary` reflect the *last* attempt for each action, not a sum across

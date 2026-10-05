@@ -6,9 +6,7 @@
   (`src/arodonata/api/client.py`) — the main developer entry point. Wraps
   caching, rate limiting, and session management behind helper methods like
   `get_hosts()`, `get_networks()`, `get_access_rules()`.
-- **[`AMgmtClient`](../api/arodonata/asdk/client.md)** (`src/arodonata/asdk/`) —
-  the lower-level session-oriented client: login, keepalive, and raw
-  `api-query`/`show-*` calls against a single management server.
+- **[`AMgmtClient`](../api/arodonata/asdk/client.md)** (`src/arodonata/asdk/`) — the lower-level session-oriented client: login, keepalive, and raw `api_call`/`api_query` calls against the management servers of its `ServerRegistry` (each call names its `mgmt_name`). `api_query` pages listings itself, one call per page (`asdk/pager.py`; `show-*-rulebase` by rules through `rulebase/pager.py`).
 
 ## Ports
 

@@ -124,10 +124,10 @@ class ArodonataSettings(BaseSettings):
         ge=1,
         description=(
             "Seconds a caller waits for a free concurrency slot (RateLimiter.acquire) "
-            "before giving up. Must comfortably exceed how long another caller can "
-            "legitimately hold a slot during its own login retry-with-backoff sequence, "
-            "or concurrent callers fail fast under real server-side throttling even "
-            "though the server would have accepted a login moments later."
+            "before giving up. Size it for queueing behind other callers of the same "
+            "MDS member: a call that waits for a task (publish, revert) holds its slot "
+            "for the whole task, while listings release it between pages and a login "
+            "holds it for one attempt only, never across its retries or a throttle wait."
         ),
         validation_alias="ARODONATA_RATE_LIMIT_SLOT_TIMEOUT",
     )

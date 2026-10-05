@@ -1,9 +1,10 @@
-"""Query domains, hosts, and networks from the Arodonata cache.
+"""Query domains, hosts, and networks through the Arodonata cache.
 
 Run: uv run examples/01_basic_queries.py
 Requires: DATABASE_URL, MGMT_NAMES, MGMT_SERVERS, and API_KEY_VARS set in
-your environment (see docs/configuration/index.md), with the cache already
-populated (see docs/examples/04-smart-refresh.md for how to populate it).
+your environment (see docs/configuration/index.md). With the default smart
+cache mode an empty domain is loaded on first use; running
+docs/examples/04-smart-refresh.md first warms the cache.
 
 Environment variables (examples/.env.lib):
     DATABASE_URL=sqlite+aiosqlite:///./_tmp/arodonata.db

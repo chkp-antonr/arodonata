@@ -10,7 +10,7 @@
 <br/>
 [![Async](https://img.shields.io/badge/Async-Ready-D500F9.svg?style=for-the-badge)](https://docs.python.org/3/library/asyncio.html)
 <br/>
-**A high-performance, async-first Python library for Check Point security management operations with intelligent PostgreSQL caching and automatic session handling.**
+**A high-performance, async-first Python library for Check Point security management operations with intelligent database caching (PostgreSQL or SQLite) and automatic session handling.**
 
 [Key Features](#-key-features) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Architecture](#-architecture) • [Documentation](#-documentation)
 
@@ -26,9 +26,9 @@ Standard Check Point API client scripts often struggle with connection overhead,
 
 ### Why Arodonata?
 
-* ⚡ **High-Concurrency Execution**: Fully asynchronous execution using `aiohttp` and `asyncio`, letting you execute thousands of queries simultaneously.
+* ⚡ **High-Concurrency Execution**: An `asyncio` API over the Check Point SDK, whose blocking calls run in worker threads, so many domains and servers are queried in parallel while a per-MDS-member `RateLimiter` (`concurrent_limit`, default 4) keeps each server within its limits.
 * 🔐 **Zero-Config Session Handling**: Transparent authentication, session pooling, and auto-recovery/re-login if a session expires.
-* 💾 **Intelligent DB Caching**: Blazing-fast local caching powered by **PostgreSQL** (with JSONB support) and SQLAlchemy.
+* 💾 **Intelligent DB Caching**: Fast local caching via SQLAlchemy on **PostgreSQL** (JSONB, recommended) or **SQLite**.
 * 🔄 **Smart Refresh (`show-changes`)**: Avoid full cache rebuilds. The cache tracks and pulls only incremental modifications from Check Point management logs.
 * 🛡️ **Strict Type-Safety**: 100% type hints validated with **Pydantic v2** models, catching structural errors before runtime.
 
@@ -38,7 +38,7 @@ Standard Check Point API client scripts often struggle with connection overhead,
 
 | Feature | Description | Benefit |
 | :--- | :--- | :--- |
-| **Async Core** | Fully non-blocking network calls | Scales to enterprise deployments with zero thread overhead |
+| **Async Core** | `asyncio` API; the synchronous Check Point SDK runs in worker threads | Parallel work across domains and servers without blocking the event loop |
 | **Session Cache** | Automatic database-backed session token persistence | Bypasses repetitive logins, preserving firewall resources |
 | **Multi-Domain (MDM)** | Native domain resolution and context propagation | Operates across complex tenant environments seamlessly |
 | **Rate Limiting** | Active per-MDS-member request gating and database locks | Prevents overloading firewalls during large-scale tasks |
@@ -49,11 +49,11 @@ Standard Check Point API client scripts often struggle with connection overhead,
 
 ## 📦 Installation
 
-Arodonata requires **Python 3.13+** and a **PostgreSQL 12+** database for caching.
+Arodonata requires **Python 3.13+** and a database for caching: **PostgreSQL 12+** (recommended) or **SQLite**.
 
 Choose the package extra that fits your project:
 
-* **`arodonata`**: Core library for Python automation, scripts, and applications (high-performance async client, session pooling, PostgreSQL caching, and declarative CPCRUD engine).
+* **`arodonata`**: Core library for Python automation, scripts, and applications (high-performance async client, session pooling, database caching, and declarative CPCRUD engine).
 * **`arodonata[mcp]`**: Core library + Model Context Protocol (MCP) server support, including the `arodonata-mcp` CLI executable and `arodonata.mcp` ASGI integration for FastAPI/Starlette.
 
 ### Adding to Your Project
@@ -84,19 +84,19 @@ pip install "arodonata[mcp]"
 [project]
 dependencies = [
     # Core library for Check Point automation & caching:
-    "arodonata>=1.11.0",
+    "arodonata>=1.14.0",
 
     # OR if you need the MCP server / embedded ASGI tools:
-    # "arodonata[mcp]>=1.11.0",
+    # "arodonata[mcp]>=1.14.0",
 ]
 ```
 
 #### In `requirements.txt`
 
 ```text
-arodonata>=1.11.0
+arodonata>=1.14.0
 # or
-arodonata[mcp]>=1.11.0
+arodonata[mcp]>=1.14.0
 ```
 
 ### Local Development / Contributing
@@ -104,7 +104,7 @@ arodonata[mcp]>=1.11.0
 ```bash
 git clone https://github.com/chkp-antonr/arodonata.git
 cd arodonata
-uv sync --dev
+uv sync --all-extras --dev
 ```
 
 ---
@@ -144,11 +144,10 @@ async def main():
     database_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
     engine = create_async_engine(database_url)
     
-    settings = ArodonataSettings(
-        mgmt_names=os.getenv("MGMT_NAMES", "mgmt_srv"),
-        mgmt_servers=os.getenv("MGMT_SERVERS", "10.0.0.1"),
-        api_keys=os.getenv("PRIMARY_MGMT_KEY", "mock-key"),
-    )
+    # Reads MGMT_NAMES, MGMT_SERVERS and API_KEY_VARS from the process environment
+    # (load your .env first, e.g. with python-dotenv); each variable named in
+    # API_KEY_VARS holds the key of the server at the same position.
+    settings = ArodonataSettings()
 
     # 2. Initialize the client
     client = ArodonataClient(engine=engine, settings=settings)
@@ -159,7 +158,7 @@ async def main():
             servers = client.get_mgmt_names()
             print(f"Connected to management nodes: {servers}")
 
-            # Query hosts from the primary server (read from cache or live)
+            # Query hosts from the primary server (a live, paged API query)
             if servers:
                 target_server = servers[0]
                 print(f"Retrieving hosts from {target_server}...")
@@ -269,7 +268,7 @@ Arodonata employs a structured **Ports and Adapters** (Hexagonal) architecture t
 
 * **API Facade (`ArodonataClient`)**: Main developer entry point. Integrates database caching, rate-limiting, and network calls transparently.
 * **ASDK Core (`AMgmtClient`)**: Manages individual sessions, keeps SIDs alive, and maps requests to the official Check Point API.
-* **Cache Engine (`CacheRepository`)**: Manages object serializations, handles TTL checking, and stores entities as JSONB configurations in PostgreSQL.
+* **Cache Engine (`CacheRepository`)**: Manages object serializations, handles TTL checking, and stores entities as JSON columns (JSONB on PostgreSQL, JSON on SQLite).
 
 ---
 
@@ -281,7 +280,7 @@ Arodonata can serve any MCP client (Claude Code, Claude Desktop, Cursor, Antigra
 
 * **Cached Queries**: `show_hosts`, `show_networks`, `show_groups`, `show_gateways_and_servers`, `show_domains`, `show_object`.
 * **Rulebases**: `show_access_rulebase`, `show_nat_rulebase`, `show_https_rulebase`, `show_threat_rulebase` with formats: `markdown` (clean table), `model_friendly`, or `raw` JSON.
-* **Native & Sync Operations**: `arodonata_init` (server & domain overview), `search_objects` (cross-domain search), `refresh_objects` (smart/incremental cache re-sync), `refresh_rulebases`, and `api_call` (read-only by default, gated write mode).
+* **Native & Sync Operations**: `arodonata_init` (server & domain overview), `search_objects` (cross-domain search), `refresh_objects` (object cache re-sync, mode `skip`/`check`/`force`/`incremental`, default `force`), `refresh_rulebases`, and `api_call` (read-only by default, gated write mode).
 * **Live Compatibility**: ~40 live tools mirroring `@chkp/quantum-management-mcp`.
 * **Declarative CPCRUD (Opt-In)**: `cpcrud_validate`, `cpcrud_plan`, `cpcrud_apply` (dry-run by default), `cpcrud_inverse` for reversible Policy-as-Code changes.
 
@@ -361,7 +360,7 @@ We welcome pull requests! To get set up for local development:
 2. Install dependencies:
 
     ```bash
-    uv sync --dev
+    uv sync --all-extras --dev
     ```
 
 3. Format and check code quality:

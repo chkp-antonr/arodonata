@@ -1,8 +1,6 @@
 # Arodonata
 
-**A high-performance, async-first Python library for Check Point security
-management operations with intelligent PostgreSQL caching and automatic
-session handling.**
+**A high-performance, async-first Python library for Check Point security management operations with intelligent database caching and automatic session handling.**
 
 Arodonata wraps the Check Point Management API in an async engine backed by a
 database cache layer, so scripts that would otherwise re-authenticate and
@@ -41,11 +39,11 @@ cache and only pull incremental changes.
 
 ## Why Arodonata?
 
-- **High-concurrency execution** — fully asynchronous via `aiohttp`/`asyncio`.
+- **High-concurrency execution** — an `asyncio` API over the Check Point SDK, whose blocking calls run in worker threads; the `RateLimiter` bounds concurrency per MDS member (`concurrent_limit`, default 4).
 - **Idempotent CPCRUD Policy-as-Code** — Plan-then-Execute engine with conflict resolution for objects & rules.
 - **Zero-config session handling** — transparent authentication, session
   pooling, and auto-recovery on session expiry.
-- **Intelligent DB caching** — PostgreSQL + SQLAlchemy, with JSONB storage.
+- **Intelligent DB caching** — PostgreSQL (JSONB) or SQLite via SQLAlchemy.
 - **Smart refresh (`show-changes`)** — pulls only incremental changes
   instead of rebuilding the cache from scratch.
 - **Strict type safety** — Pydantic v2 models throughout.

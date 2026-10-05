@@ -23,7 +23,7 @@ graph TD
     
     subgraph "Execution & Transaction Layer"
         Service --> Executor["executor.py\n(Executor)"]
-        Executor --> LoginCoord["LoginCoordinator\n(Per-mgmt/domain session pool)"]
+        Executor --> Session["Dedicated session\n(per domain per apply)"]
         Executor --> PositionHelper["position_helper.py\n(Rule positioning helper)"]
     end
 ```
@@ -50,14 +50,14 @@ Core decision engine. Transforms normalized template operations into a determini
 
 - Evaluates `NameConflictPolicy` (`UPDATE` | `ERROR`) and `IpConflictPolicy` (`REUSE` | `CREATE_NEW` | `ERROR`).
 - Calculates field diffs via `differ.py`.
-- Determines the exact outcome (`CREATE`, `UPDATE`, `REUSE`, `UNCHANGED`, `DELETE`, `CONFLICT`).
-- Generates `DomainStamp` records for each target domain to track `last_publish_session` hashes.
+- Determines the exact plan-time outcome (`CREATE`, `UPDATE`, `REUSE`, `UNCHANGED`, `DELETE`, `CONFLICT`, `ERROR`); apply adds `LOCKED`, `DRIFTED`, `SKIPPED_DEPENDENCY` and `PLAN_STALE`.
+- Records a `DomainStamp` per target domain holding its `last_publish_session` UID (the domain's head session, read before its lookups); a domain whose head cannot be read gets no stamp and its operations become `ERROR`.
 
 ### 5. `Executor` (`src/arodonata/cpcrud/executor.py`)
 
 Performs live write operations.
 
-- Obtains dedicated write sessions per `(mgmt_name, domain_name)` via `LoginCoordinator.acquire_write_session()`.
+- Opens one dedicated write session per `(mgmt_name, domain_name)` for each apply via `ArodonataClient.create_dedicated_session()` and logs it out (`logout_sid`) when that domain is done, whether it published, discarded or failed.
 - Validates that domain session stamps have not drifted (`PLAN_STALE` check).
 - Executes low-level API commands (`add-host`, `set-network`, `add-access-rule`, etc.).
 - Publishes or discards write sessions atomically upon completion.
@@ -80,25 +80,37 @@ sequenceDiagram
 
     App->>Service: plan(template)
     Service->>Planner: decide(doc)
-    Planner->>StateReader: fetch_object_state() / fetch_rule_state()
-    StateReader->>Mgmt: show-object / show-access-rulebase (Read-Only)
-    Mgmt-->>StateReader: Object details / Rule list
-    Planner->>Planner: Diff fields & calculate outcomes
+    loop For each target domain
+        Planner->>StateReader: get_last_publish_session()
+        StateReader->>Mgmt: show-last-published-session (Read-Only)
+        Mgmt-->>StateReader: Head session UID (the DomainStamp)
+        Planner->>StateReader: object and rule lookups
+        StateReader->>Mgmt: show-* and rulebase reads (Read-Only or object cache)
+        Mgmt-->>StateReader: Object details / Rule list
+        Planner->>Planner: Diff fields & calculate outcomes
+    end
     Planner-->>Service: Plan (with PlannedAction list & DomainStamps)
     Service-->>App: Plan object
 
     App->>Service: apply(plan)
     Service->>Executor: stream(plan)
-    Executor->>Mgmt: Login write session (session_name)
-    loop For each PlannedAction
-        Executor->>Mgmt: add-*/set-*/delete-* API command
-        Mgmt-->>Executor: Command result
-        Executor-->>App: yield SSEEvent
+    loop For each target domain
+        Executor->>StateReader: get_last_publish_session() unless force
+        StateReader->>Mgmt: show-last-published-session
+        Executor->>Mgmt: login dedicated session
+        loop For each PlannedAction
+            Executor->>Mgmt: add-*/set-*/delete-* API command
+            Mgmt-->>Executor: Command result
+            Executor-->>App: yield SSEEvent
+        end
+        Executor->>Mgmt: publish (or discard) session
+        Executor->>Mgmt: logout session
     end
-    Executor->>Mgmt: publish session
     Executor-->>Service: ApplyReport
     Service-->>App: yield ApplyReport
 ```
+
+The planner's lookups are `get_by_name`, `find_by_ip`, `get_rule_by_key`, `find_rules_by_traffic` and their siblings on the `StateReader`. At apply, a domain whose head is not its stamp (or cannot be read) is `PLAN_STALE` and nothing is written there; otherwise the executor opens a dedicated session with `ArodonataClient.create_dedicated_session`.
 
 ---
 
@@ -116,7 +128,7 @@ A head that cannot be read (including a failed or timed-out `show-last-published
 
 ### Failed Lookups
 
-A lookup that decides whether something already exists never reads a failed call as "not found": the name lookup (`show-<type>`, except Check Point's own "object not found"), the IP lookup (`show-objects`), the service port listing (`show-services-tcp`/`-udp`), every rulebase read (each page of `show-*-rulebase`) and `where-used` raise `StateReadError` when the call fails, including `paging_inconsistent`. The planner turns that into one `ERROR` action for the whole operation, with `lookup failed, nothing planned (re-plan to retry): …` as its message; neither the operation's auto-created dependencies nor the groups it names are planned, and a failed lookup of a group it names stops the object the same way. Nothing is created, updated or deleted for it, actions that depend on it are skipped (`skipped_dependency`), and the other operations of the template run as usual. At apply time a failed `where-used` blocks the delete (`delete blocked: …`). A retry pass (`retry_remaining`) re-runs the plan without re-planning, so it reports the same error; plan again to retry the lookup. An exception from the transport (a timeout, an unreachable server, a certificate mismatch) still aborts the whole plan, so nothing is written then either. A NAT rule addressed by key in a package that cannot be read is now an `ERROR` instead of "not found" (a delete used to report "already absent").
+A lookup that decides whether something already exists never reads a failed call as "not found": the name lookup (`show-<type>`, except Check Point's own "object not found"), the IP lookup (`show-objects`), the service port listing (`show-services-tcp`/`-udp`), every rulebase read (each page of `show-*-rulebase`) and `where-used` raise `StateReadError` when the call fails, including `paging_inconsistent`. The planner turns that into one `ERROR` action for the whole operation, with `lookup failed, nothing planned (re-plan to retry): …` as its message; neither the operation's auto-created dependencies nor the groups it names are planned, and a failed lookup of a group it names stops the object the same way. Nothing is created, updated or deleted for it, actions that depend on it are skipped (`skipped_dependency`), and the other operations of the template run as usual. At apply time a failed `where-used` blocks the delete (`delete blocked: …`). A retry pass (`retry_remaining`) re-runs the plan without re-planning, so it reports the same error; plan again to retry the lookup. An exception from the transport (a timeout, an unreachable server, a certificate mismatch) during a lookup still aborts the whole plan, so nothing is written then either; the head read is the exception, since `fetch_last_published_session` reports any failure as no record, so the domain's operations become `ERROR` as described above. A NAT rule addressed by key in a package that cannot be read is now an `ERROR` instead of "not found" (a delete used to report "already absent").
 
 ### Field Diffing (`differ.py`)
 
@@ -131,5 +143,5 @@ When an object exists, `differ.py` compares the normalized desired attributes ag
 
 Access and NAT rules in Check Point do not always have unique global names. `rule_identity.py` and `position_helper.py` handle rule identity and positional anchoring:
 
-1. **Rule Matching (`RuleMatch`)**: Matches rules based on rule names, rule numbers, or signature match (source, destination, service, action).
-2. **Positional Target**: `position_helper.py` converts abstract positioning options (`top`, `bottom`, `above`, `below`) into concrete Check Point API `position` structures required during rule creation or reordering.
+1. **Rule Matching (`RuleMatch`)**: An operation with a `key` matches by uid, then name, then rule number (`get_rule_by_key` / `get_nat_rule_by_key`). An `add` matches by traffic: access, HTTPS and threat-prevention rules by the order-independent (source, destination, service) tuple (action and name are not part of it), NAT rules by their positional (original source, destination, service, translated source, destination, service) tuple; when several rules match, the declared name wins, else the topmost.
+2. **Positional Target**: `position_helper.py` converts abstract positioning options (`top`, `bottom`, `above`, `below`) into concrete Check Point API `position` structures required during rule creation or reordering. `"bottom"` and `{bottom: section}` are cleanup-aware: when the layer's (or section's) last rule is an any/any/any rule they anchor `{above: <cleanup rule uid>}`, the section's last rule being read from its layer (`StateReader.get_last_rule_in_section`); see [Cleanup-rule-aware `bottom`](../user-guide/cpcrud.md#cleanup-rule-aware-bottom).

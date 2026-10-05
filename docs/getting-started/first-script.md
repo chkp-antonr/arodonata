@@ -13,16 +13,15 @@ from arodonata import ArodonataClient, ArodonataSettings
 
 
 async def main() -> None:
-    # 1. Create the database engine — Arodonata manages the engine's lifecycle
-    #    for you, but the calling app owns creating and disposing it.
+    # 1. Create the database engine — the calling app owns its lifecycle:
+    #    it creates the engine here and disposes it at the end.
     database_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
     engine = create_async_engine(database_url)
 
-    settings = ArodonataSettings(
-        mgmt_names=os.getenv("MGMT_NAMES", "mgmt1"),
-        mgmt_servers=os.getenv("MGMT_SERVERS", "10.0.0.1"),
-        api_keys=os.getenv("PRIMARY_MGMT_KEY", "mock-key"),
-    )
+    # 2. Read MGMT_NAMES, MGMT_SERVERS and API_KEY_VARS from the process
+    #    environment (load your .env first, e.g. with python-dotenv); each
+    #    variable named in API_KEY_VARS holds one server's API key.
+    settings = ArodonataSettings()
 
     client = ArodonataClient(engine=engine, settings=settings)
 
@@ -44,11 +43,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-This queries `get_hosts()` straight from the cache — nothing is populated in
-it yet on a fresh database, so the first run against an empty cache returns
-an empty list. See
-[`build_refresh_assets_cache`](../api/arodonata/api/client.md) and the
-[Examples](../examples/index.md) section for how to populate it.
+`get_hosts()` reads through the cache in the client's default `cache_mode="smart"`: a domain with nothing cached yet is loaded in full from the management server on first use, and a cached domain is reloaded only when it has been published since it was cached (checked at most once per TTL window). So the first run against a fresh database returns the server's hosts, it just takes longer. Pass `cache_mode="cache"` (to the call or to `ArodonataClient`) to read only what is already cached, without calling the API. To populate or refresh the cache up front, see [`refresh_objects`](../api/arodonata/api/client.md) and [Smart Refresh](../examples/04-smart-refresh.md).
 
 ## First run against a server
 
