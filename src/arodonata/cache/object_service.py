@@ -974,9 +974,9 @@ class ObjectService:
         record = await self.fetch_last_published_session(mgmt_name, domain_name)
         if record is None:
             return None
-        return await self._store_last_published_session(record)
+        return await self.store_last_published_session(record)
 
-    async def _store_last_published_session(self, record: LastPublishedSession) -> LastPublishedSession | None:
+    async def store_last_published_session(self, record: LastPublishedSession) -> LastPublishedSession | None:
         """Upsert a last-published-session record; None (logged) if the cache write fails."""
         try:
             await self._cache.upsert_last_published_session(record)
@@ -1123,7 +1123,7 @@ class ObjectService:
         Changed objects are re-fetched in full (show-object) — the diff is
         only a change list. Any unsafe condition falls back to the atomic
         full-domain reload. The baseline stamp advances only on success
-        (of either path).
+        (of either path), to the head read before the diff or the listing.
         """
         if await self._count_cached_objects(mgmt_name, domain_name) == 0:
             # A domain with a baseline stamp but zero (or partial) cached rows
@@ -1147,7 +1147,7 @@ class ObjectService:
             return
 
         try:
-            applied = await self._make_refresher().apply(mgmt_name, domain_name)
+            result = await self._make_refresher().apply(mgmt_name, domain_name)
         except FallbackToFull as exc:
             yield {
                 "message": (
@@ -1163,15 +1163,16 @@ class ObjectService:
             return
 
         yield {
-            "message": f"Incremental: {mgmt_name}/{domain_name} - {applied} change(s) applied",
+            "message": f"Incremental: {mgmt_name}/{domain_name} - {result.applied} change(s) applied",
             "mgmt_name": mgmt_name,
             "domain_name": domain_name,
             "status": "domain_incremental",
-            "count": applied,
+            "count": result.applied,
         }
-        # Success (including a rules-only publish with 0 in-scope changes):
-        # advance the freshness stamp so the next probe sees this domain fresh.
-        await self.refresh_last_published_session(mgmt_name, domain_name)
+        # Success (including a rules-only publish with 0 in-scope changes): advance the freshness stamp to the
+        # head read before the diff, so a publish after that read stays after the stamp (as D6 for the full refresh).
+        if result.head is not None:
+            await self.store_last_published_session(result.head)
 
     async def _refresh_domain(
         self,
@@ -1248,7 +1249,7 @@ class ObjectService:
 
         # Only a fully successful refresh may advance the freshness stamp.
         if head is not None:
-            await self._store_last_published_session(head)
+            await self.store_last_published_session(head)
 
     async def _collect_objects_by_type(
         self,

@@ -126,7 +126,7 @@ async def test_adds_are_refetched_and_upserted_from_full_object():
     cache = FakeCache()
     engine = make_engine(FakeApi(flat_response([change("u1")])), cache, fetcher)
 
-    applied = await engine.apply("m1", "d1")
+    applied = (await engine.apply("m1", "d1")).applied
 
     assert applied == 1
     assert fetcher.fetched == ["u1"]
@@ -151,7 +151,7 @@ async def test_deletes_are_deleted_without_refetch():
     cache = FakeCache()
     engine = make_engine(FakeApi(flat_response([change("u1", "delete")])), cache, fetcher)
 
-    applied = await engine.apply("m1", "d1")
+    applied = (await engine.apply("m1", "d1")).applied
 
     assert applied == 1
     assert cache.deleted == ["u1"]
@@ -163,7 +163,7 @@ async def test_refetch_not_found_becomes_delete():
     cache = FakeCache()
     engine = make_engine(FakeApi(flat_response([change("u1", "set")])), cache, fetcher)
 
-    applied = await engine.apply("m1", "d1")
+    applied = (await engine.apply("m1", "d1")).applied
 
     assert applied == 1
     assert cache.deleted == ["u1"]
@@ -174,7 +174,7 @@ async def test_same_uid_changed_twice_fetched_once():
     fetcher = FakeFetcher()
     engine = make_engine(FakeApi(flat_response([change("u1", "add"), change("u1", "set")])), FakeCache(), fetcher)
 
-    applied = await engine.apply("m1", "d1")
+    applied = (await engine.apply("m1", "d1")).applied
 
     assert fetcher.fetched == ["u1"]
     assert applied == 1
@@ -186,7 +186,7 @@ async def test_uid_deleted_then_readded_resolved_by_refetch():
     cache = FakeCache()
     engine = make_engine(FakeApi(flat_response([change("u1", "delete"), change("u1", "add")])), cache, fetcher)
 
-    applied = await engine.apply("m1", "d1")
+    applied = (await engine.apply("m1", "d1")).applied
 
     assert applied == 1
     assert [o.uid for o in cache.upserted] == ["u1"]
@@ -197,7 +197,7 @@ async def test_zero_changes_returns_zero_without_writes():
     cache = FakeCache()
     engine = make_engine(FakeApi(flat_response([])), cache)
 
-    assert await engine.apply("m1", "d1") == 0
+    assert (await engine.apply("m1", "d1")).applied == 0
     assert cache.upserted == [] and cache.deleted == []
 
 
@@ -206,6 +206,32 @@ async def test_special_domain_uses_empty_api_domain():
     engine = make_engine(api)
     await engine.apply("m1", "SMC User")
     assert api.calls[0]["domain"] == ""
+
+
+@pytest.mark.parametrize("changes", [[change("u1")], []], ids=["with-changes", "no-in-scope-changes"])
+async def test_apply_returns_the_head_read_before_the_diff(changes):
+    """The caller stores this head as the new stamp (Backlog #36), so it must predate the diff."""
+    heads = [_Baseline(datetime(2026, 7, 2), uid="sess-before"), _Baseline(datetime(2026, 7, 3), uid="sess-after")]
+
+    async def fetch_head(mgmt, domain):
+        return heads[0]
+
+    class PublishingApi(FakeApi):
+        async def show_changes(self, mgmt_name, **kwargs):
+            heads.pop(0)  # someone publishes right after the diff was read
+            return await super().show_changes(mgmt_name, **kwargs)
+
+    engine = make_engine(PublishingApi(flat_response(changes)), fetch_head=fetch_head)
+
+    result = await engine.apply("m1", "d1")
+
+    assert result.applied == len(changes)
+    assert result.head.uid == "sess-before"
+
+
+async def test_apply_returns_no_head_without_a_head_reader():
+    engine = make_engine(FakeApi(flat_response([])))
+    assert (await engine.apply("m1", "d1")).head is None
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +248,7 @@ async def test_out_of_scope_changes_are_ignored():
         fetcher,
     )
 
-    assert await engine.apply("m1", "d1") == 0
+    assert (await engine.apply("m1", "d1")).applied == 0
     assert fetcher.fetched == [] and cache.upserted == [] and cache.deleted == []
 
 
@@ -232,7 +258,7 @@ async def test_mixed_scope_applies_only_in_scope():
         FakeApi(flat_response([change("u1"), change("r1", "set", "access-rule")])), cache, FakeFetcher()
     )
 
-    assert await engine.apply("m1", "d1") == 1
+    assert (await engine.apply("m1", "d1")).applied == 1
     assert [o.uid for o in cache.upserted] == ["u1"]
 
 
@@ -247,7 +273,7 @@ async def test_refetched_type_out_of_scope_falls_back():
 async def test_cap_counts_only_in_scope_changes():
     entries = [change(f"u{i}") for i in range(3)] + [change(f"r{i}", "set", "access-rule") for i in range(10)]
     engine = make_engine(FakeApi(flat_response(entries)), FakeCache(), FakeFetcher(), max_changes=5)
-    assert await engine.apply("m1", "d1") == 3  # 3 in-scope <= cap despite 13 total
+    assert (await engine.apply("m1", "d1")).applied == 3  # 3 in-scope <= cap despite 13 total
 
 
 async def test_over_cap_falls_back():
@@ -350,7 +376,7 @@ async def test_dropped_out_of_scope_entry_does_not_trip_guard():
         },
     }
     engine = make_engine(FakeApi(response))
-    assert await engine.apply("m1", "d1") == 0
+    assert (await engine.apply("m1", "d1")).applied == 0
 
 
 async def test_unknown_legacy_change_type_in_scope_falls_back():
@@ -401,7 +427,7 @@ async def test_real_task_wrapped_diff_applies():
     cache = FakeCache()
     engine = make_engine(FakeApi(response), cache, FakeFetcher())
 
-    assert await engine.apply("m1", "d1") == 2
+    assert (await engine.apply("m1", "d1")).applied == 2
     assert [o.uid for o in cache.upserted] == ["u1"]
     assert cache.deleted == ["u2"]
 
@@ -463,7 +489,7 @@ async def test_a_modified_in_scope_object_wrapped_in_new_object_is_applied():
     cache = FakeCache()
     engine = make_engine(FakeApi(response), cache, FakeFetcher())
 
-    assert await engine.apply("m1", "d1") == 1
+    assert (await engine.apply("m1", "d1")).applied == 1
     assert [o.uid for o in cache.upserted] == ["u1"]
 
 
@@ -481,7 +507,7 @@ async def test_modified_out_of_scope_objects_wrapped_in_new_object_do_not_force_
     cache = FakeCache()
     engine = make_engine(FakeApi(response), cache, FakeFetcher())
 
-    assert await engine.apply("m1", "d1") == 1
+    assert (await engine.apply("m1", "d1")).applied == 1
     assert [o.uid for o in cache.upserted] == ["h1"]
 
 
@@ -496,5 +522,5 @@ async def test_the_real_r82_20_response_parses_every_in_scope_entry():
     cache = FakeCache()
     engine = make_engine(FakeApi({"success": True, "data": data}), cache, FakeFetcher())
 
-    assert await engine.apply("m1", "d1") == 10
+    assert (await engine.apply("m1", "d1")).applied == 10
     assert len({o.uid for o in cache.upserted}) == 10

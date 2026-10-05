@@ -44,7 +44,9 @@ log line-by-line instead of blocking until completion.
   default 500 — parse anomalies, re-fetch failures) falls back to the atomic
   full reload. Only changes to cached object kinds (hosts, networks, address
   ranges, groups) are applied; a rules-only publish just advances the
-  freshness baseline.
+  freshness baseline. The baseline stored is the domain's last-published
+  session read before the diff, so a publish while the diff is applied is
+  picked up by the next refresh.
 
 The same engine backs the `smart-fast` cache mode used by read helpers for objects. Rule reads (`get_*_rules`) do not refresh objects: they use the rulebase sync state (see [Rulebase refresh](#rulebase-refresh)) and refresh only explicitly named domains, on the named management servers or, when none is named, on the first configured one (an application that omits the server is assumed to have one).
 

@@ -10,19 +10,20 @@ by the canonical full-reload converter — diff payload bodies are never
 written to the cache. Any condition that would make the apply unsafe raises
 FallbackToFull; the caller performs an atomic full-domain reload instead.
 The engine never advances the LastPublishedSession baseline — callers do,
-and only on success.
+and only on success, with the head the engine read before the diff.
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from arodonata.core.change_processor import ChangeProcessor, ChangeType, ObjectChange, unwrap_change_entry
 from arodonata.logger import lazy_logger
 
 if TYPE_CHECKING:
-    from arodonata.cache.models import CPObject
+    from arodonata.cache.models import CPObject, LastPublishedSession
 
 log = lazy_logger("arodonata.core.incremental_refresh")
 
@@ -35,6 +36,19 @@ class FallbackToFull(Exception):
     """Incremental apply would be unsafe; the caller must do a full reload."""
 
 
+@dataclass(frozen=True)
+class IncrementalApplyResult:
+    """Outcome of a successful incremental apply.
+
+    `head` is the domain's last-published session read BEFORE `show-changes`, so a publish after that read
+    stays after the stamp the caller stores and reaches the cache through the next refresh. None when the
+    engine was built without `fetch_head`; the caller then stores no stamp.
+    """
+
+    applied: int
+    head: LastPublishedSession | None
+
+
 class IncrementalRefresher:
     """Applies a show-changes diff for one domain with re-fetch-in-full semantics."""
 
@@ -45,7 +59,7 @@ class IncrementalRefresher:
         cache: Any,
         fetch_full_object: Callable[[str, str, str], Awaitable[dict[str, Any] | None]],
         to_cpobject: Callable[[dict[str, Any], str, str], CPObject | None],
-        fetch_head: Callable[[str, str], Awaitable[Any]] | None = None,
+        fetch_head: Callable[[str, str], Awaitable[LastPublishedSession | None]] | None = None,
         in_scope_types: frozenset[str] = DEFAULT_IN_SCOPE_TYPES,
         max_changes: int = DEFAULT_MAX_CHANGES,
     ) -> None:
@@ -57,30 +71,32 @@ class IncrementalRefresher:
         self._in_scope_types = in_scope_types
         self._max_changes = max_changes
 
-    async def apply(self, mgmt: str, domain: str) -> int:
+    async def apply(self, mgmt: str, domain: str) -> IncrementalApplyResult:
         """Apply all in-scope changes since the stored baseline.
 
-        Returns the number of rows written (upserts + deletes); 0 means the
-        publish touched nothing the object cache holds. Raises FallbackToFull
-        whenever an incremental apply would be unsafe. Never advances the
-        baseline stamp — that is the caller's responsibility.
+        Returns the number of rows written (upserts + deletes; 0 means the
+        publish touched nothing the object cache holds) and the head read
+        before the diff. Raises FallbackToFull whenever an incremental apply
+        would be unsafe. Never advances the baseline stamp — that is the
+        caller's responsibility, with the returned head.
         """
         baseline = await self._cache.get_last_published_session(mgmt, domain)
         if baseline is None or not getattr(baseline, "published_time", None):
             raise FallbackToFull("no baseline session")
 
-        await self._require_forward_history(mgmt, domain, baseline)
+        head = await self._require_forward_history(mgmt, domain, baseline)
 
         response = await self._fetch_changes(mgmt, domain, baseline)
         changes = self._parse_in_scope(response)
         if not changes:
-            return 0
+            return IncrementalApplyResult(applied=0, head=head)
         if len(changes) > self._max_changes:
             raise FallbackToFull(f"too many changes ({len(changes)})")
 
         refetch_uids, deleted_uids = self._classify_changes(changes)
         to_upsert = await self._refetch_and_convert(mgmt, domain, refetch_uids, deleted_uids)
-        return await self._write_results(mgmt, domain, to_upsert, deleted_uids)
+        applied = await self._write_results(mgmt, domain, to_upsert, deleted_uids)
+        return IncrementalApplyResult(applied=applied, head=head)
 
     @staticmethod
     def _classify_changes(changes: list[ObjectChange]) -> tuple[list[str], set[str]]:
@@ -134,8 +150,8 @@ class IncrementalRefresher:
         log().debug(f"Incremental apply for {mgmt}/{domain}: {len(to_upsert)} upsert(s), {len(deleted_uids)} delete(s)")
         return applied
 
-    async def _require_forward_history(self, mgmt: str, domain: str, baseline: Any) -> None:
-        """Raise FallbackToFull unless the domain's head is later than the baseline.
+    async def _require_forward_history(self, mgmt: str, domain: str, baseline: Any) -> LastPublishedSession | None:
+        """Return the domain's head; raise FallbackToFull unless it is later than the baseline.
 
         A diff is a forward change list, so it only describes reality when the
         domain's head is a later revision than the one the cache was built from.
@@ -168,7 +184,7 @@ class IncrementalRefresher:
         without a session uid still diff by date and keep the gap.
         """
         if self._fetch_head is None:
-            return  # caller opted out; the show-changes failure path still applies
+            return None  # caller opted out; the show-changes failure path still applies
 
         head = await self._fetch_head(mgmt, domain)
         if head is None or not getattr(head, "published_time", None):
@@ -178,6 +194,7 @@ class IncrementalRefresher:
             raise FallbackToFull(
                 f"history moved backwards (head {head.published_time}, baseline {baseline.published_time}) - reverted"
             )
+        return head
 
     # ---- diff fetching / parsing ------------------------------------------
 
@@ -348,5 +365,6 @@ __all__ = [
     "DEFAULT_IN_SCOPE_TYPES",
     "DEFAULT_MAX_CHANGES",
     "FallbackToFull",
+    "IncrementalApplyResult",
     "IncrementalRefresher",
 ]

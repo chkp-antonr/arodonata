@@ -7,6 +7,8 @@ trigger, incremental delete propagation + baseline advance, and scope resolution
 
 from datetime import datetime, timedelta
 
+import pytest
+
 from arodonata.core.cache_mode import CacheMode
 from arodonata.core.cache_policy import CachePolicy, RefreshScope, SystemClock
 from arodonata.core.cache_refresh_coordinator import CacheRefreshCoordinator
@@ -85,19 +87,26 @@ class FakeObjectService:
         self.stale = stale
         self.full_reloads: list[tuple[str, str]] = []
         self.refresh_domain_list_args: list[bool] = []
-        self.baseline_refreshes: list[tuple[str, str]] = []
         self.stale_checks = 0
         self.fetched: list[str] = []
         self.objects_by_uid = objects_by_uid or {}
         self.head_published_time = head_published_time
         self.head_fetches: list[tuple[str, str]] = []
+        self.heads_read: list[_Baseline] = []
+        self.stored_heads: list[_Baseline] = []
 
     async def fetch_last_published_session(self, mgmt, domain):
         """Read-only head lookup; must never advance the cached baseline."""
         self.head_fetches.append((mgmt, domain))
         if self.head_published_time is None:
             return None
-        return _Baseline(self.head_published_time)
+        head = _Baseline(self.head_published_time)
+        self.heads_read.append(head)
+        return head
+
+    async def store_last_published_session(self, record):
+        self.stored_heads.append(record)
+        return record
 
     async def _is_domain_stale(self, mgmt, domain):
         self.stale_checks += 1
@@ -107,9 +116,6 @@ class FakeObjectService:
         self.full_reloads.append((mgmt_names[0], domain_names[0]))
         self.refresh_domain_list_args.append(refresh_domain_list)
         yield {"progress": 1}  # coordinator drains this generator
-
-    async def refresh_last_published_session(self, mgmt, domain):
-        self.baseline_refreshes.append((mgmt, domain))
 
     async def fetch_full_object(self, mgmt, domain, uid):
         self.fetched.append(uid)
@@ -397,7 +403,7 @@ async def test_smart_fast_applies_diff_without_full_reload():
     assert obj.fetched == ["a1"]  # changed object was re-fetched in full
     assert cache.upserted == ["a1"]
     assert cache.deleted == ["d9"]  # delete propagated
-    assert obj.baseline_refreshes == [("m1", "d1")]  # baseline advanced
+    assert obj.stored_heads == [obj.heads_read[0]]  # baseline advanced
     assert outcome.fell_back is False
     assert outcome.refreshed_domains == [("m1", "d1")]
     # baseline.published_time was passed as from_date (ISO).
@@ -480,7 +486,7 @@ async def test_smart_fast_checks_the_head_without_advancing_the_baseline():
     await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART_FAST, 300))
 
     assert obj.head_fetches == [("m1", "d1")]
-    assert obj.baseline_refreshes == [], "the read-only head check must not advance the baseline"
+    assert obj.stored_heads == [], "the read-only head check must not advance the baseline"
 
 
 async def test_smart_fast_still_applies_a_diff_when_the_head_moved_forward():
@@ -523,6 +529,26 @@ async def test_smart_fast_set_update_is_upserted():
     assert outcome.fell_back is False
 
 
+@pytest.mark.parametrize("adds", [["a1"], []], ids=["with-changes", "no-in-scope-changes"])
+async def test_smart_fast_stamps_the_head_read_before_the_diff(adds):
+    """A publish between the head read and the stamp must not be stamped as included (Backlog #36)."""
+    obj = FakeObjectService(stale=True)
+    cache = StatefulCache({("m1", "d1"): ["x"]}, baseline=_Baseline())
+
+    class PublishingApi(RecordingApi):
+        async def show_changes(self, mgmt_name, **kwargs):
+            obj.head_published_time = datetime(2026, 7, 3)  # someone publishes right after the diff was read
+            return await super().show_changes(mgmt_name, **kwargs)
+
+    coord = make_coord(cache, obj, api=PublishingApi(_changes_response(adds=adds)), mode=CacheMode.SMART_FAST)
+
+    await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART_FAST, 300))
+
+    assert obj.full_reloads == []
+    assert obj.stored_heads == [obj.heads_read[0]]
+    assert obj.stored_heads[0].published_time == FakeObjectService.DEFAULT_HEAD
+
+
 async def test_smart_fast_no_changes_advances_baseline_without_recording_refresh():
     obj = FakeObjectService(stale=True)
     cache = StatefulCache({("m1", "d1"): ["x"]}, baseline=_Baseline())
@@ -532,7 +558,7 @@ async def test_smart_fast_no_changes_advances_baseline_without_recording_refresh
     outcome = await coord.ensure(RefreshScope(["m1"], ["d1"]), CachePolicy(CacheMode.SMART_FAST, 300))
 
     assert obj.full_reloads == []
-    assert obj.baseline_refreshes == [("m1", "d1")]  # baseline still advances
+    assert obj.stored_heads == [obj.heads_read[0]]  # baseline still advances
     assert outcome.refreshed_domains == []  # nothing applied -> not recorded
     assert outcome.fell_back is False
 
@@ -704,7 +730,7 @@ async def test_smart_fast_out_of_scope_only_diff_advances_baseline_quietly():
     assert obj.full_reloads == []
     assert obj.fetched == []
     assert cache.upserted == []
-    assert obj.baseline_refreshes == [("m1", "d1")]
+    assert obj.stored_heads == [obj.heads_read[0]]
     assert outcome.refreshed_domains == []
 
 
@@ -851,7 +877,7 @@ async def test_smart_fast_applies_real_task_wrapped_diff():
     assert cache.upserted == ["u-new"]
     assert cache.deleted == ["u-gone"]
     assert obj.full_reloads == []  # no fallback full reload
-    assert obj.baseline_refreshes == [("m1", "d1")]
+    assert obj.stored_heads == [obj.heads_read[0]]
 
 
 async def test_smart_fast_falls_back_on_unsuccessful_show_changes():
@@ -938,4 +964,4 @@ async def test_smart_fast_session_only_publish_advances_baseline_quietly():
 
     assert not outcome.fell_back
     assert outcome.refreshed_domains == []
-    assert obj.baseline_refreshes == [("m1", "d1")]
+    assert obj.stored_heads == [obj.heads_read[0]]
