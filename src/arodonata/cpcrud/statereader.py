@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from ..utils.helpers import extract_data_from_response, extract_objects_from_response
 from .differ import _mask_to_dotted
 from .models import LayerInfo, ObjectState, RuleMatch, SectionInfo
-from .resolver import _TYPE_CMD
+from .resolver import _TYPE_CMD, StateReadError
 from .resolver import StateReader as StateReader  # re-export the Protocol from the resolver module
 from .rule_identity import nat_tuple, traffic_tuple
 from .services import auto_service_name
@@ -19,6 +19,11 @@ if TYPE_CHECKING:
 _RULEBASE_PAGE_SIZE = 50
 
 _UID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def _not_found(result: Any) -> bool:
+    """True when a failed call is Check Point's "object not found" (as `ObjectService.fetch_full_object` reads it)."""
+    return "object_not_found" in (result.code or "") or "not found" in (result.message or "").lower()
 
 
 def _looks_like_uid(text: str) -> bool:
@@ -33,8 +38,11 @@ def _looks_like_uid(text: str) -> bool:
 
 async def _paginate_rulebase(
     client: Any, mgmt: str, command: str, domain: str, payload: dict[str, Any]
-) -> dict[str, Any] | None:
-    """Accumulate a full show-*-rulebase read across all pages.
+) -> dict[str, Any]:
+    """Accumulate a full show-*-rulebase read across all pages; raise StateReadError if any page fails.
+
+    A failed page used to return the pages read so far: a rule on the missing pages then read as
+    absent, and a traffic-tuple match created a duplicate of it (Backlog #37).
 
     Confirmed against Check Point's own API reference (show-access-rulebase.j.md): "The 'limit'
     and 'offset' parameters control the number of returned results... the default limit is 50."
@@ -59,10 +67,10 @@ async def _paginate_rulebase(
         page_payload = {**payload, "limit": _RULEBASE_PAGE_SIZE, "offset": offset}
         result = await client.api_call(mgmt, command, domain, payload=page_payload)
         if not result.success:
-            return combined
+            raise StateReadError(f"{command} failed at offset {offset}: {result.code}: {result.message}")
         data = extract_data_from_response(result)
         if not isinstance(data, dict):
-            return combined
+            raise StateReadError(f"{command} returned no rulebase at offset {offset}")
         if combined is None:
             combined = dict(data)  # seed with the first page's non-paginated fields (uid, name, ...)
         merged_rulebase.extend(data.get("rulebase", []) or [])
@@ -74,6 +82,8 @@ async def _paginate_rulebase(
         if not data.get("rulebase") or received >= total:
             break
         offset += _RULEBASE_PAGE_SIZE
+    if combined is None:  # unreachable: the first page either fails (raised above) or seeds it
+        raise StateReadError(f"{command} returned no rulebase")
     combined["rulebase"] = merged_rulebase
     combined["objects-dictionary"] = list(merged_dictionary.values())
     return combined
@@ -121,7 +131,10 @@ class LiveStateReader:
             mgmt, f"show-{suffix}", domain, payload={key: name, "details-level": "full"}
         )
         if not result.success:
-            return None
+            if _not_found(result):
+                return None
+            # Not "absent": an add would plan a create, a delete "already absent" (Backlog #37).
+            raise StateReadError(f"show-{suffix} failed: {result.code}: {result.message}")
         data = extract_data_from_response(result)
         if not isinstance(data, dict) or "uid" not in data:
             return None
@@ -140,7 +153,8 @@ class LiveStateReader:
             container_key="objects",
         )
         if not result.success:
-            return []
+            # Not "no object with this IP": cpcrud would create a duplicate (Backlog #37).
+            raise StateReadError(f"show-objects failed: {result.code}: {result.message}")
         objects = extract_objects_from_response(result)
         matches = [o for o in objects if _ip_matches(type, ip_value, o)]
         return [
@@ -150,7 +164,10 @@ class LiveStateReader:
     async def where_used(self, uid: str, *, mgmt: str, domain: str) -> int:
         result = await self._client.api_call(mgmt, "where-used", domain, payload={"uid": uid})
         if not result.success:
-            return 0
+            if _not_found(result):
+                return 0  # the object is gone, so nothing uses it
+            # Not "unused": the executor would let a delete through that the references should block (Backlog #37).
+            raise StateReadError(f"where-used failed: {result.code}: {result.message}")
         data = extract_data_from_response(result)
         if isinstance(data, dict):
             direct = data.get("used-directly")
@@ -220,7 +237,8 @@ class LiveStateReader:
             mgmt, list_command, domain, details_level="full", payload={}, container_key="objects"
         )
         if not result.success:
-            return None
+            # Not "no service on this port": the caller would create a duplicate (Backlog #37).
+            raise StateReadError(f"{list_command} failed: {result.code}: {result.message}")
         for obj in extract_objects_from_response(result):
             if obj.get("port") == spec.port and obj.get("uid"):
                 return ObjectState(uid=obj["uid"], name=obj.get("name", ""), type=f"{spec.kind}-service", raw=obj)
@@ -278,8 +296,6 @@ class LiveStateReader:
         data = await _paginate_rulebase(
             self._client, mgmt, command, domain, {"uid": layer_uid, "details-level": "full"}
         )
-        if data is None:
-            return None
         items = data.get("rulebase", [])
         section_type = _SECTION_TYPE[layer_type]
         for item in items:
@@ -298,8 +314,6 @@ class LiveStateReader:
             domain,
             {"uid": scope_uid, "details-level": "full", "use-object-dictionary": True},
         )
-        if data is None:
-            return None
         flat = _flatten_rulebase(data.get("rulebase", []))
         if not flat:
             return None
@@ -328,8 +342,6 @@ class LiveStateReader:
             domain,
             {"uid": scope_uid, "details-level": "full", "use-object-dictionary": True},
         )
-        if data is None:
-            return []
         uid_to_name = _uid_to_name_map(data)
         target = traffic_tuple(source_uids, dest_uids, service_uids)
         matches = []
@@ -361,8 +373,6 @@ class LiveStateReader:
             domain,
             {"package": package, "details-level": "full", "use-object-dictionary": True},
         )
-        if data is None:
-            return []
         uid_to_name = _uid_to_name_map(data)
         matches = []
         # NAT rules nest inside nat-section items exactly like access rules nest inside
@@ -402,8 +412,6 @@ class LiveStateReader:
             domain,
             {"package": package, "details-level": "full", "use-object-dictionary": True},
         )
-        if data is None:
-            return None
         nat_rules = [r for r in _flatten_rulebase(data.get("rulebase", [])) if r.get("type") == "nat-rule"]
         if not nat_rules:
             return None
@@ -424,8 +432,6 @@ class LiveStateReader:
             domain,
             {"uid": scope_uid, "details-level": "full", "use-object-dictionary": True},
         )
-        if data is None:
-            return None
         uid_to_name = _uid_to_name_map(data)
         for raw_rule in _flatten_rulebase(data.get("rulebase", [])):
             if _rule_matches_key(raw_rule, key):
@@ -445,8 +451,6 @@ class LiveStateReader:
             domain,
             {"package": package, "details-level": "full", "use-object-dictionary": True},
         )
-        if data is None:
-            return None
         uid_to_name = _uid_to_name_map(data)
         for raw_rule in _flatten_rulebase(data.get("rulebase", [])):
             if raw_rule.get("type") != "nat-rule":

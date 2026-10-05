@@ -39,6 +39,14 @@ _TYPE_CMD: dict[str, str] = {
 }
 
 
+class StateReadError(Exception):
+    """A StateReader lookup could not be completed (failed or partial listing).
+
+    Never means "not found": the planner turns it into an ERROR action for the whole operation, so
+    nothing is created on the strength of a lookup that did not happen (Backlog #37).
+    """
+
+
 @runtime_checkable
 class StateReader(Protocol):
     async def get_by_name(self, type: str, name: str, *, mgmt: str, domain: str) -> ObjectState | None: ...

@@ -83,13 +83,15 @@ async def test_bottom_no_existing_rules_at_all_passes_through():
 
 
 @pytest.mark.asyncio
-async def test_section_relative_bottom_resolves_section_then_checks_its_last_rule():
+async def test_section_relative_bottom_resolves_section_without_a_rulebase_read_by_section_uid():
+    """show-access-rulebase refuses a section uid (generic_error, home lab 2026-10-05), so the cleanup check never
+    ran for a section; with failed rulebase reads raising (Backlog #37) the call would turn every such add into an
+    ERROR. Section bottom goes to the section's bottom without that read."""
     reader = AsyncMock()
     reader.get_section.return_value = SectionInfo(uid="s1", name="Web Section", layer_uid="layer-u1")
-    reader.get_last_rule.return_value = None
     result = await resolve_position(reader, {"bottom": "Web Section"}, "layer-u1", "access", mgmt="m", domain="d")
     reader.get_section.assert_awaited_once_with("Web Section", "layer-u1", "access", mgmt="m", domain="d")
-    reader.get_last_rule.assert_awaited_once_with("s1", "access", mgmt="m", domain="d")
+    reader.get_last_rule.assert_not_awaited()
     assert result == {"position": {"bottom": "s1"}}
 
 

@@ -7,6 +7,7 @@ import pytest
 from arodonata.api.schemas import ApiCallResult
 from arodonata.cpcrud.executor import Executor, classify_api_error, fold_reports
 from arodonata.cpcrud.models import ActionResult, ApplyReport, DomainStamp, ObjectState, Outcome, Plan, PlannedAction
+from arodonata.cpcrud.resolver import StateReadError
 
 
 class FakeClient:
@@ -190,6 +191,29 @@ async def test_delete_gated_by_where_used():
     assert delete_calls == []
 
 
+@pytest.mark.asyncio
+async def test_delete_blocked_when_where_used_fails():
+    """A failed where-used is not "unused" (Backlog #37): the delete must not go ahead."""
+    client = AsyncMock()
+    client.create_dedicated_session.return_value = ("sid", "ip")
+    reader = AsyncMock()
+    reader.where_used.side_effect = StateReadError("where-used failed: generic_err: timeout")
+    plan = Plan(
+        actions=[
+            _action(
+                "act-0001", op="delete", outcome=Outcome.DELETE, command="delete-host", payload={"uid": "u1"}, uid="u1"
+            ),
+        ],
+        stamps=[],
+        template_hash="h",
+    )
+    report = await Executor(client, reader).execute(plan)
+    assert report.results[0].outcome == Outcome.ERROR
+    assert report.results[0].message.startswith("delete blocked: where-used failed")
+    delete_calls = [c for c in client.api_call_with_sid.await_args_list if c.args[3] == "delete-host"]
+    assert delete_calls == []
+
+
 def _plan_with_stamp(stamp_uid):
     return Plan(
         actions=[_action("act-0001")],
@@ -293,6 +317,21 @@ async def test_create_drift_reuses_existing_object():
     report = await Executor(client, reader).execute(plan)
     assert report.results[0].outcome == Outcome.DRIFTED
     assert report.results[0].uid == "u-live"
+
+
+async def test_create_drift_with_a_failed_uid_lookup_still_reports_drift():
+    client = AsyncMock()
+    client.create_dedicated_session.return_value = ("sid", "ip")
+    client.api_call_with_sid.return_value = SimpleNamespace(
+        success=False, data=None, message="Object 'h1' already exists", code=""
+    )
+    reader = AsyncMock()
+    reader.get_by_name.side_effect = StateReadError("show-host failed: generic_err: timeout")
+    plan = Plan(actions=[_action("act-0001")], stamps=[], template_hash="h")
+    report = await Executor(client, reader).execute(plan)
+    assert report.results[0].outcome == Outcome.DRIFTED
+    assert report.results[0].uid is None
+    assert "uid lookup failed" in report.results[0].message
 
 
 async def test_delete_drift_counts_as_success():

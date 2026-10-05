@@ -4,6 +4,7 @@ import pytest
 from arodonata.cpcrud.models import DomainStamp, ObjectState, Outcome
 from arodonata.cpcrud.naming import DEFAULT_PREFIXES, NamingPrefixes
 from arodonata.cpcrud.planner import Planner
+from arodonata.cpcrud.resolver import StateReadError
 from tests.unit.cpcrud.test_resolver import FakeReader  # reuse the fake
 
 
@@ -521,3 +522,116 @@ async def test_decide_default_prefixes_unchanged_for_rule_add_synthesized_deps()
     plan = await Planner(reader).decide(doc)
     host_dep = next(a for a in plan.actions if a.type == "host")
     assert host_dep.resolved_name == "Host_10.0.0.9"
+
+
+# ---------------------------------------------------------------------------
+# Backlog #37: a failed lookup plans nothing for its operation
+# ---------------------------------------------------------------------------
+
+
+class _FailingReader(FakeReader):
+    """find_by_ip fails for 10.0.0.1 and find_rules_by_traffic always fails, as failed listings do."""
+
+    async def find_by_ip(self, *, type, ip_value, mgmt, domain):
+        if "10.0.0.1" in ip_value.values():
+            raise StateReadError("show-objects failed: generic_err: timeout")
+        return await super().find_by_ip(type=type, ip_value=ip_value, mgmt=mgmt, domain=domain)
+
+    async def find_rules_by_traffic(self, scope_uid, layer_type, source_uids, dest_uids, service_uids, *, mgmt, domain):
+        raise StateReadError("show-access-rulebase failed at offset 50: generic_err: timeout")
+
+
+@pytest.mark.asyncio
+async def test_failed_lookup_plans_no_group_for_the_failed_object():
+    plan = await Planner(_FailingReader()).decide(
+        _doc({"type": "host", "data": {"name": "h1", "ip-address": "10.0.0.1", "groups": ["g-new"]}})
+    )
+    actions = _actions_for(plan, "m1", "General")
+    assert [(a.type, a.outcome) for a in actions] == [("host", Outcome.ERROR)]
+    assert actions[0].depends_on == []
+
+
+@pytest.mark.asyncio
+async def test_failed_rulebase_read_drops_the_rule_dependencies_already_planned():
+    plan = await Planner(_FailingReader()).decide(
+        _doc(
+            {
+                "type": "access-rule",
+                "layer": "Network",
+                "position": "bottom",
+                "data": {"name": "r1", "source": ["10.0.0.2"], "destination": ["any"], "service": ["any"]},
+            },
+            {"type": "host", "data": {"name": "h3", "ip-address": "10.0.0.3"}},
+        )
+    )
+    actions = _actions_for(plan, "m1", "General")
+    # Hosts sort before rules; the rule's auto-created host for 10.0.0.2 is not planned.
+    assert sorted((a.id, a.type, a.outcome) for a in actions) == [
+        ("act-0001", "host", Outcome.CREATE),
+        ("act-0002", "access-rule", Outcome.ERROR),
+    ]
+    rule = next(a for a in actions if a.type == "access-rule")
+    assert rule.message.startswith("lookup failed, nothing planned (re-plan to retry):")
+    assert "offset 50" in rule.message
+
+
+@pytest.mark.asyncio
+async def test_failed_lookup_names_a_rule_addressed_by_rule_number():
+    plan = await Planner(_FailingReader()).decide(
+        _doc(
+            {
+                "operation": "update",
+                "type": "access-rule",
+                "layer": "Network",
+                "key": {"rule-number": 7},
+                "data": {"source": ["10.0.0.1"]},
+            }
+        )
+    )
+    (action,) = _actions_for(plan, "m1", "General")
+    assert action.outcome == Outcome.ERROR
+    assert action.resolved_name == "7"
+
+
+class _FailingNameReader(FakeReader):
+    """get_by_name fails for "h-bad" and the group "g-bad", as a failed show-<type> does."""
+
+    async def get_by_name(self, type, name, *, mgmt, domain):
+        if name in ("h-bad", "g-bad"):
+            raise StateReadError(f"show-{type} failed: generic_err: timeout")
+        return await super().get_by_name(type, name, mgmt=mgmt, domain=domain)
+
+
+@pytest.mark.asyncio
+async def test_failed_name_lookup_on_delete_is_an_error_not_already_absent():
+    plan = await Planner(_FailingNameReader()).decide(
+        _doc({"operation": "delete", "type": "host", "key": {"name": "h-bad"}})
+    )
+    (action,) = _actions_for(plan, "m1", "General")
+    assert action.outcome == Outcome.ERROR
+    assert action.command is None
+
+
+@pytest.mark.asyncio
+async def test_failed_group_lookup_stops_the_object_that_names_the_group():
+    plan = await Planner(_FailingNameReader()).decide(
+        _doc(
+            {"type": "host", "data": {"name": "h1", "ip-address": "10.0.0.5", "groups": ["g-bad"]}},
+            {"type": "host", "data": {"name": "h2", "ip-address": "10.0.0.6"}},
+        )
+    )
+    by_name = {a.resolved_name: a for a in _actions_for(plan, "m1", "General")}
+    assert set(by_name) == {"h1", "h2"}  # no group action for g-bad
+    assert by_name["h1"].outcome == Outcome.ERROR
+    assert by_name["h1"].command is None and by_name["h1"].payload is None
+    assert "g-bad" in by_name["h1"].message and "show-network-group failed" in by_name["h1"].message
+    assert by_name["h2"].outcome == Outcome.CREATE
+
+
+@pytest.mark.asyncio
+async def test_failed_lookup_of_a_second_group_keeps_no_group_planned_for_the_object():
+    plan = await Planner(_FailingNameReader()).decide(
+        _doc({"type": "host", "data": {"name": "h1", "ip-address": "10.0.0.5", "groups": ["g-new", "g-bad"]}})
+    )
+    actions = _actions_for(plan, "m1", "General")
+    assert [(a.type, a.outcome) for a in actions] == [("host", Outcome.ERROR)]
