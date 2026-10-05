@@ -101,8 +101,10 @@ async def _trailing_sections(
     Re-reads the last rule on a page with room and keeps only the empty sections that follow it.
     """
     offset = total - 1
+    # Room for more than the last rule: a page of one is full again, and CP would leave the empty sections out again.
+    limit = max(page_size, 2)
     result = await client.api_call(
-        mgmt_name=mgmt_name, domain=domain, command=command, payload={**payload, "limit": page_size, "offset": offset}
+        mgmt_name=mgmt_name, domain=domain, command=command, payload={**payload, "limit": limit, "offset": offset}
     )
     if not result.success:
         raise RulebaseFetchError(result.code or "", result.message or f"{command} failed at offset {offset}")
@@ -132,8 +134,9 @@ async def fetch_full_rulebase(  # noqa: C901
     payload: dict[str, Any],
     *,
     page_size: int = RULEBASE_PAGE_SIZE,
+    offset: int = 0,
 ) -> dict[str, Any]:
-    """Every page of one layer, merged into one response.
+    """Every page of one layer from rule `offset` on, merged into one response.
 
     Args:
         client: Anything with ``api_call(mgmt_name=, domain=, command=, payload=)`` returning an
@@ -144,6 +147,7 @@ async def fetch_full_rulebase(  # noqa: C901
         payload: uid/name/package, details-level, use-object-dictionary and any live-only parameters; ``limit`` and
             ``offset`` are set by the pager.
         page_size: Rules per page.
+        offset: Rules to skip; the first page must start at rule ``offset + 1``.
 
     Returns:
         The first page's top-level keys (including its ``from``, ``to``, and ``total``), with ``rulebase`` holding
@@ -156,8 +160,7 @@ async def fetch_full_rulebase(  # noqa: C901
     first: dict[str, Any] | None = None
     items: list[Any] = []
     dictionary: dict[str, dict[str, Any]] = {}
-    offset = 0
-    prev_to = 0
+    prev_to = offset
     while True:
         result = await client.api_call(
             mgmt_name=mgmt_name,
@@ -172,6 +175,9 @@ async def fetch_full_rulebase(  # noqa: C901
             raise RulebaseFetchError("", f"{command} returned a non-dict page at offset {offset}")
         if first is None:
             first = page
+            total = page.get("total")
+            if offset > 0 and isinstance(total, int) and total <= offset and not _count_rules(page.get("rulebase")):
+                return {**page, "rulebase": [], "objects-dictionary": []}  # the caller's offset is past the last rule
 
         bounds = _page_bounds(page, command, offset, prev_to)
         for obj in page.get("objects-dictionary", []):
