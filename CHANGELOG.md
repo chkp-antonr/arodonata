@@ -8,6 +8,69 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 via [commitizen](https://commitizen-tools.github.io/commitizen/) — do not
 hand-edit released sections, only the `[Unreleased]` section above them.
 
+## v1.14.0 (2026-10-05)
+
+### Feat
+
+- **asdk**: own pagination with a RateLimiter slot per page and FIFO slot hand-off (#28)
+
+### Fix
+
+- resolve API_KEY_VARS in a bare ArodonataSettings() and ship the cpcrud schema in the wheel (#34)
+- **cpcrud**: cleanup-aware section bottom anchored on the rule; a reader per plan and per apply (#33)
+- **asdk**: page rulebase listings by rules in api_query (#32)
+- **cpcrud**: read the domain head without storing the cache stamp; trust the cache only at that head (#31)
+- **cpcrud**: a failed lookup stops the operation instead of reading as not found (#30)
+- **cache**: stamp the head read before the incremental diff (#29)
+- **asdk**: resolve a domain's server with show-domain by name, not an unpaged show-domains (#27)
+
+### Changed
+
+- Listings (`api_query`) are paged by arodonata itself: 300 objects per page unless the caller sets `limit` (at most 500), one call and one RateLimiter slot per page, so short calls get in between the pages of long listings. Waiters for a member's slots are served in arrival order within a client.
+- Rulebase listings through `api_query` (`show-access-rulebase`, `show-nat-rulebase`, `show-https-rulebase`, `show-threat-rulebase`) are paged by rules: at most 100 rules per page (a larger `limit` is capped), `offset` is the starting rule, and a section split across pages comes back once with all its rules (cpapi returned it twice).
+- A listing that keeps changing while it is read fails with `paging_inconsistent` instead of returning duplicates or gaps; an empty listing returns an empty list.
+- The `code` of a successful `api_query` result is `""` (cpapi put the HTTP status `"200"` there).
+- cpcrud reads each domain's last published session before planning it, so a publish while the plan is being built makes the plan stale.
+- The cpcrud template schema ships in the package (`arodonata/cpcrud/checkpoint_ops_schema.json`, moved from the repo's `ops/`); `ARODONATA_CPCRUD_SCHEMA_PATH` is only needed to override it.
+
+### Fixed
+
+- Objects with equal names at a page boundary (Check Point's built-in catalogue has such objects) are no longer returned twice while another goes missing.
+- A session that expires in the middle of a listing is retried for that page only; layer listings (`show-access-layers` and siblings) are read in full.
+- A full object refresh no longer marks publishes made during its listing as already included; an incremental or smart-fast refresh no longer marks a publish made while its diff was applied as included (the next refresh picks it up).
+- cpcrud no longer reads a failed lookup (IP, name, service port, rulebase page, where-used, including `paging_inconsistent`) as "not found": the operation becomes an `error` action and nothing is created, updated or deleted for it, instead of possibly creating a duplicate object or rule; the template's other operations still run. A delete is blocked when where-used cannot be read.
+- cpcrud no longer marks the object cache as fresh when it reads a domain's last published session (at plan, at apply and after its own publish), so the next cache read after a cpcrud apply picks up cpcrud's changes and any earlier publish.
+- A domain whose last published session cannot be read is no longer applied without the stale-plan check: its operations are errors at plan time, and at apply it is `plan_stale` unless `force`.
+- cpcrud no longer trusts object cache rows older than the domain's last publish when planning (a deleted or changed object could read as already in the desired state); such lookups go to the server.
+- cpcrud `{bottom: "<section>"}` places the rule above the section's cleanup rule (Any/Any/Any) instead of after it, like `bottom` does for a layer; several rules added at a layer's or section's bottom in one apply keep the template's order and section (the position is anchored on the cleanup rule, not its number); concurrent plans of one domain no longer share the head the reader remembers.
+- A bare `ArodonataSettings()` resolves `API_KEY_VARS` when neither `api_keys=` nor `API_KEYS` is given (the keys were silently empty).
+- An installed package no longer fails cpcrud validation with "CPCRUD schema not found".
+
+### Added
+
+- `ArodonataClient.fetch_last_published_session` reads a domain's last published session without storing it; `ObjectService.store_last_published_session` is public.
+
+### Removed
+
+- `ApiTransport.api_query` (and the matching protocol method).
+
+### Documentation
+
+- Every published page, the README and the public docstrings reviewed against the code: SQLite next to PostgreSQL, the default smart cache mode, settings with their environment variables and API key precedence, `mgmt_name` vs `mgmt_names`, cpcrud failed lookups, `plan_stale` and `force`, the executor's sessions, paging checks, the CI steps; the NotebookLM docs regenerated with the TLS page.
+
+### Upgrade notes
+
+- Nothing new to configure beyond 1.13.0's `ARODONATA_TLS_KNOWN_HOSTS_PATH`.
+- Listings page by 300 and may fail with `paging_inconsistent` (the listing kept changing while it was read); treat it like any failed listing and retry later.
+- Rulebase listings through `api_query` page by rules (at most 100 per page) and return a split section once (cpapi returned it twice).
+- `ApiTransport.api_query` is removed; use `ArodonataClient.api_query` (or `AMgmtClient.api_query`).
+- The `code` of a successful `api_query` is `""`; read `code` only on failure.
+- New `ArodonataClient.fetch_last_published_session` (read-only). `refresh_last_published_session` stores the object cache's freshness stamp and so marks the cache current without refreshing it; call it only after the cache really has that head.
+- cpcrud results: a failed lookup is now an `error` action ("lookup failed, nothing planned (re-plan to retry): …"), an unreadable head is `plan_stale`; plan again to retry (`retry_remaining` replays the same plan).
+- `ARODONATA_CPCRUD_SCHEMA_PATH` pointing at arodonata's `ops/checkpoint_ops_schema.json` must be unset or repointed: the file moved into the package.
+- With `API_KEY_VARS` set and no `API_KEYS`, a bare `ArodonataSettings()` now loads those keys; an explicit `api_keys=` or `API_KEYS` still wins.
+- FPCR uses arodonata through an editable symlink (`libs/arodonata`), so it runs whatever that checkout has checked out.
+
 ## v1.13.0 (2026-10-04)
 
 ### Feat
