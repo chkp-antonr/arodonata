@@ -8,7 +8,7 @@ With `client.cpcrud`, you define desired security management state in YAML or JS
 
 ## Key Features
 
-- **Idempotent Execution**: Re-running the exact same template produces zero state mutations once applied (`outcome: unchanged` / `skipped`).
+- **Idempotent Execution**: Re-running the exact same template produces zero state mutations once applied (`outcome: unchanged` / `reuse`).
 - **Plan-then-Execute Architecture**: Preview plan actions, field diffs, and potential conflicts before committing any changes.
 - **Conflict Resolution Policies**: Configurable policies for handling name collisions (`on_name_conflict`) and IP address overlaps (`on_ip_conflict`).
 - **Rulebase Aware**: Supports targeting rule layers (`layer`), packages (`package`), and positional anchoring (`position: top | bottom | above | below`).
@@ -44,6 +44,8 @@ if errors:
 
 Queries live management state, evaluates conflict policies, diffs desired fields against existing objects, and produces a `Plan`.
 
+A lookup that fails (an API or cache read error) is never taken as "not found": the operation becomes one `error` action that writes nothing, with the message `lookup failed, nothing planned (re-plan to retry): …`. If a domain's head (its last published session) can't be read, every operation in that domain is planned as such an `error`, because the plan couldn't be checked for staleness at apply. These actions carry no command, so `retry_remaining` can't fix them; call `plan()` again.
+
 ```python
 plan = await client.cpcrud.plan(
     "path/to/template.yaml",
@@ -58,6 +60,8 @@ for action in plan.actions:
 ### 3. Execution (`apply`)
 
 Opens dedicated write sessions, executes planned API commands, yields real-time `SSEEvent` items during execution, and returns an `ApplyReport`.
+
+Before writing to a domain, `apply()` re-reads its head. If the domain was published since the plan, or its head can't be read, every action in that domain gets `plan_stale` and nothing is written there (re-plan, or pass `force=True` to skip the check). A `delete` is blocked with `error` while the object still has references, or when its where-used check fails.
 
 ```python
 async for event in client.cpcrud.apply("path/to/template.yaml"):
@@ -79,7 +83,7 @@ Templates are written in YAML or JSON and structured hierarchically by Managemen
 management_servers:
   - mgmt_name: "10.192.15.140"         # Target Management IP or Hostname
     domains:
-      - name: "Domain4"                # Target Domain (or 'SMC' for single-domain)
+      - name: "Domain4"                # Target Domain ('SMC User' on a single-domain server)
         operations:
           - type: "host"
             data:
@@ -159,8 +163,8 @@ Controls behavior when an object with the same `name` already exists in the mana
 Controls behavior when another object shares the requested IP address or subnet.
 
 - **`reuse`** *(default)*: Reuses the existing object matching the IP address (`outcome: reuse`).
-- **`create_new`**: Creates a new object with auto-prefixed naming (e.g. `host_10.1.10.50`).
-- **`error`**: Raises an IP conflict error and skips execution.
+- **`create_new`**: Creates the requested object under its own name despite the overlap (`outcome: create`); the IP conflict is recorded on the action.
+- **`error`**: Nothing is raised; the action gets `outcome: conflict` with the message `ip conflict; policy=error`, and nothing is written for it.
 
 ---
 
@@ -188,7 +192,7 @@ For `access-rule` and `nat-rule` operations, CPCRUD supports explicit position p
 
 ### Cleanup-rule-aware `bottom`
 
-When you target `"bottom"` (whole layer) or `{bottom: "Section Name"}` (a section), CPCRUD checks the actual last rule in that scope first (for a section, read from its layer). If it has `source: Any`, `destination: Any`, **and** `service: Any` — regardless of its `action` or `name`, so this also catches an "accept any/any/any" rule, not just a "drop" cleanup rule — the new rule is inserted one position *above* it instead of literally at the bottom, so it never lands after an existing catch-all rule. If the last rule isn't a full any/any/any rule, `"bottom"` is used literally. For a section ending in such a rule (typically a `Cleanup` section holding the cleanup rule), the new rule goes into that section just above it; without the check it would land after the drop rule and never match.
+When you target `"bottom"` (whole layer) or `{bottom: "Section Name"}` (a section), CPCRUD checks the actual last rule in that scope first (for a section, read from its layer). If it has `source: Any`, `destination: Any`, **and** `service: Any` — regardless of its `action` or `name`, so this also catches an "accept any/any/any" rule, not just a "drop" cleanup rule — the new rule is inserted one position *above* it instead of literally at the bottom, so it never lands after an existing catch-all rule. If the last rule isn't a full any/any/any rule, `"bottom"` is used literally. For a section ending in such a rule (typically a `Cleanup` section holding the cleanup rule), the new rule goes into that section just above it; without the check it would land after the drop rule and never match. The insert is anchored on the catch-all rule's uid (`position: {above: <uid>}`), not on its rule number, so several rules added at the same bottom in one apply keep their template order.
 
 This cleanup-aware behavior applies to access/HTTPS/threat-prevention layers only. `nat-rule` positioning does not have it — NAT rulebases have no equivalent implicit cleanup rule — and section-relative positioning (`{top: ...}`/`{bottom: ...}`) is not supported for NAT rules at all; use `"top"`, `"bottom"`, an integer, or `{above: ...}`/`{below: ...}` instead.
 
@@ -202,7 +206,7 @@ The `apply()` method accepts keyword arguments to fine-tune execution and transa
 async for event in client.cpcrud.apply(
     template_path,
     dry_run=False,        # Preview mode without making live modifications
-    force=False,          # Skip lock check warnings
+    force=False,          # Skip the plan-staleness guard (domain published since plan, or head unreadable)
     no_publish=False,     # Execute changes without publishing the session
     discard=False,        # Discard write session changes upon completion
     session_name="Deploy-App-Policy",

@@ -5,20 +5,23 @@ Complete, auto-generated reference of every public class, function, and method i
 ## Package Map
 
 - **Top-Level Package** — 4 module(s)
-- **api — High-Level Client & Services** — 10 module(s)
+- **api — High-Level Client & Services** — 12 module(s)
 - **adapters — External Integrations (API transport, cache backend)** — 5 module(s)
-- **asdk — Low-Level Check Point Management API SDK** — 10 module(s)
-- **cache — Database-Backed Caching Layer** — 8 module(s)
-- **config — Settings & Constants** — 3 module(s)
-- **core — Core Domain Logic, Protocols & Exceptions** — 11 module(s)
+- **asdk — Low-Level Check Point Management API SDK** — 13 module(s)
+- **cache — Database-Backed Caching Layer** — 9 module(s)
+- **config — Settings & Constants** — 4 module(s)
+- **core — Core Domain Logic, Protocols & Exceptions** — 12 module(s)
 - **cpcrud — Declarative CRUD / Rule Engine** — 16 module(s)
-- **mcp — Model Context Protocol (MCP) Server & Tools** — 18 module(s)
+- **mcp — Model Context Protocol (MCP) Server & Tools** — 19 module(s)
 - **extractors — Bulk Data Extraction** — 4 module(s)
 - **helpers — Convenience Helper Functions** — 5 module(s)
 - **models — Data Models** — 4 module(s)
 - **ports — Abstract Interfaces (Hexagonal Architecture Ports)** — 3 module(s)
 - **utils — Utility Functions** — 3 module(s)
 - **services — (reserved)** — 2 module(s)
+- **reports** — 15 module(s)
+- **rulebase** — 6 module(s)
+
 
 ---
 
@@ -69,7 +72,6 @@ Initialize a SQLModel table with automatic recovery on schema errors.
 
 If the table exists but has a different schema (e.g., columns added/removed),
 this function will:
-
 1. Log the error at CRITICAL level
 2. Drop the problematic table
 3. Recreate it with the correct schema
@@ -77,7 +79,7 @@ this function will:
 Args:
     engine_or_conn: AsyncEngine or AsyncConnection
     table_class: SQLModel class to initialize
-    table_name: Optional table name (defaults to table_class.**tablename**)
+    table_name: Optional table name (defaults to table_class.__tablename__)
 
 Returns:
     True if table was created/recreated successfully, False otherwise
@@ -106,7 +108,7 @@ Get a logger instance, ensuring arodonata defaults are applied.
 Create a lazy logger function for a module.
 
 Args:
-    name: Logger name (usually **name**).
+    name: Logger name (usually __name__).
 
 Returns:
     A function that returns a LoggerProtocol instance when called.
@@ -124,6 +126,7 @@ is a no-op. Never pass credentials, full SIDs, or customer payloads.
 ##### `def span_attrs(**attrs: Any) -> None`
 
 Set arodonata.*-namespaced attributes on the current span; None skipped.
+
 
 ---
 
@@ -168,7 +171,6 @@ Handles transformation of API objects to Asset models.
 ```python
 @staticmethod
 ```
-
 Transform API object to Asset model.
 
 Args:
@@ -185,7 +187,6 @@ Returns:
 ```python
 @staticmethod
 ```
-
 Build mapping from cluster member names to cluster asset IDs.
 
 Args:
@@ -199,7 +200,6 @@ Returns:
 ```python
 @staticmethod
 ```
-
 Transform API object to Asset with cluster relationship handling.
 
 Args:
@@ -300,7 +300,6 @@ it will be disposed here. App-provided engines are NOT closed.
 ```python
 @traced
 ```
-
 Explicitly logout of a session.
 
 Args:
@@ -315,7 +314,6 @@ Returns:
 ```python
 @property
 ```
-
 Get configuration settings.
 
 ###### `def cache(self) -> CacheRepository`
@@ -323,7 +321,6 @@ Get configuration settings.
 ```python
 @property
 ```
-
 Get cache repository for direct access.
 
 ###### `def cpcrud(self) -> CPCRUDService`
@@ -331,7 +328,6 @@ Get cache repository for direct access.
 ```python
 @property
 ```
-
 Lazy CPCRUD (idempotent object CRUD) service.
 
 ###### `def get_mgmt_names(self) -> list[str]`
@@ -356,7 +352,6 @@ Returns:
 ```python
 @traced
 ```
-
 Execute API call with automatic session management.
 
 Args:
@@ -378,12 +373,11 @@ Args:
 Returns:
     Validated API call result.
 
-###### `async def api_call_with_sid(self, mgmt_name: str, sid: str, server_ip: str, command: str, payload: dict[str, Any] | None = None, wait_for_task: bool = True, timeout: int = -1) -> ApiCallResult`
+###### `async def api_call_with_sid(self, mgmt_name: str, sid: str, server_ip: str, command: str, payload: dict[str, Any] | None = None, wait_for_task: bool = True, timeout: int = -1, *, domain: str | None = None) -> ApiCallResult`
 
 ```python
 @traced
 ```
-
 Execute API call with an explicit SID (no auto-session management).
 
 Used by write workflows (e.g. CPCRUD) that manage their own sessions
@@ -397,6 +391,9 @@ Args:
     payload: Additional command parameters.
     wait_for_task: Wait for task completion.
     timeout: Request timeout in seconds (-1 for default).
+    domain: The session's domain, if known: selects the RateLimiter slot of its hosting MDS member
+        (LoginCoordinator.mds_host). Without it the member is looked up by server_ip
+        (LoginCoordinator.mds_host_for_ip).
 
 Returns:
     Validated API call result.
@@ -406,7 +403,6 @@ Returns:
 ```python
 @traced
 ```
-
 Create a dedicated session bypassing the global SID cache.
 
 Used by write workflows (e.g. CPCRUD) that need session isolation
@@ -427,7 +423,6 @@ Returns:
 ```python
 @traced
 ```
-
 Logout a specific SID (e.g. a dedicated session).
 
 Args:
@@ -443,7 +438,6 @@ Returns:
 ```python
 @traced
 ```
-
 Execute paginated API query with automatic session management.
 
 Args:
@@ -462,7 +456,6 @@ Returns:
 ```python
 @traced
 ```
-
 Collect gateway/server assets with streaming progress.
 
 Args:
@@ -477,7 +470,6 @@ Yields:
 ```python
 @traced
 ```
-
 Clear all cached sessions.
 
 ###### `async def build_refresh_assets_cache(self, mgmt_names: str | list[str] = '', domains: str | list[str] = '', cache_mode: str = 'auto') -> AsyncGenerator[SSEEvent]`
@@ -485,7 +477,6 @@ Clear all cached sessions.
 ```python
 @traced
 ```
-
 Build and refresh the assets cache with comprehensive asset collection.
 
 This method delegates to the AssetRefreshService for the actual implementation.
@@ -514,7 +505,6 @@ Example:
 ```python
 @traced
 ```
-
 Refresh cached assets for a single domain.
 
 This method delegates to AssetRefreshService.refresh_domain_assets —
@@ -534,11 +524,13 @@ Yields:
 ```python
 @traced
 ```
-
 Refresh the last-published-session record for a single domain.
 
 Makes one lightweight API call and upserts LastPublishedSession —
-does not touch the object or asset caches.
+does not touch the object or asset caches. The stored record is the
+object cache's freshness stamp, so this marks the domain's cache as
+current without refreshing it; to only read the head, use
+`fetch_last_published_session`.
 
 Args:
     mgmt_name: Management server name.
@@ -547,12 +539,29 @@ Args:
 Returns:
     The upserted LastPublishedSession record, or None on failure.
 
+###### `async def fetch_last_published_session(self, mgmt_name: str, domain_name: str) -> LastPublishedSession | None`
+
+```python
+@traced
+```
+Read the last-published session of a single domain WITHOUT storing it.
+
+The read-only counterpart of `refresh_last_published_session`: the stored record is the object cache's
+freshness stamp, so a caller that only wants to know the domain's head (cpcrud's plan and publish stamps)
+must not store it, or the cache reads as fresh without having been refreshed.
+
+Args:
+    mgmt_name: Management server name.
+    domain_name: Domain name.
+
+Returns:
+    An unsaved LastPublishedSession, or None on failure.
+
 ###### `async def search_objects(self, search_input: str, mgmt_names: list[str] | None = None, domain_names: list[str] | None = None, refresh: Literal['skip', 'check', 'force', 'incremental'] = 'skip', max_depth: int = 2) -> AsyncGenerator[SSEEvent]`
 
 ```python
 @traced
 ```
-
 Search for Check Point objects with cache-first queries.
 
 Args:
@@ -570,49 +579,122 @@ Yields:
 ```python
 @traced
 ```
-
 Refresh object cache from API.
 
 Args:
     mgmt_names: Optional management server filter.
     domain_names: Optional domain filter.
     mode: Refresh mode - "skip", "check", "force", or "incremental".
-    include_global: When False (default), the synthetic "Global" domain
+    include_global: When False (default), the "Global" domain
         is excluded from the all-domains refresh path so existing
         callers see today's behavior.
 
 Yields:
     SSEEvent with progress updates.
 
-###### `async def refresh_rulebases(self, mgmt_names: list[str] | None = None, domain_names: list[str] | None = None, mode: Literal['skip', 'check', 'force'] = 'force') -> AsyncGenerator[SSEEvent]`
+###### `def invalidate_domain(self, mgmt_name: str, domain_name: str) -> None`
+
+Drop the object and the rulebase freshness memos of one domain, so the next smart read re-checks it.
+
+Called after every publish the library sees (cpcrud, ``helpers.policy.publish_session``,
+``CacheOrchestrationService.publish``, a successful ``api_call('publish')``). It only drops memos; the
+published-session comparison decides whether anything is refreshed.
+
+###### `async def refresh_rulebases(self, mgmt_names: list[str] | None = None, domain_names: list[str] | None = None, mode: Literal['skip', 'check', 'force'] = 'force', include_global: bool = False) -> AsyncGenerator[SSEEvent]`
 
 ```python
 @traced
 ```
-
 Refresh rulebase cache from API.
 
 Args:
     mgmt_names: Optional management server filter.
     domain_names: Optional domain filter.
     mode: Refresh mode - "skip", "check", or "force".
+    include_global: When False (default), the "Global" domain is excluded, as in `refresh_objects`.
 
 Yields:
     SSEEvent with progress updates.
+
+###### `async def get_policy_packages(self, mgmt_name: str | None, domain_name: str, cache_mode: CacheMode | str | None = None, cache_ttl: int | None = None) -> list[PackageLayout]`
+
+```python
+@traced
+```
+Policy packages of a domain with their ordered layers per rulebase type (from the rulebase cache).
+
+###### `async def get_package_rulebase(self, mgmt_name: str | None, domain_name: str | None, package: str, rulebase_type: RulebaseType = 'access', cache_mode: CacheMode | str | None = None, cache_ttl: int | None = None) -> PackageRulebase`
+
+```python
+@traced
+```
+A package's rulebase numbered exactly like SmartConsole (global layer, parent rule, ``2.x``, ``2.2.1``).
+
+``domain_name`` None/'' resolves to the one cached domain holding the package (``SMC User`` on an SMS).
+Numbers reflect the cached snapshot's session (``snapshot_session_uid``).
+
+###### `async def get_layer_rulebase(self, mgmt_name: str | None, domain_name: str | None, layer: str, rulebase_type: RulebaseType = 'access', cache_mode: CacheMode | str | None = None, cache_ttl: int | None = None) -> LayerRulebase`
+
+```python
+@traced
+```
+One layer (uid, or unique name) numbered without package context: layer-relative numbers, sections,
+place-holders, inline layers expanded. ``domain_name`` None/'' resolves like ``get_package_rulebase``.
+
+###### `async def locate_rules(self, mgmt_name: str | None, domain_name: str, rule_uids: Collection[str] = (), rulebase_type: RulebaseType | None = None, *, layer_uids: Collection[str] = (), cache_mode: CacheMode | str | None = None, cache_ttl: int | None = None) -> RuleLocations`
+
+```python
+@traced
+```
+Every SmartConsole position of each rule uid, and every numbering prefix of each layer uid (``""`` for an
+ordered layer, ``"2."``/``"2.2."`` for nested ones), across the domain's packages; ``[]`` for unknown uids.
+
+The result carries the snapshot's session uid, publish time, refresh time and sync status, so a caller can
+tell which published state the numbers describe (a deleted or unpublished rule is numbered as a layer's
+prefix plus its show-changes position).
+
+Raises:
+    ValueError: No ``domain_name``.
+    TypeError: ``rule_uids`` or ``layer_uids`` is a bare ``str`` (pass a list of uids).
+
+###### `async def collect_change_report(self, scopes: Sequence[Scope], *, include_raw: bool = False, concurrency: int = 4, max_sessions: int | None = None) -> ChangeReport`
+
+```python
+@traced
+```
+Collect the changes of sessions (``SessionScope``) or published ranges (``RangeScope``) into a ChangeReport.
+
+Reads ``show-changes`` through the shared session (read-only), member names through ``show-object``, and
+numbers rules from the rulebase cache, or live through an ``owned_session``'s SID for unpublished sessions.
+Partial failures are warnings in the report; invalid input raises ``ChangeReportInputError``. See the user
+guide "Change Report".
+
+###### `async def build_change_report(self, scopes: Sequence[Scope], formats: Collection[ReportFormat], options: RenderOptions | None = None, *, include_raw: bool = False, concurrency: int = 4, max_sessions: int | None = None) -> ChangeReportResult`
+
+```python
+@traced
+```
+``collect_change_report`` then ``render_change_report`` (HTML needs the ``report`` extra).
 
 ###### `async def get_domains(self, mgmt_names: list[str] | None = None, cache_mode: str | None = None, cache_ttl: int | None = None, include_global: bool = False) -> list[Domain]`
 
 ```python
 @traced
 ```
-
 Get domains from cache as Pydantic models.
+
+Only the domain list itself is refreshed (one ``show-domains`` per management server), never the domains'
+objects: ``cache`` reads the table as is; ``smart``/``smart-fast`` re-read the list when the table is empty
+or the domain-list TTL has passed; ``force`` re-reads it now. Without ``mgmt_names`` every cached server is
+read and the first configured server's list is refreshed. When a server's object cache is still empty and
+``warm_object_cache_on_first_use`` is on (the default), its objects start loading in the background; the call
+returns without waiting for them.
 
 Args:
     mgmt_names: Optional list of management server names to filter.
-    cache_mode: Optional per-call cache refresh mode override.
-    cache_ttl: Optional per-call cache freshness TTL override.
-    include_global: When False (default), the synthetic "Global" domain
+    cache_mode: Optional per-call cache refresh mode override (for the domain list).
+    cache_ttl: Accepted for signature compatibility; the domain list uses its own TTL.
+    include_global: When False (default), the "Global" domain
         is excluded so existing callers see today's behavior.
 
 Returns:
@@ -623,12 +705,18 @@ Example:
     for domain in domains:
         print(f"{domain.name}: {domain.active_ip}")
 
+###### `def object_cache_warm_up(self, mgmt_name: str) -> ObjectCacheWarmUp | None`
+
+The background object-cache load of `mgmt_name` started by this client, or None if none was started.
+
+`get_domains` starts one, once per server, when it finds that server's object cache empty (see
+`warm_object_cache_on_first_use`). Counts are known once it has finished.
+
 ###### `async def get_gateways(self, mgmt_names: list[str] | None = None, cache_mode: str | None = None, cache_ttl: int | None = None) -> list[Gateway]`
 
 ```python
 @traced
 ```
-
 Get gateways and servers from cache as Pydantic models.
 
 Gateways/servers live in a separate asset cache populated by
@@ -660,7 +748,6 @@ Example:
 ```python
 @traced
 ```
-
 Get host objects from cache as Pydantic models.
 
 Args:
@@ -683,7 +770,6 @@ Example:
 ```python
 @traced
 ```
-
 Get network objects from cache as Pydantic models.
 
 Args:
@@ -706,7 +792,6 @@ Example:
 ```python
 @traced
 ```
-
 Get group objects from cache as Pydantic models.
 
 Args:
@@ -729,7 +814,6 @@ Example:
 ```python
 @traced
 ```
-
 Get any object by UID from cache.
 
 Args:
@@ -750,7 +834,6 @@ Example:
 ```python
 @traced
 ```
-
 Get access control rules from cache.
 
 Args:
@@ -769,11 +852,10 @@ Returns:
 ```python
 @traced
 ```
-
 Get NAT rules from cache.
 
 Args:
-    layer_name: Optional layer name filter (e.g., "NAT").
+    layer_name: Optional policy package name filter; NAT rules are keyed by package, e.g. layer_name="Standard".
     mgmt_names: Optional list of management server names to filter.
     domain_names: Optional list of domain names to filter.
     enabled_only: If True, only return enabled rules.
@@ -788,7 +870,6 @@ Returns:
 ```python
 @traced
 ```
-
 Get HTTPS inspection rules from cache.
 
 Args:
@@ -807,7 +888,6 @@ Returns:
 ```python
 @traced
 ```
-
 Get threat prevention rules from cache.
 
 Args:
@@ -872,6 +952,19 @@ Public API response schemas for Arodonata library.
 These Pydantic models provide type-safe response handling
 and validation for API operations.
 
+#### class `ObjectCacheWarmUp(BaseModel)`
+
+Background load of a server's empty object cache, started by the first ``get_domains`` (once per client).
+
+##### Fields / Class Variables
+
+```python
+state: Literal['running', 'finished', 'failed', 'cancelled'] = Field(description='Where the load is')
+started_at: datetime = Field(description='When the load started (UTC)')
+finished_at: datetime | None = Field(default=None, description='When it ended; None while running')
+refreshed_domains: int = Field(default=0, description='Domains loaded (known once finished)')
+failed_domains: int = Field(default=0, description='Domains that failed to load (known once finished)')
+```
 #### class `SSEEventType(StrEnum)`
 
 Server-Sent Event types for streaming operations.
@@ -888,7 +981,6 @@ data: dict[str, Any] | None = Field(default=None, description='Response data fro
 message: str = Field(default='', description='Error or status message')
 code: str = Field(default='', description='Error code if failed')
 ```
-
 ##### Methods
 
 ###### `def has_data(self) -> bool`
@@ -896,7 +988,6 @@ code: str = Field(default='', description='Error code if failed')
 ```python
 @property
 ```
-
 Check if result has data.
 
 #### class `ApiQueryResult(BaseModel)`
@@ -907,14 +998,13 @@ Result of an API query operation.
 
 ```python
 success: bool = Field(description='Whether the query succeeded')
-data: list[dict[str, Any]] | dict[str, Any] | None = Field(default=None, description='Response data from API (list for success, dict for errors)')
+data: list[dict[str, Any]] | dict[str, Any] | None = Field(default=None, description="Response data from API: on success usually the list of objects (also in `objects`), but a dict for task queries such as show-changes (the items under their key, plus `total`) or a response without a listing; on failure the server's error dict, or None")
 objects: list[dict[str, Any]] = Field(default_factory=list, description='Query result objects')
 message: str = Field(default='', description='Error or status message')
 code: str = Field(default='', description='Error code if failed')
 total: int = Field(default=0, description='Total number of results')
 res_obj: dict[str, Any] | None = Field(default=None, description='The raw response object when data cannot be processed normally')
 ```
-
 ##### Methods
 
 ###### `def handle_response_data(cls, values: Any) -> Any`
@@ -923,7 +1013,6 @@ res_obj: dict[str, Any] | None = Field(default=None, description='The raw respon
 @model_validator(mode='before')
 @classmethod
 ```
-
 Handle cases where data is a list, dict, or error response.
 
 For successful responses with list data, store in objects for easier access.
@@ -934,7 +1023,6 @@ For error responses with dict data, extract error details into code/message.
 ```python
 @property
 ```
-
 Check if result has objects.
 
 #### class `SSEEvent(BaseModel)`
@@ -952,7 +1040,6 @@ timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), descripti
 mgmt_name: str | None = Field(default=None, description='Management server name')
 domain: str | None = Field(default=None, description='Domain name')
 ```
-
 ##### Methods
 
 ###### `def to_sse_format(self) -> str`
@@ -970,7 +1057,6 @@ event_type: SSEEventType = SSEEventType.RESULT
 result_type: str = Field(default='', description='Type of result (asset, gateway, etc)')
 count: int = Field(default=0, ge=0)
 ```
-
 #### class `ErrorEvent(SSEEvent)`
 
 Error event.
@@ -982,7 +1068,6 @@ event_type: SSEEventType = SSEEventType.ERROR
 error_code: str = Field(default='')
 error_message: str = Field(default='')
 ```
-
 #### class `CompleteEvent(SSEEvent)`
 
 Collection complete event.
@@ -994,7 +1079,6 @@ event_type: SSEEventType = SSEEventType.COMPLETE
 total_results: int = Field(default=0, ge=0)
 duration_seconds: float = Field(default=0.0, ge=0)
 ```
-
 ### `arodonata/api/services/__init__.py`
 
 High-level business logic services.
@@ -1037,7 +1121,6 @@ Args:
 ```python
 @distributed_lock('asset_refresh:{mgmt_names}:{domains}', timeout=300, ttl=300)
 ```
-
 Build and refresh the assets cache with comprehensive asset collection.
 
 Collects gateways, servers, clusters, VSX, and VS objects from specified
@@ -1057,7 +1140,6 @@ Yields:
 ```python
 @distributed_lock('asset_refresh:{mgmt_name}:{domain_name}', timeout=60, ttl=60)
 ```
-
 Refresh cached assets for a single domain.
 
 Unlike build_refresh_assets_cache, this does not delete existing
@@ -1068,7 +1150,7 @@ without paying for a full multi-domain refresh.
 
 Acquires its own per-domain lock — do not call this from a context
 that already holds an asset_refresh lock covering the same
-mgmt_name/domain_name (use_refresh_domain_assets_impl instead in
+mgmt_name/domain_name (use _refresh_domain_assets_impl instead in
 that case, e.g. build_refresh_assets_cache's own per-domain loop).
 
 Args:
@@ -1109,9 +1191,9 @@ Query domains from management server and populate cache.
 Args:
     mgmt_name: Management server name.
     cache_mode: Cache mode for the underlying API query.
-    include_global: When False (default), the synthetic "Global" domain
+    include_global: When False (default), the "Global" domain
         is written to the cache table (for MDMs) but excluded from the
-        _returned_ list, so unflagged callers (e.g. asset collection)
+        *returned* list, so unflagged callers (e.g. asset collection)
         are unaffected by its existence.
 
 Returns:
@@ -1128,17 +1210,119 @@ Args:
 Returns:
     Domain UID or empty string if not found.
 
-### `arodonata/api/services/rulebase_refresh_service.py`
+### `arodonata/api/services/live_rulebase_source.py`
 
-Rulebase population and refresh service.
+Live rulebase reads inside an app-owned session (the change report's unpublished-session numbering, spec 5.3).
 
-#### class `RulebaseRefreshService`
+The SID is unwrapped only inside SidCaller, used only for SID_READ_COMMANDS (never publish, discard or logout: the
+app owns the session), and scrubbed — the full value and any 8+ character prefix — from every message and exception
+before anything leaves this module. Takes ``sid``/``server_ip``, never an OwnedSession, so api/services never imports
+arodonata.reports.
 
-Service for refreshing rulebase cache from Check Point API.
+#### class `SidCallError(RuntimeError)`
+
+A call through an owned session raised; the message is scrubbed of the SID.
+
+#### class `SidCaller`
+
+RulebaseCaller bound to one app-owned SID (read-only).
+
+The SID is domain-bound: ``domain`` only selects the RateLimiter slot (the hosting member).
 
 ##### Methods
 
-###### `def __init__(self, client: ArodonataClient, cache: CacheRepository, domain_list_refresh_ttl: int = DOMAIN_LIST_REFRESH_TTL_SECONDS, clock: Clock | None = None) -> None`
+###### `def __init__(self, client: ArodonataClient, mgmt_name: str, sid: SecretStr, server_ip: str) -> None`
+
+_No docstring._
+
+###### `def scrub(self, text: str) -> str`
+
+Remove the SID and every prefix of it of 8 or more characters.
+
+###### `async def api_call(self, *, mgmt_name: str, domain: str, command: str, payload: dict[str, Any]) -> ApiCallResult`
+
+_No docstring._
+
+###### `async def api_query(self, *, mgmt_name: str, domain: str, command: str, details_level: DetailsLevel, container_key: str) -> ApiQueryResult`
+
+api_call_with_sid has no paging: pages with details-level/limit/offset until total; any failed page fails
+the whole query.
+
+#### class `LiveRulebaseSource`
+
+RulebaseSource read once inside one app-owned session (status "live").
+
+``snapshot_session_uid`` is the owned session's uid and ``snapshot_published_at`` is None (the session is not
+published); ``snapshot_refreshed_at`` is the read time, naive UTC like the cache. ``warnings`` holds the read's
+warnings (a failed place-holder link or layer page); any warning means the numbers may be wrong.
+
+##### Methods
+
+###### `def __init__(self, client: ArodonataClient, mgmt_name: str, domain_name: str, sid: SecretStr, server_ip: str, *, session_uid: str, packages: Collection[str] | None, clock: Callable[[], datetime] = _naive_utcnow) -> None`
+
+_No docstring._
+
+###### `async def packages(self, mgmt_name: str, domain_name: str) -> list[PackageLayout]`
+
+_No docstring._
+
+###### `async def package_rulebase(self, mgmt_name: str, domain_name: str, package: str, rulebase_type: RulebaseType) -> PackageRulebase`
+
+_No docstring._
+
+###### `async def layer_rulebase(self, mgmt_name: str, domain_name: str, layer: str, rulebase_type: RulebaseType) -> LayerRulebase`
+
+_No docstring._
+
+###### `async def locate_rules(self, mgmt_name: str, domain_name: str, rule_uids: Collection[str] = (), rulebase_type: RulebaseType | None = None, *, layer_uids: Collection[str] = ()) -> RuleLocations`
+
+_No docstring._
+
+### `arodonata/api/services/rulebase_reader.py`
+
+Rulebase read pipeline shared by the cache refresh and the change report's live source (cache v2 2.8).
+
+Per domain: show-packages and NAT per package, every layer of each type (package layers, listing, inline closure),
+then the global place-holder links per package. ``caller`` is anything with the RulebaseCaller methods: the
+ArodonataClient (cache refresh, shared session) or a SidCaller (live read inside an app-owned session).
+
+#### Module-Level Functions
+
+##### `async def read_domain(caller: RulebaseCaller, mgmt_name: str, domain: str, warnings: list[str], *, packages: Collection[str] | None = None) -> tuple[list[PackageLayout], dict[str, LayerSnapshot]]`
+
+Read a domain's rulebases completely. With ``packages``, only those packages (and their NAT), no
+``show-*-layers`` listings: targets are the selected packages' ordered layers, their inline closure and the
+place-holder links (the change report's package-scoped live read, D25).
+
+#### class `RulebaseCaller(Protocol)`
+
+What read_domain calls. ArodonataClient satisfies it structurally (mypy-checked through its uses).
+
+##### Methods
+
+###### `async def api_call(self, *, mgmt_name: str, domain: str, command: str, payload: dict[str, Any]) -> Any`
+
+_No docstring._
+
+###### `async def api_query(self, *, mgmt_name: str, domain: str, command: str, details_level: DetailsLevel, container_key: str) -> Any`
+
+_No docstring._
+
+#### class `DomainReadFailed(Exception)`
+
+A domain read step failed: nothing is replaced (cache) / the live numbers cannot be trusted.
+
+### `arodonata/api/services/rulebase_refresh_service.py`
+
+Rulebase refresh: per domain, every policy package, layer and NAT policy is read completely, with sections, place-holders and the global place-holder link, then the domain's snapshot and sync state are replaced in one transaction.
+
+#### class `RulebaseRefreshService`
+
+Refreshes the rulebase cache from the Check Point API, one domain snapshot at a time.
+
+##### Methods
+
+###### `def __init__(self, client: ArodonataClient, cache: CacheRepository, domain_list_refresh_ttl: int = DOMAIN_LIST_REFRESH_TTL_SECONDS, clock: Clock | None = None, object_service: ObjectService | None = None) -> None`
 
 Initialize rulebase refresh service.
 
@@ -1151,6 +1335,27 @@ Args:
         See `arodonata.core.domain_list_refresh`.
     clock: Injectable time source for the TTL memo (tests only;
         defaults to the real wall clock).
+    object_service: Reads the domain's published head (``read_last_published_session``). Optional so the
+        exported class stays source-compatible; ``refresh_domain`` and ``is_rulebase_stale`` raise
+        RuntimeError without it.
+
+###### `async def refresh_domain(self, mgmt_name: str, domain: str, *, force: bool = False) -> AsyncGenerator[dict[str, Any]]`
+
+Read one domain's rulebases completely and replace its snapshot atomically.
+
+Steps: published head (before any rulebase read), dirty-session guard, show-packages and NAT per package,
+every layer of each type (package layers, listing, inline closure), place-holder links per package and
+global layer (skipped for the Global domain), then one replace with the sync state. Any failure keeps the
+old snapshot and marks the sync state failed. ``force`` only changes head failure: the snapshot is then
+stored unversioned instead of failing. ``asyncio.CancelledError`` is not caught.
+
+Yields:
+    Progress events; ``warning`` events; the last event has status ``domain_refreshed`` or
+    ``domain_failed`` and carries the DomainRefreshResult under ``result``.
+
+###### `async def is_rulebase_stale(self, mgmt_name: str, domain: str) -> bool`
+
+Whether the domain's rulebase snapshot is older than its last published session (spec 2.9).
 
 ###### `async def refresh_all(self, mgmt_names: list[str] | None = None, domain_names: list[str] | None = None, mode: Literal['skip', 'check', 'force'] = 'force', include_global: bool = False) -> AsyncGenerator[dict[str, Any]]`
 
@@ -1159,11 +1364,12 @@ Refresh all rulebases for specified managements and domains.
 Args:
     mgmt_names: Optional management server filter.
     domain_names: Optional domain filter.
-    mode: Refresh mode (only "force" currently implemented for rules;
-        affects only whether the domain _list_ is re-fetched before
+    mode: "skip" does nothing; "check" refreshes only stale domains
+        (see `is_rulebase_stale`); "force" refreshes every domain. The
+        mode also decides whether the domain *list* is re-fetched before
         resolving `target_domains` below - see
-        `_ensure_domain_list_fresh`).
-    include_global: When False (default), the synthetic "Global" domain
+        `_ensure_domain_list_fresh`.
+    include_global: When False (default), the "Global" domain
         is excluded so existing callers see today's behavior.
 
 Yields:
@@ -1171,19 +1377,19 @@ Yields:
 
 ###### `async def refresh_access_rulebases(self, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]`
 
-Refresh all access control rulebases for a domain.
+Deprecated: refreshes the whole domain (every rulebase type), like ``refresh_domain(force=True)``.
 
 ###### `async def refresh_nat_rulebases(self, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]`
 
-Refresh NAT rulebase for a domain.
+Deprecated: refreshes the whole domain (every rulebase type), like ``refresh_domain(force=True)``.
 
 ###### `async def refresh_https_rulebases(self, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]`
 
-Refresh HTTPS inspection rulebases for a domain.
+Deprecated: refreshes the whole domain (every rulebase type), like ``refresh_domain(force=True)``.
 
 ###### `async def refresh_threat_rulebases(self, mgmt_name: str, domain: str) -> AsyncGenerator[dict[str, Any]]`
 
-Refresh threat prevention rulebases for a domain.
+Deprecated: refreshes the whole domain (every rulebase type), like ``refresh_domain(force=True)``.
 
 ### `arodonata/api/vsx_relationship_manager.py`
 
@@ -1248,6 +1454,7 @@ Args:
 
 Returns:
     Number of relationships updated.
+
 
 ---
 
@@ -1371,6 +1578,23 @@ Args:
 Returns:
     List of rule cache models.
 
+###### `async def get_rulebase_sync_state(self, mgmt_name: str, domain_name: str) -> 'RulebaseSyncState | None'`
+
+The domain's rulebase sync state, or None before its first rulebase refresh.
+
+###### `async def load_domain_rulebase_snapshot(self, mgmt_name: str, domain_name: str) -> 'DomainRulebaseSnapshot | None'`
+
+The domain's cached rulebase snapshot, or None when it has no sync state.
+
+###### `async def find_rulebase_layers(self, mgmt_name: str, layer: str, rulebase_type: str) -> list[tuple[str, str]]`
+
+(domain_name, layer_uid) of cached layers of that type matching ``layer`` by uid or name.
+
+###### `async def find_rulebase_packages(self, mgmt_name: str, package: str) -> list[tuple[str, str]]`
+
+(domain_name, package_uid) of cached packages matching ``package`` by name or uid.
+
+
 ---
 
 ## asdk — Low-Level Check Point Management API SDK
@@ -1384,6 +1608,25 @@ cp-mgmt-api-sdk with proper session management, rate limiting,
 and dependency injection support.
 
 _No public classes or functions in this module._
+
+### `arodonata/asdk/_sid.py`
+
+SID log hygiene (Backlog #25, #2).
+
+A log line may name its session by a SID prefix — the first 8 characters, ``SID=[3f9a1c2e...]`` — at DEBUG (or TRACE)
+only; nothing about the SID at INFO and above, and the full SID never anywhere. A prefix cannot be replayed; a full
+live SID is a bearer token. Session UIDs are not secrets and stay in logs and spans at every level.
+
+#### Module-Level Functions
+
+##### `def sid_prefix(sid: SecretStr | str | None) -> str`
+
+``SID=[<first 8>...]`` for a DEBUG/TRACE log line; never use it at INFO and above.
+
+##### `def redact_sid(text: str, sid: SecretStr | str | None) -> str`
+
+Remove ``sid`` (the full value and every prefix of 8+ characters) and any SID inside a Check Point
+"session id [...]" phrase from a text that is logged or handed back (a server message or exception text).
 
 ### `arodonata/asdk/client.py`
 
@@ -1460,7 +1703,7 @@ Args:
 Returns:
     API response dictionary.
 
-###### `async def api_call_with_sid(self, mgmt_name: str, sid: str, server_ip: str, command: str, payload: dict[str, Any] | None = None, wait_for_task: bool = True, timeout: int = -1, task_timeout: int = -1) -> RawApiResponse`
+###### `async def api_call_with_sid(self, mgmt_name: str, sid: str, server_ip: str, command: str, payload: dict[str, Any] | None = None, wait_for_task: bool = True, timeout: int = -1, task_timeout: int = -1, *, domain: str | None = None) -> RawApiResponse`
 
 Execute API call with an explicit SID (no auto-session management).
 
@@ -1475,6 +1718,9 @@ Args:
     payload: Additional command parameters.
     wait_for_task: Wait for task completion.
     timeout: Request timeout in seconds.
+    domain: The session's domain, if known: selects the RateLimiter slot of its hosting MDS member
+        (LoginCoordinator.mds_host). Without it the member is looked up by server_ip
+        (LoginCoordinator.mds_host_for_ip).
 
 Returns:
     API response dictionary.
@@ -1506,7 +1752,23 @@ Returns:
 
 ###### `async def api_query(self, mgmt_name: str, command: str, domain: str = '', details_level: Literal['uid', 'standard', 'full'] = 'standard', payload: dict[str, Any] | None = None, container_key: str = 'objects', cache_mode: str = 'auto') -> RawApiResponse`
 
-Execute API query with automatic session management.
+Page a listing command to the end, one call per page (asdk/pager.py).
+
+Each page runs through _execute_with_retry like any api_call: it takes its own RateLimiter slot
+and releases it after the page, so other callers of the member get in between pages; a session
+that expires mid-listing re-logs in and retries that page only. The caller's `limit` is the page
+size (QUERY_PAGE_SIZE, 300, when absent or below 1, at most QUERY_MAX_PAGE_SIZE, 500) and `offset` the
+starting point; the caller's payload is not modified. On success `data` is the list of objects, as with
+cpapi's api_query.
+
+show-access-rulebase, show-nat-rulebase, show-https-rulebase and show-threat-rulebase are paged by rules
+instead, through rulebase/pager.py: pages of the caller's `limit` rules (RULEBASE_PAGE_SIZE, 100, when
+absent or below 1, and at most that), `offset` the starting rule; a section split by a page boundary is
+merged into one entry with all its rules, and on success `data` is the list of top-level rulebase entries
+(sections, rules, place-holders).
+
+A listing that keeps changing under the cursor is restarted once from `offset`, then fails with code
+`paging_inconsistent` instead of returning duplicates or gaps.
 
 ### `arodonata/asdk/domain_servers.py`
 
@@ -1531,7 +1793,7 @@ that are not dicts, or have no address, are ignored.
 
 ##### `def extract_global_domain_mdss(global_domain_obj: dict[str, Any]) -> GlobalDomainMdss`
 
-Read the Global domain's active and standby MDS members.
+Read the Global domain's UID and its active and standby MDS members.
 
 Deliberately not `extract_domain_servers`: that one skips every entry
 without an `ipv4-address`, which for Global is every entry, so it would
@@ -1549,7 +1811,6 @@ rather than a permission one.
 ```python
 @dataclass(frozen=True)
 ```
-
 A domain's servers as `show-domains` (details-level full) reports them.
 
 ##### Fields / Class Variables
@@ -1562,13 +1823,11 @@ standby_ips: tuple[str, ...] = ()
 standby_servers: tuple[str, ...] = ()
 standby_mdss: tuple[str, ...] = ()
 ```
-
 #### class `GlobalDomainMdss`
 
 ```python
 @dataclass(frozen=True)
 ```
-
 Which MDS member serves the writable copy of the implicit Global domain.
 
 Global has no domain server of its own, so `show-global-domain` reports its
@@ -1582,13 +1841,17 @@ Resolve the name to an address with `mds_ip_map`. `active_mds` is empty when
 no member is flagged active; a caller must then fall back deliberately
 rather than be handed an arbitrary member.
 
+`uid` is the Global domain's own UID, from the same object (`show-domains`
+never lists Global, so this is the only place it comes from); empty when the
+call failed.
+
 ##### Fields / Class Variables
 
 ```python
 active_mds: str = ''
 standby_mdss: tuple[str, ...] = ()
+uid: str = ''
 ```
-
 ### `arodonata/asdk/login_coordinator.py`
 
 Login coordinator for session management with domain resolution.
@@ -1645,7 +1908,6 @@ explicitly if you need to invalidate sessions on the server.
 ```python
 @traced
 ```
-
 Run session cleanup for all configured servers at library initialization.
 
 Called once as a background task when ArodonataClient enters its async context.
@@ -1657,7 +1919,6 @@ Errors per-server are logged but never propagate.
 ```python
 @traced
 ```
-
 Send keepalives for all stale cached sessions concurrently.
 
 Called as a background task after every API call. Skips the SID
@@ -1677,7 +1938,6 @@ Args:
 ```python
 @traced
 ```
-
 Explicitly logout of a session.
 
 Args:
@@ -1692,15 +1952,32 @@ Returns:
 ```python
 @traced
 ```
-
 Logout of all active sessions and clear cache.
+
+###### `async def mds_host(self, mgmt_name: str, domain: str) -> str`
+
+The MDS member a call to `mgmt_name`/`domain` counts against: what the login gate and the RateLimiter key on.
+
+Check Point serves every domain of a member from that member's one API server, and rate-limits logins per
+member. A domain's requests go to its domain server, hosted on some member -- and domains move between
+members on failover -- so for a domain it is the member IP recorded on the domain's cache row by
+`_cache_domain_active_ip`. The system domain, Global without a known member, a SmartCenter, or a row
+without that information fall back to the configured host.
+
+###### `async def mds_host_for_ip(self, mgmt_name: str, server_ip: str) -> str`
+
+The MDS member serving `server_ip`, for a call that knows only the address (an explicit SID).
+
+The domain row whose active server is at `server_ip` names the domain, and its member is whatever
+`mds_host` says for that domain (the row's `active_mds_ip`, else the configured host, exactly as for a
+call that names the domain). Without such a row -- the system domain, a SmartCenter, a domain not cached
+yet -- the address itself is the key.
 
 ###### `async def login(self, mgmt_name: str, domain: str = '', force: bool = False, *, cache_mode: str = 'auto', session_name: str | None = None, session_description: str | None = None, _skip_prefetch: bool = False, refresh_domain_ip: bool = False) -> tuple[str, str]`
 
 ```python
 @traced
 ```
-
 Login to management server or domain.
 
 Args:
@@ -1722,7 +1999,6 @@ Returns:
 ```python
 @traced
 ```
-
 Create a dedicated session that bypasses the global SID cache.
 
 Used by write-intensive workflows (e.g. CPCRUD) that need session
@@ -1767,8 +2043,8 @@ the gate stops it being paid more than once.
 Which server a login counts against is the caller's business (see
 LoginCoordinator.mds_host): the gate is keyed on whatever string it is given.
 
-This is a _rate_ concern and deliberately separate from RateLimiter, which caps
-_concurrency_ per MDS member, keyed like the gate (LoginCoordinator.mds_host).
+This is a *rate* concern and deliberately separate from RateLimiter, which caps
+*concurrency* per MDS member, keyed like the gate (LoginCoordinator.mds_host).
 Design: docs/superpowers/specs/2026-09-14-mds-login-gate-design.md
 
 #### class `LoginGateDeadlineError(ThrottlingError)`
@@ -1811,27 +2087,26 @@ One marker row per management server: `loginthrottle:{mds_host}`, TTL = window.
 
 Args:
     lock_manager: Where the marker rows live (the same table as every other lock).
-    window: Seconds a refusal closes the gate for, measured from the _last_ refusal.
+    window: Seconds a refusal closes the gate for, measured from the *last* refusal.
     now: Clock returning naive UTC; injectable for tests.
 
-###### `async def close(self, mds_host: str, window: int | None = None) -> None`
+###### `async def close(self, mds_host: str, window: int | None = None, *, target: str = '') -> None`
 
 ```python
 @traced
 ```
-
 Record that `mds_host` just refused a login: nobody tries again for one window.
 
 Upserts the row, or -- if another task already closed the gate -- pushes its
-expiry out, because the window that matters runs from the _last_ refusal.
-The row is never released; it lapses.
+expiry out, because the window that matters runs from the *last* refusal.
+The row is never released; it lapses. `target` ("mgmt/domain") names the
+refused login in the log line, the only one a throttle produces.
 
 ###### `async def wait_open(self, mds_host: str, *, deadline: float, max_wait: int, keepalive: Callable[[], Awaitable[Any]] | None = None) -> None`
 
 ```python
 @traced
 ```
-
 Return once no refusal is live for `mds_host`; raise if that would pass `deadline`.
 
 Args:
@@ -1839,6 +2114,34 @@ Args:
     deadline: Absolute `loop.time()` after which the login gives up.
     max_wait: The setting behind `deadline`, for the error message only.
     keepalive: Awaited before every sleep chunk -- the caller's lock renewal.
+
+### `arodonata/asdk/pager.py`
+
+Own paging for listing commands (spec D3): one call per page, so a caller holds a RateLimiter slot per page.
+
+cpapi's api_query fetched every page inside one call and checked nothing across pages. Here every page is checked
+against the previous one. An object can come twice for two reasons: Check Point swapped two objects with equal names
+at a page boundary between requests, which hides the other one, so the repeat is dropped and a few objects on both
+sides of the boundary are read again in one request to recover it (spec D3a); or a publish between pages shifted offsets. A changed
+`total` or a final count of distinct objects other than `total` catches the publishes that shift the boundary. An
+insert and a delete before the cursor that cancel out shift nothing and read like a slightly older snapshot; the
+cache's freshness stamp is taken before the listing, so the next incremental refresh picks them up. A failed check
+restarts the listing once from the caller's offset, and a second failure fails the query instead of returning
+duplicates or gaps.
+
+#### Module-Level Functions
+
+##### `async def fetch_all_pages(fetch_page: PageFetcher, *, command: str, container_key: str, offset: int, page_size: int) -> RawApiResponse`
+
+Page `command` from `offset` to the end, `page_size` objects per call.
+
+Returns cpapi's api_query shape: on success `data` is the list of objects. A first page that is unsuccessful, not a
+dict or without a `container_key` list is returned as is; one with the list but no paging (no `total`, `total` 0 or
+an empty list) comes back with `data` replaced by that list, as cpapi does. An unsuccessful later page (or window
+re-read) fails the query with that page's code. A repeated uid on a later page is dropped and up to `_TIE_WINDOW`
+objects on each side of that page's start are re-read in one request to recover the object an equal-name swap hid; the listing must end with
+`total - offset` distinct objects, or it is restarted once. Exceptions from `fetch_page` propagate untouched:
+nothing here retries a timeout or an identity error.
 
 ### `arodonata/asdk/rate_limiter.py`
 
@@ -1858,6 +2161,14 @@ workers/processes.
 Lock keys use a slot-based approach: ratelimit:{host}:slot_{n}
 where host is the MDS member hosting the target (LoginCoordinator.mds_host)
 and n is determined by hashing the operation ID to distribute load.
+A held slot's row is renewed every third of its TTL until release, so a
+request that outlasts the TTL (a publish task, a long single call) keeps it.
+
+Waiters for one host are served in arrival order within this limiter (one per client): a caller
+that finds others waiting queues behind them, only the longest waiter sweeps the slots, and a
+release wakes it at once. A caller that releases after a page and asks again (asdk/pager.py)
+therefore lets the waiter in first. Slots freed by other processes or other limiters are found by
+the longest waiter's polling sweep.
 
 Example:
     limiter = RateLimiter(concurrent_limit=4)
@@ -1867,7 +2178,7 @@ Example:
 
 ##### Methods
 
-###### `def __init__(self, concurrent_limit: int = 4, lock_manager: DatabaseLockManager | None = None, slot_timeout: int = DEFAULT_RATE_LIMIT_SLOT_TIMEOUT) -> None`
+###### `def __init__(self, concurrent_limit: int = DEFAULT_CONCURRENT_LIMIT, lock_manager: DatabaseLockManager | None = None, slot_timeout: int = DEFAULT_RATE_LIMIT_SLOT_TIMEOUT, slot_renew_interval: float | None = None) -> None`
 
 Initialize rate limiter.
 
@@ -1875,8 +2186,14 @@ Args:
     concurrent_limit: Maximum concurrent operations per MDS member.
     lock_manager: Optional DatabaseLockManager instance.
     slot_timeout: Default seconds acquire() waits for a free slot before
-        giving up (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT for why this must
-        comfortably exceed a single login retry-with-backoff sequence).
+        giving up. Size it for queueing behind other callers of the member:
+        a call that waits for a task (publish, revert) holds its slot for the
+        whole task, while listings release it between pages and a login holds
+        it for one attempt only, never across its retries or a throttle wait
+        (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT).
+    slot_renew_interval: Seconds between renewals of a held slot's lock row.
+        Defaults to a third of the row's TTL (DEFAULT_TTL_RATE_LIMIT, so 100 s);
+        must be positive.
 
 ###### `async def close(self) -> None`
 
@@ -1888,7 +2205,6 @@ Clean up resources.
 @asynccontextmanager
 @traced
 ```
-
 Acquire lock for server operations (reentrant per task).
 
 Args:
@@ -1915,7 +2231,6 @@ providing lookup and enumeration capabilities.
 ```python
 @dataclass
 ```
-
 Configuration for a management server.
 
 ##### Fields / Class Variables
@@ -1928,7 +2243,6 @@ port: int | None = None
 is_mdm: bool | None = None
 version: str | None = None
 ```
-
 ##### Methods
 
 ###### `def host(self) -> str`
@@ -1936,7 +2250,6 @@ version: str | None = None
 ```python
 @property
 ```
-
 Extract host from server_ip (handles host:port format).
 
 Returns:
@@ -2017,7 +2330,6 @@ disconnected API sessions according to age/changes criteria.
 ```python
 @dataclass
 ```
-
 Result of a session cleanup operation.
 
 ##### Fields / Class Variables
@@ -2027,7 +2339,6 @@ discarded: int = 0
 skipped: int = 0
 errors: list[str] = field(default_factory=list)
 ```
-
 #### class `SessionCleaner`
 
 Cleans up stale disconnected API sessions on Check Point management servers.
@@ -2054,26 +2365,23 @@ _No docstring._
 ```python
 @staticmethod
 ```
-
 Return True if the error indicates the max-sessions limit was hit.
 
-###### `async def cleanup_stale_sessions(self, mgmt_name: str, domain: str, system_sid: str, server_ip: str, port: int | None = None) -> CleanupResult`
+###### `async def cleanup_stale_sessions(self, mgmt_name: str, domain: str, system_sid: str, server_ip: str, port: int | None = None, *, slot_host: str | None = None) -> CleanupResult`
 
 ```python
 @traced
 ```
-
 Discard stale disconnected Management API sessions.
 
 Calls show-sessions, filters to Management API sessions only, then
 discards those that are disconnected and meet the age/changes criteria:
-
-- marked as a test session (name/description contains "pytest") and
+  - marked as a test session (name/description contains "pytest") and
     age > 10 min → discard, regardless of changes
-- 0 changes AND age > 60 min → discard
-- >0 changes AND age > 24h  → discard (abandoned with unpublished work)
-- read-write/in-work session, 0 changes AND age > 72h → discard
-- read-write/in-work session, >0 changes AND age > 7 days → discard
+  - 0 changes AND age > 60 min → discard
+  - >0 changes AND age > 24h  → discard (abandoned with unpublished work)
+  - read-write/in-work session, 0 changes AND age > 72h → discard
+  - read-write/in-work session, >0 changes AND age > 7 days → discard
 
 Args:
     mgmt_name: Management server name (for logging).
@@ -2081,6 +2389,8 @@ Args:
     system_sid: Already-authenticated SID to use for show-sessions/discard.
     server_ip: Management server IP address.
     port: Optional port number.
+    slot_host: RateLimiter key for the discards -- the MDS member the session lives on
+        (LoginCoordinator.mds_host); defaults to server_ip.
 
 Returns:
     CleanupResult with counts of discarded/skipped/errored sessions.
@@ -2133,7 +2443,6 @@ Read the `tasks` entries out of a `show-task` response; [] if malformed.
 ```python
 @dataclass(frozen=True)
 ```
-
 One task's last observed state, as read from a `show-task` entry.
 
 ##### Fields / Class Variables
@@ -2144,7 +2453,6 @@ status: str
 progress: int | None
 raw: dict[str, Any]
 ```
-
 ##### Methods
 
 ###### `def is_terminal(self) -> bool`
@@ -2152,7 +2460,6 @@ raw: dict[str, Any]
 ```python
 @property
 ```
-
 True once the task has left `in progress` -- successfully or not.
 
 Matches cpapi's completion rule exactly (`status != "in progress"`), so an
@@ -2163,7 +2470,6 @@ unrecognized status ends the wait rather than polling forever.
 ```python
 @property
 ```
-
 True only for an explicit `succeeded`.
 
 An allowlist where cpapi's `check_tasks_status` is a denylist: cpapi flips
@@ -2196,7 +2502,6 @@ _No docstring._
 ```python
 @traced
 ```
-
 Poll until every task in `task_ids` is terminal; return their statuses.
 
 Args:
@@ -2216,6 +2521,157 @@ Returns:
 Raises:
     TaskTimeoutError: The budget expired. Subclasses `TimeoutError`.
     TaskPollError: `show-task` failed more times in a row than tolerated.
+
+### `arodonata/asdk/tls.py`
+
+Verified, time-bounded connections to Check Point servers (Backlog #1 and #12).
+
+Identity is a pinned SHA-256 certificate fingerprint per ``host:port`` (trust on first use by default), checked in
+``connect()`` after the TLS handshake and before any application byte. cpapi's own ``check_fingerprint`` (cwd
+``fingerprints.txt``, ``input()`` prompt, unchecked re-send) is bypassed. The only module allowed to build an
+``ssl.SSLContext`` or to construct cpapi clients (``tests/unit/test_tls_hygiene.py``). Design:
+``docs/superpowers/specs/2026-10-04-tls-fingerprint-verification-design.md``.
+
+#### Module-Level Functions
+
+##### `def host_key(host: str, port: int) -> str`
+
+Trust-store key: ``host:port`` as dialled, IPs normalised, IPv6 bracketed, hostnames lowercased.
+
+##### `def reset_lab_memory() -> None`
+
+Forget everything lab-memory learned in this process (tests only).
+
+##### `def anchored_context(pems: Sequence[str]) -> ssl.SSLContext`
+
+CERT_REQUIRED with the pinned certificate(s) as the only trust anchors; no hostname, no expiry check.
+
+##### `def probe_certificate(host: str, port: int, timeout: float) -> bytes`
+
+Handshake only, to read the presented certificate; never carries application data (spec D3).
+
+The single CERT_NONE site in the repo: the certificate is judged by ``TrustPolicy.check`` afterwards, and only
+an accepted one becomes the trust anchor of the connection that carries data.
+
+##### `def verified_api_client(server: str, port: int | None = None, *, sid: str | None = None, policy: TrustPolicy | None = None, settings: ArodonataSettings | None = None, connect_timeout: float | None = None, read_timeout: float | None = None) -> VerifiedAPIClient`
+
+The only way arodonata (and its lab scripts) builds a cpapi client (spec D23).
+
+#### class `TrustEntry`
+
+```python
+@dataclass(frozen=True)
+```
+One trusted certificate: SHA-256 (64 lowercase hex), its PEM when known, how it was learned, when.
+
+##### Fields / Class Variables
+
+```python
+sha256: str
+pem: str | None
+source: str
+first_seen: str
+```
+#### class `TrustStore`
+
+The persisted ``host:port`` -> certificate map (spec D11-D13). Reads are lock-free; writes are atomic.
+
+##### Methods
+
+###### `def __init__(self, path: Path) -> None`
+
+_No docstring._
+
+###### `def load(self) -> dict[str, TrustEntry]`
+
+_No docstring._
+
+###### `def record(self, key: str, entry: TrustEntry) -> TrustEntry`
+
+Persist ``entry`` unless ``key`` is already recorded; return what the store holds for ``key``.
+
+###### `def ensure_writable(self) -> None`
+
+Preflight for ``tofu``: the directory and lock file can be created and the store is sane.
+
+#### class `TrustPolicy`
+
+Decides whether a presented certificate is the trusted one for ``host:port`` (spec D6).
+
+##### Methods
+
+###### `def __init__(self, mode: TrustMode, store: TrustStore, pins: Iterable[str]) -> None`
+
+_No docstring._
+
+###### `def from_settings(cls, settings: ArodonataSettings) -> TrustPolicy`
+
+```python
+@classmethod
+```
+_No docstring._
+
+###### `def preflight(self) -> None`
+
+Fail at startup instead of at the first new host (spec D14).
+
+###### `def anchor_pems(self, host: str, port: int) -> list[str] | None`
+
+_No docstring._
+
+###### `def check(self, host: str, port: int, der: bytes) -> TrustEntry`
+
+_No docstring._
+
+#### class `PinnedHTTPSConnection(_CpapiHTTPSConnection)`
+
+cpapi's connection with the identity check in ``connect()`` (spec D4).
+
+##### Fields / Class Variables
+
+```python
+sock: socket.socket | None
+```
+##### Methods
+
+###### `def __init__(self, client: VerifiedAPIClient, pems: Sequence[str]) -> None`
+
+_No docstring._
+
+###### `def connect(self) -> None`
+
+_No docstring._
+
+#### class `VerifiedAPIClient(APIClient)`
+
+cpapi client whose every connection is verified and time-bounded (spec D5).
+
+##### Fields / Class Variables
+
+```python
+conn: PinnedHTTPSConnection | None
+```
+##### Methods
+
+###### `def __init__(self, args: APIClientArgs, *, policy: TrustPolicy, connect_timeout: float, read_timeout: float) -> None`
+
+_No docstring._
+
+###### `def record_failure(self, exc: ArodonataError) -> None`
+
+_No docstring._
+
+###### `def check_fingerprint(self) -> bool`
+
+_No docstring._
+
+###### `def create_https_connection(self) -> PinnedHTTPSConnection`
+
+_No docstring._
+
+###### `def api_call(self, command, payload = None, sid = None, wait_for_task = True, timeout = -1, method = 'POST')`
+
+_No docstring._
 
 ### `arodonata/asdk/transport.py`
 
@@ -2250,20 +2706,22 @@ Example:
 
 ##### Methods
 
-###### `def __init__(self, task_waiter: TaskWaiter | None = None) -> None`
+###### `def __init__(self, task_waiter: TaskWaiter | None = None, *, tls_policy: TrustPolicy | None = None, connect_timeout: float | None = None, default_read_timeout: float | None = None) -> None`
 
 Initialize API transport.
 
 Args:
-    task_waiter: Optional TaskWaiter for polling async tasks. If None,
-        a default TaskWaiter will be instantiated.
+    task_waiter: Optional TaskWaiter for polling async tasks.
+    tls_policy: Certificate trust policy; None builds it from ArodonataSettings() on first use.
+    connect_timeout: TCP connect + TLS handshake bound; None means settings.connect_timeout.
+    default_read_timeout: Socket read bound for calls without a budget; None means
+        settings.default_read_timeout.
 
 ###### `async def api_call(self, server_ip: str, sid: str, command: str, payload: dict[str, Any] | None = None, wait_for_task: bool = True, timeout: int = -1, port: int | None = None, task_timeout: int = -1) -> RawApiResponse`
 
 ```python
 @traced
 ```
-
 Execute API call using sync SDK in async context.
 
 Args:
@@ -2274,9 +2732,14 @@ Args:
     wait_for_task: Whether to wait for task completion. The wait is done
         here, by `TaskWaiter`, never by cpapi -- see `_await_tasks`.
     timeout: Budget in seconds for the WHOLE operation: the initial call
-        plus, when it returns a task, the polling until that task ends.
-        <= 0 means unbounded.
+        plus, when it returns a task and `task_timeout` is not set, the
+        polling until that task ends. <= 0 means no overall budget; each
+        socket read is then still bounded by `default_read_timeout` (and
+        each connect by `connect_timeout`).
     port: Optional port number (defaults to 443 if not specified).
+    task_timeout: Budget in seconds for waiting out the task alone, apart
+        from `timeout`. <= 0 means the wait gets what is left of `timeout`
+        (no bound when that is <= 0 too).
 
 Returns:
     API response dictionary. For a task-returning command with
@@ -2284,41 +2747,22 @@ Returns:
     False if any task ended other than `succeeded`.
 
 Raises:
-    TaskTimeoutError: The task did not finish within `timeout`. A
+    TaskTimeoutError: The task did not finish within its budget. A
         `TimeoutError` subclass, so `except TimeoutError` still catches it.
     TimeoutError: The initial call itself did not return within `timeout`.
+    ApiTimeoutError: A socket connect or read timed out. Also a
+        `TimeoutError` subclass; the request is not re-sent.
+    ServerIdentityError: The server's TLS certificate is not the one
+        trusted for that address; nothing was sent.
     TaskPollError: `show-task` kept failing past the tolerated count.
 
-###### `async def api_query(self, server_ip: str, sid: str, command: str, details_level: str = 'standard', payload: dict[str, Any] | None = None, container_key: str = 'objects', port: int | None = None) -> RawApiResponse`
+###### `async def login_with_apikey(self, server_ip: str, api_key: SecretStr | str, domain: str | None = None, timeout: int = DEFAULT_LOGIN_TIMEOUT, port: int | None = None, session_name: str | None = None, session_description: str | None = None, session_timeout: int | None = None, *, log_sid: bool = True) -> RawApiResponse`
 
 ```python
 @traced
 ```
-
-Execute API query using sync SDK in async context.
-
-Args:
-    server_ip: Management server IP address.
-    sid: Session identifier.
-    command: API query command to execute.
-    details_level: Detail level for response.
-    payload: Request payload.
-    container_key: Key to extract objects from response.
-    port: Optional port number (defaults to 443 if not specified).
-
-Returns:
-    API response dictionary.
-
-Raises:
-    ValueError: If response is None or invalid.
-
-###### `async def login_with_apikey(self, server_ip: str, api_key: SecretStr | str, domain: str | None = None, timeout: int = DEFAULT_LOGIN_TIMEOUT, port: int | None = None, session_name: str | None = None, session_description: str | None = None, session_timeout: int | None = None) -> RawApiResponse`
-
-```python
-@traced
-```
-
-Perform login using an API key.
+Perform login using an API key. ``log_sid=False`` keeps any part of the new SID out of the log (sessions
+an app owns, D20).
 
 Args:
     server_ip: Management server IP address.
@@ -2345,7 +2789,6 @@ Raises:
 ```python
 @traced
 ```
-
 Perform login with username/password credentials.
 
 Args:
@@ -2372,7 +2815,6 @@ Raises:
 ```python
 @traced
 ```
-
 Perform logout for a session.
 
 Args:
@@ -2388,7 +2830,6 @@ Returns:
 ```python
 @traced
 ```
-
 Send keepalive ping to keep a session active.
 
 Args:
@@ -2404,7 +2845,6 @@ Returns:
 ```python
 @traced
 ```
-
 Retrieve all active sessions for the current admin.
 
 Args:
@@ -2420,7 +2860,6 @@ Returns:
 ```python
 @traced
 ```
-
 Discard a specific session by its UID.
 
 Args:
@@ -2431,6 +2870,7 @@ Args:
 
 Returns:
     API response dictionary.
+
 
 ---
 
@@ -2494,11 +2934,19 @@ Example:
     # Note: App is responsible for disposing the engine
     await engine.dispose()
 
+For SQLite engines it registers a ``do_connect`` listener on the caller's engine that defaults the driver
+timeout to ``SQLITE_BUSY_TIMEOUT_SECONDS`` (an explicit ``connect_args`` timeout wins), so concurrent writers
+and several processes on one file wait for a busy database instead of failing with "database is locked".
+
 ##### Methods
 
 ###### `def __init__(self, engine: AsyncEngine) -> None`
 
 Initialize database manager with pre-configured engine.
+
+For SQLite engines this registers a ``do_connect`` listener on ``engine`` (the caller's engine, not a copy)
+that defaults the driver timeout to ``SQLITE_BUSY_TIMEOUT_SECONDS``; a ``timeout`` set through
+``connect_args`` wins. Other dialects are untouched.
 
 Args:
     engine: Pre-configured AsyncEngine instance owned by the application.
@@ -2509,7 +2957,6 @@ Args:
 ```python
 @property
 ```
-
 Get the underlying engine.
 
 ###### `def is_initialized(self) -> bool`
@@ -2517,7 +2964,6 @@ Get the underlying engine.
 ```python
 @property
 ```
-
 Check if database tables have been initialized.
 
 ###### `async def initialize(self) -> None`
@@ -2534,7 +2980,6 @@ Set ARODONATA_FORCE_SCHEMA_SCAN=1 to force the full scan.
 ```python
 @asynccontextmanager
 ```
-
 Get an async database session.
 
 Yields:
@@ -2552,12 +2997,10 @@ JSONColumn TypeDecorator for cross-database JSON/JSONB support.
 JSON type that uses JSONB for PostgreSQL, JSON for SQLite.
 
 This TypeDecorator provides optimal JSON storage for each database:
-
 - PostgreSQL: JSONB (binary JSON, faster queries, indexed)
 - SQLite: JSON (stored as text, converted on access)
 
 Benefits of JSONB on PostgreSQL:
-
 - Efficient storage (binary format)
 - Faster queries (no reparsing on each access)
 - Supports GIN indexes for containment queries
@@ -2816,7 +3259,6 @@ Close database connection.
 ```python
 @asynccontextmanager
 ```
-
 Acquire lock as async context manager.
 
 Args:
@@ -2835,7 +3277,6 @@ Raises:
 ```python
 @traced
 ```
-
 Acquire a lock with retry logic and exponential backoff.
 
 Args:
@@ -2854,7 +3295,6 @@ Raises:
 ```python
 @traced
 ```
-
 Acquire the lock if it is free right now; never wait.
 
 Returns the LockContext on success, or None when a live owner holds the
@@ -2871,7 +3311,6 @@ Args:
 ```python
 @traced
 ```
-
 Release a lock with one conditional DELETE.
 
 Idempotent when the lock is already gone. Raises LockOwnershipError
@@ -2893,7 +3332,7 @@ Returns:
 
 `expires_at` of a live row for `lock_key`; None if absent or already expired.
 
-Read-only. For callers that use a row as a shared _marker_ rather than a
+Read-only. For callers that use a row as a shared *marker* rather than a
 mutual-exclusion lock (asdk/login_gate.py): they need to know when it
 lapses so they can sleep until then instead of polling.
 
@@ -2902,12 +3341,11 @@ lapses so they can sleep until then instead of polling.
 ```python
 @traced
 ```
-
 Push `lock_key`'s `expires_at` out to now + ttl, whoever owns the row.
 
 Unlike `renew_lock` this deliberately ignores ownership: it is for rows
 used as shared markers (asdk/login_gate.py), where the fact that matters
-is _when the row lapses_, not who wrote it. Never shortens -- a row that
+is *when the row lapses*, not who wrote it. Never shortens -- a row that
 already expires later than now + ttl is left alone. Returns False only
 when there is no row at all.
 
@@ -2916,7 +3354,6 @@ when there is no row at all.
 ```python
 @traced
 ```
-
 Renew a lock with one conditional UPDATE.
 
 Returns False when the lock is gone; raises LockOwnershipError when
@@ -2933,7 +3370,6 @@ Supports JSONB columns for complex data types with binary keys.
 ```python
 @dataclass(frozen=True)
 ```
-
 Value object for comma-separated server lists.
 
 Provides type-safe handling of standby server lists.
@@ -2952,7 +3388,6 @@ Example:
 ```python
 servers: list[str]
 ```
-
 ##### Methods
 
 ###### `def from_csv(cls, csv: str) -> ServerList`
@@ -2960,7 +3395,6 @@ servers: list[str]
 ```python
 @classmethod
 ```
-
 Create ServerList from comma-separated string.
 
 Args:
@@ -2991,7 +3425,6 @@ created_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(t
 last_keepalive: datetime | None = Field(default=None, description='Last keepalive sent for this session (naive UTC)')
 metadata_: dict[str, Any] | None = Field(default=None, sa_column=Column('metadata', JSON, nullable=True))
 ```
-
 #### class `Asset(SQLModel)`
 
 Cached gateway and server assets from Check Point.
@@ -3022,7 +3455,6 @@ country_name: str | None = Field(default=None, max_length=100)
 city_code: str | None = Field(default=None, max_length=10, index=True)
 raw_data: dict[str, Any] | None = Field(default=None, sa_column=Column('raw_data', JSON, nullable=True))
 ```
-
 #### class `Domain(SQLModel)`
 
 Cached domain information with MDS server mappings.
@@ -3043,7 +3475,6 @@ standby_servers: str = Field(default='')
 mgmt_name: str
 is_mdm: bool = Field(default=False)
 ```
-
 ##### Methods
 
 ###### `def build(cls, *, mgmt_name: str, domain_name: str, domain_uid: str = '', active_ip: str, active_server: str = '', active_mds: str = '', active_mds_ip: str = '', standby_mdss: str = '', standby_ips: str = '', standby_servers: str = '', is_mdm: bool = False) -> Domain`
@@ -3051,7 +3482,6 @@ is_mdm: bool = Field(default=False)
 ```python
 @classmethod
 ```
-
 Factory method to create Domain objects with proper defaults.
 
 Eliminates duplication in domain creation across the codebase.
@@ -3093,7 +3523,6 @@ acquired_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(
 expires_at: datetime = Field(description='Lock expiration timestamp for safety')
 metadata_: dict[str, Any] | None = Field(default=None, sa_column=Column('metadata', JSON, nullable=True))
 ```
-
 #### class `SchemaVersion(SQLModel)`
 
 Row-per-applied-hash record of confirmed-applied model schema hashes.
@@ -3113,7 +3542,6 @@ other's hash.
 schema_hash: str = Field(primary_key=True, max_length=64, description='SHA-256 of the applied model metadata')
 updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), description='When this schema hash was last confirmed applied (naive UTC)')
 ```
-
 #### class `CPObject(SQLModel)`
 
 Cached Check Point network object with extracted fields and raw data.
@@ -3150,7 +3578,6 @@ last_modify_time: datetime | None = Field(default=None)
 update_time: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True, description='Last cache update')
 raw_data: dict[str, Any] | None = Field(default=None, sa_column=Column('raw_data', JSON, nullable=True), description='Complete API response as JSON')
 ```
-
 #### class `LastPublishedSession(SQLModel)`
 
 Last published session for smart refresh detection.
@@ -3173,7 +3600,6 @@ creator: str = Field(default='', max_length=255)
 description: str = Field(default='')
 update_time: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
 ```
-
 #### class `RulebaseAccess(SQLModel)`
 
 Cached access control rules from Network layer.
@@ -3181,7 +3607,7 @@ Cached access control rules from Network layer.
 ##### Fields / Class Variables
 
 ```python
-id: str = Field(primary_key=True, max_length=512, description="Composite key: 'mgmt_name:domain_name:layer_name:uid'")
+id: str = Field(primary_key=True, max_length=512, description="Composite key: 'mgmt_name:domain_name:layer_uid:uid'")
 uid: str = Field(index=True, max_length=64)
 rule_number: int = Field(index=True, description='Rule position in layer')
 name: str = Field(max_length=255)
@@ -3189,15 +3615,19 @@ enabled: bool = Field(index=True)
 layer_name: str = Field(index=True, max_length=255)
 mgmt_name: str = Field(index=True, max_length=64)
 domain_name: str = Field(index=True, max_length=255, default='')
-sources: str = Field(default='', description='Comma-separated source UIDs')
-destinations: str = Field(default='', description='Comma-separated destination UIDs')
-services: str = Field(default='', description='Comma-separated service UIDs')
-action: str = Field(default='accept', max_length=32)
-track: str = Field(default='', max_length=32)
+layer_uid: str | None = Field(default=None, max_length=64, description='Layer uid from the response; NULL marks a pre-v2 row')
+kind: str = Field(default='rule', max_length=32, description="'rule' or 'place-holder'")
+section_uid: str | None = Field(default=None, max_length=64, description='Enclosing section uid')
+inline_layer_uid: str | None = Field(default=None, max_length=64, description="The rule's inline-layer uid")
+domain_type: str = Field(default='', max_length=32, description="The rule's domain.domain-type")
+sources: str = Field(default='', description='Comma-separated source names (uid when unresolved); a name containing a comma is split wrongly on read')
+destinations: str = Field(default='', description='Comma-separated destination names (uid when unresolved); a name containing a comma is split wrongly on read')
+services: str = Field(default='', description='Comma-separated service names (uid when unresolved); a name containing a comma is split wrongly on read')
+action: str = Field(default='Accept', max_length=64, description='Action name (Accept, Drop, Inner Layer...)')
+track: str = Field(default='', max_length=64, description='Track type name (Log, None...)')
 update_time: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
 raw_data: dict[str, Any] | None = Field(default=None, sa_column=Column('raw_data', JSON, nullable=True))
 ```
-
 #### class `RulebaseNAT(SQLModel)`
 
 Cached NAT rules from NAT layer.
@@ -3205,7 +3635,7 @@ Cached NAT rules from NAT layer.
 ##### Fields / Class Variables
 
 ```python
-id: str = Field(primary_key=True, max_length=512, description="Composite key: 'mgmt_name:domain_name:layer_name:uid'")
+id: str = Field(primary_key=True, max_length=512, description="Composite key: 'mgmt_name:domain_name:layer_uid:uid'")
 uid: str = Field(index=True, max_length=64)
 rule_number: int = Field(index=True)
 name: str = Field(max_length=255)
@@ -3213,6 +3643,12 @@ enabled: bool = Field(index=True)
 layer_name: str = Field(index=True, max_length=255)
 mgmt_name: str = Field(index=True, max_length=64)
 domain_name: str = Field(index=True, max_length=255, default='')
+layer_uid: str | None = Field(default=None, max_length=64, description='Layer uid from the response; NULL marks a pre-v2 row')
+kind: str = Field(default='rule', max_length=32, description="'rule' or 'place-holder'")
+section_uid: str | None = Field(default=None, max_length=64, description='Enclosing section uid')
+inline_layer_uid: str | None = Field(default=None, max_length=64, description="The rule's inline-layer uid")
+domain_type: str = Field(default='', max_length=32, description="The rule's domain.domain-type")
+auto_generated: bool = Field(default=False, description='CP auto-generated NAT rule')
 original_source: str = Field(default='', max_length=255)
 original_destination: str = Field(default='', max_length=255)
 original_service: str = Field(default='', max_length=255)
@@ -3222,7 +3658,6 @@ translated_service: str = Field(default='', max_length=255)
 update_time: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
 raw_data: dict[str, Any] | None = Field(default=None, sa_column=Column('raw_data', JSON, nullable=True))
 ```
-
 #### class `RulebaseHTTPS(SQLModel)`
 
 Cached HTTPS inspection rules from CVD layer.
@@ -3230,7 +3665,7 @@ Cached HTTPS inspection rules from CVD layer.
 ##### Fields / Class Variables
 
 ```python
-id: str = Field(primary_key=True, max_length=512, description="Composite key: 'mgmt_name:domain_name:layer_name:uid'")
+id: str = Field(primary_key=True, max_length=512, description="Composite key: 'mgmt_name:domain_name:layer_uid:uid'")
 uid: str = Field(index=True, max_length=64)
 rule_number: int = Field(index=True)
 name: str = Field(max_length=255)
@@ -3238,13 +3673,17 @@ enabled: bool = Field(index=True)
 layer_name: str = Field(index=True, max_length=255)
 mgmt_name: str = Field(index=True, max_length=64)
 domain_name: str = Field(index=True, max_length=255, default='')
-sources: str = Field(default='', description='Comma-separated source UIDs')
-destinations: str = Field(default='', description='Comma-separated destination UIDs')
-track: str = Field(default='', max_length=32)
+layer_uid: str | None = Field(default=None, max_length=64, description='Layer uid from the response; NULL marks a pre-v2 row')
+kind: str = Field(default='rule', max_length=32, description="'rule' or 'place-holder'")
+section_uid: str | None = Field(default=None, max_length=64, description='Enclosing section uid')
+inline_layer_uid: str | None = Field(default=None, max_length=64, description="The rule's inline-layer uid")
+domain_type: str = Field(default='', max_length=32, description="The rule's domain.domain-type")
+sources: str = Field(default='', description='Comma-separated source names (uid when unresolved); a name containing a comma is split wrongly on read')
+destinations: str = Field(default='', description='Comma-separated destination names (uid when unresolved); a name containing a comma is split wrongly on read')
+track: str = Field(default='', max_length=64, description='Track type name (Log, None...)')
 update_time: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
 raw_data: dict[str, Any] | None = Field(default=None, sa_column=Column('raw_data', JSON, nullable=True))
 ```
-
 #### class `RulebaseThreat(SQLModel)`
 
 Cached threat prevention rules from Threat layer.
@@ -3252,7 +3691,7 @@ Cached threat prevention rules from Threat layer.
 ##### Fields / Class Variables
 
 ```python
-id: str = Field(primary_key=True, max_length=512, description="Composite key: 'mgmt_name:domain_name:layer_name:uid'")
+id: str = Field(primary_key=True, max_length=512, description="Composite key: 'mgmt_name:domain_name:layer_uid:uid'")
 uid: str = Field(index=True, max_length=64)
 rule_number: int = Field(index=True)
 name: str = Field(max_length=255)
@@ -3260,12 +3699,97 @@ enabled: bool = Field(index=True)
 layer_name: str = Field(index=True, max_length=255)
 mgmt_name: str = Field(index=True, max_length=64)
 domain_name: str = Field(index=True, max_length=255, default='')
-track: str = Field(default='', max_length=32)
-protections: str = Field(default='', description='Comma-separated protection names')
+layer_uid: str | None = Field(default=None, max_length=64, description='Layer uid from the response; NULL marks a pre-v2 row')
+kind: str = Field(default='rule', max_length=32, description="'rule' or 'place-holder'")
+section_uid: str | None = Field(default=None, max_length=64, description='Enclosing section uid')
+inline_layer_uid: str | None = Field(default=None, max_length=64, description="The rule's inline-layer uid")
+domain_type: str = Field(default='', max_length=32, description="The rule's domain.domain-type")
+track: str = Field(default='', max_length=64, description='Track type name (Log, None...)')
+protections: str = Field(default='', description='Comma-separated protection names (uid when unresolved); a name containing a comma is split wrongly on read')
 update_time: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
 raw_data: dict[str, Any] | None = Field(default=None, sa_column=Column('raw_data', JSON, nullable=True))
 ```
+#### class `RulebaseLayer(SQLModel)`
 
+One cached layer of a domain's rulebase snapshot (an empty layer has a row with total=0).
+
+##### Fields / Class Variables
+
+```python
+id: str = Field(primary_key=True, max_length=512, description="'mgmt_name:domain_name:rulebase_type:layer_uid'")
+mgmt_name: str = Field(max_length=64)
+domain_name: str = Field(max_length=255, default='')
+rulebase_type: str = Field(max_length=16)
+layer_uid: str = Field(max_length=64)
+layer_name: str = Field(max_length=255, default='')
+layer_domain_type: str = Field(max_length=32, default='')
+total: int = Field(default=0)
+objects_dictionary: list[dict[str, Any]] | None = Field(default=None, sa_column=Column('objects_dictionary', JSON, nullable=True), description='Trimmed {uid, name, type}')
+update_time: datetime = Field(default_factory=_utcnow)
+```
+#### class `RulebaseSection(SQLModel)`
+
+One section of a cached layer (from/to are in-layer rule numbers; NULL for an empty section).
+
+##### Fields / Class Variables
+
+```python
+id: str = Field(primary_key=True, max_length=512, description="'mgmt_name:domain_name:layer_uid:section_uid'")
+mgmt_name: str = Field(max_length=64)
+domain_name: str = Field(max_length=255, default='')
+rulebase_type: str = Field(max_length=16)
+layer_uid: str = Field(max_length=64)
+section_uid: str = Field(max_length=64)
+name: str = Field(max_length=255, default='')
+from_number: int | None = Field(default=None)
+to_number: int | None = Field(default=None)
+rules_before: int = Field(default=0)
+seq: int = Field(default=0)
+raw_data: dict[str, Any] | None = Field(default=None, sa_column=Column('raw_data', JSON, nullable=True))
+update_time: datetime = Field(default_factory=_utcnow)
+```
+#### class `PolicyPackageLayer(SQLModel)`
+
+One ordered layer of a policy package (a package with no ordered layers has no rows).
+
+##### Fields / Class Variables
+
+```python
+id: str = Field(primary_key=True, max_length=512, description="'mgmt_name:domain_name:package_uid:rulebase_type:position'")
+mgmt_name: str = Field(max_length=64)
+domain_name: str = Field(max_length=255, default='')
+package_uid: str = Field(max_length=64)
+package_name: str = Field(max_length=255)
+rulebase_type: str = Field(max_length=16)
+position: int = Field(default=0)
+slot: str = Field(max_length=16, default='')
+layer_uid: str = Field(max_length=64)
+layer_name: str = Field(max_length=255, default='')
+layer_domain_type: str = Field(max_length=32, default='')
+placeholder_uid: str | None = Field(default=None, max_length=64)
+parent_rule_uid: str | None = Field(default=None, max_length=64)
+parent_rule_name: str | None = Field(default=None, max_length=255)
+domain_layer_uid: str | None = Field(default=None, max_length=64)
+update_time: datetime = Field(default_factory=_utcnow)
+```
+#### class `RulebaseSyncState(SQLModel)`
+
+Which published session a domain's rulebase snapshot was built from (separate from the object baseline).
+
+##### Fields / Class Variables
+
+```python
+id: str = Field(primary_key=True, max_length=512, description="'mgmt_name:domain_name'")
+mgmt_name: str = Field(max_length=64)
+domain_name: str = Field(max_length=255, default='')
+session_uid: str | None = Field(default=None, max_length=64)
+session_published_time: datetime | None = Field(default=None)
+refreshed_at: datetime | None = Field(default=None)
+format_version: int = Field(default=0)
+status: str = Field(default='', max_length=16, description="'ok' | 'unversioned' | 'failed'")
+last_error: str | None = Field(default=None)
+update_time: datetime = Field(default_factory=_utcnow)
+```
 ### `arodonata/cache/object_service.py`
 
 High-level object cache operations.
@@ -3308,7 +3832,6 @@ Classification of search input.
 ```python
 @dataclass
 ```
-
 A node in the group membership tree.
 
 ##### Fields / Class Variables
@@ -3320,13 +3843,11 @@ domain: str
 depth: int
 children: list[GroupNode] | None = None
 ```
-
 #### class `SearchResult`
 
 ```python
 @dataclass
 ```
-
 Search result for a single term.
 
 ##### Fields / Class Variables
@@ -3337,7 +3858,6 @@ search_type: SearchType
 objects: list[CPObject]
 memberships: dict[str, list[GroupNode]] | None = None
 ```
-
 #### class `ObjectService`
 
 High-level object cache operations.
@@ -3376,7 +3896,7 @@ Args:
 Yields:
     SearchResult for each search term.
 
-###### `async def refresh_objects(self, mgmt_names: list[str] | None = None, domain_names: list[str] | None = None, mode: str = 'force', include_global: bool = False) -> AsyncIterator[dict[str, Any]]`
+###### `async def refresh_objects(self, mgmt_names: list[str] | None = None, domain_names: list[str] | None = None, mode: str = 'force', include_global: bool = False, *, refresh_domain_list: bool = True) -> AsyncIterator[dict[str, Any]]`
 
 Refresh object cache from API.
 
@@ -3384,10 +3904,19 @@ Args:
     mgmt_names: Optional management server filter.
     domain_names: Optional domain filter.
     mode: Refresh mode (skip/check/force/incremental).
-    include_global: When False (default), the synthetic "Global" domain
+    include_global: When False (default), the "Global" domain
         is excluded from the all-domains refresh path so existing
         callers see today's behavior. An explicit ``domain_names``
         request for "Global" is honored regardless of this flag.
+    refresh_domain_list: When True (default), a FORCE refresh (and a
+        smart refresh whose domain-list TTL ran out) re-reads the
+        server's domain list (show-domains/show-mdss) and rewrites
+        the domain rows. Pass False when the caller already knows
+        its domains, as ``CacheRefreshCoordinator`` does: with
+        several domains reloading at once every reload would
+        otherwise issue those calls and rewrite every domain row.
+        An empty domain table and a ``domain_names`` entry missing
+        from the table still trigger the re-read.
 
 Yields:
     Progress dictionaries with keys:
@@ -3403,8 +3932,10 @@ Yields:
 Refresh and upsert the last-published-session record for one domain.
 
 Makes a single, lightweight `show-last-published-session` API call —
-does not touch CPObject or Asset caches. Safe to call independently
-of a full object/asset refresh.
+does not touch CPObject or Asset caches. The stored record is the
+object cache's freshness stamp, so this marks the domain's cache as
+current without refreshing it; to only read the head, use
+`fetch_last_published_session`.
 
 Args:
     mgmt_name: Management server name.
@@ -3414,12 +3945,31 @@ Returns:
     The upserted LastPublishedSession record, or None if the API
     call failed or returned no usable timestamp.
 
+###### `async def store_last_published_session(self, record: LastPublishedSession) -> LastPublishedSession | None`
+
+Upsert a last-published-session record; None (logged) if the cache write fails.
+
+###### `async def read_last_published_session(self, mgmt_name: str, domain_name: str) -> LastPublishedSession`
+
+Read the domain's current last-published session WITHOUT storing it, or raise.
+
+Args:
+    mgmt_name: Management server name.
+    domain_name: Domain name.
+
+Returns:
+    An unsaved LastPublishedSession.
+
+Raises:
+    InvalidCredentialsError: The login was refused for invalid credentials (propagated unchanged).
+    PublishedHeadError: The call failed, raised, or returned no usable timestamp.
+
 ###### `async def fetch_last_published_session(self, mgmt_name: str, domain_name: str) -> LastPublishedSession | None`
 
 Read the domain's current last-published session WITHOUT storing it.
 
 The read-only half of `refresh_last_published_session`. Callers that need
-to know where the domain's head is _before_ deciding what to do with the
+to know where the domain's head is *before* deciding what to do with the
 cache must not advance the stored baseline in the process — doing so
 empties the diff window they are about to use. `CacheRefreshCoordinator`
 uses this to tell a forward publish from a revert.
@@ -3430,7 +3980,8 @@ Args:
 
 Returns:
     An unsaved LastPublishedSession, or None if the API call failed or
-    returned no usable timestamp.
+    returned no usable timestamp. Never raises (see
+    `read_last_published_session` for the raising variant).
 
 ###### `async def fetch_full_object(self, mgmt_name: str, domain_name: str, uid: str) -> dict[str, Any] | None`
 
@@ -3471,6 +4022,11 @@ Example:
     # Asset operations
     assets = await cache.get_assets(mgmt_names=["mgmt1"])
 
+##### Fields / Class Variables
+
+```python
+_SNAPSHOT_TABLES: tuple[type[SQLModel], ...] = (RulebaseLayer, RulebaseSection, PolicyPackageLayer)
+```
 ##### Methods
 
 ###### `def __init__(self, db_manager: DatabaseManager) -> None`
@@ -3673,7 +4229,7 @@ Get all domains, optionally filtered by management server.
 Args:
     mgmt_name: Optional single management server filter (deprecated, use mgmt_names).
     mgmt_names: Optional list of management server names to filter.
-    include_global: When False (default), the synthetic "Global" domain
+    include_global: When False (default), the "Global" domain
         row is excluded so existing callers see today's behavior.
 
 Returns:
@@ -3858,7 +4414,8 @@ Atomically replace all objects for a domain.
 Delete + bulk insert run in ONE transaction, so concurrent readers
 never observe an empty/partial domain and a failure rolls back to
 the previous cache contents. Input is deduped by primary key (the
-API occasionally returns duplicate uids within a page set).
+API occasionally returns duplicate uids within a page set). Swaps of
+one repository run one at a time (see the lock).
 
 Args:
     mgmt_name: Management server name.
@@ -3943,6 +4500,52 @@ Args:
 Returns:
     Number of rules deleted.
 
+###### `async def replace_domain_rulebases(self, mgmt_name: str, domain_name: str, rows: Sequence[SQLModel], state: RulebaseSyncState) -> int`
+
+Atomically replace a domain's whole rulebase snapshot and its sync state.
+
+One session and commit: deletes the domain's rows from the four rule tables, ``rulebase_layer``,
+``rulebase_section`` and ``rulebase_package_layer`` (this also purges pre-v2 rule rows, whatever their id),
+inserts ``rows`` (deduped by primary key) and merges ``state``. A failure rolls back to the previous snapshot
+and state.
+
+Returns:
+    Number of rule rows inserted (all four types, place-holders included).
+
+###### `async def get_rulebase_sync_state(self, mgmt_name: str, domain_name: str) -> RulebaseSyncState | None`
+
+The domain's rulebase sync state, or None before its first rulebase refresh.
+
+###### `async def mark_rulebase_sync_failed(self, mgmt_name: str, domain_name: str, error: str) -> None`
+
+Record a failed refresh: status 'failed' and ``last_error``; ``session_uid`` and ``format_version`` stay.
+
+###### `async def find_rulebase_layers(self, mgmt_name: str, layer: str, rulebase_type: str) -> list[tuple[str, str]]`
+
+``(domain_name, layer_uid)`` of every cached layer of that type whose uid or name is ``layer``.
+
+###### `async def find_rulebase_packages(self, mgmt_name: str, package: str) -> list[tuple[str, str]]`
+
+``(domain_name, package_uid)`` of every cached package whose name or uid is ``package``.
+
+###### `async def load_domain_rulebase_snapshot(self, mgmt_name: str, domain_name: str) -> DomainRulebaseSnapshot | None`
+
+The domain's cached rulebase snapshot (canonical order), or None when it has no sync state.
+
+### `arodonata/cache/rulebase_rows.py`
+
+A domain's rulebase snapshot as cache rows, and back. The only code that knows both shapes.
+
+#### Module-Level Functions
+
+##### `def build_rulebase_rows(snapshot: DomainRulebaseSnapshot) -> list[SQLModel]`
+
+Rule, layer, section and package-layer rows of one domain (the sync state is built by the caller).
+
+##### `def snapshot_from_rows(state: RulebaseSyncState, layer_rows: Iterable[RulebaseLayer], section_rows: Iterable[RulebaseSection], rule_rows: Iterable[Any], package_rows: Iterable[PolicyPackageLayer]) -> DomainRulebaseSnapshot`
+
+Rebuild the snapshot in canonical order. Rule rows without ``layer_uid`` (pre-v2) are ignored.
+
 ### `arodonata/cache/schema_version.py`
 
 Deterministic hash of SQLModel/SQLAlchemy metadata.
@@ -3966,6 +4569,7 @@ Args:
 Returns:
     64-char hex SHA-256 digest.
 
+
 ---
 
 ## config — Settings & Constants
@@ -3988,7 +4592,6 @@ Configuration settings for Arodonata library.
 
 Uses Pydantic v2 BaseSettings for type-safe configuration.
 Settings can be provided via:
-
 1. Environment variables (e.g., ARODONATA_LOG_LEVEL, MGMT_NAMES, etc.)
 2. Explicit constructor parameters (overrides env vars)
 
@@ -4028,14 +4631,14 @@ mgmt_names: str = Field(default='', description='Comma-separated management serv
 mgmt_servers: str = Field(default='', description='Comma-separated management server IPs/hosts', validation_alias='MGMT_SERVERS')
 api_keys_raw: str = Field(default='', validation_alias='API_KEYS', exclude=True)
 api_key_vars: str = Field(default='', validation_alias='API_KEY_VARS', exclude=True)
-api_keys: SecretStr = Field(default_factory=lambda: SecretStr(''), description='Comma-separated API keys (actual values)')
+api_keys: SecretStr = Field(default_factory=lambda: SecretStr(''), description='Comma-separated API keys (actual values)', validate_default=True)
 username: str | None = Field(default=None, description='Username for credential-based auth', validation_alias='ARODONATA_USERNAME')
 password: SecretStr | None = Field(default=None, description='Password for credential-based auth', validation_alias='ARODONATA_PASSWORD')
 mgmt_ip: str | None = Field(default=None, description='Management server IP for credential mode', validation_alias='ARODONATA_MGMT_IP')
 session_expire_seconds: int = Field(default=DEFAULT_SESSION_EXPIRE, ge=0, description='Session expiration in seconds', validation_alias='ARODONATA_SESSION_EXPIRE')
 session_timeout: int = Field(default=DEFAULT_SESSION_TIMEOUT, ge=0, description='Session timeout in seconds (passed to login API)', validation_alias='ARODONATA_SESSION_TIMEOUT')
 concurrent_limit: int = Field(default=DEFAULT_CONCURRENT_LIMIT, ge=1, le=20, description='Max concurrent API requests per MDS member (per server for a SmartCenter)', validation_alias='ARODONATA_CONCURRENT_LIMIT')
-rate_limit_slot_timeout: int = Field(default=DEFAULT_RATE_LIMIT_SLOT_TIMEOUT, ge=1, description='Seconds a caller waits for a free concurrency slot (RateLimiter.acquire) before giving up. Must comfortably exceed how long another caller can legitimately hold a slot during its own login retry-with-backoff sequence, or concurrent callers fail fast under real server-side throttling even though the server would have accepted a login moments later.', validation_alias='ARODONATA_RATE_LIMIT_SLOT_TIMEOUT')
+rate_limit_slot_timeout: int = Field(default=DEFAULT_RATE_LIMIT_SLOT_TIMEOUT, ge=1, description='Seconds a caller waits for a free concurrency slot (RateLimiter.acquire) before giving up. Size it for queueing behind other callers of the same MDS member: a call that waits for a task (publish, revert) holds its slot for the whole task, while listings release it between pages and a login holds it for one attempt only, never across its retries or a throttle wait.', validation_alias='ARODONATA_RATE_LIMIT_SLOT_TIMEOUT')
 api_timeout: int = Field(default=DEFAULT_API_TIMEOUT, ge=1, description='API timeout in seconds', validation_alias='ARODONATA_API_TIMEOUT')
 task_timeout: int = Field(default=DEFAULT_TASK_TIMEOUT, ge=1, description='Seconds to wait for a server-side task (publish, install-policy, assign-global-assignment, revert-to-revision) after the call that started it has returned. Separate from api_timeout on purpose: see DEFAULT_TASK_TIMEOUT', validation_alias='ARODONATA_TASK_TIMEOUT')
 login_timeout: int = Field(default=DEFAULT_LOGIN_TIMEOUT, ge=1, description='Per-attempt login timeout in seconds (see DEFAULT_LOGIN_TIMEOUT)', validation_alias='ARODONATA_LOGIN_TIMEOUT')
@@ -4043,6 +4646,7 @@ login_throttle_window: int = Field(default=LOGIN_THROTTLE_WINDOW_SECONDS, ge=1, 
 login_max_wait: int = Field(default=DEFAULT_LOGIN_MAX_WAIT, ge=1, description="Total seconds one login() may spend waiting out Check Point's per-MDS login rate limit before failing; also the login-lock acquire timeout (see DEFAULT_LOGIN_MAX_WAIT)", validation_alias='ARODONATA_LOGIN_MAX_WAIT')
 login_retry_backoff: int = Field(default=DEFAULT_LOGIN_BACKOFF, ge=1, description='Login retry backoff in seconds', validation_alias='ARODONATA_LOGIN_BACKOFF')
 login_max_retries: int = Field(default=DEFAULT_LOGIN_RETRIES, ge=1, description='Maximum login retry attempts', validation_alias='ARODONATA_LOGIN_RETRIES')
+warm_object_cache_on_first_use: bool = Field(default=True, description="When get_domains finds a management server's object cache empty, start loading every domain's objects in the background (get_domains itself returns the domain list at once)", validation_alias='ARODONATA_WARM_OBJECT_CACHE_ON_FIRST_USE')
 log_level: str = Field(default='INFO', description='Logging level', validation_alias='ARODONATA_LOG_LEVEL')
 trace_modules: str = Field(default='', description="Comma-separated 'module:on|off' span gating rules", validation_alias='ARODONATA_TRACE_MODULES')
 cpcrud_on_name_conflict: str = Field(default='update', description="Name conflict policy: 'update' | 'error'", validation_alias='ARODONATA_CPCRUD_ON_NAME_CONFLICT')
@@ -4055,8 +4659,11 @@ cpcrud_auto_name_prefix_svc_udp: str = Field(default='UDP_', validation_alias='A
 cpcrud_auto_name_prefix_svc_icmp: str = Field(default='ICMP_', validation_alias='ARODONATA_CPCRUD_AUTO_NAME_PREFIX_SVC_ICMP')
 cpcrud_refresh_mode: str = Field(default='invalidate', description="Post-publish cache refresh: 'invalidate' | 'force'", validation_alias='ARODONATA_CPCRUD_REFRESH_MODE')
 cpcrud_schema_path: str = Field(default='', description='Override path to checkpoint_ops_schema.json', validation_alias='ARODONATA_CPCRUD_SCHEMA_PATH')
+tls_trust: str = Field(default=DEFAULT_TLS_TRUST, description="Certificate trust mode: 'tofu' (learn and persist) | 'pinned' | 'lab-memory' (lab runs only)", validation_alias='ARODONATA_TLS_TRUST')
+tls_fingerprints: str = Field(default='', description="Comma-separated SHA-256 fingerprints trusted at any address (from 'api fingerprint -f json')", validation_alias='ARODONATA_TLS_FINGERPRINTS')
+tls_known_hosts_path: str = Field(default='', description='Trust store file; empty means ${XDG_STATE_HOME:-~/.local/state}/arodonata/tls_known_hosts.json', validation_alias='ARODONATA_TLS_KNOWN_HOSTS_PATH')
+connect_timeout: int = Field(default=DEFAULT_CONNECT_TIMEOUT, ge=1, description='Seconds for TCP connect plus TLS handshake to a Check Point server', validation_alias='ARODONATA_CONNECT_TIMEOUT')
 ```
-
 ##### Methods
 
 ###### `def __init__(self, **data: Any) -> None`
@@ -4068,13 +4675,13 @@ environment-variable name (e.g. ``ARODONATA_USERNAME``, ``MGMT_NAMES``).
 Pydantic only accepts that alias as input by default, so a plain kwarg
 like ``ArodonataSettings(username=...)`` would silently be dropped.
 
-To support that ergonomic kwarg form _without_ also turning every bare
+To support that ergonomic kwarg form *without* also turning every bare
 field name into a valid environment variable (which a blanket
 ``populate_by_name=True`` on ``model_config`` would do — see
 ``pydantic_settings.sources.base.EnvSettingsSource._extract_field_info``,
 which registers an env-var candidate for every name the field accepts
 as input), remap explicit constructor kwargs from their plain field
-name to their alias _before_ handing off to ``BaseSettings.__init__``.
+name to their alias *before* handing off to ``BaseSettings.__init__``.
 
 This only touches keys the caller passed in directly here; it never
 changes what ``model_config`` or any field's ``validation_alias``
@@ -4087,7 +4694,6 @@ absorbed.
 ```python
 @property
 ```
-
 Return authentication mode based on provided credentials.
 
 Returns:
@@ -4098,7 +4704,6 @@ Returns:
 ```python
 @property
 ```
-
 Parse comma-separated management names to list.
 
 ###### `def mgmt_servers_list(self) -> list[str]`
@@ -4106,7 +4711,6 @@ Parse comma-separated management names to list.
 ```python
 @property
 ```
-
 Parse comma-separated management servers to list.
 
 ###### `def trace_modules_rules(self) -> dict[str, bool]`
@@ -4114,15 +4718,27 @@ Parse comma-separated management servers to list.
 ```python
 @property
 ```
-
 Parsed gating rules for arlogi's set_trace_modules().
+
+###### `def tls_fingerprints_list(self) -> list[str]`
+
+```python
+@property
+```
+Normalised SHA-256 pins (64 lowercase hex digits each).
+
+###### `def default_read_timeout(self) -> int`
+
+```python
+@property
+```
+Socket read timeout for calls that carry no budget of their own (spec D16).
 
 ###### `def api_keys_list(self) -> list[str]`
 
 ```python
 @property
 ```
-
 Parse comma-separated API keys to list.
 
 Returns:
@@ -4134,11 +4750,11 @@ Returns:
 @field_validator('api_keys', mode='before')
 @classmethod
 ```
-
-Resolve API keys with priority: explicit parameter > API_KEY_VARS > API_KEYS > default.
+Resolve API keys with priority: explicit parameter or API_KEYS > API_KEY_VARS > default.
 
 This allows both automatic environment reading AND explicit override support,
-plus support for the API_KEY_VARS indirection pattern.
+plus support for the API_KEY_VARS indirection pattern. The field validates its
+default too, so a bare ``ArodonataSettings()`` resolves API_KEY_VARS.
 
 ###### `def validate_log_level(cls, v: Any) -> str`
 
@@ -4146,7 +4762,6 @@ plus support for the API_KEY_VARS indirection pattern.
 @field_validator('log_level', mode='before')
 @classmethod
 ```
-
 Validate log level is one of the allowed values.
 
 ###### `def validate_trace_modules(cls, v: str) -> str`
@@ -4155,16 +4770,64 @@ Validate log level is one of the allowed values.
 @field_validator('trace_modules')
 @classmethod
 ```
-
 Each entry must be 'dotted.module:on' or 'dotted.module:off'.
+
+###### `def validate_tls_trust(cls, v: Any) -> str`
+
+```python
+@field_validator('tls_trust', mode='before')
+@classmethod
+```
+Must be one of the TrustMode values (case-insensitive).
+
+###### `def validate_tls_fingerprints(cls, v: str) -> str`
+
+```python
+@field_validator('tls_fingerprints')
+@classmethod
+```
+Every entry must be a SHA-256 fingerprint.
 
 ###### `def validate_credential_mode(self) -> ArodonataSettings`
 
 ```python
 @model_validator(mode='after')
 ```
-
 Validate that mgmt_ip is provided when using credential-based auth.
+
+### `arodonata/config/tls.py`
+
+TLS identity settings helpers: trust modes, SHA-256 fingerprint parsing, trust-store path.
+
+Pure functions only (no cpapi, no sockets, no file writes), so `config.settings` can import them. The
+verification itself lives in `arodonata.asdk.tls` (spec D1).
+
+#### Module-Level Functions
+
+##### `def normalize_sha256(value: str) -> str`
+
+Return the 64 lowercase hex digits of a SHA-256 fingerprint, or raise ValueError with a hint.
+
+##### `def parse_fingerprints(value: str) -> list[str]`
+
+Parse ARODONATA_TLS_FINGERPRINTS: comma-separated SHA-256 values, blanks ignored.
+
+##### `def colon_hex(hex_digits: str) -> str`
+
+`ab01…` -> `AB:01:…`, the form `api fingerprint` and openssl print.
+
+##### `def default_store_path() -> Path`
+
+`${XDG_STATE_HOME:-~/.local/state}/arodonata/tls_known_hosts.json` (spec D11).
+
+##### `def resolve_store_path(configured: str) -> Path`
+
+The store file for ARODONATA_TLS_KNOWN_HOSTS_PATH; empty means the default, relative means cwd-relative.
+
+#### class `TrustMode(StrEnum)`
+
+How unknown Check Point server certificates are treated (spec D6).
+
 
 ---
 
@@ -4219,7 +4882,6 @@ _No docstring._
 ```python
 @dataclass(frozen=True)
 ```
-
 What a caller wants for a single read: a mode and an optional freshness TTL.
 
 ##### Fields / Class Variables
@@ -4228,7 +4890,6 @@ What a caller wants for a single read: a mode and an optional freshness TTL.
 mode: CacheMode
 ttl: int | None = None
 ```
-
 ##### Methods
 
 ###### `def resolve(cls, mode: CacheMode | str | None, ttl: int | None, default: CachePolicy) -> CachePolicy`
@@ -4236,7 +4897,6 @@ ttl: int | None = None
 ```python
 @classmethod
 ```
-
 Merge a per-call (mode, ttl) with the client default.
 
 A None call arg falls back to the default's value for that field.
@@ -4246,7 +4906,6 @@ A None call arg falls back to the default's value for that field.
 ```python
 @dataclass(frozen=True)
 ```
-
 The management servers / domains a read touches (None = all in scope).
 
 ##### Fields / Class Variables
@@ -4255,13 +4914,11 @@ The management servers / domains a read touches (None = all in scope).
 mgmt_names: list[str] | None = None
 domain_names: list[str] | None = None
 ```
-
 #### class `RefreshOutcome`
 
 ```python
 @dataclass
 ```
-
 Result of a coordinator.ensure() call, for logging/telemetry and tests.
 
 ##### Fields / Class Variables
@@ -4273,7 +4930,6 @@ failed_domains: list[tuple[str, str]] = field(default_factory=list)
 fell_back: bool = False
 skipped_reason: str | None = None
 ```
-
 ### `arodonata/core/cache_refresh_coordinator.py`
 
 Coordinates cache freshness/refresh decisions ahead of reads.
@@ -4284,9 +4940,24 @@ Decides whether/how to refresh cache before a read, per CachePolicy.
 
 ##### Methods
 
-###### `def __init__(self, cache: Any, api: Any, object_service: Any, session_tracker: Any = None, default_mode: CacheMode = CacheMode.SMART, default_ttl: int = 300, clock: Clock | None = None, max_incremental_changes: int = 500) -> None`
+###### `def __init__(self, cache: Any, api: Any, object_service: Any, session_tracker: Any = None, default_mode: CacheMode = CacheMode.SMART, default_ttl: int = 300, clock: Clock | None = None, max_incremental_changes: int = 500, member_of: MemberOf | None = None, domain_concurrency: int = 1) -> None`
 
-_No docstring._
+Create the coordinator.
+
+Args:
+    cache: Cache repository.
+    api: API facade used for change and head lookups.
+    object_service: Object service that performs the reloads.
+    session_tracker: Optional session tracker.
+    default_mode: Cache mode used when a read names none.
+    default_ttl: Freshness window in seconds for the smart modes.
+    clock: Clock for freshness checks (tests inject one).
+    max_incremental_changes: Largest change set applied incrementally before a full reload.
+    member_of: Resolver `(mgmt, domain) -> MDS member`; `ensure` refreshes members in parallel and at most
+        `domain_concurrency` domains of one member at once. Without it, domains group by management server
+        name, so different servers refresh in parallel (previously they refreshed one after another) and
+        the domains of one server share one `domain_concurrency` budget.
+    domain_concurrency: Domain refreshes started at once per member per `ensure` call.
 
 ###### `async def ensure(self, scope: RefreshScope, policy: CachePolicy) -> RefreshOutcome`
 
@@ -4320,7 +4991,6 @@ Type of object change.
 ```python
 @dataclass
 ```
-
 Represents a single object change from show-changes API.
 
 ##### Fields / Class Variables
@@ -4332,7 +5002,6 @@ change_type: ChangeType
 name: str
 raw_data: dict[str, Any]
 ```
-
 #### class `ChangeProcessor`
 
 Process show-changes API responses.
@@ -4344,7 +5013,6 @@ Parses the response and provides methods for filtering/grouping changes.
 ```python
 _OPERATION_KEYS: tuple[tuple[str, ChangeType], ...] = (('added-objects', ChangeType.ADD), ('modified-objects', ChangeType.UPDATE), ('deleted-objects', ChangeType.DELETE))
 ```
-
 ##### Methods
 
 ###### `def parse_changes(self, api_response: dict[str, Any]) -> list[ObjectChange]`
@@ -4352,7 +5020,6 @@ _OPERATION_KEYS: tuple[tuple[str, ChangeType], ...] = (('added-objects', ChangeT
 Parse changes from show-changes API response.
 
 Supports both response shapes:
-
 - Real CP (R80+): task-wrapped and session-grouped —
   data.tasks[].task-details[].changes[].operations.{added,modified,
   deleted}-objects[], where each entry is the full object.
@@ -4400,7 +5067,7 @@ Returns:
 
 Shared TTL bookkeeping for opportunistic domain-list re-fetches.
 
-A management server's _domain list itself_ (as opposed to any one domain's
+A management server's *domain list itself* (as opposed to any one domain's
 objects/rulebases) used to only ever get re-fetched from the API when the
 local domains table came back completely empty. That meant a domain created
 in SmartConsole after the table was first seeded stayed invisible to every
@@ -4478,7 +5145,7 @@ API connection failed.
 A management or domain server never answered at the address we used.
 
 Distinct from every other login failure because the remedy is different: a
-server that _answers_ with a refusal (throttling, "Database revision is in
+server that *answers* with a refusal (throttling, "Database revision is in
 progress") clears on its own, so backing off and retrying the same address is
 right. A server that answers nothing may simply not live at that address any
 more -- Check Point's `show-domains` reports a domain's active server, and
@@ -4505,6 +5172,16 @@ Session has expired and needs relogin.
 #### class `InvalidCredentialsError(AuthenticationError)`
 
 Credentials are invalid.
+
+#### class `PublishedHeadError(Exception)`
+
+``show-last-published-session`` could not tell where a domain's head is (failed call, exception, no timestamp).
+
+##### Methods
+
+###### `def __init__(self, reason: str) -> None`
+
+_No docstring._
 
 #### class `ApiError(ArodonataError)`
 
@@ -4558,6 +5235,46 @@ own ``APIException`` here, which nothing in the compatibility contract names.
 
 _No docstring._
 
+#### class `ServerIdentityError(ArodonataError)`
+
+A Check Point server's TLS certificate is not the one trusted for that address. Nothing was sent.
+
+Never retried: a different certificate does not fix itself. Deliberately not an ``OSError`` (cpapi would
+re-send), an ``ApiConnectionError`` (login would re-resolve the domain) or an ``AuthenticationError`` (login
+would wrap and retry it).
+
+##### Methods
+
+###### `def __init__(self, message: str, *args: object, host: str = '', port: int = 0, presented_sha256: str = '', presented_sha1: str = '', expected_sha256: str = '', source: str = '') -> None`
+
+_No docstring._
+
+#### class `CertificateMismatchError(ServerIdentityError)`
+
+The server presented a different certificate than the one recorded or pinned for it.
+
+#### class `UnknownServerCertificateError(ServerIdentityError)`
+
+``ARODONATA_TLS_TRUST=pinned`` and the presented certificate is not trusted anywhere.
+
+#### class `TrustStoreError(ConfigurationError)`
+
+The TLS trust store cannot be read, is unsafe (owner/permissions), is corrupt, or cannot be written.
+
+#### class `ApiTimeoutError(ArodonataError, TimeoutError)`
+
+A socket connect or read to a Check Point server timed out. The request is never re-sent after a timeout.
+
+(cpapi may already have re-sent it once after a dropped connection, before the timeout: Backlog #30.)
+A ``TimeoutError`` subclass like ``TaskTimeoutError``, so existing ``except TimeoutError`` handlers keep working.
+Every field has a default, so the error can be unpickled (the built-in reduce restores the fields).
+
+##### Methods
+
+###### `def __init__(self, message: str, *args: object, phase: str = '', host: str = '', port: int = 0, timeout: float = 0.0, command: str = '') -> None`
+
+_No docstring._
+
 #### class `CacheError(ArodonataError)`
 
 Cache-related errors.
@@ -4583,7 +5300,6 @@ Management server not found in configuration.
 Shared show-changes incremental refresh engine.
 
 One implementation used by both consumers:
-
 - CacheRefreshCoordinator._incremental_reload (smart-fast read path)
 - ObjectService.refresh_objects(mode="incremental") (bulk refresh path)
 
@@ -4593,30 +5309,48 @@ by the canonical full-reload converter — diff payload bodies are never
 written to the cache. Any condition that would make the apply unsafe raises
 FallbackToFull; the caller performs an atomic full-domain reload instead.
 The engine never advances the LastPublishedSession baseline — callers do,
-and only on success.
+and only on success, with the head the engine read before the diff.
 
 #### class `FallbackToFull(Exception)`
 
 Incremental apply would be unsafe; the caller must do a full reload.
 
+#### class `IncrementalApplyResult`
+
+```python
+@dataclass(frozen=True)
+```
+Outcome of a successful incremental apply.
+
+`head` is the domain's last-published session read BEFORE `show-changes`, so a publish after that read
+stays after the stamp the caller stores and reaches the cache through the next refresh. None when the
+engine was built without `fetch_head`; the caller then stores no stamp.
+
+##### Fields / Class Variables
+
+```python
+applied: int
+head: LastPublishedSession | None
+```
 #### class `IncrementalRefresher`
 
 Applies a show-changes diff for one domain with re-fetch-in-full semantics.
 
 ##### Methods
 
-###### `def __init__(self, *, api: Any, cache: Any, fetch_full_object: Callable[[str, str, str], Awaitable[dict[str, Any] | None]], to_cpobject: Callable[[dict[str, Any], str, str], CPObject | None], fetch_head: Callable[[str, str], Awaitable[Any]] | None = None, in_scope_types: frozenset[str] = DEFAULT_IN_SCOPE_TYPES, max_changes: int = DEFAULT_MAX_CHANGES) -> None`
+###### `def __init__(self, *, api: Any, cache: Any, fetch_full_object: Callable[[str, str, str], Awaitable[dict[str, Any] | None]], to_cpobject: Callable[[dict[str, Any], str, str], CPObject | None], fetch_head: Callable[[str, str], Awaitable[LastPublishedSession | None]] | None = None, in_scope_types: frozenset[str] = DEFAULT_IN_SCOPE_TYPES, max_changes: int = DEFAULT_MAX_CHANGES) -> None`
 
 _No docstring._
 
-###### `async def apply(self, mgmt: str, domain: str) -> int`
+###### `async def apply(self, mgmt: str, domain: str) -> IncrementalApplyResult`
 
 Apply all in-scope changes since the stored baseline.
 
-Returns the number of rows written (upserts + deletes); 0 means the
-publish touched nothing the object cache holds. Raises FallbackToFull
-whenever an incremental apply would be unsafe. Never advances the
-baseline stamp — that is the caller's responsibility.
+Returns the number of rows written (upserts + deletes; 0 means the
+publish touched nothing the object cache holds) and the head read
+before the diff. Raises FallbackToFull whenever an incremental apply
+would be unsafe. Never advances the baseline stamp — that is the
+caller's responsibility, with the returned head.
 
 ### `arodonata/core/orchestration.py`
 
@@ -4627,7 +5361,6 @@ Cache orchestration service for smart caching.
 Orchestrates cache and API interactions.
 
 Responsibilities:
-
 - Provide typed cache-read helper methods (get_domains, get_gateways, etc.)
 - Check cache freshness for smart-refresh callers
 - Handle session-aware change tracking
@@ -4638,10 +5371,9 @@ Responsibilities:
 ```python
 DEFAULT_FRESHNESS_SECONDS: dict[str, int] = {'objects': 900, 'assets': 3600, 'domains': 86400}
 ```
-
 ##### Methods
 
-###### `def __init__(self, cache: 'CachePort', api: 'ApiPort', session_tracker: 'SessionChangeTracker | None', coordinator: 'CacheRefreshCoordinator | None' = None) -> None`
+###### `def __init__(self, cache: 'CachePort', api: 'ApiPort', session_tracker: 'SessionChangeTracker | None', coordinator: 'CacheRefreshCoordinator | None' = None, rulebase_coordinator: 'RulebaseRefreshCoordinator | None' = None) -> None`
 
 Initialize orchestration service.
 
@@ -4651,16 +5383,21 @@ Args:
     session_tracker: Session change tracker (optional for now).
     coordinator: Cache refresh coordinator (optional; when absent,
         read helpers skip cache-mode-driven refresh entirely).
+    rulebase_coordinator: Rulebase refresh coordinator (optional; when
+        absent, rule reads skip cache-mode-driven refresh).
 
 ###### `async def get_domains(self, mgmt_names: list[str] | None = None, cache_mode: 'CacheMode | str | None' = None, cache_ttl: int | None = None, include_global: bool = False) -> list['Domain']`
 
-Get domains from cache.
+Get domains from cache (a pure read).
+
+It never refreshes the object cache: listing domains must not load every domain's objects. The client
+refreshes the domain list itself (``ArodonataClient.get_domains``).
 
 Args:
     mgmt_names: Optional list of management server names to filter.
-    cache_mode: Optional per-call cache refresh mode override.
-    cache_ttl: Optional per-call cache freshness TTL override.
-    include_global: When False (default), the synthetic "Global" domain
+    cache_mode: Accepted for compatibility and ignored (this is a pure read).
+    cache_ttl: Accepted for compatibility and ignored.
+    include_global: When False (default), the "Global" domain
         is excluded so existing callers see today's behavior.
 
 Returns:
@@ -4752,7 +5489,7 @@ Returns:
 Get NAT rules from cache.
 
 Args:
-    layer_name: Optional layer name filter (e.g., "NAT").
+    layer_name: Optional policy package name filter; NAT rules are keyed by package, e.g. layer_name="Standard".
     mgmt_names: Optional list of management server names to filter.
     domain_names: Optional list of domain names to filter.
     enabled_only: If True, only return enabled rules.
@@ -4836,7 +5573,6 @@ Attributes:
 ```python
 @runtime_checkable
 ```
-
 Interface for cache operations.
 
 All database access goes through this protocol.
@@ -4884,7 +5620,6 @@ Close database connections.
 ```python
 @runtime_checkable
 ```
-
 Interface for API communication layer.
 
 ##### Methods
@@ -4893,16 +5628,11 @@ Interface for API communication layer.
 
 Execute API call.
 
-###### `async def api_query(self, server_ip: str, sid: str, command: str, details_level: str = 'standard', payload: dict[str, Any] | None = None, container_key: str = 'objects') -> RawApiResponse`
-
-Execute API query.
-
 #### class `IServerRegistry(Protocol)`
 
 ```python
 @runtime_checkable
 ```
-
 Interface for server configuration lookup.
 
 ##### Methods
@@ -4924,7 +5654,6 @@ Update server metadata.
 ```python
 @runtime_checkable
 ```
-
 Interface for rate limiting per MDS member.
 
 ##### Methods
@@ -4934,7 +5663,6 @@ Interface for rate limiting per MDS member.
 ```python
 @asynccontextmanager
 ```
-
 Acquire a rate limit slot; server_ip is the slot key (the MDS member hosting the target).
 
 #### class `ILoginCoordinator(Protocol)`
@@ -4942,7 +5670,6 @@ Acquire a rate limit slot; server_ip is the slot key (the MDS member hosting the
 ```python
 @runtime_checkable
 ```
-
 Interface for login orchestration.
 
 ##### Methods
@@ -4963,7 +5690,6 @@ server_ip: str
 is_mdm: bool | None
 version: str | None
 ```
-
 #### class `SIDRecord`
 
 Cached SID record data.
@@ -4975,6 +5701,33 @@ sid: str
 server_ip: str
 created_at: datetime
 ```
+### `arodonata/core/rulebase_refresh_coordinator.py`
+
+Decides whether a named domain's rulebase snapshot is refreshed before a rule read (spec 2.10).
+
+#### class `RulebaseRefreshCoordinator`
+
+Rulebase counterpart of CacheRefreshCoordinator.
+
+Only explicitly named, non-empty domains are refreshed (a broad read serves the cache; ``''`` is never
+refreshed; ``Global`` only when named), on the named mgmt servers, or on the first configured one when none is
+named (an application that omits the mgmt has one server). SMART and SMART_FAST: TTL memo, then the service's session-uid check,
+then a full domain refresh. FORCE: refresh, memo ignored. CACHE: nothing. The memo is marked after every
+outcome, failures included, so a failing domain is retried at most once per TTL.
+
+##### Methods
+
+###### `def __init__(self, refresh_service: Any, api: Any, default_mode: CacheMode = CacheMode.SMART, default_ttl: int = 300, clock: Clock | None = None) -> None`
+
+_No docstring._
+
+###### `async def ensure(self, scope: RefreshScope, policy: CachePolicy) -> RefreshOutcome`
+
+Refresh the named domains of ``scope`` that ``policy`` says are due.
+
+###### `def invalidate(self, mgmt_name: str, domain_name: str) -> None`
+
+Drop the TTL memo for a domain so the next smart read re-checks it.
 
 ### `arodonata/core/session_tracker.py`
 
@@ -4985,7 +5738,6 @@ Session change tracker for in-memory change tracking.
 ```python
 @dataclass
 ```
-
 A change within the current unpublished session.
 
 ##### Fields / Class Variables
@@ -4998,7 +5750,6 @@ name: str
 data: dict[str, Any] | None = None
 timestamp: datetime = field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None))
 ```
-
 #### class `SessionChangeTracker`
 
 Tracks in-memory changes for the current unpublished session.
@@ -5051,6 +5802,7 @@ Args:
 
 Returns:
     True if session has changes, False otherwise.
+
 
 ---
 
@@ -5148,7 +5900,6 @@ where_used_total: int = 0
 matches_convention: bool = False
 lock: str | None = None
 ```
-
 #### class `ConflictInfo(BaseModel)`
 
 _No docstring._
@@ -5161,7 +5912,6 @@ policy: str
 requested: dict[str, Any] = Field(default_factory=dict)
 candidates: list[ObjectMatch] = Field(default_factory=list)
 ```
-
 #### class `FieldDiff(BaseModel)`
 
 _No docstring._
@@ -5171,7 +5921,6 @@ _No docstring._
 ```python
 changes: dict[str, dict[str, Any]] = Field(default_factory=dict)
 ```
-
 ##### Methods
 
 ###### `def has_changes(self) -> bool`
@@ -5179,7 +5928,6 @@ changes: dict[str, dict[str, Any]] = Field(default_factory=dict)
 ```python
 @property
 ```
-
 _No docstring._
 
 #### class `CPCRUDResult(BaseModel)`
@@ -5199,7 +5947,6 @@ changes: dict[str, dict[str, Any]] | None = None
 conflict: ConflictInfo | None = None
 message: str = ''
 ```
-
 #### class `PlannedAction(BaseModel)`
 
 _No docstring._
@@ -5231,7 +5978,6 @@ package: str | None = None
 message: str = ''
 prior_state: dict[str, Any] | None = None
 ```
-
 ##### Methods
 
 ###### `def to_result(self) -> CPCRUDResult`
@@ -5249,7 +5995,6 @@ mgmt_name: str
 domain_name: str
 last_publish_session: str
 ```
-
 #### class `Plan(BaseModel)`
 
 _No docstring._
@@ -5261,7 +6006,6 @@ actions: list[PlannedAction] = Field(default_factory=list)
 stamps: list[DomainStamp] = Field(default_factory=list)
 template_hash: str = ''
 ```
-
 ##### Methods
 
 ###### `def domains(self) -> list[tuple[str, str]]`
@@ -5285,7 +6029,6 @@ uid: str | None = None
 locking_session: dict[str, Any] | None = None
 message: str = ''
 ```
-
 #### class `ApplyReport(BaseModel)`
 
 _No docstring._
@@ -5298,7 +6041,6 @@ published_domains: list[DomainStamp] = Field(default_factory=list)
 remaining: Plan | None = None
 summary: dict[str, int] = Field(default_factory=dict)
 ```
-
 #### class `ObjectState(BaseModel)`
 
 Actual state of an existing object, as returned by show-<type>.
@@ -5311,7 +6053,6 @@ name: str
 type: str
 raw: dict[str, Any] = Field(default_factory=dict)
 ```
-
 ##### Methods
 
 ###### `def lock(self) -> str | None`
@@ -5319,7 +6060,6 @@ raw: dict[str, Any] = Field(default_factory=dict)
 ```python
 @property
 ```
-
 _No docstring._
 
 #### class `LayerInfo(BaseModel)`
@@ -5334,7 +6074,6 @@ name: str
 type: str
 parent_layer_uid: str | None = None
 ```
-
 #### class `SectionInfo(BaseModel)`
 
 _No docstring._
@@ -5346,7 +6085,6 @@ uid: str
 name: str
 layer_uid: str
 ```
-
 #### class `RuleMatch(BaseModel)`
 
 _No docstring._
@@ -5359,7 +6097,6 @@ name: str
 rule_number: int
 raw: dict[str, Any] = Field(default_factory=dict)
 ```
-
 ### `arodonata/cpcrud/naming.py`
 
 Object naming conventions (from FPCR ObjectMatcher), prefix-configurable.
@@ -5384,7 +6121,6 @@ svc_tcp: str = 'TCP_'
 svc_udp: str = 'UDP_'
 svc_icmp: str = 'ICMP_'
 ```
-
 ##### Methods
 
 ###### `def from_settings(cls, settings: Any) -> NamingPrefixes`
@@ -5392,7 +6128,6 @@ svc_icmp: str = 'ICMP_'
 ```python
 @classmethod
 ```
-
 _No docstring._
 
 ### `arodonata/cpcrud/nat.py`
@@ -5419,7 +6154,7 @@ fail loudly or, worse, silently write the wrong object into a customer's product
 This module resolves both UIDs at runtime, by name/type, once per management server, and caches
 the result for the process. Resolution never blocks a NAT removal: any failure (API error, object
 not found, unexpected response shape, missing package) degrades to the verified constant and logs
-a warning. If a resolved UID ever _differs_ from the constant, that is logged prominently at
+a warning. If a resolved UID ever *differs* from the constant, that is logged prominently at
 warning level -- naming the management server, the object, and both UIDs -- since that is the
 exact early-warning signal for the scenario this module exists to guard against.
 
@@ -5427,10 +6162,10 @@ The two objects need different resolution strategies, both empirically verified 
 ``mdsNP2.np.cparch.in`` (MDS, domain ``General``) and ``smsNP82`` (plain SmartCenter) on
 2026-09-03:
 
-- The "Any" object (type ``CpmiAnyObject``) IS a normal, catalog-listed object: a read-only
+* The "Any" object (type ``CpmiAnyObject``) IS a normal, catalog-listed object: a read-only
   ``show-objects`` call filtered by ``filter="Any", type="CpmiAnyObject"`` returns exactly one
   match on both servers, with a UID matching ``NAT_ANY_OBJECT_UID``.
-- The "Original" object (type ``Global``) is NOT catalog-listed: ``show-objects`` rejects
+* The "Original" object (type ``Global``) is NOT catalog-listed: ``show-objects`` rejects
   ``type="Global"`` outright ("Requested API type: [Global] not found"), and a name filter for
   "Original" with no type filter returns 15 unrelated objects, none of them the sentinel. It is
   only reachable indirectly, e.g. by reading it off a real NAT rule -- exactly how the constant
@@ -5470,7 +6205,6 @@ Returns:
 ```python
 @dataclass(frozen=True)
 ```
-
 The two resolved (or fallback) NAT sentinel UIDs for one management server.
 
 ##### Fields / Class Variables
@@ -5479,7 +6213,6 @@ The two resolved (or fallback) NAT sentinel UIDs for one management server.
 any_uid: str
 original_uid: str
 ```
-
 ### `arodonata/cpcrud/planner.py`
 
 Decide phase: normalized template + StateReader + policy -> single Plan.
@@ -5554,7 +6287,7 @@ Resolve a bare IP/CIDR/range string in a rule's source/destination to a referenc
 
 Returns the object's NAME, not its uid, for an existing match -- confirmed against the live
 lab (Task 14) that `find_rules_by_traffic`'s traffic-tuple comparison works against the live
-rulebase's _dereferenced_ (uid->name) fields (see statereader.py's `_dereference_rule`), so
+rulebase's *dereferenced* (uid->name) fields (see statereader.py's `_dereference_rule`), so
 this side of the comparison must speak names too, matching the "Any"/auto-created-dependency
 cases below (which were already name-based) instead of mixing uid and name representations.
 CP's add/set-*-rule commands accept either form for these fields, so this is payload-safe.
@@ -5602,12 +6335,18 @@ Mirrors `resolve_rule_by_key`'s reasoning exactly, substituting NAT's `package` 
 for access/threat/https's `layer` scoping (the same distinction `resolve_nat_rule` draws
 from `resolve_rule` for `add`).
 
+#### class `StateReadError(Exception)`
+
+A StateReader lookup could not be completed (failed or partial listing).
+
+Never means "not found": the planner turns it into an ERROR action for the whole operation, so
+nothing is created on the strength of a lookup that did not happen (Backlog #37).
+
 #### class `StateReader(Protocol)`
 
 ```python
 @runtime_checkable
 ```
-
 _No docstring._
 
 ##### Methods
@@ -5641,6 +6380,10 @@ _No docstring._
 _No docstring._
 
 ###### `async def get_last_rule(self, scope_uid: str, layer_type: str, *, mgmt: str, domain: str) -> RuleMatch | None`
+
+_No docstring._
+
+###### `async def get_last_rule_in_section(self, layer_uid: str, section_uid: str, layer_type: str, *, mgmt: str, domain: str) -> RuleMatch | None`
 
 _No docstring._
 
@@ -5722,7 +6465,6 @@ _No docstring._
 ```python
 @traced
 ```
-
 _No docstring._
 
 ###### `def inverse(self, plan: Plan, report: ApplyReport | None = None) -> dict[str, Any]`
@@ -5730,7 +6472,6 @@ _No docstring._
 ```python
 @traced
 ```
-
 Compensating template for a plan (optionally filtered by what actually executed).
 
 ###### `async def plan(self, template: str | Path | dict[str, Any], on_name_conflict: NameConflictPolicy | None = None, on_ip_conflict: IpConflictPolicy | None = None) -> Plan`
@@ -5738,7 +6479,6 @@ Compensating template for a plan (optionally filtered by what actually executed)
 ```python
 @traced
 ```
-
 _No docstring._
 
 ###### `async def apply(self, plan_or_template: Plan | str | Path | dict[str, Any], *, force: bool = False, dry_run: bool = False, no_publish: bool = False, discard: bool = False, session_name: str | None = None, session_description: str | None = None, on_name_conflict: NameConflictPolicy | None = None, on_ip_conflict: IpConflictPolicy | None = None, retry_remaining: int = 0, refresh: str | None = None) -> AsyncIterator[SSEEvent | ApplyReport]`
@@ -5746,7 +6486,6 @@ _No docstring._
 ```python
 @traced
 ```
-
 _No docstring._
 
 ### `arodonata/cpcrud/services.py`
@@ -5787,7 +6526,6 @@ port: str | None = None
 icmp_type: int | None = None
 icmp_code: int | None = None
 ```
-
 #### class `ServiceResolution(BaseModel)`
 
 _No docstring._
@@ -5803,7 +6541,6 @@ command: str | None = None
 payload: dict[str, Any] = Field(default_factory=dict)
 message: str = ''
 ```
-
 ### `arodonata/cpcrud/statereader.py`
 
 StateReader port and the live (API-backed) implementation.
@@ -5846,6 +6583,12 @@ _No docstring._
 
 _No docstring._
 
+###### `async def get_last_rule_in_section(self, layer_uid: str, section_uid: str, layer_type: str, *, mgmt: str, domain: str) -> RuleMatch | None`
+
+The last rule of a section, from a read of its LAYER: show-*-rulebase refuses a section uid (Backlog #40).
+
+A section split across pages comes once per page here, so the last part holds its last rule.
+
 ###### `async def get_last_rule(self, scope_uid: str, layer_type: str, *, mgmt: str, domain: str) -> RuleMatch | None`
 
 _No docstring._
@@ -5873,6 +6616,10 @@ _No docstring._
 #### class `HybridStateReader`
 
 Cache-first StateReader: object cache lookups with immediate live-API fallback.
+
+The cache is used for a domain only while it is as new as the domain's head: the stored freshness stamp must be
+the session the planner read with `get_last_publish_session` (Backlog #41). Otherwise, and before that read,
+every lookup goes live: a row from before the last publish may be gone or changed on the server.
 
 where-used has no cache backing yet -> always live (spec decision).
 
@@ -5914,6 +6661,10 @@ _No docstring._
 
 _No docstring._
 
+###### `async def get_last_rule_in_section(self, layer_uid: str, section_uid: str, layer_type: str, *, mgmt: str, domain: str) -> RuleMatch | None`
+
+_No docstring._
+
 ###### `async def find_rules_by_traffic(self, scope_uid: str, layer_type: str, source_uids: list[str], dest_uids: list[str], service_uids: list[str], *, mgmt: str, domain: str) -> list[RuleMatch]`
 
 _No docstring._
@@ -5933,6 +6684,7 @@ _No docstring._
 ###### `async def get_nat_rule_by_key(self, package: str, key: dict[str, Any], *, mgmt: str, domain: str) -> RuleMatch | None`
 
 _No docstring._
+
 
 ---
 
@@ -5970,6 +6722,10 @@ _No docstring._
 ##### `async def serve(args: argparse.Namespace) -> None`
 
 _No docstring._
+
+##### `def configure_logging(level: str) -> None`
+
+Root logging at ``level``; the SDK loggers in QUIET_SDK_LOGGERS at WARNING unless ``level`` is debug.
 
 ##### `def main(argv: list[str] | None = None) -> int`
 
@@ -6066,6 +6822,16 @@ Reference-named ``show_*`` tools answered from the Arodonata cache.
 
 _No docstring._
 
+### `arodonata/mcp/change_report_tools.py`
+
+MCP tool change_report: read-only evidence of what policy sessions changed, as markdown (spec 7).
+
+#### Module-Level Functions
+
+##### `def register_change_report_tools(server: MCPServer, client: ArodonataClient, opts: ToolOptions) -> list[str]`
+
+_No docstring._
+
 ### `arodonata/mcp/common.py`
 
 Helpers shared by every MCP tool: server resolution, error mapping, envelopes, JSON.
@@ -6079,6 +6845,15 @@ Log one INFO line naming the tool and the caller identity.
 The caller identity is the access token's ``client_id`` (the token's environment-variable name, see
 ``auth.py``), or ``anonymous`` when the request carries none (stdio, or HTTP without auth). Never logs the
 token value, the tool arguments or the result.
+
+##### `def describe_for_model(exc: ServerIdentityError | TrustStoreError | ApiTimeoutError) -> str`
+
+Tool-facing text: the facts, never a ready-to-run command that would re-pin the presented certificate.
+
+The MCP client may have a shell on the MCP host, so the text names no ``ARODONATA_TLS_FINGERPRINTS=<value>``
+command; the operator gets the full message from the server log (spec D21). No SID or key either. The identity
+text names where the expected value came from (``(from <store path>)``, or ``this process (lab-memory)``) so the
+operator knows what to edit; trust-store and timeout texts carry no path.
 
 ##### `def add_guarded_tool(server: MCPServer, fn: Callable[..., Awaitable[Any]], *, name: str, description: str | None = None) -> None`
 
@@ -6161,7 +6936,6 @@ Data-only description of the live ``show_*`` tools (mirrors @chkp/quantum-manage
 ```python
 @dataclass(frozen=True)
 ```
-
 _No docstring._
 
 ##### Fields / Class Variables
@@ -6172,13 +6946,11 @@ kind: ParamKind
 description: str = ''
 default: Any = None
 ```
-
 #### class `CompatTool`
 
 ```python
 @dataclass(frozen=True)
 ```
-
 _No docstring._
 
 ##### Fields / Class Variables
@@ -6191,7 +6963,6 @@ container_key: str = 'objects'
 params: tuple[ParamSpec, ...] = ()
 description: str = ''
 ```
-
 ### `arodonata/mcp/native.py`
 
 Tools that have no counterpart in the reference server.
@@ -6255,7 +7026,6 @@ Add the Arodonata tool set to ``server``. The caller owns ``client`` and its lif
 ```python
 @dataclass(frozen=True)
 ```
-
 _No docstring._
 
 ##### Fields / Class Variables
@@ -6266,7 +7036,6 @@ default_limit: int = 50
 max_result_chars: int = 200000
 allow_write_api: bool = False
 ```
-
 ##### Methods
 
 ###### `def name(self, base: str) -> str`
@@ -6278,7 +7047,6 @@ _No docstring._
 ```python
 @dataclass(frozen=True)
 ```
-
 _No docstring._
 
 ##### Fields / Class Variables
@@ -6289,7 +7057,6 @@ live: tuple[str, ...] = field(default_factory=tuple)
 native: tuple[str, ...] = field(default_factory=tuple)
 cpcrud: tuple[str, ...] = field(default_factory=tuple)
 ```
-
 ##### Methods
 
 ###### `def all(self) -> tuple[str, ...]`
@@ -6297,25 +7064,55 @@ cpcrud: tuple[str, ...] = field(default_factory=tuple)
 ```python
 @property
 ```
-
 _No docstring._
 
 ### `arodonata/mcp/rulebase_format.py`
 
-Turn cached or live rulebases into rows, then into markdown or compact structured text.
+Turn numbered rulebase entries (cache or live) into rows, then into markdown or compact structured text.
 
 Ported in spirit from the reference server's rulebase parser. The reference's padded fixed-width table is intentionally
 not reproduced (decision 2026-09-27): cells always carry full values.
 
 #### Module-Level Functions
 
-##### `def rows_from_live(response: dict[str, Any]) -> list[RuleRow]`
+##### `def layer_header(name: str) -> RuleRow`
 
-_No docstring._
+The header row printed before an ordered layer when a package view shows several.
 
-##### `def rows_from_cached(rules: Sequence[Any], inline_lookup: Callable[[str], Sequence[Any]] | None = None) -> list[RuleRow]`
+##### `def rows_from_entries(entries: Sequence[NumberedEntry], layer_names: Mapping[str, str], layer_dictionaries: Mapping[str, Sequence[Mapping[str, str]]]) -> list[RuleRow]`
 
-Build rows from cached rule models (``AccessRule``, ``NATRule``, ``HTTPSRule`` or ``ThreatRule``).
+Rows of numbered entries; references resolve through the dictionary of the layer that holds each entry.
+
+##### `def drop_disabled(entries: Sequence[NumberedEntry]) -> list[NumberedEntry]`
+
+Remove disabled rules and their inline subtree (deeper entries that follow); numbers are unchanged.
+
+##### `def package_layers(result: PackageRulebase, layer: str | None = None, *, enabled_only: bool = False) -> list[OrderedEntries]`
+
+The package's ordered layers, or only the one whose uid or name is ``layer``; ``enabled_only`` applies
+``drop_disabled`` to each.
+
+Raises:
+    LookupError: ``layer`` is not an ordered layer of the package (the message lists the package's layers).
+
+##### `def rows_from_package(result: PackageRulebase, layers: Sequence[OrderedEntries] | None = None) -> list[RuleRow]`
+
+Rows of a package's ordered layers (default: all of them; pass ``package_layers(...)`` to narrow or filter),
+with a ``layer`` header row before each when there are several.
+
+##### `def raw_entries(entries: Sequence[NumberedEntry], details_level: str) -> list[dict[str, Any]]`
+
+``format='raw'`` entries: rules/place-holders as projected raw items plus number/depth/layer; sections and parent
+rules as small records.
+
+##### `def raw_package_entries(layers: Sequence[OrderedEntries], details_level: str) -> list[dict[str, Any]]`
+
+``format='raw'`` entries of a package view, with an ``ordered-layer`` record before each layer when there are
+several (the same rule as the header rows of ``rows_from_package``).
+
+##### `def rows_from_live(response: dict[str, Any], rulebase_type: RulebaseType = 'access') -> list[RuleRow]`
+
+Rows of one live layer, numbered with sections; inline layers are named, not expanded (one layer fetched).
 
 ##### `def render_markdown(rows: Sequence[RuleRow], title: str) -> str`
 
@@ -6330,7 +7127,6 @@ _No docstring._
 ```python
 @dataclass
 ```
-
 _No docstring._
 
 ##### Fields / Class Variables
@@ -6350,8 +7146,9 @@ comments: str = ''
 depth: int = 0
 negate: dict[str, bool] = field(default_factory=dict)
 extra: dict[str, str] = field(default_factory=dict)
+kind: str = 'rule'
+section_range: str = ''
 ```
-
 ### `arodonata/mcp/rulebase_tools.py`
 
 show_*_rulebase tools: cache-backed by default, live when a live-only parameter is given.
@@ -6393,10 +7190,10 @@ jwt_audience: str = Field(default='')
 jwt_jwks_url: str = Field(default='')
 default_limit: int = Field(default=50, ge=0)
 max_result_chars: int = Field(default=200000, ge=1000)
+shutdown_timeout: int = Field(default=5, ge=0, description='Seconds Ctrl+C waits for open client connections and for SDK calls stuck in network I/O')
 allowed_hosts: str = Field(default='', description='Comma-separated Host header values accepted (DNS-rebinding protection); default derives from host, port and public_url')
 allowed_origins: str = Field(default='', description='Comma-separated Origin values accepted; default derives from public_url')
 ```
-
 ##### Methods
 
 ###### `def token_var_names(self) -> list[str]`
@@ -6404,7 +7201,6 @@ allowed_origins: str = Field(default='', description='Comma-separated Origin val
 ```python
 @property
 ```
-
 _No docstring._
 
 ###### `def allowed_hosts_list(self) -> list[str]`
@@ -6412,7 +7208,6 @@ _No docstring._
 ```python
 @property
 ```
-
 _No docstring._
 
 ###### `def allowed_origins_list(self) -> list[str]`
@@ -6420,8 +7215,8 @@ _No docstring._
 ```python
 @property
 ```
-
 _No docstring._
+
 
 ---
 
@@ -6442,7 +7237,6 @@ Base extractor classes and types.
 ```python
 @dataclass
 ```
-
 Context information for object extraction.
 
 ##### Fields / Class Variables
@@ -6452,7 +7246,6 @@ mgmt_name: str
 domain_name: str
 objects_map: dict[str, str] | None = None
 ```
-
 #### class `BaseExtractor`
 
 Base class for all extractors.
@@ -6470,7 +7263,6 @@ Extractor for network objects (hosts, networks, groups, etc.).
 ```python
 _TYPE_EXTRACTORS: dict[str, Any] = {'host': _extract_host_fields, 'network': _extract_network_fields, 'group': _extract_group_fields, 'service-group': _extract_group_fields, 'address-range': _extract_address_range_fields}
 ```
-
 ##### Methods
 
 ###### `def extract(self, raw_data: dict[str, Any], context: ExtractionContext) -> dict[str, Any]`
@@ -6488,6 +7280,16 @@ Returns:
 
 Rulebase extractors for access, NAT, HTTPS, and threat rules.
 
+Every reference field resolves through ``context.objects_map`` ({uid: name}, built from the response's
+``objects-dictionary``) and falls back to the uid when unresolved. ``layer_name`` is not extracted: rules do not
+carry their layer; the caller sets it from the response's top-level ``name`` (NAT: the package name).
+
+#### Module-Level Functions
+
+##### `def resolve_ref(value: Any, objects_map: dict[str, str] | None) -> str`
+
+One reference as a name: a uid string via ``objects_map``; a dict by its ``name``, else its resolved ``uid``.
+
 #### class `AccessRuleExtractor(BaseExtractor)`
 
 Extractor for access control rules.
@@ -6496,14 +7298,14 @@ Extractor for access control rules.
 
 ###### `def extract(self, raw_data: dict, context: ExtractionContext) -> dict[str, Any]`
 
-Extract model fields from access rule API response.
+Extract model fields from an access rule.
 
 Args:
-    raw_data: Raw API response data.
-    context: Extraction context with mgmt/domain info.
+    raw_data: One rule from a ``show-access-rulebase`` response.
+    context: Extraction context with mgmt/domain info and the layer's objects map.
 
 Returns:
-    Dictionary with extracted fields suitable for AccessRule model.
+    Fields for ``RulebaseAccess`` except ``id`` and ``layer_name``.
 
 #### class `NATRuleExtractor(BaseExtractor)`
 
@@ -6513,14 +7315,7 @@ Extractor for NAT rules.
 
 ###### `def extract(self, raw_data: dict, context: ExtractionContext) -> dict[str, Any]`
 
-Extract model fields from NAT rule API response.
-
-Args:
-    raw_data: Raw API response data.
-    context: Extraction context with mgmt/domain info.
-
-Returns:
-    Dictionary with extracted fields suitable for NATRule model.
+Extract model fields from a NAT rule (fields for ``RulebaseNAT`` except ``id`` and ``layer_name``).
 
 #### class `HTTPSRuleExtractor(BaseExtractor)`
 
@@ -6530,14 +7325,7 @@ Extractor for HTTPS inspection rules.
 
 ###### `def extract(self, raw_data: dict, context: ExtractionContext) -> dict[str, Any]`
 
-Extract model fields from HTTPS rule API response.
-
-Args:
-    raw_data: Raw API response data.
-    context: Extraction context with mgmt/domain info.
-
-Returns:
-    Dictionary with extracted fields suitable for HTTPSRule model.
+Extract model fields from an HTTPS rule (fields for ``RulebaseHTTPS`` except ``id`` and ``layer_name``).
 
 #### class `ThreatRuleExtractor(BaseExtractor)`
 
@@ -6547,14 +7335,8 @@ Extractor for threat prevention rules.
 
 ###### `def extract(self, raw_data: dict, context: ExtractionContext) -> dict[str, Any]`
 
-Extract model fields from threat rule API response.
+Extract model fields from a threat rule (fields for ``RulebaseThreat`` except ``id`` and ``layer_name``).
 
-Args:
-    raw_data: Raw API response data.
-    context: Extraction context with mgmt/domain info.
-
-Returns:
-    Dictionary with extracted fields suitable for ThreatRule model.
 
 ---
 
@@ -6589,7 +7371,6 @@ User context models for session tracking.
 ```python
 @dataclass
 ```
-
 User information for session tracking.
 
 Authentication is handled separately by ArodonataClient.
@@ -6601,7 +7382,6 @@ This is only for tracking who made what changes.
 username: str
 source: str
 ```
-
 ##### Methods
 
 ###### `def from_fastapi_user(cls, user: dict) -> UserContext`
@@ -6609,7 +7389,6 @@ source: str
 ```python
 @classmethod
 ```
-
 Create from FastAPI request state (WebUI/API).
 
 Args:
@@ -6623,7 +7402,6 @@ Returns:
 ```python
 @classmethod
 ```
-
 Create from CLI environment.
 
 Returns:
@@ -6769,7 +7547,6 @@ Args:
 ```python
 @asynccontextmanager
 ```
-
 Context manager for write sessions.
 
 Automatically handles publish/discard based on success/exception.
@@ -6902,6 +7679,7 @@ Args:
 Returns:
     List of threat rules.
 
+
 ---
 
 ## models — Data Models
@@ -6925,7 +7703,6 @@ Base model with raw_data field.
 ```python
 raw_data: dict[str, Any] = Field(default_factory=dict)
 ```
-
 ### `arodonata/models/domains.py`
 
 Domain and Gateway models for arodonata.
@@ -6949,7 +7726,6 @@ standby_mdss: list[str] = []
 mgmt_name: str
 is_mdm: bool = False
 ```
-
 #### class `Gateway(BaseModelWithRaw)`
 
 Cached gateway/server asset.
@@ -6966,7 +7742,6 @@ domain_name: str = ''
 mgmt_name: str
 parent_uid: str | None = None
 ```
-
 #### class `Host(BaseModelWithRaw)`
 
 Cached host object.
@@ -6980,7 +7755,6 @@ ip_address: str = ''
 mgmt_name: str
 domain_name: str = ''
 ```
-
 #### class `Network(BaseModelWithRaw)`
 
 Cached network object.
@@ -6995,7 +7769,6 @@ subnet_mask: str = ''
 mgmt_name: str
 domain_name: str = ''
 ```
-
 #### class `Group(BaseModelWithRaw)`
 
 Cached group object.
@@ -7009,7 +7782,6 @@ member_uids: list[str] = []
 mgmt_name: str
 domain_name: str = ''
 ```
-
 ### `arodonata/models/rulebases.py`
 
 Rulebase models for arodonata v2.
@@ -7033,8 +7805,10 @@ track: str
 layer_name: str
 mgmt_name: str
 domain_name: str = ''
+layer_uid: str | None = None
+section_uid: str | None = None
+inline_layer_uid: str | None = None
 ```
-
 ##### Methods
 
 ###### `def uid_must_not_be_empty(cls, v: str) -> str`
@@ -7043,7 +7817,6 @@ domain_name: str = ''
 @field_validator('uid')
 @classmethod
 ```
-
 Validate that uid is not empty.
 
 #### class `NATRule(BaseModelWithRaw)`
@@ -7066,8 +7839,11 @@ translated_service: str
 layer_name: str
 mgmt_name: str
 domain_name: str = ''
+auto_generated: bool = False
+layer_uid: str | None = None
+section_uid: str | None = None
+inline_layer_uid: str | None = None
 ```
-
 #### class `HTTPSRule(BaseModelWithRaw)`
 
 HTTPS inspection rule from CVD layer.
@@ -7085,8 +7861,10 @@ track: str
 layer_name: str
 mgmt_name: str
 domain_name: str = ''
+layer_uid: str | None = None
+section_uid: str | None = None
+inline_layer_uid: str | None = None
 ```
-
 #### class `ThreatRule(BaseModelWithRaw)`
 
 Threat prevention rule from Threat layer.
@@ -7103,6 +7881,9 @@ protections: list[str]
 layer_name: str
 mgmt_name: str
 domain_name: str = ''
+layer_uid: str | None = None
+section_uid: str | None = None
+inline_layer_uid: str | None = None
 ```
 
 ---
@@ -7124,7 +7905,6 @@ ApiPort protocol interface for Check Point API operations.
 ```python
 @runtime_checkable
 ```
-
 Port for Check Point API operations - structural interface.
 
 ##### Methods
@@ -7154,7 +7934,6 @@ CachePort protocol interface for cache operations.
 ```python
 @runtime_checkable
 ```
-
 Port for cache operations - structural interface.
 
 Any class with these methods satisfies this protocol - no inheritance needed.
@@ -7206,6 +7985,23 @@ Args:
 
 Returns:
     List of rule objects (type depends on cache implementation).
+
+###### `async def get_rulebase_sync_state(self, mgmt_name: str, domain_name: str) -> 'RulebaseSyncState | None'`
+
+The domain's rulebase sync state, or None before its first rulebase refresh.
+
+###### `async def load_domain_rulebase_snapshot(self, mgmt_name: str, domain_name: str) -> 'DomainRulebaseSnapshot | None'`
+
+The domain's cached rulebase snapshot, or None when it has no sync state.
+
+###### `async def find_rulebase_layers(self, mgmt_name: str, layer: str, rulebase_type: str) -> list[tuple[str, str]]`
+
+(domain_name, layer_uid) of cached layers of that type matching ``layer`` by uid or name.
+
+###### `async def find_rulebase_packages(self, mgmt_name: str, package: str) -> list[tuple[str, str]]`
+
+(domain_name, package_uid) of cached packages matching ``package`` by name or uid.
+
 
 ---
 
@@ -7329,7 +8125,6 @@ Returns:
 Extract data from API response with robust handling of various response types.
 
 This function handles:
-
 - Pydantic v2 models (using model_dump())
 - Objects with .data attribute (ApiCallResult, ApiQueryResult)
 - Raw dictionaries
@@ -7354,7 +8149,6 @@ Examples:
 Extract objects from API response in a consistent format.
 
 Handles various response structures from Check Point API:
-
 - response.data.objects (list of objects)
 - response.data.object (single object, returned as list)
 - response.data (direct dict/list)
@@ -7375,6 +8169,7 @@ Examples:
     >>> hosts = extract_objects_from_response(result)
     >>> for host in hosts:
     ...     print(host.get("name"), host.get("ip-address"))
+
 
 ---
 
@@ -7417,7 +8212,6 @@ Args:
 ```python
 @traced
 ```
-
 Search for Check Point objects with cache-first queries and SSE streaming.
 
 Args:
@@ -7429,3 +8223,1408 @@ Args:
 
 Yields:
     SSEEvent with refresh progress and domain-grouped search results.
+
+
+---
+
+## reports
+
+### `arodonata/reports/__init__.py`
+
+Reports built on arodonata (namespace).
+
+_No public classes or functions in this module._
+
+### `arodonata/reports/changes/__init__.py`
+
+Change report: Check Point show-changes of sessions turned into evidence (HTML, JSON, markdown).
+
+Importing this package loads neither Jinja2 nor MarkupSafe nor the MCP SDK; HTML needs the ``report`` extra.
+
+_No public classes or functions in this module._
+
+### `arodonata/reports/changes/_messages.py`
+
+Messages that must import nothing optional.
+
+_No public classes or functions in this module._
+
+### `arodonata/reports/changes/build.py`
+
+Pure: one show-changes session entry -> SessionChanges (spec 4).
+
+added-objects -> added; deleted-objects -> deleted (the body is the pre-session state); modified-objects with
+old-object -> modified, without old-object -> added (created in the session). Rules get one cell per data column and,
+when modified, field deltas; objects, sections, other and internal types get key values and field deltas.
+
+#### Module-Level Functions
+
+##### `def session_uid(entry: dict[str, Any]) -> str`
+
+_No docstring._
+
+##### `def published_at(meta: dict[str, Any]) -> datetime | None`
+
+``publish-time.posix`` (milliseconds) as an aware UTC datetime; None for an unpublished session.
+
+##### `def classify(obj_type: str) -> Category`
+
+_No docstring._
+
+##### `def ref(value: Any) -> NamedRef | None`
+
+A reference: dereferenced object -> uid and name; bare uid string -> the uid as both (names.py resolves).
+
+##### `def refs(value: Any) -> list[NamedRef]`
+
+_No docstring._
+
+##### `def build_session(entry: dict[str, Any]) -> SessionChanges`
+
+One show-changes session entry as SessionChanges; numbering source "none" and no rulebase blocks yet.
+
+### `arodonata/reports/changes/collect.py`
+
+Collect a change report: show-changes per session or range through the shared session, then build, member
+names and numbering (spec 2.2, 2.3, 4, 5).
+
+#### Module-Level Functions
+
+##### `def cache_domain(domain: str) -> str`
+
+_No docstring._
+
+##### `async def collect_change_report(client: ArodonataClient, scopes: Iterable[Scope], *, include_raw: bool = False, concurrency: int = 4, max_sessions: int | None = None, now: Callable[[], datetime] = _utcnow) -> ChangeReport`
+
+```python
+@traced
+```
+Collect the changes of the given scopes into one ChangeReport (spec 2.2). Errors become warnings; only
+invalid input raises (ChangeReportInputError, or pydantic's ValidationError when the scope was built).
+
+#### class `RuleLocator(Protocol)`
+
+Structural subset of RulebaseSource that numbering needs (spec 5.1).
+
+##### Methods
+
+###### `async def locate_rules(self, mgmt_name: str, domain_name: str, rule_uids: Collection[str] = (), rulebase_type: RulebaseType | None = None, *, layer_uids: Collection[str] = ()) -> RuleLocations`
+
+_No docstring._
+
+#### class `CacheLocator`
+
+```python
+@dataclass(frozen=True)
+```
+RuleLocator over the client facade with a fixed cache_mode ("smart", or "force" for the D19 re-locate).
+
+##### Fields / Class Variables
+
+```python
+client: Any
+mode: str
+```
+##### Methods
+
+###### `async def locate_rules(self, mgmt_name: str, domain_name: str, rule_uids: Collection[str] = (), rulebase_type: RulebaseType | None = None, *, layer_uids: Collection[str] = ()) -> RuleLocations`
+
+_No docstring._
+
+### `arodonata/reports/changes/columns.py`
+
+Column specs per rulebase (SmartConsole-like), report order, object key fields and compare allowlists (spec 4).
+
+Field names are pinned by test_column_fields_exist_in_recordings (fixtures/rule_field_names.json, plan decision 1).
+
+#### Module-Level Functions
+
+##### `def is_internal_type(obj_type: str) -> bool`
+
+CamelCase CP bookkeeping types (AccessPolicy, NatRulebase, ...); real API types are kebab-case.
+
+##### `def data_columns(kind: RulebaseKind) -> tuple[Column, ...]`
+
+_No docstring._
+
+##### `def key_value(obj_type: str, body: dict[str, Any]) -> str`
+
+The value shown for an added or deleted object (address, subnet, range, port, ICMP type).
+
+##### `def visible_columns(kind: RulebaseKind, rules: Iterable[RuleChange]) -> list[str]`
+
+Column keys of one table: structural columns always; a data column when any row's cell is not default.
+
+#### class `Column`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+key: str
+title: str
+field: str | None
+kind: ColumnKind
+negate_field: str | None = None
+default_names: tuple[str, ...] = ('Any',)
+structural: bool = False
+```
+### `arodonata/reports/changes/markup.py`
+
+Limited markdown for titles and header fields, and markdown escaping for CP-sourced strings (spec 6.2).
+
+Allowed: ``**bold**``, ``*italic*``, `` `code` ``, ``[text](url)`` with an http, https or mailto URL without control
+characters; no nesting except plain text inside bold/italic; unclosed markers are literal. Standard library only:
+MarkupSafe arrives only with the ``report`` extra, so the markdown and JSON paths must not import it.
+
+#### Module-Level Functions
+
+##### `def inline_html(text: str) -> str`
+
+Escaped HTML built from escaped parts only; render_html.py wraps it in markupsafe.Markup.
+
+##### `def escape_md(text: str) -> str`
+
+Backslash-escape markdown metacharacters (backslash included) and fold newlines into spaces.
+
+##### `def inline_markdown(text: str) -> str`
+
+Markdown: the allowed constructs kept, everything else escaped.
+
+### `arodonata/reports/changes/model.py`
+
+The change report: one JSON-serialisable model, the single source for every renderer (spec 3).
+
+#### class `ReportWarning(_Model)`
+
+codes: domain_unavailable, session_not_found, owned_session_not_used, owned_session_error,
+owned_session_conflict, live_numbering_degraded, numbering_failed, names_unresolved, range_truncated
+
+##### Fields / Class Variables
+
+```python
+mgmt: str
+domain: str
+code: str
+message: str
+severity: Literal['info', 'warning'] = 'warning'
+session_uid: str | None = None
+```
+#### class `RequestedScope(_Model)`
+
+What the caller asked for; never a SID.
+
+##### Fields / Class Variables
+
+```python
+kind: Literal['session', 'range']
+mgmt_name: str
+domain: str
+session_uids: list[str] = Field(default_factory=list)
+from_session: str | None = None
+to_session: str | None = None
+from_date: UtcDatetime | None = None
+to_date: UtcDatetime | None = None
+owned_session_supplied: bool = False
+```
+#### class `RawResponse(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+mgmt: str
+domain: str
+request: dict[str, Any]
+success: bool
+code: str = ''
+message: str = ''
+response: dict[str, Any] | None = None
+```
+#### class `NumberingInfo(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+source: Literal['cache', 'live', 'none']
+snapshot_session_uid: str | None = None
+snapshot_published_at: UtcDatetime | None = None
+snapshot_refreshed_at: UtcDatetime | None = None
+status: str = 'none'
+last_error: str | None = None
+provisional: bool = False
+global_packages: bool = False
+```
+#### class `NamedRef(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+uid: str
+name: str
+```
+#### class `CellItem(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+uid: str
+name: str
+status: ItemStatus = 'unchanged'
+anchor: str | None = None
+```
+#### class `Cell(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+items: list[CellItem] | None = None
+text: str | None = None
+changed: bool = False
+negated: bool = False
+default: bool = False
+```
+#### class `FieldChange(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+field: str
+old: str | None = None
+new: str | None = None
+removed: list[NamedRef] = Field(default_factory=list)
+added: list[NamedRef] = Field(default_factory=list)
+```
+#### class `RuleChange(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+uid: str
+type: str
+rulebase: RulebaseKind
+name: str = ''
+status: ChangeStatus
+enabled: bool
+enabled_changed: bool = False
+layer_uid: str | None
+position: int | None
+old_layer_uid: str | None = None
+old_position: int | None = None
+moved: bool = False
+inline_layer_uid: str | None = None
+cells: dict[str, Cell]
+changes: list[FieldChange] = Field(default_factory=list)
+other_fields: list[str] = Field(default_factory=list)
+anchor_base: str
+```
+#### class `RulePlacement(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+kind: Literal['rule'] = 'rule'
+rule_uid: str
+anchor: str
+number: str | None
+previous_number: str | None = None
+basis: NumberBasis
+section_uid: str | None = None
+section_name: str | None = None
+section_range: str | None = None
+section_position: int | None = None
+```
+#### class `SectionHeader(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+kind: Literal['section'] = 'section'
+uid: str | None
+name: str
+range: str | None
+status: ChangeStatus | None = None
+changes: list[FieldChange] = Field(default_factory=list)
+```
+#### class `LayerBlock(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+ordered_layer_name: str
+ordered_layer_position: int
+rows: list[Annotated[RulePlacement | SectionHeader, Field(discriminator='kind')]]
+```
+#### class `PackageBlock(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+package_name: str
+layers: list[LayerBlock]
+```
+#### class `RulebaseBlock(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+rulebase: RulebaseKind
+packages: list[PackageBlock]
+unplaced: list[RulePlacement] = Field(default_factory=list)
+columns: list[str]
+```
+#### class `ObjectChange(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+uid: str
+type: str
+name: str
+status: ChangeStatus
+category: Literal['object', 'section', 'other']
+internal: bool = False
+key_value: str = ''
+changes: list[FieldChange] = Field(default_factory=list)
+other_fields: list[str] = Field(default_factory=list)
+anchor: str
+```
+#### class `SessionChanges(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+uid: str
+name: str
+description: str = ''
+user_name: str = ''
+published: bool
+published_at: UtcDatetime | None
+numbering: NumberingInfo
+rules: list[RuleChange]
+rulebases: list[RulebaseBlock]
+sections: list[ObjectChange]
+objects: list[ObjectChange]
+other: list[ObjectChange]
+internal: list[ObjectChange]
+```
+#### class `DomainError(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+code: str
+message: str
+```
+#### class `DomainChanges(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+domain: str
+display_name: str
+unavailable: DomainError | None = None
+sessions: list[SessionChanges]
+```
+#### class `MgmtChanges(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+mgmt_name: str
+domains: list[DomainChanges]
+```
+#### class `ChangeReport(_Model)`
+
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+format_version: int = FORMAT_VERSION
+generated_at: UtcDatetime
+arodonata_version: str
+requested: list[RequestedScope]
+servers: list[MgmtChanges]
+warnings: list[ReportWarning] = Field(default_factory=list)
+raw: list[RawResponse] | None = None
+```
+### `arodonata/reports/changes/names.py`
+
+Bare-uid names (group members, NAT references): the session's own entries first, then read-only show-object
+through the shared session (at most NAME_LOOKUP_CAP per report), else the uid itself (spec 4, D26).
+
+#### Module-Level Functions
+
+##### `def known_names(value: Any, into: dict[str, str] | None = None) -> dict[str, str]`
+
+uid -> name of every object body or dereferenced reference anywhere in a session entry.
+
+##### `def unresolved_uids(session: SessionChanges) -> set[str]`
+
+_No docstring._
+
+##### `def apply_names(session: SessionChanges, names: dict[str, str]) -> SessionChanges`
+
+Replace unresolved names (name == uid) found in ``names``.
+
+##### `async def resolve_names(client: ArodonataClient, mgmt: str, domain: str, built: list[tuple[SessionChanges, dict[str, Any]]], budget: NameBudget, concurrency: int) -> tuple[list[SessionChanges], ReportWarning | None]`
+
+Names for one domain's sessions; one names_unresolved warning with the count of uids left as uids.
+
+#### class `NameBudget`
+
+```python
+@dataclass
+```
+show-object lookups left for the whole report.
+
+##### Fields / Class Variables
+
+```python
+remaining: int = NAME_LOOKUP_CAP
+```
+##### Methods
+
+###### `def take(self, wanted: int) -> int`
+
+_No docstring._
+
+### `arodonata/reports/changes/placement.py`
+
+Pure: SessionChanges + RuleLocations -> numbered RulebaseBlocks (spec 5.2 as amended by D27).
+
+show-changes gives ``position`` only for rules the session moved (and for added and deleted rules), counted within
+the rule's section (lab F1/F2). Numbers therefore come from ``locations`` (cache or live) or ``prior`` (the cache's
+pre-session state of an unpublished session) wherever the rule is there; a position becomes a number only in a layer
+without sections, otherwise the placement carries ``section_position``. Per rule: (1) in locations — for basis
+provisional only when unmoved; (2) positional with the session's position; (3) in an inline layer created in the
+session: the parent's number + "." + position; (4) deleted: its prior (else locations) number, else positional with the
+pre-session layer/position, else the deleted parent; (5) otherwise "Not placed in a package".
+
+#### Module-Level Functions
+
+##### `def number_key(number: str | None) -> tuple[int, ...]`
+
+'2.2.1' -> (2, 2, 1); None (or a non-numeric number) sorts last.
+
+##### `def place_session(session: SessionChanges, locations: RuleLocations | None, *, basis: NumberBasis, prior: RuleLocations | None = None) -> SessionChanges`
+
+Number every rule of the session and group it: rulebase (RULEBASE_ORDER) > package > ordered layer > number.
+
+``prior`` is the cache's pre-session state of an unpublished session (deleted rules, previous numbers).
+
+### `arodonata/reports/changes/render.py`
+
+Render a ChangeReport into the requested formats only (spec 6.1). No Check Point access; a stored report
+(``ChangeReport.model_validate_json``) re-renders identically. HTML needs the ``report`` extra (lazy import).
+
+#### Module-Level Functions
+
+##### `def render_json(report: ChangeReport, options: RenderOptions) -> bytes`
+
+_No docstring._
+
+##### `def render_change_report(report: ChangeReport, formats: Collection[ReportFormat] = (), options: RenderOptions | None = None) -> ChangeReportResult`
+
+```python
+@traced
+```
+Build only the requested formats; ``report`` is always returned.
+
+#### class `RenderOptions(BaseModel)`
+
+``title`` and ``header_fields`` accept limited markdown (bold, italic, code, http/https/mailto links).
+
+##### Fields / Class Variables
+
+```python
+title: str = 'Policy change report'
+header_fields: dict[str, str] = Field(default_factory=dict)
+generated_by: str | None = None
+markdown_max_rules: int | None = None
+markdown_max_objects: int | None = None
+```
+#### class `ChangeReportResult`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+report: ChangeReport
+html: bytes | None = None
+json: bytes | None = None
+markdown: str | None = None
+pdf: bytes | None = None
+```
+#### class `UnsupportedFormat(ValueError)`
+
+A known but not (yet) supported format, e.g. 'pdf' (reserved).
+
+### `arodonata/reports/changes/render_html.py`
+
+HTML change report, layout A: one self-contained file, Jinja2 with autoescape on (spec 6.3). Needs the 'report'
+extra; imported lazily by render.py only.
+
+#### Module-Level Functions
+
+##### `def render_html(report: ChangeReport, options: RenderOptions) -> bytes`
+
+_No docstring._
+
+### `arodonata/reports/changes/render_markdown.py`
+
+Markdown change report for MCP (spec 6.4): the HTML structure without colour.
+
+Markers: ``[+]`` added, ``[-]`` deleted (row cells struck through), ``[~]`` modified, ``[x]`` appended for disabled;
+items ``+added``, ``~~removed~~``, ``modified*``; changed scalars bold; negation ``not (a, b)``. Every CP-sourced string
+goes through escape_md first, so these markers are the only live markup. No raw appendix.
+
+#### Module-Level Functions
+
+##### `def render_markdown(report: ChangeReport, options: RenderOptions) -> str`
+
+_No docstring._
+
+### `arodonata/reports/changes/scopes.py`
+
+Change-report inputs: which sessions of which management servers and domains (validated at construction).
+
+#### class `ChangeReportInputError(ValueError)`
+
+Invalid input found when collecting: empty scope list, a non-scope item, unknown mgmt_name, no server.
+
+#### class `OwnedSession(BaseModel)`
+
+An app-owned session's SID, used read-only to number its unpublished rules. Never serialised or logged.
+
+##### Fields / Class Variables
+
+```python
+sid: SecretStr
+server_ip: str
+```
+#### class `SessionScope(BaseModel)`
+
+Explicit sessions of one domain, each fetched on its own (published or not).
+
+##### Fields / Class Variables
+
+```python
+mgmt_name: str | None = None
+domain: str = ''
+session_uids: list[str] = Field(min_length=1)
+owned_session: OwnedSession | None = None
+```
+#### class `RangeScope(BaseModel)`
+
+Published sessions of one domain between bounds: from_session exclusive, to_session inclusive (server
+semantics); dates inclusive and exact (applied client-side on the publish time).
+
+##### Fields / Class Variables
+
+```python
+mgmt_name: str | None = None
+domain: str = ''
+from_session: str | None = None
+to_session: str | None = None
+from_date: AwareDatetime | None = None
+to_date: AwareDatetime | None = None
+```
+### `arodonata/reports/changes/view.py`
+
+Pure: a ChangeReport as render-ready rows shared by the HTML and markdown renderers (plan decision 4).
+
+#### Module-Level Functions
+
+##### `def fmt_time(dt: datetime | None) -> str`
+
+_No docstring._
+
+##### `def numbering_label(session: SessionChanges) -> str`
+
+_No docstring._
+
+##### `def session_view(s: SessionChanges) -> SessionView`
+
+_No docstring._
+
+##### `def report_view(report: ChangeReport) -> ReportView`
+
+_No docstring._
+
+#### class `ItemView`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+name: str
+status: ItemStatus
+link: str | None
+```
+#### class `CellView`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+key: str
+items: tuple[ItemView, ...] | None
+text: str | None
+changed: bool
+negated: bool
+link: str | None
+```
+#### class `RowView`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+kind: Literal['rule', 'section']
+status: ChangeStatus | None
+name: str = ''
+disabled: bool = False
+enabled_changed: bool = False
+number: str | None = None
+previous_number: str | None = None
+moved: bool = False
+basis_label: str = ''
+cells: tuple[CellView, ...] = ()
+section_range: str | None = None
+section_changes: tuple[FieldChange, ...] = ()
+section_position: int | None = None
+anchor: str | None = None
+```
+#### class `DetailView`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+anchor: str
+label: str
+changes: tuple[FieldChange, ...]
+other_fields: tuple[str, ...]
+```
+#### class `TableView`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+title: str
+columns: tuple[tuple[str, str], ...]
+rows: tuple[RowView, ...]
+details: tuple[DetailView, ...]
+```
+#### class `RulebaseView`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+kind: RulebaseKind
+title: str
+tables: tuple[TableView, ...]
+unplaced: TableView | None
+```
+#### class `SessionView`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+session: SessionChanges
+anchor: str
+published_label: str
+numbering_label: str
+rulebases: tuple[RulebaseView, ...]
+sections: tuple[ObjectChange, ...]
+added_deleted: tuple[ObjectChange, ...]
+modified_objects: tuple[ObjectChange, ...]
+other: tuple[ObjectChange, ...]
+internal_count: int
+empty: bool
+counts_text: str
+```
+#### class `DomainView`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+domain: str
+display_name: str
+unavailable: DomainError | None
+sessions: tuple[SessionView, ...]
+```
+#### class `ServerView`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+name: str
+domains: tuple[DomainView, ...]
+```
+#### class `WarningGroup`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+mgmt: str
+domain: str
+items: tuple[ReportWarning, ...]
+```
+#### class `ReportView`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+generated_at: str
+version: str
+servers: tuple[ServerView, ...]
+warnings: tuple[WarningGroup, ...]
+raw: tuple[RawResponse, ...]
+```
+
+---
+
+## rulebase
+
+### `arodonata/rulebase/__init__.py`
+
+Rulebase reading helpers shared by the cache and live paths (pure: no DB or API imports).
+
+_No public classes or functions in this module._
+
+### `arodonata/rulebase/model.py`
+
+Parsed rulebase structures shared by the cache, the numbering and the change report (pure: no DB or API imports).
+
+Numbers here are Check Point's in-layer ``rule-number``s; hierarchical SmartConsole numbers are computed by
+``arodonata.rulebase.numbering`` and never stored.
+
+#### class `SectionItem`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+uid: str
+name: str
+from_number: int | None
+to_number: int | None
+rules_before: int
+seq: int
+raw: dict[str, Any]
+```
+#### class `RuleItem`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+uid: str
+name: str
+kind: ItemKind
+rule_number: int
+enabled: bool
+section_uid: str | None
+inline_layer_uid: str | None
+domain_type: str
+auto_generated: bool
+raw: dict[str, Any]
+```
+#### class `LayerSnapshot`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+rulebase_type: RulebaseType
+layer_uid: str
+layer_name: str
+layer_domain_type: str
+total: int
+sections: tuple[SectionItem, ...]
+items: tuple[RuleItem, ...]
+objects_dictionary: tuple[dict[str, str], ...]
+```
+#### class `OrderedLayer`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+rulebase_type: RulebaseType
+position: int
+slot: str
+layer_uid: str
+layer_name: str
+layer_domain_type: str
+placeholder_uid: str | None = None
+parent_rule_uid: str | None = None
+parent_rule_name: str | None = None
+domain_layer_uid: str | None = None
+```
+#### class `PackageLayout`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+package_uid: str
+package_name: str
+layers: tuple[OrderedLayer, ...]
+```
+#### class `DomainRulebaseSnapshot`
+
+```python
+@dataclass(frozen=True)
+```
+One domain's rulebases. Canonical order: layers by (rulebase_type, layer_uid), packages by package_name.
+
+##### Fields / Class Variables
+
+```python
+mgmt_name: str
+domain_name: str
+session_uid: str | None
+session_published_time: datetime | None
+refreshed_at: datetime | None
+packages: tuple[PackageLayout, ...]
+layers: tuple[LayerSnapshot, ...]
+```
+#### class `DomainRefreshResult`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+mgmt_name: str
+domain_name: str
+status: Literal['ok', 'unversioned', 'fresh', 'failed']
+session_uid: str | None
+counts: dict[str, int]
+error: str | None
+warnings: tuple[str, ...]
+```
+#### class `ParentRule`
+
+```python
+@dataclass(frozen=True)
+```
+The rule CP shows in place of a global place-holder when the global layer is read with ``package``.
+
+##### Fields / Class Variables
+
+```python
+uid: str
+name: str
+domain_layer_uid: str
+```
+### `arodonata/rulebase/numbering.py`
+
+SmartConsole rule numbering over parsed rulebase snapshots (pure).
+
+Each ordered layer numbers from 1. A rule with an inline layer, and a global place-holder linked to its package's
+domain layer, number their children with the parent's number as prefix ("2." -> "2.1", "2.2.1"). Sections carry a
+range ("2.1-2.2", "2.3", "No Rules") and precede their first rule; an empty section stays where it sits in the layer.
+
+#### Module-Level Functions
+
+##### `def section_range(prefix: str, from_number: int | None, to_number: int | None) -> str`
+
+SmartConsole's section range: ``2.1-2.2``, ``2.3`` for one rule, ``No Rules`` for an empty section.
+
+##### `def number_layer(layer_uid: str, layers: Mapping[str, LayerSnapshot], *, prefix: str = '', depth: int = 0, ordered_layer: OrderedLayer | None = None, expand_inline: bool = True, _path: frozenset[str] = frozenset()) -> list[NumberedEntry]`
+
+Number one layer and, recursively, its inline layers and (with ``ordered_layer`` link context) the domain
+layer under a global place-holder.
+
+The cycle guard holds only the layers on the current descent path, so a layer shared by two parents is expanded
+under both and only a true cycle stops. A layer missing from ``layers`` is logged and yields no entries.
+``expand_inline=False`` names inline layers (``inline_layer_uid``) without descending (a single fetched layer).
+
+##### `def number_package(layout: PackageLayout, rulebase_type: RulebaseType, layers: Mapping[str, LayerSnapshot]) -> list[list[NumberedEntry]]`
+
+One numbered list per ordered layer of ``rulebase_type`` in the package, in position order.
+
+#### class `NumberedEntry`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+kind: Literal['rule', 'section', 'place-holder', 'parent-rule']
+rulebase_type: RulebaseType
+number: str
+range: str
+depth: int
+uid: str
+name: str
+layer_uid: str
+layer_name: str
+rule_number: int | None
+section_uid: str | None
+section_name: str | None
+inline_layer_uid: str | None
+item: RuleItem | SectionItem | None
+```
+### `arodonata/rulebase/pager.py`
+
+Page a ``show-*-rulebase`` command to completion, or fail: never a partial layer.
+
+The pager assumes ``offset`` counts rules and continues from the previous page's ``to``. It checks that
+assumption on every page (``from`` must be the previous ``to + 1``), so a server that pages differently makes it
+raise instead of silently skipping or duplicating rules. A full last page omits trailing empty sections, so the
+pager then re-reads the last rule on a page with room.
+
+#### Module-Level Functions
+
+##### `async def fetch_full_rulebase(client: Any, mgmt_name: str, domain: str, command: str, payload: dict[str, Any], *, page_size: int = RULEBASE_PAGE_SIZE, offset: int = 0) -> dict[str, Any]`
+
+Every page of one layer from rule `offset` on, merged into one response.
+
+Args:
+    client: Anything with ``api_call(mgmt_name=, domain=, command=, payload=)`` returning an
+        ``ApiCallResult``-like object (``success``, ``data``, ``code``, ``message``).
+    mgmt_name: Management server name.
+    domain: Domain name ('' for the system domain).
+    command: ``show-access-rulebase``, ``show-nat-rulebase``, ``show-https-rulebase`` or ``show-threat-rulebase``.
+    payload: uid/name/package, details-level, use-object-dictionary and any live-only parameters; ``limit`` and
+        ``offset`` are set by the pager.
+    page_size: Rules per page.
+    offset: Rules to skip; the first page must start at rule ``offset + 1``.
+
+Returns:
+    The first page's top-level keys (including its ``from``, ``to``, and ``total``), with ``rulebase`` holding
+    every item (a section split across pages merged by uid) and ``objects-dictionary`` merged by uid.
+
+Raises:
+    RulebaseFetchError: A page failed, was not a dict, did not advance, or did not start right after the
+        previous one. Exceptions raised by ``client.api_call`` itself propagate unchanged.
+
+#### class `RulebaseFetchError(Exception)`
+
+A rulebase page failed, or CP paged the layer in a way the pager cannot trust.
+
+##### Methods
+
+###### `def __init__(self, code: str, message: str) -> None`
+
+_No docstring._
+
+### `arodonata/rulebase/parse.py`
+
+Parse Check Point show-* responses into the frozen structures of ``arodonata.rulebase.model`` (pure).
+
+#### Module-Level Functions
+
+##### `def objects_map(dictionary: Iterable[Mapping[str, str]]) -> dict[str, str]`
+
+{uid: name} of a trimmed objects-dictionary (entries without a name are left out).
+
+##### `def parse_layer_response(data: dict[str, Any], rulebase_type: RulebaseType, *, layer_name: str | None = None, layer_domain_type: str = '') -> LayerSnapshot`
+
+One complete ``show-*-rulebase`` response (``fetch_full_rulebase``) as a LayerSnapshot.
+
+Sections at any depth become SectionItems and their children inherit ``section_uid``; ``<type>-rule`` items
+become ``kind='rule'``, ``place-holder`` items ``kind='place-holder'``; anything else is skipped (debug log).
+
+Args:
+    data: The merged response; its top-level ``uid`` is the layer uid (required).
+    rulebase_type: "access", "nat", "https" or "threat".
+    layer_name: Overrides the response's ``name`` (NAT responses have none: pass the package name).
+    layer_domain_type: The layer's domain-type from its package or listing entry.
+
+Raises:
+    ValueError: The response has no ``uid``.
+
+##### `def parse_packages(packages: Iterable[Any], *, nat_layer_uids: Mapping[str, str] | None = None) -> list[PackageLayout]`
+
+``show-packages details-level full`` objects as PackageLayouts (listing order).
+
+Access and threat layers keep their list order; HTTPS uses fixed slots (inbound 0, outbound 1); a package gets one
+NAT ordered layer when ``nat-policy`` is true and its uid is in ``nat_layer_uids`` (package uid -> the NAT
+response's uid). A blade flag set to false (``access``, ``threat-prevention``, ``https-inspection-policy``) gives
+no ordered layers of that type. A global layer's nested domain layer is still listed here; ``link_placeholder``
+removes it.
+
+Raises:
+    ValueError: A package without uid/name, or a layer reference without uid.
+
+##### `def find_parent_rule(data: dict[str, Any], rulebase_type: RulebaseType, rule_number: int) -> ParentRule | None`
+
+The domain parent rule at a place-holder's position in a global layer read with ``package``.
+
+Returns None unless the entry at ``rule_number`` is a ``<type>-rule`` of domain-type ``domain`` with an
+``inline-layer`` (the domain layer).
+
+##### `def link_placeholder(layout: PackageLayout, rulebase_type: RulebaseType, layer_uid: str, placeholder_uid: str, parent: ParentRule) -> PackageLayout`
+
+Record the place-holder link on the global ordered layer and drop the nested domain layer from the ordered
+layers of that type (it is numbered only under the parent rule). Positions of that type are renumbered from 0,
+except HTTPS, whose positions are fixed slots.
+
+### `arodonata/rulebase/source.py`
+
+Read contract over rulebase snapshots: SmartConsole-numbered packages and layers, and rule positions.
+
+The builders are pure (a ``DomainRulebaseSnapshot`` in, numbered results out). ``CachedRulebaseSource`` adds the cache
+reads and the readiness rule; a live source can wrap the same builders.
+
+#### Module-Level Functions
+
+##### `def check_uid_collections(**collections: Collection[str]) -> None`
+
+Reject a bare ``str`` passed as a collection of uids (it would be iterated per character).
+
+Raises:
+    TypeError: One of the arguments is a ``str``.
+
+##### `def resolve_layer(snapshot: DomainRulebaseSnapshot, layer: str, rulebase_type: RulebaseType) -> LayerSnapshot`
+
+A layer of the given type by uid, else by name.
+
+Raises:
+    RulebaseNotFound: No layer with that uid or name.
+    AmbiguousLayerName: The name matches several layers.
+
+##### `def package_rulebase_from_snapshot(snapshot: DomainRulebaseSnapshot, package: str, rulebase_type: RulebaseType, *, status: str = 'ok', last_error: str | None = None) -> PackageRulebase`
+
+A package's SmartConsole numbering for one rulebase type (one entry list per ordered layer).
+
+Raises:
+    RulebaseNotFound: No package with that name or uid.
+
+##### `def layer_rulebase_from_snapshot(snapshot: DomainRulebaseSnapshot, layer: str, rulebase_type: RulebaseType, *, status: str = 'ok', last_error: str | None = None) -> LayerRulebase`
+
+One layer numbered without package context (layer-relative numbers, inline layers expanded).
+
+##### `def locate_rules_in_snapshot(snapshot: DomainRulebaseSnapshot, rule_uids: Collection[str] = (), rulebase_type: RulebaseType | None = None, *, layer_uids: Collection[str] = (), status: str = 'ok', last_error: str | None = None) -> RuleLocations`
+
+Every position of each rule uid and each layer uid in every package's numbering.
+
+A rule position is its SmartConsole number (shared and inline layers give several). A layer position is the
+prefix its rules get there: ``""`` for an ordered layer, ``"<n>."`` for a layer reached through rule ``n`` (an
+inline layer, or the domain layer under Global's parent rule). Unknown uids map to ``[]``.
+
+#### class `RulePosition`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+package_name: str
+rulebase_type: RulebaseType
+ordered_layer_position: int
+ordered_layer_name: str
+number: str
+section_name: str | None
+section_range: str | None
+layer_uid: str
+layer_name: str
+section_uid: str | None = None
+```
+#### class `LayerPosition`
+
+```python
+@dataclass(frozen=True)
+```
+Where a layer appears in a package's numbering; a rule at in-layer position n there is ``prefix + str(n)``.
+
+##### Fields / Class Variables
+
+```python
+package_name: str
+rulebase_type: RulebaseType
+ordered_layer_position: int
+ordered_layer_name: str
+prefix: str
+has_sections: bool = False
+```
+#### class `RuleLocations`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+snapshot_session_uid: str | None
+snapshot_published_at: datetime | None
+snapshot_refreshed_at: datetime | None
+status: str
+last_error: str | None
+rules: dict[str, list[RulePosition]]
+layers: dict[str, list[LayerPosition]]
+```
+#### class `PackageRulebase`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+mgmt_name: str
+domain_name: str
+package_name: str
+rulebase_type: RulebaseType
+snapshot_session_uid: str | None
+snapshot_published_at: datetime | None
+snapshot_refreshed_at: datetime | None
+status: str
+last_error: str | None
+layers: tuple[tuple[OrderedLayer, tuple[NumberedEntry, ...]], ...]
+layer_names: Mapping[str, str]
+layer_dictionaries: Mapping[str, tuple[dict[str, str], ...]]
+```
+#### class `LayerRulebase`
+
+```python
+@dataclass(frozen=True)
+```
+_No docstring._
+
+##### Fields / Class Variables
+
+```python
+mgmt_name: str
+domain_name: str
+rulebase_type: RulebaseType
+layer_uid: str
+layer_name: str
+snapshot_session_uid: str | None
+snapshot_published_at: datetime | None
+snapshot_refreshed_at: datetime | None
+status: str
+last_error: str | None
+entries: tuple[NumberedEntry, ...]
+layer_names: Mapping[str, str]
+layer_dictionaries: Mapping[str, tuple[dict[str, str], ...]]
+```
+#### class `RulebaseCacheNotReady(Exception)`
+
+The domain has no usable rulebase snapshot (no sync state, or an older cache format).
+
+#### class `RulebaseNotFound(LookupError)`
+
+The layer or package is not in the domain's snapshot.
+
+#### class `AmbiguousLayerName(Exception)`
+
+A layer (or package) name matches several layers; candidates are (domain_name, uid).
+
+##### Methods
+
+###### `def __init__(self, name: str, candidates: tuple[tuple[str, str], ...]) -> None`
+
+_No docstring._
+
+#### class `RulebaseSource(Protocol)`
+
+Numbered rulebases of one domain, whatever they are read from.
+
+A cached source reports the sync-state status (``ok`` | ``unversioned`` | ``failed``) with ``snapshot_*`` fields
+describing the cached snapshot. A live source reports status ``live``, with ``snapshot_*`` describing what it
+read (the head session it read at, that session's publish time, and the read time as ``snapshot_refreshed_at``).
+A live source reading inside an unpublished app-owned session reports that session's uid as
+``snapshot_session_uid`` and ``None`` as ``snapshot_published_at``.
+
+##### Methods
+
+###### `async def packages(self, mgmt_name: str, domain_name: str) -> list[PackageLayout]`
+
+_No docstring._
+
+###### `async def package_rulebase(self, mgmt_name: str, domain_name: str, package: str, rulebase_type: RulebaseType) -> PackageRulebase`
+
+_No docstring._
+
+###### `async def layer_rulebase(self, mgmt_name: str, domain_name: str, layer: str, rulebase_type: RulebaseType) -> LayerRulebase`
+
+_No docstring._
+
+###### `async def locate_rules(self, mgmt_name: str, domain_name: str, rule_uids: Collection[str] = (), rulebase_type: RulebaseType | None = None, *, layer_uids: Collection[str] = ()) -> RuleLocations`
+
+_No docstring._
+
+#### class `RulebaseDomainIndex(Protocol)`
+
+Which domains hold a layer or package; used only to resolve the facade's domainless calls.
+
+##### Methods
+
+###### `async def find_layer_domains(self, mgmt_name: str, layer: str, rulebase_type: RulebaseType) -> list[tuple[str, str]]`
+
+_No docstring._
+
+###### `async def find_package_domains(self, mgmt_name: str, package: str) -> list[tuple[str, str]]`
+
+_No docstring._
+
+#### class `CachedRulebaseSource`
+
+RulebaseSource (and RulebaseDomainIndex) over the rulebase cache. Never calls the API.
+
+Readable = a sync row with ``format_version >= RULEBASE_CACHE_FORMAT`` (Phase 2 writes that version only together
+with the domain's complete snapshot). Status is not checked: a ``failed`` domain is served from its last good
+snapshot with ``status``/``last_error`` exposed; a domain whose refreshes only ever failed has format 0.
+
+##### Methods
+
+###### `def __init__(self, cache: Any) -> None`
+
+_No docstring._
+
+###### `async def packages(self, mgmt_name: str, domain_name: str) -> list[PackageLayout]`
+
+_No docstring._
+
+###### `async def package_rulebase(self, mgmt_name: str, domain_name: str, package: str, rulebase_type: RulebaseType) -> PackageRulebase`
+
+_No docstring._
+
+###### `async def layer_rulebase(self, mgmt_name: str, domain_name: str, layer: str, rulebase_type: RulebaseType) -> LayerRulebase`
+
+_No docstring._
+
+###### `async def locate_rules(self, mgmt_name: str, domain_name: str, rule_uids: Collection[str] = (), rulebase_type: RulebaseType | None = None, *, layer_uids: Collection[str] = ()) -> RuleLocations`
+
+_No docstring._
+
+###### `async def find_layer_domains(self, mgmt_name: str, layer: str, rulebase_type: RulebaseType) -> list[tuple[str, str]]`
+
+_No docstring._
+
+###### `async def find_package_domains(self, mgmt_name: str, package: str) -> list[tuple[str, str]]`
+
+_No docstring._

@@ -67,8 +67,11 @@ class RateLimiter:
             concurrent_limit: Maximum concurrent operations per MDS member.
             lock_manager: Optional DatabaseLockManager instance.
             slot_timeout: Default seconds acquire() waits for a free slot before
-                giving up (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT for why this must
-                comfortably exceed a single login retry-with-backoff sequence).
+                giving up. Size it for queueing behind other callers of the member:
+                a call that waits for a task (publish, revert) holds its slot for the
+                whole task, while listings release it between pages and a login holds
+                it for one attempt only, never across its retries or a throttle wait
+                (see DEFAULT_RATE_LIMIT_SLOT_TIMEOUT).
             slot_renew_interval: Seconds between renewals of a held slot's lock row.
                 Defaults to a third of the row's TTL (DEFAULT_TTL_RATE_LIMIT, so 100 s);
                 must be positive.

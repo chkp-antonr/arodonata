@@ -20,17 +20,19 @@ uv run pytest
 - Shared infrastructure: `tests/unit/doubles.py` provides protocol-satisfying
   `FakeApi`/`FakeCache` doubles for the ports; `tests/unit/conftest.py`
   neutralizes the distributed-lock manager.
+- `tests/unit/test_db_utils_postgres.py` is the one opt-in unit test: it runs against a real PostgreSQL database (in a throwaway schema) only when `ARODONATA_PG_TEST_URL` is set to a `postgresql+asyncpg://...` URL, and skips otherwise.
 
-This is what CI runs — integration tests are excluded from default runs by
-the `-m "not integration"` marker expression.
+CI (`.github/workflows/ci.yml`, Python 3.13) runs `uv sync --all-extras --dev`, `uv run ruff check src/ tests/`, `uv run mypy src/` and `uv run pytest`, in that order; it does not run `ruff format --check` or `mkdocs build`. Run all four locally before pushing. `--all-extras` matters: the tests under `tests/unit/mcp` import the `mcp` extra and fail without it. Integration tests are excluded from default runs by the `-m "not integration"` marker expression.
 
 ## Integration suite
 
 ```bash
 ./pytest.sh int-1        # one bucket
 ./pytest.sh int-7        # ...
-./pytest.sh int-full     # all seven, back-to-back (~60 min for b1..b6 measured 2026-09-12)
+./pytest.sh int-full     # all seven, back-to-back (~2 h)
 ```
+
+`int-full` pauses `BUCKET_PAUSE_SECONDS` (default `90`) between buckets so the next one does not open into Check Point's login rate-limit window; set `BUCKET_PAUSE_SECONDS=0` for a server that does not enforce one.
 
 Tests live in `tests/integration/b1`..`b7`; the `bucket_N` marker is applied
 automatically from the directory path. Buckets are sized for roughly equal
@@ -60,8 +62,7 @@ for the run lock and the reasons behind it.
 
 ### Configuration
 
-The integration conftest loads `.env.test` then `.env.secrets` from the repo
-root. See `.env.example` for the variable names; the important ones:
+The integration conftest loads `.env.test` then `.env.secrets` from the repo root, then `.env.lab.<profile>` when a lab profile is selected; each file overrides values already in the environment. Select a profile by setting `ARODONATA_LAB=<profile>` (in the shell, or in `.env.test`/`.env.secrets`); without it the run uses the default lab from `.env.test`. A selected profile whose `.env.lab.<profile>` file does not exist is an error, not a fallback to the default lab. See `.env.example` for the variable names; the important ones:
 
 - `API_MGMT` — management server IP
 - `APIKEY`, `USER_admin`, `USER_AntonR`, `USER_Eng1..4` — identities
@@ -80,10 +81,7 @@ Fingerprints are public data, so they may live in that file.
 
 Tests that change server state are marked `cp_mutates` and confine
 themselves to the sandbox domains, reverting to the pre-test revision when
-they finish. Independently of that, the harness snapshots every domain's
-last published revision to `_tmp/cp_baseline/baseline-<timestamp>.json`
-**before any test runs** and reverts drifted domains at session end. After
-a crashed run, restore manually:
+they finish. Independently of that, the harness snapshots the last published revision of the sandbox domains (`TEST_DOMAIN_A`/`TEST_DOMAIN_B`, no other domain) to `_tmp/cp_baseline/baseline-<timestamp>.json` **before any test runs**; with neither set, no snapshot is taken (no mutating test can run). At session end, only if a `cp_mutates` test ran, it reverts the snapshotted domains that drifted. A failed snapshot aborts the whole session (exit code 5) before any test runs: no safety net, no run. After a crashed run, restore manually:
 
 ```bash
 uv run tests/integration/restore_baseline.py _tmp/cp_baseline/baseline-<timestamp>.json

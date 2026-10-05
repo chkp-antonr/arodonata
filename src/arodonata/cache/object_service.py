@@ -960,8 +960,10 @@ class ObjectService:
         """Refresh and upsert the last-published-session record for one domain.
 
         Makes a single, lightweight `show-last-published-session` API call —
-        does not touch CPObject or Asset caches. Safe to call independently
-        of a full object/asset refresh.
+        does not touch CPObject or Asset caches. The stored record is the
+        object cache's freshness stamp, so this marks the domain's cache as
+        current without refreshing it; to only read the head, use
+        `fetch_last_published_session`.
 
         Args:
             mgmt_name: Management server name.

@@ -55,7 +55,12 @@ class ApiQueryResult(BaseModel):
 
     success: bool = Field(description="Whether the query succeeded")
     data: list[dict[str, Any]] | dict[str, Any] | None = Field(
-        default=None, description="Response data from API (list for success, dict for errors)"
+        default=None,
+        description=(
+            "Response data from API: on success usually the list of objects (also in `objects`), but a dict for "
+            "task queries such as show-changes (the items under their key, plus `total`) or a response without a "
+            "listing; on failure the server's error dict, or None"
+        ),
     )
     objects: list[dict[str, Any]] = Field(default_factory=list, description="Query result objects")
     message: str = Field(default="", description="Error or status message")

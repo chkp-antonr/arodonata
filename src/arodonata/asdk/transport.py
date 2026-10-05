@@ -355,9 +355,14 @@ class ApiTransport:
             wait_for_task: Whether to wait for task completion. The wait is done
                 here, by `TaskWaiter`, never by cpapi -- see `_await_tasks`.
             timeout: Budget in seconds for the WHOLE operation: the initial call
-                plus, when it returns a task, the polling until that task ends.
-                <= 0 means unbounded.
+                plus, when it returns a task and `task_timeout` is not set, the
+                polling until that task ends. <= 0 means no overall budget; each
+                socket read is then still bounded by `default_read_timeout` (and
+                each connect by `connect_timeout`).
             port: Optional port number (defaults to 443 if not specified).
+            task_timeout: Budget in seconds for waiting out the task alone, apart
+                from `timeout`. <= 0 means the wait gets what is left of `timeout`
+                (no bound when that is <= 0 too).
 
         Returns:
             API response dictionary. For a task-returning command with
@@ -365,9 +370,13 @@ class ApiTransport:
             False if any task ended other than `succeeded`.
 
         Raises:
-            TaskTimeoutError: The task did not finish within `timeout`. A
+            TaskTimeoutError: The task did not finish within its budget. A
                 `TimeoutError` subclass, so `except TimeoutError` still catches it.
             TimeoutError: The initial call itself did not return within `timeout`.
+            ApiTimeoutError: A socket connect or read timed out. Also a
+                `TimeoutError` subclass; the request is not re-sent.
+            ServerIdentityError: The server's TLS certificate is not the one
+                trusted for that address; nothing was sent.
             TaskPollError: `show-task` kept failing past the tolerated count.
         """
         if payload is None:

@@ -18,8 +18,9 @@ caps the number of sources per notebook but allows large individual files):
                                 `--8<--` snippets resolved inline against
                                 the real examples/*.py scripts
 
-Output directory (docs-notebooklm/, repo root) is gitignored - it's a
-generation artifact, not something to hand-edit or commit.
+Output directory (docs-notebooklm/, repo root) is committed - it's a
+generation artifact: never hand-edit it, regenerate it with this script and
+commit the result together with the doc or API changes it reflects.
 """
 
 from __future__ import annotations
@@ -313,6 +314,7 @@ GUIDE_SOURCES = [
     ("Architecture — CRUD Engine", "architecture/cpcrud.md"),
     ("Configuration — Overview", "configuration/index.md"),
     ("Configuration — Multi-Server Setup", "configuration/multi-server.md"),
+    ("Configuration — TLS Verification", "configuration/tls-verification.md"),
     ("MCP Server", "mcp/index.md"),
     ("User Guide — CRUD Operations", "user-guide/cpcrud.md"),
     ("Change Report", "user-guide/change-report.md"),
