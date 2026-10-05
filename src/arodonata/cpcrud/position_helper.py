@@ -30,8 +30,10 @@ async def _bottom_with_cleanup_check(
     domain: str,
 ) -> dict[str, Any]:
     last = await reader.get_last_rule(scope_uid, layer_type, mgmt=mgmt, domain=domain)
-    if last is not None and _is_cleanup_rule(last.raw):
-        return {"position": last.rule_number}  # one above the cleanup rule
+    if last is not None and _is_cleanup_rule(last.raw) and last.uid:
+        # Anchored on the rule, not its number: numbers planned per rule go stale when one apply adds several
+        # (two rules at the bottom would land reversed; an insert above shifts the number into the previous section).
+        return {"position": {"above": last.uid}}
     return fallback
 
 
@@ -74,9 +76,15 @@ async def resolve_position(
             f"Section {value!r} not found in layer scope {layer_scope_uid!r} -- "
             "fix the section name/uid or create it first."
         )
-    # top and bottom of a section: no cleanup check. It would need the section's last rule, and
-    # show-*-rulebase refuses a section uid (generic_error, home lab 2026-10-05), so the check never ran here.
-    return {"position": {key: section.uid}}
+    if key == "top":
+        return {"position": {"top": section.uid}}
+    # bottom: cleanup-aware like the layer's bottom. The section's last rule comes from a read of the layer, since
+    # show-*-rulebase refuses a section uid (home lab, Backlog #40). `{"bottom": section}` would put the rule after
+    # a section's drop rule; placing it above that rule keeps it inside the section (home lab, discarded write).
+    last = await reader.get_last_rule_in_section(layer_scope_uid, section.uid, layer_type, mgmt=mgmt, domain=domain)
+    if last is not None and _is_cleanup_rule(last.raw) and last.uid:
+        return {"position": {"above": last.uid}}  # anchored on the rule, as for the layer's bottom
+    return {"position": {"bottom": section.uid}}
 
 
 def resolve_nat_position(position: Any) -> dict[str, Any]:

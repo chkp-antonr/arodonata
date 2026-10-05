@@ -715,3 +715,37 @@ async def test_unreadable_head_skips_the_domain_lookups():
     ]
     assert all("could not read the last published session" in a.message for a in actions)
     assert plan.stamps == []
+
+
+@pytest.mark.asyncio
+async def test_two_rules_at_a_sections_bottom_anchor_on_its_cleanup_rule_not_its_number():
+    """Backlog #40 review: a rule number planned per rule goes stale once the first add shifts it (the second rule
+    would land above the first); both anchor on the cleanup rule, so they keep the template's order."""
+    from arodonata.cpcrud.models import RuleMatch, SectionInfo
+
+    cleanup = RuleMatch(
+        uid="r-cleanup",
+        name="Cleanup rule",
+        rule_number=6,
+        raw={"source": [{"name": "Any"}], "destination": [{"name": "Any"}], "service": [{"name": "Any"}]},
+    )
+
+    class Reader(FakeReader):
+        async def get_section(self, section_ref, layer_uid, layer_type, *, mgmt, domain):
+            return SectionInfo(uid="s-cleanup", name=section_ref, layer_uid=layer_uid)
+
+        async def get_last_rule_in_section(self, layer_uid, section_uid, layer_type, *, mgmt, domain):
+            return cleanup
+
+    def rule(name, source):
+        return {
+            "type": "access-rule",
+            "layer": "Network",
+            "position": {"bottom": "Cleanup"},
+            "data": {"name": name, "source": [source], "destination": ["any"], "service": ["any"]},
+        }
+
+    plan = await Planner(Reader()).decide(_doc(rule("r-a", "10.0.0.11"), rule("r-b", "10.0.0.12")))
+    rules = [a for a in _actions_for(plan, "m1", "General") if a.type == "access-rule"]
+    assert [r.payload["position"] for r in rules] == [{"above": "r-cleanup"}, {"above": "r-cleanup"}]
+    assert [r.resolved_name for r in rules] == ["r-a", "r-b"]

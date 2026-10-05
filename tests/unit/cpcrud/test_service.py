@@ -24,8 +24,7 @@ async def test_apply_dry_run_returns_plan_no_writes(monkeypatch):
     client = _fake_client()
     service = CPCRUDService(client)
     # inject a fake reader so plan() does not hit the API
-    service._reader = FakeReader()
-    service._planner._reader = service._reader
+    service._new_reader = FakeReader
     template = {
         "management_servers": [
             {
@@ -66,7 +65,7 @@ async def test_apply_streams_events_then_report(monkeypatch):
             summary={"create": 1},
         )
 
-    monkeypatch.setattr(service._executor, "stream", fake_stream)
+    monkeypatch.setattr(service, "_new_executor", lambda reader: types.SimpleNamespace(stream=fake_stream))
 
     async def fake_plan(template, **kwargs):
         return Plan(
@@ -98,7 +97,7 @@ async def test_apply_accepts_prebuilt_plan(monkeypatch):
         seen["plan"] = plan
         yield ApplyReport(results=[], published_domains=[], remaining=None, summary={})
 
-    monkeypatch.setattr(service._executor, "stream", fake_stream)
+    monkeypatch.setattr(service, "_new_executor", lambda reader: types.SimpleNamespace(stream=fake_stream))
     prebuilt = Plan(actions=[], stamps=[], template_hash="prebuilt")
     [item async for item in service.apply(prebuilt, force=True)]
     assert seen["plan"].template_hash == "prebuilt"
@@ -142,7 +141,7 @@ def service_with_flaky_executor(monkeypatch):
             yield result
             yield ApplyReport(results=[result], published_domains=[], remaining=None, summary={"create": 1})
 
-    monkeypatch.setattr(service._executor, "stream", fake_stream)
+    monkeypatch.setattr(service, "_new_executor", lambda reader: types.SimpleNamespace(stream=fake_stream))
 
     async def fake_plan(template, **kwargs):
         return initial_plan
@@ -181,9 +180,7 @@ class _FailingIpReader(FakeReader):
 def _service_with_reader(reader):
     client = _fake_client()
     service = CPCRUDService(client)
-    service._reader = reader
-    service._planner._reader = reader
-    service._executor._reader = reader
+    service._new_reader = lambda: reader
     return client, service
 
 
@@ -266,9 +263,7 @@ async def test_plan_and_publish_never_store_the_object_cache_stamp():
             return await live.get_last_publish_session(mgmt=mgmt, domain=domain)
 
     reader = Reader()
-    service._reader = reader
-    service._planner._reader = reader
-    service._executor._reader = reader
+    service._new_reader = lambda: reader
 
     report = [
         i async for i in service.apply(_template({"type": "host", "data": {"name": "h1", "ip-address": "10.0.0.9"}}))
@@ -278,3 +273,27 @@ async def test_plan_and_publish_never_store_the_object_cache_stamp():
     assert report.published_domains and report.published_domains[0].last_publish_session == "sess-head"
     assert client.head_reads == 3  # plan stamp, PLAN_STALE check, publish stamp
     assert client.stamp_writes == 0
+
+
+@pytest.mark.asyncio
+async def test_each_plan_and_apply_reads_through_its_own_reader():
+    """Backlog #42: the reader remembers the head each plan read; one shared reader let two concurrent plans of a
+    domain overwrite each other's head, and let an apply that skips the stale check (`force`) compare against an old
+    plan's head. A fresh reader per call keeps each head to its own run."""
+    client = _fake_client()
+    service = CPCRUDService(client)
+    made = []
+
+    def new_reader():
+        made.append(FakeReader())
+        return made[-1]
+
+    service._new_reader = new_reader
+    template = _template({"type": "host", "data": {"name": "h1", "ip-address": "10.0.0.1"}})
+
+    await service.plan(template)
+    await service.plan(template)
+    [i async for i in service.apply(template, dry_run=True)]
+
+    assert len(made) == 4  # two plans, then one for apply's own plan and one for its executor
+    assert len({id(r) for r in made}) == 4

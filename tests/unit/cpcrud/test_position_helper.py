@@ -52,7 +52,8 @@ async def test_bottom_with_cleanup_rule_present_lands_one_above():
         },
     )
     result = await resolve_position(reader, "bottom", "layer-u1", "access", mgmt="m", domain="d")
-    assert result == {"position": 7}  # one above rule 7 == at position 7 (pushes cleanup down to 8)
+    # Anchored on the cleanup rule, not its number: several rules added in one apply keep their order and section.
+    assert result == {"position": {"above": "r1"}}
 
 
 @pytest.mark.asyncio
@@ -71,7 +72,7 @@ async def test_cleanup_detection_ignores_action_accept_cleanup_counts_too():
         },
     )
     result = await resolve_position(reader, "bottom", "layer-u1", "access", mgmt="m", domain="d")
-    assert result == {"position": 3}
+    assert result == {"position": {"above": "r1"}}
 
 
 @pytest.mark.asyncio
@@ -82,16 +83,43 @@ async def test_bottom_no_existing_rules_at_all_passes_through():
     assert result == {"position": "bottom"}
 
 
+_CLEANUP = RuleMatch(
+    uid="r-c",
+    name="Cleanup rule",
+    rule_number=6,
+    raw={"source": [{"name": "Any"}], "destination": [{"name": "Any"}], "service": [{"name": "Any"}], "action": "Drop"},
+)
+
+
 @pytest.mark.asyncio
-async def test_section_relative_bottom_resolves_section_without_a_rulebase_read_by_section_uid():
-    """show-access-rulebase refuses a section uid (generic_error, home lab 2026-10-05), so the cleanup check never
-    ran for a section; with failed rulebase reads raising (Backlog #37) the call would turn every such add into an
-    ERROR. Section bottom goes to the section's bottom without that read."""
+async def test_section_bottom_above_the_sections_cleanup_rule():
+    """Backlog #40: `{"bottom": <section>}` would put the rule after the section's drop rule (home lab, discarded
+    write: rule 8 after Cleanup rule 7); the cleanup rule's number puts it above, inside the section."""
+    reader = AsyncMock()
+    reader.get_section.return_value = SectionInfo(uid="s-c", name="Cleanup", layer_uid="layer-u1")
+    reader.get_last_rule_in_section.return_value = _CLEANUP
+    result = await resolve_position(reader, {"bottom": "Cleanup"}, "layer-u1", "access", mgmt="m", domain="d")
+    reader.get_last_rule_in_section.assert_awaited_once_with("layer-u1", "s-c", "access", mgmt="m", domain="d")
+    reader.get_last_rule.assert_not_awaited()  # show-*-rulebase refuses a section uid (home lab)
+    assert result == {"position": {"above": "r-c"}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "last",
+    [
+        None,
+        RuleMatch(
+            uid="r1", name="web", rule_number=3, raw={"source": ["u1"], "destination": ["any"], "service": ["any"]}
+        ),
+    ],
+)
+async def test_section_bottom_without_a_cleanup_rule_goes_to_the_sections_bottom(last):
     reader = AsyncMock()
     reader.get_section.return_value = SectionInfo(uid="s1", name="Web Section", layer_uid="layer-u1")
+    reader.get_last_rule_in_section.return_value = last
     result = await resolve_position(reader, {"bottom": "Web Section"}, "layer-u1", "access", mgmt="m", domain="d")
     reader.get_section.assert_awaited_once_with("Web Section", "layer-u1", "access", mgmt="m", domain="d")
-    reader.get_last_rule.assert_not_awaited()
     assert result == {"position": {"bottom": "s1"}}
 
 

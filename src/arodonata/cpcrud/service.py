@@ -13,6 +13,7 @@ from ..telemetry import span_attrs
 from .executor import Executor, fold_reports
 from .models import ApplyReport, IpConflictPolicy, NameConflictPolicy, Outcome, Plan
 from .planner import Planner
+from .resolver import StateReader
 from .schema import load_template, validate_template
 from .statereader import HybridStateReader
 
@@ -23,9 +24,15 @@ if TYPE_CHECKING:
 class CPCRUDService:
     def __init__(self, client: ArodonataClient) -> None:
         self._client = client
-        self._reader = HybridStateReader(client)
-        self._planner = Planner(self._reader, settings=client.settings)
-        self._executor = Executor(client, self._reader)
+
+    # A reader per plan and per apply: it remembers the head each run read (Backlog #41), so a shared one let two
+    # concurrent plans of a domain overwrite each other's head, and let an apply that skips the stale check compare
+    # cache rows against an old plan's head (Backlog #42).
+    def _new_reader(self) -> StateReader:
+        return HybridStateReader(self._client)
+
+    def _new_executor(self, reader: StateReader) -> Executor:
+        return Executor(self._client, reader)
 
     @traced
     def validate(self, template: str | Path | dict[str, Any]) -> list[str]:
@@ -47,7 +54,8 @@ class CPCRUDService:
         on_ip_conflict: IpConflictPolicy | None = None,
     ) -> Plan:
         doc = load_template(template) if not isinstance(template, dict) else template
-        return await self._planner.decide(doc, on_name=on_name_conflict, on_ip=on_ip_conflict)
+        planner = Planner(self._new_reader(), settings=self._client.settings)
+        return await planner.decide(doc, on_name=on_name_conflict, on_ip=on_ip_conflict)
 
     @traced
     async def apply(
@@ -86,13 +94,14 @@ class CPCRUDService:
             message=f"applying plan {plan.template_hash[:12]}",
             data={"actions": len(plan.actions)},
         )
+        executor = self._new_executor(self._new_reader())
         report: ApplyReport | None = None
         current: Plan = plan
         attempt = 0
         while True:
             actions_by_id = {a.id: a for a in current.actions}
             pass_report: ApplyReport | None = None
-            async for item in self._executor.stream(
+            async for item in executor.stream(
                 current,
                 force=force,
                 dry_run=dry_run,
