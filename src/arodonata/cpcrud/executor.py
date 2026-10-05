@@ -11,6 +11,7 @@ from arlogi.otel.decorator import traced
 from ..telemetry import span_attrs
 from ..utils.helpers import extract_data_from_response
 from .models import ActionResult, ApplyReport, DomainStamp, Outcome, Plan, PlannedAction
+from .resolver import StateReadError
 
 if TYPE_CHECKING:
     from ..api.client import ArodonataClient
@@ -227,20 +228,32 @@ class Executor:
         span_attrs(**{"action.outcome": result.outcome.value})
         return result
 
+    async def _delete_blocked(self, mgmt: str, action: PlannedAction, uid: str) -> ActionResult | None:
+        """An ERROR result while the object is still referenced, or when where-used cannot tell (Backlog #37)."""
+        try:
+            total = await self._reader.where_used(uid, mgmt=mgmt, domain=action.domain_name)
+        except StateReadError as exc:
+            reason = str(exc)
+        else:
+            if total == 0:
+                return None
+            reason = f"{total} direct reference(s) still exist"
+        return ActionResult(
+            action_id=action.id,
+            outcome=Outcome.ERROR,
+            type=action.type,
+            name=action.resolved_name,
+            mgmt_name=action.mgmt_name,
+            domain_name=action.domain_name,
+            uid=uid,
+            message=f"delete blocked: {reason}",
+        )
+
     async def _execute_action_inner(self, mgmt: str, sid: str, server_ip: str, action: PlannedAction) -> ActionResult:
         if action.operation == "delete" and action.command is not None and action.resolved_uid:
-            total = await self._reader.where_used(action.resolved_uid, mgmt=mgmt, domain=action.domain_name)
-            if total > 0:
-                return ActionResult(
-                    action_id=action.id,
-                    outcome=Outcome.ERROR,
-                    type=action.type,
-                    name=action.resolved_name,
-                    mgmt_name=action.mgmt_name,
-                    domain_name=action.domain_name,
-                    uid=action.resolved_uid,
-                    message=f"delete blocked: {total} direct reference(s) still exist",
-                )
+            blocked = await self._delete_blocked(mgmt, action, action.resolved_uid)
+            if blocked is not None:
+                return blocked
         if action.command is None or action.payload is None:
             # UNCHANGED / REUSE / CONFLICT / ERROR decided at plan time -> no write
             return ActionResult(
@@ -288,9 +301,14 @@ class Executor:
                     message=res.message,
                 )
             if kind == "exists" and action.operation == "add":
-                live = await self._reader.get_by_name(
-                    action.type, action.resolved_name, mgmt=mgmt, domain=action.domain_name
-                )
+                message = "drift: object appeared since plan; reusing existing"
+                try:
+                    live = await self._reader.get_by_name(
+                        action.type, action.resolved_name, mgmt=mgmt, domain=action.domain_name
+                    )
+                except StateReadError as exc:  # the server said it exists; only its uid is unknown
+                    live = None
+                    message += f" (uid lookup failed: {exc})"
                 return ActionResult(
                     action_id=action.id,
                     outcome=Outcome.DRIFTED,
@@ -299,7 +317,7 @@ class Executor:
                     mgmt_name=action.mgmt_name,
                     domain_name=action.domain_name,
                     uid=live.uid if live else None,
-                    message="drift: object appeared since plan; reusing existing",
+                    message=message,
                 )
             if kind == "missing" and action.operation in ("update", "delete"):
                 message = (

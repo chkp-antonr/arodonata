@@ -13,6 +13,8 @@ from .models import DomainStamp, IpConflictPolicy, NameConflictPolicy, Outcome, 
 from .naming import DEFAULT_PREFIXES, NamingPrefixes
 from .resolver import (
     StateReader,
+    StateReadError,
+    _resolved_name_from_key,
     resolve_add,
     resolve_delete,
     resolve_nat_rule,
@@ -109,6 +111,27 @@ def _dedupe_reuse(actions: list[PlannedAction]) -> list[PlannedAction]:
     return out
 
 
+def _lookup_failed_action(
+    op: dict[str, Any], exc: StateReadError, *, mgmt: str, domain: str, action_id: str
+) -> PlannedAction:
+    data = op.get("data") or {}
+    key = op.get("key") or {}
+    return PlannedAction(
+        id=action_id,
+        operation=op["operation"],
+        type=op["type"],
+        mgmt_name=mgmt,
+        domain_name=domain,
+        desired=data,
+        key=op.get("key"),
+        resolved_name=data.get("name") or _resolved_name_from_key(key),
+        layer=op.get("layer"),
+        package=op.get("package"),
+        outcome=Outcome.ERROR,
+        message=f"lookup failed, nothing planned (re-plan to retry): {exc}",
+    )
+
+
 class Planner:
     def __init__(self, reader: StateReader, settings: Any | None = None) -> None:
         self._reader = reader
@@ -168,15 +191,22 @@ class Planner:
                 for op in ops:
                     counter += 1
                     action_id = f"act-{counter:04d}"
-                    new_actions, counter = await self._resolve_op(
-                        op,
-                        mgmt=mgmt,
-                        domain_name=domain_name,
-                        action_id=action_id,
-                        counter=counter,
-                        on_name=on_name,
-                        on_ip=on_ip,
-                    )
+                    try:
+                        new_actions, counter = await self._resolve_op(
+                            op,
+                            mgmt=mgmt,
+                            domain_name=domain_name,
+                            action_id=action_id,
+                            counter=counter,
+                            on_name=on_name,
+                            on_ip=on_ip,
+                        )
+                    except StateReadError as exc:
+                        # A lookup that did not happen is not "not found": plan nothing for this operation (its
+                        # auto-created dependencies included) rather than create a duplicate (Backlog #37).
+                        new_actions = [
+                            _lookup_failed_action(op, exc, mgmt=mgmt, domain=domain_name, action_id=action_id)
+                        ]
                     domain_actions.extend(new_actions)
                 domain_actions, counter = await self._ensure_group_dependencies(
                     domain_actions,
@@ -321,44 +351,59 @@ class Planner:
         for action in domain_actions:
             if action.operation not in ("add", "update") or action.type == "network-group":
                 continue
-            for group in action.desired.get("groups", []) or []:
-                if group in explicit_groups:
-                    dep = explicit_groups[group]
-                elif group in synthesized:
-                    dep = synthesized[group]
-                else:
-                    existing = await self._reader.get_by_name("network-group", group, mgmt=mgmt, domain=domain)
-                    counter += 1
-                    if existing is not None:
-                        dep = PlannedAction(
-                            id=f"act-{counter:04d}",
-                            operation="add",
-                            type="network-group",
-                            mgmt_name=mgmt,
-                            domain_name=domain,
-                            desired={"name": group},
-                            resolved_name=group,
-                            resolved_uid=existing.uid,
-                            outcome=Outcome.REUSE,
-                            auto_created=True,
-                            message="reused existing (referenced in groups)",
-                        )
-                    else:
-                        dep = PlannedAction(
-                            id=f"act-{counter:04d}",
-                            operation="add",
-                            type="network-group",
-                            mgmt_name=mgmt,
-                            domain_name=domain,
-                            desired={"name": group},
-                            resolved_name=group,
-                            outcome=Outcome.CREATE,
-                            command="add-group",
-                            payload={"name": group},
-                            auto_created=True,
-                            message="auto-created (referenced in groups)",
-                        )
-                    synthesized[group] = dep
+            if action.outcome == Outcome.ERROR:
+                continue  # nothing is written for it, so neither are the groups it names (Backlog #37)
+            planned: dict[str, PlannedAction] = {}  # this action's new group actions, kept only if all resolve
+            deps: list[PlannedAction] = []
+            try:
+                for group in action.desired.get("groups", []) or []:
+                    dep = explicit_groups.get(group) or synthesized.get(group) or planned.get(group)
+                    if dep is None:
+                        dep, counter = await self._group_dependency(group, mgmt, domain, counter)
+                        planned[group] = dep
+                    deps.append(dep)
+            except StateReadError as exc:
+                # The object cannot be written without knowing whether its group exists (Backlog #37).
+                action.outcome = Outcome.ERROR
+                action.command = None
+                action.payload = None
+                action.message = f"lookup failed, nothing planned (re-plan to retry): group {group!r}: {exc}"
+                continue
+            synthesized.update(planned)
+            for dep in deps:
                 if dep.id not in action.depends_on:
                     action.depends_on.append(dep.id)
         return list(synthesized.values()) + domain_actions, counter
+
+    async def _group_dependency(self, group: str, mgmt: str, domain: str, counter: int) -> tuple[PlannedAction, int]:
+        """Reuse or auto-create one group named in an object's `groups`; raises StateReadError if its lookup fails."""
+        existing = await self._reader.get_by_name("network-group", group, mgmt=mgmt, domain=domain)
+        counter += 1
+        if existing is not None:
+            return PlannedAction(
+                id=f"act-{counter:04d}",
+                operation="add",
+                type="network-group",
+                mgmt_name=mgmt,
+                domain_name=domain,
+                desired={"name": group},
+                resolved_name=group,
+                resolved_uid=existing.uid,
+                outcome=Outcome.REUSE,
+                auto_created=True,
+                message="reused existing (referenced in groups)",
+            ), counter
+        return PlannedAction(
+            id=f"act-{counter:04d}",
+            operation="add",
+            type="network-group",
+            mgmt_name=mgmt,
+            domain_name=domain,
+            desired={"name": group},
+            resolved_name=group,
+            outcome=Outcome.CREATE,
+            command="add-group",
+            payload={"name": group},
+            auto_created=True,
+            message="auto-created (referenced in groups)",
+        ), counter

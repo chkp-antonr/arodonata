@@ -74,17 +74,9 @@ async def resolve_position(
             f"Section {value!r} not found in layer scope {layer_scope_uid!r} -- "
             "fix the section name/uid or create it first."
         )
-    if key == "top":
-        return {"position": {"top": section.uid}}
-    # bottom: cleanup-aware, scoped to the section itself
-    return await _bottom_with_cleanup_check(
-        reader,
-        section.uid,
-        layer_type,
-        {"position": {"bottom": section.uid}},
-        mgmt=mgmt,
-        domain=domain,
-    )
+    # top and bottom of a section: no cleanup check. It would need the section's last rule, and
+    # show-*-rulebase refuses a section uid (generic_error, home lab 2026-10-05), so the check never ran here.
+    return {"position": {key: section.uid}}
 
 
 def resolve_nat_position(position: Any) -> dict[str, Any]:

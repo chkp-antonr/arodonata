@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from arodonata.api.schemas import ApiCallResult
+from arodonata.cpcrud.resolver import StateReadError
 from arodonata.cpcrud.services import ServiceSpec
 from arodonata.cpcrud.statereader import HybridStateReader, LiveStateReader
 
@@ -59,6 +60,61 @@ async def test_get_by_name_miss_returns_none():
     client = FakeClient({})
     reader = LiveStateReader(client)
     assert await reader.get_by_name("host", "missing", mgmt="m", domain="d") is None
+
+
+@pytest.mark.asyncio
+async def test_get_by_name_object_not_found_returns_none():
+    client = FakeClient(
+        {
+            "show-host": ApiCallResult(
+                success=False, message="Requested object [missing] not found", code="generic_err_object_not_found"
+            )
+        }
+    )
+    assert await LiveStateReader(client).get_by_name("host", "missing", mgmt="m", domain="d") is None
+
+
+@pytest.mark.asyncio
+async def test_get_by_name_not_found_by_code_alone_returns_none():
+    client = FakeClient({"show-host": ApiCallResult(success=False, message="", code="generic_err_object_not_found")})
+    assert await LiveStateReader(client).get_by_name("host", "missing", mgmt="m", domain="d") is None
+
+
+@pytest.mark.asyncio
+async def test_get_by_name_failed_call_raises():
+    """A failed show-<type> is not "absent" (Backlog #37): an add would plan a create, a delete "already absent"."""
+    client = FakeClient({"show-host": ApiCallResult(success=False, message="timeout", code="generic_err")})
+    with pytest.raises(StateReadError, match="show-host"):
+        await LiveStateReader(client).get_by_name("host", "h1", mgmt="m", domain="d")
+
+
+@pytest.mark.asyncio
+async def test_hybrid_get_by_name_failed_live_call_raises():
+    client = FakeClient({"show-host": ApiCallResult(success=False, message="timeout", code="generic_err")})
+    client.cache = AsyncMock()
+    client.cache.get_objects_by_name.return_value = []  # cache miss -> live
+    with pytest.raises(StateReadError):
+        await HybridStateReader(client).get_by_name("host", "h1", mgmt="m", domain="d")
+
+
+@pytest.mark.asyncio
+async def test_where_used_failed_call_raises():
+    """A failed where-used is not "unused" (Backlog #37): the executor would let a blocked delete through."""
+    client = FakeClient({"where-used": ApiCallResult(success=False, message="timeout", code="generic_err")})
+    with pytest.raises(StateReadError, match="where-used"):
+        await LiveStateReader(client).where_used("u1", mgmt="m", domain="d")
+
+
+@pytest.mark.asyncio
+async def test_where_used_of_a_vanished_object_is_zero():
+    client = FakeClient(
+        {
+            "where-used": ApiCallResult(
+                success=False, message="Requested object [u1] not found", code="generic_err_object_not_found"
+            )
+        }
+    )
+    assert await LiveStateReader(client).where_used("u1", mgmt="m", domain="d") == 0
 
 
 @pytest.mark.asyncio
@@ -1194,9 +1250,9 @@ async def test_find_nat_rules_by_tuple_accumulates_across_pages():
 
 
 @pytest.mark.asyncio
-async def test_paginate_rulebase_returns_partial_accumulation_when_a_later_page_fails():
-    """A failure on page 2+ must not discard page 1's already-accumulated data -- return what
-    was gathered so far rather than nothing at all."""
+async def test_paginate_rulebase_raises_when_a_later_page_fails():
+    """A failure on page 2+ must not read as a shorter rulebase (Backlog #37): a rule on the
+    missing pages would then read as absent, and cpcrud would add a duplicate of it."""
     client = FakeClient(
         {
             "show-access-rulebase": [
@@ -1215,8 +1271,10 @@ async def test_paginate_rulebase_returns_partial_accumulation_when_a_later_page_
         }
     )
     reader = LiveStateReader(client)
-    last = await reader.get_last_rule("layer-u1", "access", mgmt="m", domain="d")
-    assert last is not None and last.uid == "r1"
+    with pytest.raises(StateReadError, match="timeout"):
+        await reader.get_last_rule("layer-u1", "access", mgmt="m", domain="d")
+    with pytest.raises(StateReadError, match="timeout"):
+        await reader.find_rules_by_traffic("layer-u1", "access", ["u1"], ["u3"], ["u4"], mgmt="m", domain="d")
 
 
 @pytest.mark.asyncio
@@ -1242,11 +1300,48 @@ async def test_find_by_ip_uses_api_query_for_pagination():
 
 
 @pytest.mark.asyncio
-async def test_find_rules_by_traffic_api_failure_returns_empty():
+async def test_find_rules_by_traffic_api_failure_raises():
     client = FakeClient({})  # api_call falls through to the default failing ApiCallResult
     reader = LiveStateReader(client)
-    matches = await reader.find_rules_by_traffic("layer-u1", "access", ["u1"], ["u3"], ["u4"], mgmt="m", domain="d")
-    assert matches == []
+    with pytest.raises(StateReadError, match="show-access-rulebase"):
+        await reader.find_rules_by_traffic("layer-u1", "access", ["u1"], ["u3"], ["u4"], mgmt="m", domain="d")
+
+
+@pytest.mark.asyncio
+async def test_find_nat_rules_by_tuple_api_failure_raises():
+    reader = LiveStateReader(FakeClient({}))
+    with pytest.raises(StateReadError, match="show-nat-rulebase"):
+        await reader.find_nat_rules_by_tuple("Standard", ("s", "d", "v", "s", "d", "v"), mgmt="m", domain="d")
+
+
+@pytest.mark.asyncio
+async def test_find_by_ip_failed_listing_raises():
+    """A failed show-objects must not read as "no object with this IP" (Backlog #37): cpcrud would create a duplicate."""
+    client = FakeClient(
+        {"show-objects": ApiCallResult(success=False, message="paging inconsistent", code="paging_inconsistent")}
+    )
+    reader = LiveStateReader(client)
+    with pytest.raises(StateReadError, match="paging_inconsistent"):
+        await reader.find_by_ip(type="host", ip_value={"ip-address": "10.0.0.5"}, mgmt="m", domain="d")
+
+
+@pytest.mark.asyncio
+async def test_hybrid_find_by_ip_failed_live_listing_raises():
+    client = FakeClient({"show-objects": ApiCallResult(success=False, message="timeout", code="generic_err")})
+    client.cache = AsyncMock()
+    client.cache.get_objects_by_ip.return_value = []  # cache miss -> live
+    reader = HybridStateReader(client)
+    with pytest.raises(StateReadError):
+        await reader.find_by_ip(type="host", ip_value={"ip-address": "10.0.0.5"}, mgmt="m", domain="d")
+
+
+@pytest.mark.asyncio
+async def test_get_service_failed_port_listing_raises():
+    """The port listing is the last check before cpcrud creates a service: its failure must not read as "no such port"."""
+    client = FakeClient({"show-services-tcp": ApiCallResult(success=False, message="timeout", code="generic_err")})
+    reader = LiveStateReader(client)
+    with pytest.raises(StateReadError, match="show-services-tcp"):
+        await reader.get_service(ServiceSpec(kind="tcp", port="22"), "22", mgmt="m", domain="d")
 
 
 @pytest.mark.asyncio
@@ -1544,11 +1639,11 @@ async def test_get_rule_by_key_not_found_returns_none():
 
 
 @pytest.mark.asyncio
-async def test_get_rule_by_key_api_failure_returns_none():
+async def test_get_rule_by_key_api_failure_raises():
     client = FakeClient({})
     reader = LiveStateReader(client)
-    rule = await reader.get_rule_by_key("layer-u1", "access", {"name": "x"}, mgmt="m", domain="d")
-    assert rule is None
+    with pytest.raises(StateReadError):
+        await reader.get_rule_by_key("layer-u1", "access", {"name": "x"}, mgmt="m", domain="d")
 
 
 @pytest.mark.asyncio

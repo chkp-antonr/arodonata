@@ -110,6 +110,10 @@ When a `Plan` is created, `Planner` records a `DomainStamp` for each target doma
 
 During `apply()`, `Executor` re-checks the target domain's published session UID. If another administrator or script published changes in that domain while the plan was sitting unexecuted, `Executor` aborts execution with `PLAN_STALE` to prevent unintended policy overwrites.
 
+### Failed Lookups
+
+A lookup that decides whether something already exists never reads a failed call as "not found": the name lookup (`show-<type>`, except Check Point's own "object not found"), the IP lookup (`show-objects`), the service port listing (`show-services-tcp`/`-udp`), every rulebase read (each page of `show-*-rulebase`) and `where-used` raise `StateReadError` when the call fails, including `paging_inconsistent`. The planner turns that into one `ERROR` action for the whole operation, with `lookup failed, nothing planned (re-plan to retry): …` as its message; neither the operation's auto-created dependencies nor the groups it names are planned, and a failed lookup of a group it names stops the object the same way. Nothing is created, updated or deleted for it, actions that depend on it are skipped (`skipped_dependency`), and the other operations of the template run as usual. At apply time a failed `where-used` blocks the delete (`delete blocked: …`). A retry pass (`retry_remaining`) re-runs the plan without re-planning, so it reports the same error; plan again to retry the lookup. An exception from the transport (a timeout, an unreachable server, a certificate mismatch) still aborts the whole plan, so nothing is written then either. A NAT rule addressed by key in a package that cannot be read is now an `ERROR` instead of "not found" (a delete used to report "already absent").
+
 ### Field Diffing (`differ.py`)
 
 When an object exists, `differ.py` compares the normalized desired attributes against `ObjectState.raw`.

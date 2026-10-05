@@ -6,6 +6,7 @@ import pytest
 
 from arodonata.api.schemas import SSEEvent, SSEEventType
 from arodonata.cpcrud.models import ActionResult, ApplyReport, Outcome, Plan, PlannedAction
+from arodonata.cpcrud.resolver import StateReadError
 from arodonata.cpcrud.service import CPCRUDService
 from tests.unit.cpcrud.test_executor import FakeClient
 from tests.unit.cpcrud.test_resolver import FakeReader
@@ -165,3 +166,69 @@ async def test_apply_default_no_retry(service_with_flaky_executor):
     events = [e async for e in service_with_flaky_executor.apply(TEMPLATE)]
     report = events[-1]
     assert report.remaining is not None  # unchanged 1.2.0 behavior
+
+
+class _FailingIpReader(FakeReader):
+    """find_by_ip fails for one address, as a failed or inconsistent show-objects listing does."""
+
+    async def find_by_ip(self, *, type, ip_value, mgmt, domain):
+        if "10.0.0.1" in ip_value.values():
+            raise StateReadError("show-objects failed: paging_inconsistent: listing changed while paging")
+        return await super().find_by_ip(type=type, ip_value=ip_value, mgmt=mgmt, domain=domain)
+
+
+def _service_with_reader(reader):
+    client = _fake_client()
+    service = CPCRUDService(client)
+    service._reader = reader
+    service._planner._reader = reader
+    service._executor._reader = reader
+    return client, service
+
+
+def _template(*ops):
+    return {"management_servers": [{"mgmt_name": "m1", "domains": [{"name": "General", "operations": list(ops)}]}]}
+
+
+@pytest.mark.asyncio
+async def test_failed_ip_lookup_stops_the_create_not_the_other_objects():
+    """Backlog #37: a failed lookup must not read as "no object with this IP" and create a duplicate."""
+    client, service = _service_with_reader(_FailingIpReader())
+    template = _template(
+        {"type": "host", "data": {"name": "h1", "ip-address": "10.0.0.1"}},
+        {"type": "host", "data": {"name": "h2", "ip-address": "10.0.0.2"}},
+    )
+
+    report = [i async for i in service.apply(template)][-1]
+
+    added = [payload["name"] for command, payload in client.calls if command == "add-host"]
+    assert added == ["h2"]
+    by_name = {r.name: r for r in report.results}
+    assert by_name["h1"].outcome == Outcome.ERROR
+    assert "lookup failed" in by_name["h1"].message and "paging_inconsistent" in by_name["h1"].message
+    assert by_name["h2"].outcome == Outcome.CREATE
+
+
+@pytest.mark.asyncio
+async def test_failed_ip_lookup_in_a_rule_reference_creates_neither_the_host_nor_the_rule():
+    client, service = _service_with_reader(_FailingIpReader())
+    template = _template(
+        {
+            "type": "access-rule",
+            "layer": "Network",
+            "position": "bottom",
+            "data": {
+                "name": "r1",
+                "source": ["10.0.0.1"],
+                "destination": ["any"],
+                "service": ["any"],
+                "action": "accept",
+            },
+        }
+    )
+
+    report = [i async for i in service.apply(template)][-1]
+
+    assert [command for command, _ in client.calls if command.startswith("add-")] == []
+    assert [r.outcome for r in report.results] == [Outcome.ERROR]
+    assert report.published_domains == []
