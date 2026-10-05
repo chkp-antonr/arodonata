@@ -192,23 +192,37 @@ async def test_where_used_total():
 
 
 @pytest.mark.asyncio
-async def test_live_reader_last_publish_session_uses_client_refresh():
+async def test_live_reader_last_publish_session_reads_the_head_without_storing_it():
+    """cpcrud only compares session uids; storing the head as the object cache's freshness stamp marked the cache
+    fresh without refreshing it, so cpcrud's own changes (and a publish before the plan) never reached it (Backlog #39)."""
+
     class FakeLPS:
         uid = "sess-uid-42"
 
     client = AsyncMock()
-    client.refresh_last_published_session.return_value = FakeLPS()
+    client.fetch_last_published_session.return_value = FakeLPS()
     reader = LiveStateReader(client)
     assert await reader.get_last_publish_session(mgmt="m", domain="d") == "sess-uid-42"
-    client.refresh_last_published_session.assert_awaited_once_with("m", "d")
+    client.fetch_last_published_session.assert_awaited_once_with("m", "d")
+    client.refresh_last_published_session.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_live_reader_last_publish_session_empty_on_none():
+async def test_live_reader_last_publish_session_raises_on_a_head_without_uid():
     client = AsyncMock()
-    client.refresh_last_published_session.return_value = None
+    client.fetch_last_published_session.return_value = SimpleNamespace(uid="")
+    with pytest.raises(StateReadError):
+        await LiveStateReader(client).get_last_publish_session(mgmt="m", domain="d")
+
+
+@pytest.mark.asyncio
+async def test_live_reader_last_publish_session_raises_when_the_head_cannot_be_read():
+    """Not "no stamp": an empty stamp skips the PLAN_STALE check (Backlog #39)."""
+    client = AsyncMock()
+    client.fetch_last_published_session.return_value = None
     reader = LiveStateReader(client)
-    assert await reader.get_last_publish_session(mgmt="m", domain="d") == ""
+    with pytest.raises(StateReadError, match="last published session"):
+        await reader.get_last_publish_session(mgmt="m", domain="d")
 
 
 def _cpobject(**kw):
@@ -230,11 +244,83 @@ def _cpobject(**kw):
     return SimpleNamespace(**defaults)
 
 
+async def _hybrid_with_head(client, *, head="sess-1", stored="sess-1"):
+    """A HybridStateReader after the planner read the domain's head; the cache's stored stamp is `stored`."""
+    client.fetch_last_published_session.return_value = SimpleNamespace(uid=head)
+    client.cache.get_last_published_session.return_value = None if stored is None else SimpleNamespace(uid=stored)
+    reader = HybridStateReader(client)
+    await reader.get_last_publish_session(mgmt="m", domain="d")
+    return reader
+
+
+def _live_host(client, uid="u-live"):
+    client.api_call.return_value = SimpleNamespace(success=True, data={"uid": uid, "name": "h1"}, message="", code="")
+
+
+@pytest.mark.asyncio
+async def test_hybrid_trusts_the_cache_when_its_stamp_is_the_planned_head():
+    client = AsyncMock()
+    client.cache.get_objects_by_name.return_value = [_cpobject()]
+    reader = await _hybrid_with_head(client)
+    state = await reader.get_by_name("host", "h1", mgmt="m", domain="d")
+    assert state is not None and state.uid == "u1"
+    client.api_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("head", "stored"), [("sess-2", "sess-1"), ("sess-1", None), ("sess-1", "")])
+async def test_hybrid_reads_live_when_the_cache_is_behind_the_head(head, stored):
+    """Backlog #41: a cache row from before the domain's last publish may be gone or changed on the server: an add
+    would read "already in desired state" for a deleted object, or diff against old values."""
+    client = AsyncMock()
+    client.cache.get_objects_by_name.return_value = [_cpobject()]
+    _live_host(client)
+    reader = await _hybrid_with_head(client, head=head, stored=stored)
+    state = await reader.get_by_name("host", "h1", mgmt="m", domain="d")
+    assert state is not None and state.uid == "u-live"
+    client.cache.get_objects_by_name.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_hybrid_reads_live_before_any_head_was_read():
+    client = AsyncMock()
+    client.cache.get_objects_by_name.return_value = [_cpobject()]
+    client.cache.get_last_published_session.return_value = SimpleNamespace(uid="sess-1")
+    _live_host(client)
+    state = await HybridStateReader(client).get_by_name("host", "h1", mgmt="m", domain="d")
+    assert state is not None and state.uid == "u-live"
+    client.cache.get_objects_by_name.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_hybrid_reads_live_after_a_failed_head_read():
+    client = AsyncMock()
+    client.cache.get_objects_by_name.return_value = [_cpobject()]
+    _live_host(client)
+    reader = await _hybrid_with_head(client)
+    client.fetch_last_published_session.return_value = None
+    with pytest.raises(StateReadError):
+        await reader.get_last_publish_session(mgmt="m", domain="d")
+    state = await reader.get_by_name("host", "h1", mgmt="m", domain="d")
+    assert state is not None and state.uid == "u-live"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_find_by_ip_reads_live_when_the_cache_is_behind_the_head():
+    client = AsyncMock()
+    client.cache.get_objects_by_ip.return_value = [_cpobject(ipv4_address="10.0.0.5")]
+    client.api_query.return_value = SimpleNamespace(success=True, objects=[], data=[], message="", code="")
+    reader = await _hybrid_with_head(client, head="sess-2", stored="sess-1")
+    assert await reader.find_by_ip(type="host", ip_value={"ip-address": "10.0.0.5"}, mgmt="m", domain="d") == []
+    client.cache.get_objects_by_ip.assert_not_awaited()
+    client.api_query.assert_awaited()
+
+
 @pytest.mark.asyncio
 async def test_hybrid_get_by_name_hits_cache_first():
     client = AsyncMock()
     client.cache.get_objects_by_name.return_value = [_cpobject()]
-    reader = HybridStateReader(client)
+    reader = await _hybrid_with_head(client)
     state = await reader.get_by_name("host", "h1", mgmt="m", domain="d")
     assert state is not None and state.uid == "u1"
     client.api_call.assert_not_awaited()  # no live fallback needed
@@ -256,7 +342,7 @@ async def test_hybrid_get_by_name_falls_back_to_live_on_miss():
 async def test_hybrid_maps_network_group_to_cache_type_group():
     client = AsyncMock()
     client.cache.get_objects_by_name.return_value = [_cpobject(type="group", name="g1", uid="ug")]
-    reader = HybridStateReader(client)
+    reader = await _hybrid_with_head(client)
     state = await reader.get_by_name("network-group", "g1", mgmt="m", domain="d")
     assert state is not None and state.type == "network-group"
 
@@ -265,7 +351,7 @@ async def test_hybrid_maps_network_group_to_cache_type_group():
 async def test_hybrid_find_by_ip_uses_cache_ip_index():
     client = AsyncMock()
     client.cache.get_objects_by_ip.return_value = [_cpobject(ipv4_address="10.0.0.5")]
-    reader = HybridStateReader(client)
+    reader = await _hybrid_with_head(client)
     matches = await reader.find_by_ip(type="host", ip_value={"ip-address": "10.0.0.5"}, mgmt="m", domain="d")
     assert [m.uid for m in matches] == ["u1"]
 
@@ -307,7 +393,7 @@ async def test_hybrid_find_by_ip_network_mask_match_uses_cache():
     client.cache.get_objects_by_subnet.return_value = [
         _cpobject(uid="u-net24", type="network", name="net-24", subnet4="10.0.0.0", subnet_mask="255.255.255.0"),
     ]
-    reader = HybridStateReader(client)
+    reader = await _hybrid_with_head(client)
     matches = await reader.find_by_ip(
         type="network",
         ip_value={"subnet": "10.0.0.0", "mask-length": 24},

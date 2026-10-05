@@ -96,8 +96,8 @@ class Executor:
             domain_actions = [a for a in plan.actions if (a.mgmt_name, a.domain_name) == (mgmt, domain)]
             stamped = stamps.get((mgmt, domain), "")
             if not force and stamped:
-                current = await self._reader.get_last_publish_session(mgmt=mgmt, domain=domain)
-                if current and current != stamped:
+                stale = await self._stale_reason(mgmt, domain, stamped)
+                if stale is not None:
                     stale_domains.add((mgmt, domain))
                     for a in domain_actions:
                         result = ActionResult(
@@ -107,7 +107,7 @@ class Executor:
                             name=a.resolved_name,
                             mgmt_name=a.mgmt_name,
                             domain_name=a.domain_name,
-                            message=f"domain published since plan (was {stamped}, now {current}); re-plan or use force",
+                            message=f"{stale}; re-plan or use force",
                         )
                         results.append(result)
                         yield result
@@ -126,16 +126,25 @@ class Executor:
                 results.append(result)
                 yield result
             if any(r.outcome in _WRITE_OUTCOMES for r in domain_results) and not no_publish and not discard:
-                published.append(
-                    DomainStamp(
-                        mgmt_name=mgmt,
-                        domain_name=domain,
-                        last_publish_session=await self._reader.get_last_publish_session(mgmt=mgmt, domain=domain),
-                    )
-                )
+                try:
+                    after = await self._reader.get_last_publish_session(mgmt=mgmt, domain=domain)
+                except StateReadError:
+                    after = ""  # report-only: the publish is done either way
+                published.append(DomainStamp(mgmt_name=mgmt, domain_name=domain, last_publish_session=after))
                 self._client.invalidate_domain(mgmt, domain)
                 await self._maybe_force_refresh(refresh, mgmt, domain)
         yield self._report(plan, results, published, stale_domains)
+
+    async def _stale_reason(self, mgmt: str, domain: str, stamped: str) -> str | None:
+        """Why the domain's plan may not be applied, or None when its head still is the planned one."""
+        try:
+            current = await self._reader.get_last_publish_session(mgmt=mgmt, domain=domain)
+        except StateReadError as exc:
+            # Not "unchanged": a head that cannot be read must not let the check pass (Backlog #39).
+            return f"could not read the domain's last published session ({exc})"
+        if current and current != stamped:
+            return f"domain published since plan (was {stamped}, now {current})"
+        return None
 
     async def _maybe_force_refresh(self, refresh: str, mgmt: str, domain: str) -> None:
         if refresh != "force":

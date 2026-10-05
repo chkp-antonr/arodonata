@@ -1028,7 +1028,10 @@ class ArodonataClient:
         """Refresh the last-published-session record for a single domain.
 
         Makes one lightweight API call and upserts LastPublishedSession —
-        does not touch the object or asset caches.
+        does not touch the object or asset caches. The stored record is the
+        object cache's freshness stamp, so this marks the domain's cache as
+        current without refreshing it; to only read the head, use
+        `fetch_last_published_session`.
 
         Args:
             mgmt_name: Management server name.
@@ -1040,6 +1043,29 @@ class ArodonataClient:
         self._ensure_open()
 
         return await self._object_service.refresh_last_published_session(mgmt_name, domain_name)
+
+    @traced
+    async def fetch_last_published_session(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+    ) -> LastPublishedSession | None:
+        """Read the last-published session of a single domain WITHOUT storing it.
+
+        The read-only counterpart of `refresh_last_published_session`: the stored record is the object cache's
+        freshness stamp, so a caller that only wants to know the domain's head (cpcrud's plan and publish stamps)
+        must not store it, or the cache reads as fresh without having been refreshed.
+
+        Args:
+            mgmt_name: Management server name.
+            domain_name: Domain name.
+
+        Returns:
+            An unsaved LastPublishedSession, or None on failure.
+        """
+        self._ensure_open()
+
+        return await self._object_service.fetch_last_published_session(mgmt_name, domain_name)
 
     @traced
     async def search_objects(

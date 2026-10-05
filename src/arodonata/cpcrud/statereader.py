@@ -177,8 +177,12 @@ class LiveStateReader:
         return 0
 
     async def get_last_publish_session(self, *, mgmt: str, domain: str) -> str:
-        record = await self._client.refresh_last_published_session(mgmt, domain)
-        return record.uid if record is not None else ""
+        # Read-only: storing it would mark the object cache fresh without refreshing it (Backlog #39).
+        record = await self._client.fetch_last_published_session(mgmt, domain)
+        if record is None or not record.uid:
+            # Not "no stamp": an empty stamp skips the PLAN_STALE check (Backlog #39).
+            raise StateReadError(f"could not read the last published session of {mgmt}/{domain}")
+        return str(record.uid)
 
     async def _probe_named_service(self, original_text: str, *, mgmt: str, domain: str) -> ObjectState | None:
         """Probe each `show-service-*` command by name; return the first hit, if any."""
@@ -613,14 +617,26 @@ def _state_from_cpobject(template_type: str, row: Any) -> ObjectState:
 class HybridStateReader:
     """Cache-first StateReader: object cache lookups with immediate live-API fallback.
 
+    The cache is used for a domain only while it is as new as the domain's head: the stored freshness stamp must be
+    the session the planner read with `get_last_publish_session` (Backlog #41). Otherwise, and before that read,
+    every lookup goes live: a row from before the last publish may be gone or changed on the server.
+
     where-used has no cache backing yet -> always live (spec decision)."""
 
     def __init__(self, client: ArodonataClient) -> None:
         self._client = client
         self._live = LiveStateReader(client)
+        self._heads: dict[tuple[str, str], str] = {}  # (mgmt, domain) -> head uid last read by get_last_publish_session
+
+    async def _cache_is_current(self, mgmt: str, domain: str) -> bool:
+        head = self._heads.get((mgmt, domain))
+        if not head:
+            return False
+        stored = await self._client.cache.get_last_published_session(mgmt, domain)
+        return stored is not None and stored.uid == head
 
     async def get_by_name(self, type: str, name: str, *, mgmt: str, domain: str) -> ObjectState | None:
-        if type not in _CACHED_TYPES:
+        if type not in _CACHED_TYPES or not await self._cache_is_current(mgmt, domain):
             return await self._live.get_by_name(type, name, mgmt=mgmt, domain=domain)
         cache_type = _CACHE_TYPE.get(type, type)
         rows = await self._client.cache.get_objects_by_name(name, mgmt_names=[mgmt], domain_names=[domain])
@@ -630,6 +646,8 @@ class HybridStateReader:
         return await self._live.get_by_name(type, name, mgmt=mgmt, domain=domain)
 
     async def find_by_ip(self, *, type: str, ip_value: dict[str, Any], mgmt: str, domain: str) -> list[ObjectState]:
+        if not await self._cache_is_current(mgmt, domain):
+            return await self._live.find_by_ip(type=type, ip_value=ip_value, mgmt=mgmt, domain=domain)
         cache_type = _CACHE_TYPE.get(type, type)
         rows: list[Any] = []
         if type == "host" and ip_value.get("ip-address"):
@@ -667,7 +685,10 @@ class HybridStateReader:
         return await self._live.where_used(uid, mgmt=mgmt, domain=domain)
 
     async def get_last_publish_session(self, *, mgmt: str, domain: str) -> str:
-        return await self._live.get_last_publish_session(mgmt=mgmt, domain=domain)
+        self._heads.pop((mgmt, domain), None)  # a failed read leaves the domain live-only
+        head = await self._live.get_last_publish_session(mgmt=mgmt, domain=domain)
+        self._heads[(mgmt, domain)] = head
+        return head
 
     async def get_service(self, spec: Any, original_text: str, *, mgmt: str, domain: str) -> ObjectState | None:
         return await self._live.get_service(spec, original_text, mgmt=mgmt, domain=domain)

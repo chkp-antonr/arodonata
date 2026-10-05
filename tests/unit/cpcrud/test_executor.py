@@ -242,6 +242,30 @@ async def test_force_overrides_staleness():
     assert report.results[0].outcome == Outcome.CREATE
 
 
+async def test_unreadable_head_blocks_the_domain_as_plan_stale():
+    """Backlog #39: a head that cannot be read must not let the PLAN_STALE check pass silently."""
+    client = AsyncMock()
+    reader = AsyncMock()
+    reader.get_last_publish_session.side_effect = StateReadError("could not read the last published session")
+    report = await Executor(client, reader).execute(_plan_with_stamp("sess-OLD"))
+    assert report.results[0].outcome == Outcome.PLAN_STALE
+    assert "could not read the domain's last published session" in report.results[0].message
+    assert "re-plan or use force" in report.results[0].message
+    client.create_dedicated_session.assert_not_awaited()
+
+
+async def test_force_writes_even_when_the_head_cannot_be_read():
+    client = AsyncMock()
+    client.create_dedicated_session.return_value = ("sid", "ip")
+    client.api_call_with_sid.return_value = SimpleNamespace(success=True, data={"uid": "u1"}, message="", code="")
+    reader = AsyncMock()
+    reader.get_last_publish_session.side_effect = StateReadError("could not read the last published session")
+    reader.where_used.return_value = 0
+    report = await Executor(client, reader).execute(_plan_with_stamp("sess-OLD"), force=True)
+    assert report.results[0].outcome == Outcome.CREATE
+    assert report.published_domains[0].last_publish_session == ""  # the post-publish stamp is report-only
+
+
 async def test_unknown_stamp_does_not_block():
     client = AsyncMock()
     client.create_dedicated_session.return_value = ("sid", "ip")

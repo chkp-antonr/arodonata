@@ -42,7 +42,7 @@ Uses `jsonschema.Draft7Validator` against `checkpoint_ops_schema.json` to enforc
 
 ### 3. `HybridStateReader` (`src/arodonata/cpcrud/statereader.py`)
 
-Queries live management state via `ArodonataClient` read operations (or DB cache) to build `ObjectState` representations. It reads existing object fields, meta-info locks, and rulebase trees without modifying live session state.
+Queries live management state via `ArodonataClient` read operations, or the object cache for hosts, networks, address ranges and groups while the cache's freshness stamp equals the domain's current head, to build `ObjectState` representations. It reads existing object fields, meta-info locks, and rulebase trees without modifying live session state.
 
 ### 4. `Planner` (`src/arodonata/cpcrud/planner.py`)
 
@@ -106,9 +106,13 @@ sequenceDiagram
 
 ### Domain Stamps & Stale Plan Safeguard
 
-When a `Plan` is created, `Planner` records a `DomainStamp` for each target domain containing the `last_publish_session` UID.
+When a `Plan` is created, `Planner` records a `DomainStamp` for each target domain containing the `last_publish_session` UID. It reads the stamp before the domain's lookups, so a publish while the domain is being planned leaves the plan stale instead of being stamped as already seen.
 
 During `apply()`, `Executor` re-checks the target domain's published session UID. If another administrator or script published changes in that domain while the plan was sitting unexecuted, `Executor` aborts execution with `PLAN_STALE` to prevent unintended policy overwrites.
+
+The stamps are read with `ArodonataClient.fetch_last_published_session`, which never stores them: the stored last-published session is the object cache's freshness stamp, and storing cpcrud's reads marked the cache fresh without refreshing it, so cpcrud's own changes (and a publish before the plan) did not reach the cache until a full refresh. After cpcrud publishes, `invalidate_domain` makes the next smart read through the client (`CacheRefreshCoordinator`) compare the stored stamp with the new head and refresh the domain. cpcrud's own cache-first lookups (`HybridStateReader`) do not refresh the cache: they use it for a domain only while its stored stamp is the head the planner just read for that domain, and otherwise look every object up live, so a row from before the last publish (an object deleted or changed since) is never trusted.
+
+A head that cannot be read (including a failed or timed-out `show-last-published-session`, which `fetch_last_published_session` logs and reports as no record) never reads as "no stamp": at plan time every operation of that domain becomes an `ERROR` that writes nothing and no lookup runs for it (a plan without a stamp cannot be checked for staleness; template errors in those operations, such as a missing layer, surface on the next plan), and at apply time the domain is `PLAN_STALE` ("could not read the domain's last published session …; re-plan or use force"); `force` skips the check as before. The stamp recorded after cpcrud's own publish is only reported, and is empty if it cannot be read.
 
 ### Failed Lookups
 

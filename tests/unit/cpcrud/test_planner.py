@@ -635,3 +635,83 @@ async def test_failed_lookup_of_a_second_group_keeps_no_group_planned_for_the_ob
     )
     actions = _actions_for(plan, "m1", "General")
     assert [(a.type, a.outcome) for a in actions] == [("host", Outcome.ERROR)]
+
+
+@pytest.mark.asyncio
+async def test_unreadable_head_plans_nothing_for_that_domain():
+    """Backlog #39: a plan without a publish stamp cannot be checked for staleness at apply."""
+
+    class Reader(FakeReader):
+        async def get_last_publish_session(self, *, mgmt, domain):
+            if domain == "Bad":
+                raise StateReadError("could not read the last published session of m1/Bad")
+            return "sess-ok"
+
+    doc = {
+        "management_servers": [
+            {
+                "mgmt_name": "m1",
+                "domains": [
+                    {"name": "Bad", "operations": [{"type": "host", "data": {"name": "h1", "ip-address": "10.0.0.1"}}]},
+                    {
+                        "name": "Good",
+                        "operations": [{"type": "host", "data": {"name": "h2", "ip-address": "10.0.0.2"}}],
+                    },
+                ],
+            }
+        ]
+    }
+    plan = await Planner(Reader()).decide(doc)
+
+    (bad,) = _actions_for(plan, "m1", "Bad")
+    assert bad.outcome == Outcome.ERROR and bad.command is None and bad.payload is None
+    assert "could not read the last published session" in bad.message
+    assert [a.outcome for a in _actions_for(plan, "m1", "Good")] == [Outcome.CREATE]
+    assert plan.stamps == [DomainStamp(mgmt_name="m1", domain_name="Good", last_publish_session="sess-ok")]
+
+
+@pytest.mark.asyncio
+async def test_head_is_read_before_the_domain_lookups():
+    """A publish while the domain is being planned must leave the plan stale: the stamp predates every lookup."""
+    calls: list[str] = []
+
+    class Reader(FakeReader):
+        async def get_last_publish_session(self, *, mgmt, domain):
+            calls.append("head")
+            return "sess-1"
+
+        async def get_by_name(self, type, name, *, mgmt, domain):
+            calls.append("get_by_name")
+            return await super().get_by_name(type, name, mgmt=mgmt, domain=domain)
+
+        async def find_by_ip(self, *, type, ip_value, mgmt, domain):
+            calls.append("find_by_ip")
+            return await super().find_by_ip(type=type, ip_value=ip_value, mgmt=mgmt, domain=domain)
+
+    await Planner(Reader()).decide(_doc({"type": "host", "data": {"name": "h1", "ip-address": "10.0.0.1"}}))
+    assert calls[0] == "head"
+    assert calls.count("head") == 1
+
+
+@pytest.mark.asyncio
+async def test_unreadable_head_skips_the_domain_lookups():
+    class Reader(FakeReader):
+        async def get_last_publish_session(self, *, mgmt, domain):
+            raise StateReadError("could not read the last published session of m1/General")
+
+        async def get_by_name(self, type, name, *, mgmt, domain):
+            raise AssertionError("no lookup may run without a stamp")
+
+    plan = await Planner(Reader()).decide(
+        _doc(
+            {"type": "host", "data": {"name": "h1", "ip-address": "10.0.0.1"}},
+            {"operation": "update", "type": "host", "key": {"name": "h2"}, "data": {}},
+        )
+    )
+    actions = _actions_for(plan, "m1", "General")
+    assert sorted((a.id, a.resolved_name, a.outcome) for a in actions) == [
+        ("act-0001", "h1", Outcome.ERROR),
+        ("act-0002", "h2", Outcome.ERROR),
+    ]
+    assert all("could not read the last published session" in a.message for a in actions)
+    assert plan.stamps == []

@@ -594,6 +594,21 @@ async def test_refresh_last_published_session_delegates_to_object_service():
     svc.refresh_last_published_session.assert_awaited_once_with("mgmt1", "domainA")
 
 
+@pytest.mark.asyncio
+async def test_fetch_last_published_session_reads_without_storing():
+    client = make_client()
+    svc = AsyncMock()
+    svc.fetch_last_published_session.return_value = "the-record"
+    install_object_service(client, svc)
+
+    result = await client.fetch_last_published_session("mgmt1", "domainA")
+
+    assert result == "the-record"
+    svc.fetch_last_published_session.assert_awaited_once_with("mgmt1", "domainA")
+    svc.refresh_last_published_session.assert_not_awaited()
+    svc.store_last_published_session.assert_not_awaited()
+
+
 # --------------------------------------------------------------------------- #
 # search_objects
 # --------------------------------------------------------------------------- #
