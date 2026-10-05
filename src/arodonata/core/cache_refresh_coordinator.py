@@ -197,15 +197,17 @@ class CacheRefreshCoordinator:
 
     async def _incremental_reload(self, mgmt: str, domain: str, policy: CachePolicy, outcome: RefreshOutcome) -> None:
         try:
-            applied = await self._make_refresher().apply(mgmt, domain)
+            result = await self._make_refresher().apply(mgmt, domain)
         except FallbackToFull as exc:
             log().debug(f"smart-fast fallback for {mgmt}/{domain}: {exc}")
             outcome.fell_back = True
             await self._full_reload(mgmt, domain, outcome)
             return
-        # Success: advance baseline + record (only if something was actually applied).
-        await self._object_service.refresh_last_published_session(mgmt, domain)
-        if applied > 0:
+        # Success: advance the baseline to the head read before the diff (a publish after that read stays after
+        # the stamp) and record the refresh (only if something was actually applied).
+        if result.head is not None:
+            await self._object_service.store_last_published_session(result.head)
+        if result.applied > 0:
             outcome.refreshed_domains.append((mgmt, domain))
         self._mark_checked(mgmt, domain)
 

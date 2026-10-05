@@ -1567,6 +1567,52 @@ async def test_incremental_mode_applies_diff_and_advances_baseline(db):
     assert lps.uid == "sess-new"
 
 
+@pytest.mark.parametrize(
+    "changes",
+    [
+        [{"uid": "u1", "type": "host", "change-type": "add", "name": "h1"}],
+        [],  # a rules-only publish: 0 in-scope changes
+    ],
+    ids=["with-changes", "no-in-scope-changes"],
+)
+async def test_incremental_mode_stamps_the_head_read_before_the_diff(db, changes):
+    """A publish between the head read and the stamp must not be stamped as included (Backlog #36)."""
+    await _seed_incremental_domain(db)
+    client = make_client(["m1"])
+    published_later = False
+
+    def api_call_side_effect(**kwargs):
+        if kwargs["command"] == "show-last-published-session":
+            if published_later:
+                return ApiCallResult(
+                    success=True,
+                    data={"uid": "sess-later", "meta-info": {"last-modify-time": {"posix": _FORWARD_PUBLISH_POSIX_MS}}},
+                )
+            return _stale_probe_response()
+        if kwargs["command"] == "show-object":
+            return ApiCallResult(
+                success=True,
+                data={"object": {"uid": "u1", "name": "h1", "type": "host", "ipv4-address": "10.5.5.5"}},
+            )
+        raise AssertionError(f"unexpected api_call: {kwargs['command']}")
+
+    async def show_changes(**kwargs):
+        nonlocal published_later
+        published_later = True  # someone publishes right after the diff was read
+        return {"success": True, "data": {"changes": changes}}
+
+    client.api_call.side_effect = lambda **kw: api_call_side_effect(**kw)
+    client._api_adapter.show_changes = show_changes
+    service = make_service(db, client)
+
+    events = await collect(service.refresh_objects(mgmt_names=["m1"], mode="incremental"))
+
+    assert "domain_incremental" in [e.get("status") for e in events]
+    async with db.session() as session:
+        lps = (await session.execute(select(LastPublishedSession))).scalars().one()
+    assert lps.uid == "sess-new"
+
+
 async def test_incremental_mode_falls_back_to_full_after_a_revert(db):
     """A revert must rebuild the domain, never apply a diff on top of it.
 
