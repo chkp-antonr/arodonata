@@ -1028,7 +1028,10 @@ class ArodonataClient:
         """Refresh the last-published-session record for a single domain.
 
         Makes one lightweight API call and upserts LastPublishedSession —
-        does not touch the object or asset caches.
+        does not touch the object or asset caches. The stored record is the
+        object cache's freshness stamp, so this marks the domain's cache as
+        current without refreshing it; to only read the head, use
+        `fetch_last_published_session`.
 
         Args:
             mgmt_name: Management server name.
