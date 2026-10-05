@@ -192,23 +192,37 @@ async def test_where_used_total():
 
 
 @pytest.mark.asyncio
-async def test_live_reader_last_publish_session_uses_client_refresh():
+async def test_live_reader_last_publish_session_reads_the_head_without_storing_it():
+    """cpcrud only compares session uids; storing the head as the object cache's freshness stamp marked the cache
+    fresh without refreshing it, so cpcrud's own changes (and a publish before the plan) never reached it (Backlog #39)."""
+
     class FakeLPS:
         uid = "sess-uid-42"
 
     client = AsyncMock()
-    client.refresh_last_published_session.return_value = FakeLPS()
+    client.fetch_last_published_session.return_value = FakeLPS()
     reader = LiveStateReader(client)
     assert await reader.get_last_publish_session(mgmt="m", domain="d") == "sess-uid-42"
-    client.refresh_last_published_session.assert_awaited_once_with("m", "d")
+    client.fetch_last_published_session.assert_awaited_once_with("m", "d")
+    client.refresh_last_published_session.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_live_reader_last_publish_session_empty_on_none():
+async def test_live_reader_last_publish_session_raises_on_a_head_without_uid():
     client = AsyncMock()
-    client.refresh_last_published_session.return_value = None
+    client.fetch_last_published_session.return_value = SimpleNamespace(uid="")
+    with pytest.raises(StateReadError):
+        await LiveStateReader(client).get_last_publish_session(mgmt="m", domain="d")
+
+
+@pytest.mark.asyncio
+async def test_live_reader_last_publish_session_raises_when_the_head_cannot_be_read():
+    """Not "no stamp": an empty stamp skips the PLAN_STALE check (Backlog #39)."""
+    client = AsyncMock()
+    client.fetch_last_published_session.return_value = None
     reader = LiveStateReader(client)
-    assert await reader.get_last_publish_session(mgmt="m", domain="d") == ""
+    with pytest.raises(StateReadError, match="last published session"):
+        await reader.get_last_publish_session(mgmt="m", domain="d")
 
 
 def _cpobject(**kw):

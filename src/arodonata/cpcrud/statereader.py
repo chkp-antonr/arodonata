@@ -177,8 +177,12 @@ class LiveStateReader:
         return 0
 
     async def get_last_publish_session(self, *, mgmt: str, domain: str) -> str:
-        record = await self._client.refresh_last_published_session(mgmt, domain)
-        return record.uid if record is not None else ""
+        # Read-only: storing it would mark the object cache fresh without refreshing it (Backlog #39).
+        record = await self._client.fetch_last_published_session(mgmt, domain)
+        if record is None or not record.uid:
+            # Not "no stamp": an empty stamp skips the PLAN_STALE check (Backlog #39).
+            raise StateReadError(f"could not read the last published session of {mgmt}/{domain}")
+        return str(record.uid)
 
     async def _probe_named_service(self, original_text: str, *, mgmt: str, domain: str) -> ObjectState | None:
         """Probe each `show-service-*` command by name; return the first hit, if any."""

@@ -8,6 +8,7 @@ from arodonata.api.schemas import SSEEvent, SSEEventType
 from arodonata.cpcrud.models import ActionResult, ApplyReport, Outcome, Plan, PlannedAction
 from arodonata.cpcrud.resolver import StateReadError
 from arodonata.cpcrud.service import CPCRUDService
+from arodonata.cpcrud.statereader import LiveStateReader
 from tests.unit.cpcrud.test_executor import FakeClient
 from tests.unit.cpcrud.test_resolver import FakeReader
 
@@ -232,3 +233,48 @@ async def test_failed_ip_lookup_in_a_rule_reference_creates_neither_the_host_nor
     assert [command for command, _ in client.calls if command.startswith("add-")] == []
     assert [r.outcome for r in report.results] == [Outcome.ERROR]
     assert report.published_domains == []
+
+
+class _HeadClient(FakeClient):
+    """Executor fake client that also answers the head reads, recording every one that stores the stamp."""
+
+    def __init__(self):
+        super().__init__()
+        self.settings = types.SimpleNamespace()
+        self.head_reads = 0
+        self.stamp_writes = 0
+
+    async def fetch_last_published_session(self, mgmt_name, domain_name):
+        self.head_reads += 1
+        return types.SimpleNamespace(uid="sess-head")
+
+    async def refresh_last_published_session(self, mgmt_name, domain_name):
+        self.stamp_writes += 1
+        return types.SimpleNamespace(uid="sess-head")
+
+
+@pytest.mark.asyncio
+async def test_plan_and_publish_never_store_the_object_cache_stamp():
+    """Backlog #39: cpcrud reads the head to stamp its plan and its publish; storing it marked the object cache fresh
+    without refreshing it, so cpcrud's own changes (and a publish before the plan) never reached the cache."""
+    client = _HeadClient()
+    service = CPCRUDService(client)
+    live = LiveStateReader(client)
+
+    class Reader(FakeReader):
+        async def get_last_publish_session(self, *, mgmt, domain):
+            return await live.get_last_publish_session(mgmt=mgmt, domain=domain)
+
+    reader = Reader()
+    service._reader = reader
+    service._planner._reader = reader
+    service._executor._reader = reader
+
+    report = [
+        i async for i in service.apply(_template({"type": "host", "data": {"name": "h1", "ip-address": "10.0.0.9"}}))
+    ][-1]
+
+    assert [c for c, _ in client.calls if c in ("add-host", "publish")] == ["add-host", "publish"]
+    assert report.published_domains and report.published_domains[0].last_publish_session == "sess-head"
+    assert client.head_reads == 3  # plan stamp, PLAN_STALE check, publish stamp
+    assert client.stamp_writes == 0

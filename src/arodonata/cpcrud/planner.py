@@ -132,6 +132,14 @@ def _lookup_failed_action(
     )
 
 
+def _mark_lookup_failed(action: PlannedAction, detail: str) -> None:
+    """Turn an already planned action into an ERROR that writes nothing."""
+    action.outcome = Outcome.ERROR
+    action.command = None
+    action.payload = None
+    action.message = f"lookup failed, nothing planned (re-plan to retry): {detail}"
+
+
 class Planner:
     def __init__(self, reader: StateReader, settings: Any | None = None) -> None:
         self._reader = reader
@@ -187,42 +195,59 @@ class Planner:
             for domain in ms.get("domains", []):
                 domain_name = domain["name"]
                 ops = sorted(domain.get("operations", []), key=_sort_key)
-                domain_actions: list[PlannedAction] = []
-                for op in ops:
-                    counter += 1
-                    action_id = f"act-{counter:04d}"
-                    try:
-                        new_actions, counter = await self._resolve_op(
-                            op,
-                            mgmt=mgmt,
-                            domain_name=domain_name,
-                            action_id=action_id,
-                            counter=counter,
-                            on_name=on_name,
-                            on_ip=on_ip,
+                # The stamp is read BEFORE the lookups, so a publish while the domain is planned leaves the plan
+                # stale at apply instead of being stamped as seen (as the object cache does, Backlog #36).
+                try:
+                    head = await self._reader.get_last_publish_session(mgmt=mgmt, domain=domain_name)
+                except StateReadError as exc:
+                    # Without a stamp the plan cannot be checked for staleness: plan nothing here (Backlog #39).
+                    for op in ops:
+                        counter += 1
+                        actions.append(
+                            _lookup_failed_action(
+                                op, exc, mgmt=mgmt, domain=domain_name, action_id=f"act-{counter:04d}"
+                            )
                         )
-                    except StateReadError as exc:
-                        # A lookup that did not happen is not "not found": plan nothing for this operation (its
-                        # auto-created dependencies included) rather than create a duplicate (Backlog #37).
-                        new_actions = [
-                            _lookup_failed_action(op, exc, mgmt=mgmt, domain=domain_name, action_id=action_id)
-                        ]
-                    domain_actions.extend(new_actions)
-                domain_actions, counter = await self._ensure_group_dependencies(
-                    domain_actions,
-                    mgmt,
-                    domain_name,
-                    counter,
+                    continue
+                stamps.append(DomainStamp(mgmt_name=mgmt, domain_name=domain_name, last_publish_session=head))
+                domain_actions, counter = await self._plan_domain(
+                    ops, mgmt=mgmt, domain_name=domain_name, counter=counter, on_name=on_name, on_ip=on_ip
                 )
-                actions.extend(_topo_sort(_dedupe_reuse(domain_actions)))
-                stamps.append(
-                    DomainStamp(
-                        mgmt_name=mgmt,
-                        domain_name=domain_name,
-                        last_publish_session=await self._reader.get_last_publish_session(mgmt=mgmt, domain=domain_name),
-                    )
-                )
+                actions.extend(domain_actions)
         return Plan(actions=actions, stamps=stamps, template_hash=template_hash(normalized))
+
+    async def _plan_domain(
+        self,
+        ops: list[dict[str, Any]],
+        *,
+        mgmt: str,
+        domain_name: str,
+        counter: int,
+        on_name: NameConflictPolicy | None,
+        on_ip: IpConflictPolicy | None,
+    ) -> tuple[list[PlannedAction], int]:
+        """Resolve one domain's sorted operations into its ordered actions and the updated counter."""
+        domain_actions: list[PlannedAction] = []
+        for op in ops:
+            counter += 1
+            action_id = f"act-{counter:04d}"
+            try:
+                new_actions, counter = await self._resolve_op(
+                    op,
+                    mgmt=mgmt,
+                    domain_name=domain_name,
+                    action_id=action_id,
+                    counter=counter,
+                    on_name=on_name,
+                    on_ip=on_ip,
+                )
+            except StateReadError as exc:
+                # A lookup that did not happen is not "not found": plan nothing for this operation (its
+                # auto-created dependencies included) rather than create a duplicate (Backlog #37).
+                new_actions = [_lookup_failed_action(op, exc, mgmt=mgmt, domain=domain_name, action_id=action_id)]
+            domain_actions.extend(new_actions)
+        domain_actions, counter = await self._ensure_group_dependencies(domain_actions, mgmt, domain_name, counter)
+        return _topo_sort(_dedupe_reuse(domain_actions)), counter
 
     async def _resolve_op(
         self,
@@ -364,10 +389,7 @@ class Planner:
                     deps.append(dep)
             except StateReadError as exc:
                 # The object cannot be written without knowing whether its group exists (Backlog #37).
-                action.outcome = Outcome.ERROR
-                action.command = None
-                action.payload = None
-                action.message = f"lookup failed, nothing planned (re-plan to retry): group {group!r}: {exc}"
+                _mark_lookup_failed(action, f"group {group!r}: {exc}")
                 continue
             synthesized.update(planned)
             for dep in deps:
