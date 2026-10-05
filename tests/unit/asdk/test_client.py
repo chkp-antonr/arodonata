@@ -749,3 +749,272 @@ async def test_failover_retry_takes_the_slot_of_the_new_member():
     await client.api_call("home", "show-hosts", domain="Domain4")
 
     assert [c.args[0] for c in limiter.acquire.call_args_list] == ["192.168.5.170", "192.168.5.171"]
+
+
+# --------------------------------------------------------------------------- #
+# show-*-rulebase through api_query: paged by rules (Backlog #43)              #
+# --------------------------------------------------------------------------- #
+# Check Point counts from/to/total in RULES for rulebase commands, and a section split by a page boundary comes back
+# on the next page with the same uid. Recorded shape: FPCR on mdmPrime and Domain4 `FPCR_UAT_Active Network` on the
+# home lab (5 sections, 6 rules, Section_4 holds rules 4 and 5).
+
+
+def _rule(n: int, **kw) -> dict:
+    return {"type": "access-rule", "uid": f"r{n}", "rule-number": n, **kw}
+
+
+def _section(name: str, rules: list[dict]) -> dict:
+    numbers = [r["rule-number"] for r in rules]
+    return {
+        "type": "access-section",
+        "uid": f"s-{name}",
+        "name": name,
+        "from": min(numbers),
+        "to": max(numbers),
+        "rulebase": rules,
+    }
+
+
+def _rb_page(items: list[dict], start: int, end: int, total: int) -> dict:
+    return {
+        "success": True,
+        "data": {"uid": "layer-1", "name": "Network", "rulebase": items, "from": start, "to": end, "total": total},
+        "message": "",
+        "code": "",
+    }
+
+
+def _rules_in(items: list[dict]) -> list[str]:
+    out: list[str] = []
+    for item in items:
+        if item.get("type", "").endswith("-section"):
+            out += _rules_in(item.get("rulebase", []))
+        else:
+            out.append(item["uid"])
+    return out
+
+
+_FIVE_SECTIONS_SIX_RULES = [
+    _section("S1", [_rule(1)]),
+    _section("S2", [_rule(2)]),
+    _section("S3", [_rule(3)]),
+    _section("S4", [_rule(4), _rule(5)]),
+    _section("Cleanup", [_rule(6)]),
+]
+
+
+async def test_rulebase_on_one_page_counts_rules_not_sections():
+    transport = AsyncMock()
+    transport.api_call.side_effect = [_rb_page(_FIVE_SECTIONS_SIX_RULES, 1, 6, 6)]
+    client, _, _, _, _ = _query_client(transport)
+
+    result = await client.api_query(
+        "mgmt1", "show-access-rulebase", payload={"name": "Network"}, container_key="rulebase"
+    )
+    await client.close()
+
+    assert result["success"] is True, result
+    assert [i["name"] for i in result["data"]] == ["S1", "S2", "S3", "S4", "Cleanup"]
+    assert _rules_in(result["data"]) == ["r1", "r2", "r3", "r4", "r5", "r6"]
+    assert [c.kwargs["payload"] for c in transport.api_call.await_args_list] == [
+        {"name": "Network", "limit": 100, "offset": 0, "details-level": "standard"}
+    ]
+
+
+async def test_rulebase_section_split_by_a_page_boundary_comes_once_with_all_its_rules():
+    transport = AsyncMock()
+    transport.api_call.side_effect = [
+        _rb_page([_section("S1", [_rule(1)]), _section("S2", [_rule(2)])], 1, 2, 6),
+        _rb_page([_section("S3", [_rule(3)]), _section("S4", [_rule(4)])], 3, 4, 6),
+        _rb_page([_section("S4", [_rule(5)]), _section("Cleanup", [_rule(6)])], 5, 6, 6),
+        _rb_page([_section("Cleanup", [_rule(6)])], 6, 6, 6),  # a full last page: re-read for trailing empty sections
+    ]
+    client, _, _, _, _ = _query_client(transport)
+
+    result = await client.api_query(
+        "mgmt1", "show-access-rulebase", payload={"name": "Network", "limit": 2}, container_key="rulebase"
+    )
+    await client.close()
+
+    assert result["success"] is True, result
+    assert [i["name"] for i in result["data"]] == ["S1", "S2", "S3", "S4", "Cleanup"]
+    section_4 = result["data"][3]
+    assert [r["uid"] for r in section_4["rulebase"]] == ["r4", "r5"]
+    assert (section_4["from"], section_4["to"]) == (4, 5)
+    assert _rules_in(result["data"]) == ["r1", "r2", "r3", "r4", "r5", "r6"]
+    assert [c.kwargs["payload"]["offset"] for c in transport.api_call.await_args_list] == [0, 2, 4, 5]
+    assert all(c.kwargs["payload"]["limit"] == 2 for c in transport.api_call.await_args_list)
+
+
+async def test_flat_rulebase_on_several_pages():
+    transport = AsyncMock()
+    transport.api_call.side_effect = [_rb_page([_rule(1), _rule(2)], 1, 2, 3), _rb_page([_rule(3)], 3, 3, 3)]
+    client, _, _, _, _ = _query_client(transport)
+
+    result = await client.api_query(
+        "mgmt1", "show-nat-rulebase", payload={"package": "Std", "limit": 2}, container_key="rulebase"
+    )
+    await client.close()
+
+    assert result["success"] is True, result
+    assert _rules_in(result["data"]) == ["r1", "r2", "r3"]
+
+
+async def test_place_holder_and_inline_layer_rules_count_as_rules():
+    items = [
+        {"type": "place-holder", "uid": "p1", "rule-number": 1},
+        _rule(2, action="Inner Layer", **{"inline-layer": "layer-2"}),
+    ]
+    transport = AsyncMock()
+    transport.api_call.side_effect = [_rb_page(items, 1, 2, 2)]
+    client, _, _, _, _ = _query_client(transport)
+
+    result = await client.api_query(
+        "mgmt1", "show-access-rulebase", payload={"uid": "layer-1"}, container_key="rulebase"
+    )
+    await client.close()
+
+    assert result["success"] is True, result
+    assert [i["uid"] for i in result["data"]] == ["p1", "r2"]
+
+
+async def test_rulebase_that_changes_between_pages_restarts_once_then_fails():
+    first = _rb_page([_section("S1", [_rule(1)]), _section("S2", [_rule(2)])], 1, 2, 6)
+    grown = _rb_page([_section("S3", [_rule(3)]), _section("S4", [_rule(4)])], 3, 4, 7)
+    transport = AsyncMock()
+    transport.api_call.side_effect = [first, grown, first, grown]
+    client, _, _, _, _ = _query_client(transport)
+
+    result = await client.api_query(
+        "mgmt1", "show-access-rulebase", payload={"name": "Network", "limit": 2}, container_key="rulebase"
+    )
+    await client.close()
+
+    assert result["success"] is False
+    assert result["code"] == "paging_inconsistent"
+    assert "show-access-rulebase" in result["message"]
+    assert transport.api_call.await_count == 4  # one restart
+
+
+async def test_rulebase_failed_page_returns_its_code_without_a_restart():
+    transport = AsyncMock()
+    transport.api_call.side_effect = [
+        {
+            "success": False,
+            "data": None,
+            "message": "Requested object [x] not found",
+            "code": "generic_err_object_not_found",
+        }
+    ]
+    client, _, _, _, _ = _query_client(transport)
+
+    result = await client.api_query("mgmt1", "show-access-rulebase", payload={"name": "x"}, container_key="rulebase")
+    await client.close()
+
+    assert result["success"] is False
+    assert result["code"] == "generic_err_object_not_found"
+    assert transport.api_call.await_count == 1
+
+
+async def test_rulebase_from_a_callers_offset():
+    transport = AsyncMock()
+    transport.api_call.side_effect = [
+        _rb_page([_section("S3", [_rule(3)]), _section("S4", [_rule(4)])], 3, 4, 6),
+        _rb_page([_section("S4", [_rule(5)]), _section("Cleanup", [_rule(6)])], 5, 6, 6),
+        _rb_page([_section("Cleanup", [_rule(6)])], 6, 6, 6),
+    ]
+    client, _, _, _, _ = _query_client(transport)
+
+    result = await client.api_query(
+        "mgmt1", "show-access-rulebase", payload={"name": "Network", "limit": 2, "offset": 2}, container_key="rulebase"
+    )
+    await client.close()
+
+    assert result["success"] is True, result
+    assert _rules_in(result["data"]) == ["r3", "r4", "r5", "r6"]
+    assert [c.kwargs["payload"]["offset"] for c in transport.api_call.await_args_list] == [2, 4, 5]
+
+
+async def test_rulebase_page_size_is_capped_at_100():
+    transport = AsyncMock()
+    transport.api_call.side_effect = [_rb_page([_rule(1)], 1, 1, 1)]
+    client, _, _, _, _ = _query_client(transport)
+
+    await client.api_query(
+        "mgmt1", "show-threat-rulebase", payload={"uid": "l", "limit": 500}, container_key="rulebase"
+    )
+    await client.close()
+
+    assert transport.api_call.await_args_list[0].kwargs["payload"]["limit"] == 100
+
+
+async def test_rulebase_empty_layer_returns_no_entries():
+    empty = {"success": True, "data": {"rulebase": [], "total": 0}, "message": "", "code": ""}
+    transport = AsyncMock()
+    transport.api_call.side_effect = [empty]
+    client, _, _, _, _ = _query_client(transport)
+
+    result = await client.api_query("mgmt1", "show-access-rulebase", payload={"uid": "l"}, container_key="rulebase")
+    await client.close()
+
+    assert result == {"success": True, "data": [], "message": "", "code": ""}
+
+
+async def test_rulebase_of_only_empty_sections_keeps_them():
+    empty = [{"type": "access-section", "uid": "s-a", "name": "A", "rulebase": []}]
+    transport = AsyncMock()
+    transport.api_call.side_effect = [
+        {"success": True, "data": {"rulebase": empty, "total": 0}, "message": "", "code": ""}
+    ]
+    client, _, _, _, _ = _query_client(transport)
+
+    result = await client.api_query("mgmt1", "show-access-rulebase", payload={"uid": "l"}, container_key="rulebase")
+    await client.close()
+
+    assert result["success"] is True
+    assert [i["name"] for i in result["data"]] == ["A"]
+
+
+@pytest.mark.parametrize("limit", [1, 2])
+async def test_rulebase_keeps_trailing_empty_sections_after_a_full_last_page(limit):
+    """Check Point leaves trailing empty sections out of a full last page; the re-read must have room for them."""
+    tail = {"type": "access-section", "uid": "s-tail", "name": "Tail", "rulebase": []}
+    pages = (
+        [_rb_page([_rule(1)], 1, 1, 2), _rb_page([_rule(2)], 2, 2, 2)]
+        if limit == 1
+        else [_rb_page([_rule(1), _rule(2)], 1, 2, 2)]
+    )
+
+    async def answer(**kwargs):
+        payload = kwargs["payload"]
+        if payload["offset"] == 1 and payload["limit"] >= 2:  # the trailing re-read, with room on the page
+            return _rb_page([_rule(2), tail], 2, 2, 2)
+        return pages.pop(0)
+
+    transport = AsyncMock()
+    transport.api_call.side_effect = answer
+    client, _, _, _, _ = _query_client(transport)
+
+    result = await client.api_query(
+        "mgmt1", "show-access-rulebase", payload={"uid": "l", "limit": limit}, container_key="rulebase"
+    )
+    await client.close()
+
+    assert result["success"] is True, result
+    assert [i["uid"] for i in result["data"]] == ["r1", "r2", "s-tail"]
+
+
+async def test_rulebase_offset_past_the_end_returns_no_entries():
+    transport = AsyncMock()
+    transport.api_call.side_effect = [
+        {"success": True, "data": {"rulebase": [], "total": 3}, "message": "", "code": ""}
+    ]
+    client, _, _, _, _ = _query_client(transport)
+
+    result = await client.api_query(
+        "mgmt1", "show-access-rulebase", payload={"uid": "l", "offset": 5}, container_key="rulebase"
+    )
+    await client.close()
+
+    assert result == {"success": True, "data": [], "message": "", "code": ""}
+    assert transport.api_call.await_count == 1

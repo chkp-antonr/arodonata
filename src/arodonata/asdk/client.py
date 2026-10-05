@@ -13,9 +13,11 @@ from typing import TYPE_CHECKING, Any, Literal
 from ..config import FAILOVER_ERROR_CODES, SESSION_ERROR_CODES
 from ..config.constants import QUERY_MAX_PAGE_SIZE, QUERY_PAGE_SIZE
 from ..logger import lazy_logger
+from ..rulebase.model import RULEBASE_COMMANDS
+from ..rulebase.pager import RULEBASE_PAGE_SIZE, RulebaseFetchError, fetch_full_rulebase
 from ..utils.background_tasks import DEFAULT_CLOSE_GRACE_SECONDS, drain_background_tasks
 from ._sid import sid_prefix
-from .pager import fetch_all_pages
+from .pager import PAGING_INCONSISTENT_CODE, fetch_all_pages
 from .transport import RawApiResponse
 
 if TYPE_CHECKING:
@@ -404,6 +406,8 @@ class AMgmtClient:
         api_query.
         """
         self._ensure_not_closed()
+        if command in _RULEBASE_QUERY_COMMANDS:
+            return await self._rulebase_query(mgmt_name, command, domain, details_level, payload, cache_mode)
 
         base = dict(payload or {})
         requested = int(base.pop("limit", QUERY_PAGE_SIZE))
@@ -412,23 +416,95 @@ class AMgmtClient:
 
         async def page(offset: int, limit: int) -> RawApiResponse:
             page_payload = {**base, "limit": limit, "offset": offset, "details-level": details_level}
-
-            async def _call(*, server_ip: str, sid: str, port: int | None) -> RawApiResponse:
-                return await self._transport.api_call(
-                    server_ip=server_ip,
-                    sid=sid,
-                    command=command,
-                    payload=page_payload,
-                    wait_for_task=False,
-                    timeout=-1,
-                    port=port,
-                )
-
-            return await self._execute_with_retry(mgmt_name, domain, cache_mode, _call)
+            return await self._listing_page(mgmt_name, domain, command, page_payload, cache_mode)
 
         return await fetch_all_pages(
             page, command=command, container_key=container_key, offset=start, page_size=page_size
         )
+
+    async def _listing_page(
+        self, mgmt_name: str, domain: str, command: str, payload: dict[str, Any], cache_mode: str
+    ) -> RawApiResponse:
+        """One page of a listing: its own RateLimiter slot, session check and retry."""
+
+        async def _call(*, server_ip: str, sid: str, port: int | None) -> RawApiResponse:
+            return await self._transport.api_call(
+                server_ip=server_ip,
+                sid=sid,
+                command=command,
+                payload=payload,
+                wait_for_task=False,
+                timeout=-1,
+                port=port,
+            )
+
+        return await self._execute_with_retry(mgmt_name, domain, cache_mode, _call)
+
+    async def _rulebase_query(
+        self,
+        mgmt_name: str,
+        command: str,
+        domain: str,
+        details_level: str,
+        payload: dict[str, Any] | None,
+        cache_mode: str,
+    ) -> RawApiResponse:
+        """Page a show-*-rulebase command with rulebase/pager.py (Backlog #43).
+
+        Check Point counts `from`/`to`/`total` in rules there, not in top-level entries, and a section split by a page
+        boundary comes back on the next page with the same uid; the listing pager counts entries and drops the
+        repeat. On success `data` is the list of top-level entries (sections, rules, place-holders), a split section
+        once with all its rules, as before own paging. Pages hold the caller's `limit` rules, at most
+        RULEBASE_PAGE_SIZE; `offset` is the starting rule (inside a section, the first entry is that section with
+        its rules from `offset + 1` on; past the last rule, an empty list). A page that does not continue the previous one restarts
+        the read once, then fails with `paging_inconsistent`; a failed page fails it with that page's code.
+        """
+        base = dict(payload or {})
+        requested = int(base.pop("limit", RULEBASE_PAGE_SIZE))
+        page_size = min(requested if requested >= 1 else RULEBASE_PAGE_SIZE, RULEBASE_PAGE_SIZE)
+        start = int(base.pop("offset", 0))
+        base["details-level"] = details_level
+        pages = _RulebasePages(self, cache_mode)
+        for attempt in (1, 2):
+            try:
+                data = await fetch_full_rulebase(
+                    pages, mgmt_name, domain, command, base, page_size=page_size, offset=start
+                )
+            except RulebaseFetchError as exc:
+                if exc.code:
+                    return {"success": False, "data": None, "message": f"{command}: {exc.message}", "code": exc.code}
+                if attempt == 1:
+                    log().info(f"{command}: rulebase changed while paging ({exc}); restarting from offset {start}")
+                    continue
+                message = f"{command}: rulebase changed while paging twice from offset {start}: {exc}"
+                log().warning(message)
+                return {"success": False, "data": None, "message": message, "code": PAGING_INCONSISTENT_CODE}
+            return {"success": True, "data": data["rulebase"], "message": "", "code": ""}
+        raise AssertionError("unreachable")  # pragma: no cover
+
+
+_RULEBASE_QUERY_COMMANDS = frozenset(RULEBASE_COMMANDS.values())
+
+
+class _PageResult:
+    """The attribute view of one page that rulebase/pager.py reads."""
+
+    def __init__(self, response: RawApiResponse) -> None:
+        self.success = bool(response.get("success"))
+        self.data = response.get("data")
+        self.code = response.get("code") or ""
+        self.message = response.get("message") or ""
+
+
+class _RulebasePages:
+    """The `api_call(mgmt_name=, domain=, command=, payload=)` caller rulebase/pager.py pages through."""
+
+    def __init__(self, client: AMgmtClient, cache_mode: str) -> None:
+        self._client = client
+        self._cache_mode = cache_mode
+
+    async def api_call(self, *, mgmt_name: str, domain: str, command: str, payload: dict[str, Any]) -> _PageResult:
+        return _PageResult(await self._client._listing_page(mgmt_name, domain, command, payload, self._cache_mode))
 
 
 __all__ = ["AMgmtClient"]
