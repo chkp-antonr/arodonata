@@ -240,6 +240,7 @@ class DomainService:
             default_ip = server.server_ip if server else ""
             active_ip = active_mds_ip or default_ip
             if active_ip:
+                standby_ips = [mds_ips.get(m, "") for m in global_layout.standby_mdss if mds_ips.get(m)]
                 global_domain = Domain.build(
                     mgmt_name=mgmt_name,
                     domain_name=GLOBAL_DOMAIN_NAME,
@@ -248,6 +249,7 @@ class DomainService:
                     active_mds=global_layout.active_mds,
                     active_mds_ip=active_mds_ip,
                     standby_mdss=",".join(global_layout.standby_mdss),
+                    standby_ips=",".join(standby_ips),
                     is_mdm=True,
                 )
                 await self._cache.upsert_domain(global_domain)

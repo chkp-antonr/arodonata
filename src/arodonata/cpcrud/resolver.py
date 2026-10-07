@@ -699,7 +699,8 @@ async def resolve_rule(
         position_fragment = await resolve_position(
             reader, op["position"], layer.uid, layer_type, mgmt=mgmt, domain=domain
         )
-        base.payload = {"layer": layer_ref, **position_fragment, **payload}
+        # The resolved uid, not the template's name: a name can match a Global-assigned layer too.
+        base.payload = {"layer": layer.uid, **position_fragment, **payload}
         return base, all_deps, counter
 
     winner = pick_tie_break(existing_rules, declared_name=data.get("name"))
@@ -720,7 +721,7 @@ async def resolve_rule(
     # pre-built keys came from `data` vs. defaults. `layer` is required by CP's set-*-rule
     # commands alongside `uid` (rule uids are only unique within their owning layer).
     update_fields = _with_new_name({k: payload[k] for k in data if k in payload})
-    base.payload = {"uid": winner.uid, "layer": layer_ref, **update_fields}
+    base.payload = {"uid": winner.uid, "layer": layer.uid, **update_fields}
     return base, all_deps, counter
 
 
@@ -1151,7 +1152,7 @@ async def resolve_rule_by_key(
         base.command = f"delete-{rule_cmd}"
         # `layer` is required by CP's delete-*-rule commands alongside `uid` (rule uids are
         # only unique within their owning layer) -- same requirement as set-*-rule (Task 11).
-        base.payload = {"uid": rule.uid, "layer": layer_ref}
+        base.payload = {"uid": rule.uid, "layer": layer.uid}
         base.prior_state = {**rule.raw, "_rule_number": rule.rule_number}
         return base, all_deps, counter
 
@@ -1170,7 +1171,7 @@ async def resolve_rule_by_key(
     # `layer` is required by `set-*-rule` alongside `uid` -- same bug class Task 11 fixed for
     # resolve_rule's UPDATE path; must not be dropped here either. `name` -> `new-name` for the
     # same identifier-collision reason (Task 14 live-verified fix, resolve_rule's UPDATE path).
-    base.payload = {"uid": rule.uid, "layer": layer_ref, **_with_new_name(data)}
+    base.payload = {"uid": rule.uid, "layer": layer.uid, **_with_new_name(data)}
     return base, all_deps, counter
 
 

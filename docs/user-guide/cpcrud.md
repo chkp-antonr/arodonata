@@ -190,6 +190,8 @@ For `access-rule` and `nat-rule` operations, CPCRUD supports explicit position p
     action: "drop"
 ```
 
+`layer` takes a layer name or uid. On a Multi-Domain Server a domain with a Global policy assigned also sees the Global layers, so a name such as `Network` can belong to both the domain's own layer and a Global one; Check Point then refuses the name as not unique. CPCRUD resolves such a name to the domain's own layer, the only one a rule can be written to from inside the domain, and sends Check Point the layer uid. If none of the same-named layers belongs to the domain, the operation is reported as a lookup error; put the layer uid in the template.
+
 ### Cleanup-rule-aware `bottom`
 
 When you target `"bottom"` (whole layer) or `{bottom: "Section Name"}` (a section), CPCRUD checks the actual last rule in that scope first (for a section, read from its layer). If it has `source: Any`, `destination: Any`, **and** `service: Any` — regardless of its `action` or `name`, so this also catches an "accept any/any/any" rule, not just a "drop" cleanup rule — the new rule is inserted one position *above* it instead of literally at the bottom, so it never lands after an existing catch-all rule. If the last rule isn't a full any/any/any rule, `"bottom"` is used literally. For a section ending in such a rule (typically a `Cleanup` section holding the cleanup rule), the new rule goes into that section just above it; without the check it would land after the drop rule and never match. The insert is anchored on the catch-all rule's uid (`position: {above: <uid>}`), not on its rule number, so several rules added at the same bottom in one apply keep their template order.

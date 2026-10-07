@@ -392,7 +392,7 @@ async def test_decide_dispatches_rule_update_by_key_and_carries_layer():
     assert action.outcome == Outcome.UPDATE
     assert action.command == "set-access-rule"
     assert action.payload["uid"] == "r1"
-    assert action.payload["layer"] == "Network"
+    assert action.payload["layer"] == "layer-u1"
     assert action.payload["comments"] == "new"
 
 

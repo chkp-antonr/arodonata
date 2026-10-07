@@ -103,6 +103,11 @@ _LAYER_SHOW_COMMAND = {
     "https": "show-https-layer",
     "threat-prevention": "show-threat-layer",
 }
+_LAYER_LIST_COMMAND = {
+    "access": "show-access-layers",
+    "https": "show-https-layers",
+    "threat-prevention": "show-threat-layers",
+}
 _RULEBASE_SHOW_COMMAND = {
     "access": "show-access-rulebase",
     "https": "show-https-rulebase",
@@ -269,10 +274,20 @@ class LiveStateReader:
         # `layer` field instead of the ambiguous name, and this lookup must route it through
         # `uid`, not `name`, to actually resolve the intended layer rather than erroring or
         # (worse) silently matching an unrelated same-named one.
+        #
+        # A plain name that Check Point reports as not unique (home lab: Domain4 with a Global
+        # policy assigned sees its own "Network" and Global's "Network") resolves to the domain's
+        # own layer -- the only one a rule can be written to from inside the domain.
         key = "uid" if _looks_like_uid(layer_ref) else "name"
         result = await self._client.api_call(mgmt, command, domain, payload={key: layer_ref, "details-level": "full"})
         if not result.success:
-            return None
+            if key == "name" and "not_unique" in (result.code or ""):
+                uid = await self._domain_layer_uid(layer_ref, layer_type, mgmt=mgmt, domain=domain)
+                return await self.get_layer(uid, layer_type, mgmt=mgmt, domain=domain)
+            if _not_found(result):
+                return None
+            # Not "no such layer": the error would name the wrong problem (Backlog #37).
+            raise StateReadError(f"{command} failed: {result.code}: {result.message}")
         data = extract_data_from_response(result)
         if not isinstance(data, dict) or "uid" not in data:
             return None
@@ -292,6 +307,22 @@ class LiveStateReader:
         return LayerInfo(
             uid=data["uid"], name=data.get("name", layer_ref), type=layer_type, parent_layer_uid=parent_uid
         )
+
+    async def _domain_layer_uid(self, name: str, layer_type: str, *, mgmt: str, domain: str) -> str:
+        """The uid of the layer named `name` that belongs to `domain` itself, among same-named layers."""
+        command = _LAYER_LIST_COMMAND[layer_type]
+        result = await self._client.api_query(mgmt, command, domain, details_level="full", payload={"filter": name})
+        if not result.success:
+            raise StateReadError(f"{command} failed: {result.code}: {result.message}")
+        same_name = [layer for layer in result.objects if layer.get("name") == name]
+        own = [layer for layer in same_name if (layer.get("domain") or {}).get("name") == domain]
+        if len(own) != 1:
+            uids = ", ".join(str(layer.get("uid")) for layer in same_name)
+            raise StateReadError(
+                f"layer name {name!r} is not unique in {domain} and {len(own)} of the layers belong to it "
+                f"({uids}); put the layer uid in the template"
+            )
+        return str(own[0]["uid"])
 
     async def get_section(
         self, section_ref: str, layer_uid: str, layer_type: str, *, mgmt: str, domain: str
