@@ -8,6 +8,20 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 via [commitizen](https://commitizen-tools.github.io/commitizen/) — do not
 hand-edit released sections, only the `[Unreleased]` section above them.
 
+## v1.14.1 (2026-10-07)
+
+### Fix
+
+- **cpcrud**: resolve a layer name shared with a Global layer to the domain's own layer
+
+### Changed
+
+- cpcrud rule writes (`add-/set-/delete-*-rule`) send the resolved layer uid in `layer` instead of the template's layer name; the plan's `layer` still shows the name.
+
+### Upgrade notes
+
+- Nothing to configure. A template whose layer name a domain shares with a Global-assigned layer now targets the domain's own layer instead of failing with "Layer ... not found".
+
 ## v1.14.0 (2026-10-05)
 
 ### Feat
