@@ -563,6 +563,7 @@ async def test_resolve_rule_create_when_no_traffic_match():
     assert action.outcome == Outcome.CREATE
     assert action.command == "add-access-rule"
     assert action.layer == "Network"
+    assert action.payload["layer"] == "layer-u1"
     assert action.payload["source"] == ["Any"]
     assert action.payload["destination"] == ["Any"]
     assert action.payload["service"] == ["Any"]
@@ -652,7 +653,7 @@ async def test_resolve_rule_update_when_traffic_identical_but_other_fields_diffe
     assert "name" not in action.payload
     # layer is required by CP's set-*-rule commands alongside uid (rule uids are only
     # unique within their owning layer's rulebase) -- must not be dropped on UPDATE.
-    assert action.payload["layer"] == "Network"
+    assert action.payload["layer"] == "layer-u1"  # the resolved uid: a name can be ambiguous (Global-assigned layer)
 
 
 @pytest.mark.asyncio
@@ -1476,7 +1477,7 @@ async def test_resolve_rule_by_key_update_found_includes_layer_in_payload():
     assert action.payload["uid"] == "r1"
     # REQUIRED: layer must accompany uid on set-access-rule (access_rule_update requires
     # `layer` in its top-level `required` array per the ops schema) -- Task 11's bug class.
-    assert action.payload["layer"] == "Network"
+    assert action.payload["layer"] == "layer-u1"
     assert action.payload["comments"] == "new comment"
     assert action.resolved_uid == "r1"
 
@@ -1541,7 +1542,7 @@ async def test_resolve_rule_by_key_delete_found_includes_layer_in_payload():
     assert action.outcome == Outcome.DELETE
     assert action.command == "delete-access-rule"
     assert action.payload["uid"] == "r1"
-    assert action.payload["layer"] == "Network"  # required alongside uid, same as update
+    assert action.payload["layer"] == "layer-u1"  # required alongside uid, same as update
 
 
 @pytest.mark.asyncio
@@ -1624,7 +1625,7 @@ async def test_resolve_rule_by_key_works_for_threat_and_https_types():
         reader, "threat-prevention-rule", "update", op, mgmt="m", domain="d", action_id="act-0001", counter=1
     )
     assert action.command == "set-threat-rule"
-    assert action.payload["layer"] == "Threat Layer"
+    assert action.payload["layer"] == "layer-u1"
 
 
 @pytest.mark.asyncio

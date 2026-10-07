@@ -67,7 +67,6 @@ hand-edit released sections, only the `[Unreleased]` section above them.
 - The `code` of a successful `api_query` is `""`; read `code` only on failure.
 - New `ArodonataClient.fetch_last_published_session` (read-only). `refresh_last_published_session` stores the object cache's freshness stamp and so marks the cache current without refreshing it; call it only after the cache really has that head.
 - cpcrud results: a failed lookup is now an `error` action ("lookup failed, nothing planned (re-plan to retry): …"), an unreadable head is `plan_stale`; plan again to retry (`retry_remaining` replays the same plan).
-- `ARODONATA_CPCRUD_SCHEMA_PATH` pointing at arodonata's `ops/checkpoint_ops_schema.json` must be unset or repointed: the file moved into the package.
 - With `API_KEY_VARS` set and no `API_KEYS`, a bare `ArodonataSettings()` now loads those keys; an explicit `api_keys=` or `API_KEYS` still wins.
 - FPCR uses arodonata through an editable symlink (`libs/arodonata`), so it runs whatever that checkout has checked out.
 

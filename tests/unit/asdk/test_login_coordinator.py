@@ -1545,6 +1545,7 @@ async def test_cache_domain_active_ip_sends_global_to_the_active_mds():
     assert saved.active_mds == "mdsB"
     assert saved.active_mds_ip == "10.9.9.9"
     assert saved.standby_mdss == "mdsA"
+    assert saved.standby_ips == "10.0.0.1"
 
 
 async def test_cache_domain_active_ip_caches_the_global_uid():

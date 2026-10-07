@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from arodonata.api.schemas import ApiCallResult
+from arodonata.api.schemas import ApiCallResult, ApiQueryResult
 from arodonata.cpcrud.resolver import StateReadError
 from arodonata.cpcrud.services import ServiceSpec
 from arodonata.cpcrud.statereader import HybridStateReader, LiveStateReader
@@ -704,6 +704,91 @@ async def test_get_layer_not_found_returns_none():
     layer = await reader.get_layer("NoSuchLayer", "https", mgmt="m", domain="d")
     assert layer is None
     assert client.calls[0][0] == "show-https-layer"
+
+
+_NOT_UNIQUE = ApiCallResult(
+    success=False,
+    message="Requested object name [Network] is not unique.",
+    code="generic_err_object_field_not_unique",
+)
+_LOCAL_UID = "0a0a023e-0ea5-4fa6-9fc5-a270d2e63f3e"
+_GLOBAL_UID = "66a544ed-7c58-4245-954c-54ae67fb9f9d"
+
+
+def _layer_listing(*layers):
+    return ApiQueryResult(success=True, data=list(layers), objects=list(layers), message="", code="")
+
+
+def _listed(name, uid, domain_name, domain_type):
+    return {"name": name, "uid": uid, "domain": {"name": domain_name, "domain-type": domain_type}}
+
+
+@pytest.mark.asyncio
+async def test_get_layer_name_shared_with_a_global_layer_resolves_to_the_domain_layer():
+    """Home lab, Domain4 with a Global policy assigned: show-access-layer name=Network fails as not unique."""
+    client = FakeClient(
+        {
+            "show-access-layer": [
+                _NOT_UNIQUE,
+                ApiCallResult(success=True, data={"uid": _LOCAL_UID, "name": "Network"}, message="", code=""),
+            ],
+            "show-access-layers": _layer_listing(
+                _listed("Network", _GLOBAL_UID, "Global", "global domain"),
+                _listed("arod-global-pkg Network", "6ce00050-12ea-4cf6-b612-330b55de7acc", "Global", "global domain"),
+                _listed("Network", _LOCAL_UID, "Domain4", "domain"),
+            ),
+        }
+    )
+    reader = LiveStateReader(client)
+    layer = await reader.get_layer("Network", "access", mgmt="m", domain="Domain4")
+    assert layer is not None and layer.uid == _LOCAL_UID
+    assert client.query_calls[0][0] == "show-access-layers"
+    assert client.query_calls[0][1] == {"filter": "Network"}
+    assert client.calls[1] == ("show-access-layer", {"uid": _LOCAL_UID, "details-level": "full"})
+
+
+@pytest.mark.asyncio
+async def test_get_layer_name_not_unique_without_a_domain_layer_raises():
+    client = FakeClient(
+        {
+            "show-access-layer": _NOT_UNIQUE,
+            "show-access-layers": _layer_listing(
+                _listed("Network", _GLOBAL_UID, "Global", "global domain"),
+                _listed("Network", "11111111-2222-4333-8444-555555555555", "Global", "global domain"),
+            ),
+        }
+    )
+    reader = LiveStateReader(client)
+    with pytest.raises(StateReadError, match=_GLOBAL_UID):
+        await reader.get_layer("Network", "access", mgmt="m", domain="Domain4")
+
+
+@pytest.mark.asyncio
+async def test_get_layer_listing_failure_raises():
+    client = FakeClient(
+        {
+            "show-access-layer": _NOT_UNIQUE,
+            "show-access-layers": ApiQueryResult(success=False, message="timeout", code="generic_error"),
+        }
+    )
+    reader = LiveStateReader(client)
+    with pytest.raises(StateReadError, match="show-access-layers"):
+        await reader.get_layer("Network", "access", mgmt="m", domain="Domain4")
+
+
+@pytest.mark.asyncio
+async def test_get_layer_failed_lookup_raises_instead_of_not_found():
+    """Not "no such layer": the error would name the wrong problem (Backlog #37)."""
+    client = FakeClient(
+        {
+            "show-threat-layer": ApiCallResult(
+                success=False, message="Session expired", code="generic_err_wrong_session_id"
+            )
+        }
+    )
+    reader = LiveStateReader(client)
+    with pytest.raises(StateReadError, match="show-threat-layer"):
+        await reader.get_layer("Standard Threat Prevention", "threat-prevention", mgmt="m", domain="d")
 
 
 async def test_hybrid_get_layer_always_delegates_to_live():

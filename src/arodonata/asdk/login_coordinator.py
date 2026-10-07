@@ -1495,6 +1495,9 @@ class LoginCoordinator:
                 row = await self._cache.get_domain(mdm_dmn=f"{mgmt_name}:{GLOBAL_DOMAIN_NAME}")
                 cached_uid = getattr(row, "domain_uid", "") if row is not None else ""
                 global_uid = cached_uid if isinstance(cached_uid, str) else ""
+            standby_ips = [
+                (mds_ips or {}).get(m, "") for m in global_layout.standby_mdss if (mds_ips or {}).get(m)
+            ]
             domain_record = Domain.build(
                 mgmt_name=mgmt_name,
                 domain_name=GLOBAL_DOMAIN_NAME,
@@ -1503,6 +1506,7 @@ class LoginCoordinator:
                 active_mds=global_layout.active_mds,
                 active_mds_ip=active_mds_ip,
                 standby_mdss=",".join(global_layout.standby_mdss),
+                standby_ips=",".join(standby_ips),
                 is_mdm=is_mdm if is_mdm is not None else True,
             )
             await self._cache.upsert_domain(domain_record)

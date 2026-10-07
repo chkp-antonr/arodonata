@@ -509,6 +509,7 @@ async def test_mdm_domains_resolves_global_active_mds_ip():
     assert record.active_mds == "mds2"
     assert record.active_mds_ip == "10.0.0.2"
     assert record.standby_mdss == "mds1"
+    assert record.standby_ips == "10.0.0.1"
 
 
 @pytest.mark.asyncio
