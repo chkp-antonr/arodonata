@@ -8,6 +8,22 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 via [commitizen](https://commitizen-tools.github.io/commitizen/) — do not
 hand-edit released sections, only the `[Unreleased]` section above them.
 
+## v1.14.2 (2026-10-08)
+
+### Perf
+
+- collect assets of several domains at once, reuse the startup cleanup session, name the domain on transport spans (#38)
+
+### Changed
+
+- `build_refresh_assets_cache` collects several domains at once (`asset_refresh_concurrency`, `ARODONATA_ASSET_REFRESH_CONCURRENCY`, default 4), and prepares and collects MDS assets for that many management servers at once. Events of different domains interleave; the COMPLETE summary (counts, error order) is unchanged. `1` reproduces the previous one-at-a-time behaviour exactly.
+- The startup session cleanup keeps its system-domain session in the SID cache for the first real call instead of logging it out, unless a SID is already cached or a login for it is in flight.
+- `ApiTransport.api_call` and `keepalive` spans carry `arodonata.domain` (new optional keyword `domain`).
+
+### Upgrade notes
+
+- MMP / FPCR: attribute progress events by each event's `mgmt_name` and `domain`, not by their order. Set `ARODONATA_ASSET_REFRESH_CONCURRENCY=1` for the old behaviour. If several domain logins at once on one MDS member hit Check Point's login rate limit, lower the setting.
+
 ## v1.14.1 (2026-10-07)
 
 ### Fix
