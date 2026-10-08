@@ -18,6 +18,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .constants import (
     DEFAULT_API_TIMEOUT,
+    DEFAULT_ASSET_REFRESH_CONCURRENCY,
     DEFAULT_CONCURRENT_LIMIT,
     DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_LOGIN_BACKOFF,
@@ -130,6 +131,17 @@ class ArodonataSettings(BaseSettings):
             "holds it for one attempt only, never across its retries or a throttle wait."
         ),
         validation_alias="ARODONATA_RATE_LIMIT_SLOT_TIMEOUT",
+    )
+    asset_refresh_concurrency: int = Field(
+        default=DEFAULT_ASSET_REFRESH_CONCURRENCY,
+        ge=1,
+        le=20,
+        description=(
+            "Domains build_refresh_assets_cache collects at once, and management servers it prepares "
+            "and collects MDS assets for at once; 1 runs them one after another. concurrent_limit still "
+            "bounds the requests in flight per MDS member"
+        ),
+        validation_alias="ARODONATA_ASSET_REFRESH_CONCURRENCY",
     )
 
     # Timeouts

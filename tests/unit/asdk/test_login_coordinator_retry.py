@@ -1611,6 +1611,159 @@ async def test_run_startup_cleanup_tolerates_per_server_failure():
     await coord.run_startup_cleanup()
 
 
+class _SidCache:
+    """Just enough of the SID cache for the startup-SID tests: one entry per (mgmt, domain)."""
+
+    def __init__(self, cached=None):
+        self.entries = dict(cached or {})
+        self.stored: list[tuple] = []
+
+    async def get_sid(self, mgmt_name, domain, max_age_seconds=None, username=None):
+        sid = self.entries.get((mgmt_name, domain))
+        return (
+            MagicMock(sid=sid, server_ip="10.0.0.1", created_at=datetime.now(UTC).replace(tzinfo=None)) if sid else None
+        )
+
+    async def set_sid(self, mgmt_name, domain, sid, server_ip, uid=None, username=None):
+        self.entries[(mgmt_name, domain)] = sid
+        self.stored.append((mgmt_name, domain, sid, server_ip, uid, username))
+
+
+def _startup_coordinator(cache):
+    from tests.unit.asdk.test_rate_limiter import FakeLockManager
+
+    cleaner = AsyncMock(spec=SessionCleaner)
+    cleaner.cleanup_stale_sessions.return_value = CleanupResult(discarded=1)
+    transport = AsyncMock()
+    transport.login_with_apikey.return_value = {"success": True, "sid": "tmp", "data": {"uid": "tmp-uid"}}
+    transport.logout.return_value = {"success": True}
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", api_key=SecretStr("k"), port=None, is_mdm=False)
+    coord = _make_coordinator(transport=transport, session_cleaner=cleaner, cache=cache, registry=registry)
+    lock_manager = FakeLockManager()
+    lock_manager.DEFAULT_TTL_LOGIN = 90
+    coord._lock_manager = lock_manager
+    return coord, transport, cleaner, lock_manager
+
+
+async def _startup_cleanup(coord):
+    await coord._cleanup_for_max_sessions(
+        "mgmt1", "", "10.0.0.1", SecretStr("k"), None, reason="startup cleanup", keep_sid=True
+    )
+
+
+async def test_startup_cleanup_keeps_its_sid_for_the_first_call():
+    """The startup session is logged in like a login() one and cached; the first call reuses it, no login."""
+    cache = _SidCache()
+    coord, transport, cleaner, lock_manager = _startup_coordinator(cache)
+
+    await _startup_cleanup(coord)
+
+    cleaner.cleanup_stale_sessions.assert_awaited_once()
+    transport.logout.assert_not_called()
+    assert cache.stored == [("mgmt1", "", "tmp", "10.0.0.1", "tmp-uid", None)]
+    login_kwargs = transport.login_with_apikey.await_args.kwargs
+    assert login_kwargs["session_name"] is None
+    assert login_kwargs["session_description"] is None
+    assert login_kwargs["session_timeout"] == 600
+    assert lock_manager.acquired_keys == ["login:mgmt1:"]
+    assert not lock_manager._locks["login:mgmt1:"].locked()
+
+    sid, server_ip = await coord.login("mgmt1", "")
+    assert (sid, server_ip) == ("tmp", "10.0.0.1")
+    assert transport.login_with_apikey.await_count == 1
+
+
+async def test_startup_cleanup_logs_out_when_a_sid_is_already_cached():
+    """A cached SID may be in use by another caller: it stays, and the cleanup session goes as before."""
+    cache = _SidCache({("mgmt1", ""): "existing"})
+    coord, transport, _cleaner, _lm = _startup_coordinator(cache)
+
+    await _startup_cleanup(coord)
+
+    assert cache.entries == {("mgmt1", ""): "existing"}
+    assert cache.stored == []
+    transport.logout.assert_awaited_once_with("10.0.0.1", "tmp", port=None)
+
+
+async def test_startup_cleanup_logs_out_when_a_login_for_the_key_is_in_flight():
+    cache = _SidCache()
+    coord, transport, _cleaner, lock_manager = _startup_coordinator(cache)
+
+    # In this process (login() holds the in-process lock first)...
+    coord._in_process_locks["login:mgmt1:"] = asyncio.Lock()
+    await coord._in_process_locks["login:mgmt1:"].acquire()
+    await _startup_cleanup(coord)
+    coord._in_process_locks["login:mgmt1:"].release()
+    # ...or in another one (the distributed login lock is held).
+    await lock_manager.try_acquire_lock("login:mgmt1:", ttl=90)
+    await _startup_cleanup(coord)
+
+    assert cache.stored == []
+    assert transport.logout.await_count == 2
+
+
+async def test_startup_cleanup_logs_out_when_the_cleanup_failed():
+    cache = _SidCache()
+    coord, transport, cleaner, _lm = _startup_coordinator(cache)
+    cleaner.cleanup_stale_sessions.side_effect = RuntimeError("CP error")
+
+    await _startup_cleanup(coord)
+
+    assert cache.stored == []
+    transport.logout.assert_awaited_once_with("10.0.0.1", "tmp", port=None)
+
+
+async def test_startup_cleanup_logs_out_when_the_cache_cannot_store():
+    cache = _SidCache()
+    cache.set_sid = AsyncMock(side_effect=RuntimeError("db down"))
+    coord, transport, _cleaner, lock_manager = _startup_coordinator(cache)
+
+    await _startup_cleanup(coord)
+
+    transport.logout.assert_awaited_once_with("10.0.0.1", "tmp", port=None)
+    assert not lock_manager._locks["login:mgmt1:"].locked()
+
+
+async def test_startup_cleanup_keeps_a_stored_sid_when_releasing_the_lock_fails():
+    """Once stored, the SID is in use: a failed lock release (the TTL frees it) must not log it out."""
+    cache = _SidCache()
+    coord, transport, _cleaner, lock_manager = _startup_coordinator(cache)
+    lock_manager.release_lock = AsyncMock(side_effect=RuntimeError("db down"))
+
+    await _startup_cleanup(coord)
+
+    assert cache.entries == {("mgmt1", ""): "tmp"}
+    transport.logout.assert_not_called()
+
+
+async def test_startup_cleanup_logs_out_when_the_lock_manager_is_unavailable():
+    cache = _SidCache()
+    coord, transport, _cleaner, _lm = _startup_coordinator(cache)
+    coord._get_lock_manager = AsyncMock(side_effect=RuntimeError("no db"))
+
+    await _startup_cleanup(coord)
+
+    assert cache.stored == []
+    transport.logout.assert_awaited_once_with("10.0.0.1", "tmp", port=None)
+
+
+async def test_run_startup_cleanup_asks_to_keep_the_sid():
+    from arodonata.asdk.server_registry import ServerConfig
+
+    coord = _make_coordinator(session_cleaner=AsyncMock(spec=SessionCleaner))
+    coord._cache._db = MagicMock()
+    coord._cache._db.initialize = AsyncMock()
+    coord._registry.get_all_servers.return_value = {
+        "mgmt-a": ServerConfig(name="mgmt-a", server_ip="10.0.0.1", api_key=SecretStr("a")),
+    }
+    coord._cleanup_for_max_sessions = AsyncMock()
+
+    await coord.run_startup_cleanup()
+
+    assert coord._cleanup_for_max_sessions.await_args.kwargs == {"reason": "startup cleanup", "keep_sid": True}
+
+
 # ---------------------------------------------------------------------------
 # The deadline error names the real cause
 # ---------------------------------------------------------------------------

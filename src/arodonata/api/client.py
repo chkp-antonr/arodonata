@@ -949,6 +949,9 @@ class ArodonataClient:
         """Build and refresh the assets cache with comprehensive asset collection.
 
         This method delegates to the AssetRefreshService for the actual implementation.
+        Domains are collected `asset_refresh_concurrency` at a time (default 4; 1 runs
+        them one after another), so events of different domains interleave; each event
+        carries its `mgmt_name` and `domain`.
 
         Args:
             mgmt_names: Server names as comma-separated string or list (empty = all).

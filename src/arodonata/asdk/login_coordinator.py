@@ -387,13 +387,21 @@ class LoginCoordinator:
         api_key: SecretStr,
         port: int | None,
         reason: str = "max sessions reached",
+        *,
+        keep_sid: bool = False,
     ) -> None:
         """Acquire a temporary SID, run session cleanup, then logout temp SID.
 
         Called when login fails with the max-sessions error, or proactively at
         startup to discard leftover stale sessions. The temporary login goes
         through `_execute_login_request` (gate, slot) but not through
-        `login()`, so it neither caches a SID nor recurses into cleanup.
+        `login()`, so it does not recurse into cleanup.
+
+        With `keep_sid` (startup) the session is logged in like any `login()`
+        session (no cleanup name, the configured session timeout) and, once the
+        cleanup has run, cached for the first real call instead of logged out
+        -- unless a SID is already cached or a login for the key is in flight
+        (see `_keep_cleanup_sid`).
 
         Args:
             mgmt_name: Management server name (for logging and cleanup).
@@ -402,6 +410,7 @@ class LoginCoordinator:
             api_key: API key for the temporary login.
             port: Optional port number.
             reason: Free-text reason for the cleanup (used only in the log message).
+            keep_sid: Cache the temporary SID afterwards instead of logging it out, if nothing is cached.
         """
         span_attrs(mgmt_name=mgmt_name, domain=domain or "system", reason=reason)
         if not self._session_cleaner:
@@ -409,22 +418,27 @@ class LoginCoordinator:
 
         log().info(f"Session cleanup for '{mgmt_name}:{domain}' ({reason}): acquiring temp SID...")
 
-        async def _temp_login() -> str:
+        async def _temp_login() -> tuple[str, str | None]:
             # Through the same path as every other login: the gate in front, the
             # hosting member's slot around the call. This login counts against the member's
             # allowance like any other, so it must wait its turn and report a
             # refusal for everyone else's benefit.
-            response = await self._execute_login_request(
-                mgmt_name,
-                domain,
-                server_ip,
-                api_key,
-                port=port,
-                session_name="MMP-cleanup",
-                session_description="Temporary session for stale session cleanup",
-            )
-            sid, _uid = self._parse_login_response(response, mgmt_name, domain, server_ip)
-            return sid
+            if keep_sid:
+                # A session that may be kept is logged in as login() would: no cleanup label on real work.
+                response = await self._execute_login_request(
+                    mgmt_name, domain, server_ip, api_key, port=port, session_timeout=self._settings.session_timeout
+                )
+            else:
+                response = await self._execute_login_request(
+                    mgmt_name,
+                    domain,
+                    server_ip,
+                    api_key,
+                    port=port,
+                    session_name="MMP-cleanup",
+                    session_description="Temporary session for stale session cleanup",
+                )
+            return self._parse_login_response(response, mgmt_name, domain, server_ip)
 
         # `max_retries=1` bounds non-throttle failures to one attempt, but a
         # throttle does not increment `failures` -- it closes the gate and waits
@@ -443,7 +457,7 @@ class LoginCoordinator:
 
         sub_token = _login_pacing.set(self._sub_deadline_pacing(self._throttle_window))
         try:
-            tmp_sid = await self._retry_with_backoff(
+            tmp_sid, tmp_uid = await self._retry_with_backoff(
                 _temp_login,
                 "Cleanup login",
                 mds_host=member,
@@ -464,6 +478,7 @@ class LoginCoordinator:
         finally:
             _login_pacing.reset(sub_token)
 
+        cleaned = False
         try:
             cleanup_result = await self._session_cleaner.cleanup_stale_sessions(
                 mgmt_name=mgmt_name,
@@ -485,14 +500,54 @@ class LoginCoordinator:
                 f"discarded={cleanup_result.discarded}, skipped={cleanup_result.skipped}, "
                 f"errors={len(cleanup_result.errors)}"
             )
+            cleaned = True
         except Exception as exc:
             log().warning(f"Session cleanup failed for '{mgmt_name}:{domain}': {exc}")
         finally:
+            if not (
+                keep_sid and cleaned and await self._keep_cleanup_sid(mgmt_name, domain, tmp_sid, tmp_uid, server_ip)
+            ):
+                try:
+                    async with self._rate_limiter.acquire(member):
+                        await self._transport.logout(server_ip, tmp_sid, port=port)
+                except Exception as exc:
+                    log().warning(f"Failed to logout cleanup temp SID: {redact_sid(str(exc), tmp_sid)}")
+
+    async def _keep_cleanup_sid(self, mgmt_name: str, domain: str, sid: str, uid: str | None, server_ip: str) -> bool:
+        """Cache the startup cleanup's SID so the first real call needs no login of its own; True if cached.
+
+        Never waits and never raises. Takes the key's login lock only if it is free: a login in flight
+        for the key (here or in another process) caches its own SID. A SID already cached is left alone,
+        since another caller may be using it. In both cases the caller logs this one out, as before.
+        """
+        lock_key = self._get_lock_key(mgmt_name, domain)
+        in_process = self._in_process_locks.get(lock_key)
+        if in_process is not None and in_process.locked():
+            return False
+        try:
+            lock_manager = await self._get_lock_manager()
+            lock = await lock_manager.try_acquire_lock(lock_key, ttl=lock_manager.DEFAULT_TTL_LOGIN)
+        except Exception as exc:  # noqa: BLE001 - keeping the SID is an optimisation; logging it out is always safe
+            log().debug(f"Startup SID for '{mgmt_name}:{domain}' not kept: {type(exc).__name__}")
+            return False
+        if lock is None:
+            return False
+        username = self._credential_username
+        try:
+            if await self._cache.get_sid(mgmt_name, domain, self._settings.session_expire_seconds, username=username):
+                return False
+            await self._cache.set_sid(mgmt_name, domain, sid, server_ip, uid, username=username)
+        except Exception as exc:  # noqa: BLE001 - as above
+            log().debug(f"Startup SID for '{mgmt_name}:{domain}' not kept: {type(exc).__name__}")
+            return False
+        finally:
             try:
-                async with self._rate_limiter.acquire(member):
-                    await self._transport.logout(server_ip, tmp_sid, port=port)
-            except Exception as exc:
-                log().warning(f"Failed to logout cleanup temp SID: {redact_sid(str(exc), tmp_sid)}")
+                await lock_manager.release_lock(lock_key, lock.owner_id)
+            except Exception as exc:  # noqa: BLE001 - the lock's TTL frees it
+                log().debug(f"Releasing '{lock_key}' after keeping the startup SID failed: {type(exc).__name__}")
+        span_attrs(**{"cleanup.sid_kept": True})
+        log().debug(f"Startup cleanup SID kept for '{mgmt_name}:{domain or 'system'}' ({sid_prefix(sid)})")
+        return True
 
     async def _fire_keepalive(
         self,
@@ -529,7 +584,7 @@ class LoginCoordinator:
 
         try:
             async with self._rate_limiter.acquire(slot_host):
-                await self._transport.keepalive(server_ip, sid, port)
+                await self._transport.keepalive(server_ip, sid, port, domain=domain)
             await self._cache.update_keepalive(mgmt_name, domain, username=username)
             log().trace(f"Keepalive sent for '{mgmt_name}:{domain}'")
         except LockAcquisitionError:
@@ -556,8 +611,10 @@ class LoginCoordinator:
         """Run session cleanup for all configured servers at library initialization.
 
         Called once as a background task when ArodonataClient enters its async context.
-        For each server, acquires a temporary SID, discards stale sessions, and logs out.
-        Errors per-server are logged but never propagate.
+        For each server, logs in to the system domain, discards stale sessions, and keeps
+        that session in the SID cache for the first real call (logs it out instead if a
+        SID is already cached or a login is in flight). Errors per-server are logged but
+        never propagate.
         """
         if not self._session_cleaner:
             return
@@ -580,6 +637,7 @@ class LoginCoordinator:
                 cfg.api_key,
                 cfg.port,
                 reason="startup cleanup",
+                keep_sid=True,
             )
             for name, cfg in servers.items()
         ]
@@ -1302,6 +1360,7 @@ class LoginCoordinator:
                     command="show-domain",
                     payload={"name": domain, "details-level": "full"},
                     port=port,
+                    domain="",
                 )
             if response.get("code") in SESSION_ERROR_CODES and attempt < max_attempts - 1:
                 log().debug(f"Session expired while fetching domain '{mgmt_name}:{domain}', retrying...")
@@ -1347,6 +1406,7 @@ class LoginCoordinator:
                     command="show-mdss",
                     payload={"details-level": "full", "limit": 500},
                     port=port,
+                    domain="",
                 )
         except Exception as exc:  # noqa: BLE001 - enrichment only; the login proceeds without it
             log().debug(f"show-mdss failed on {system_ip}: {exc}; login gate will key on the configured host")
@@ -1384,6 +1444,7 @@ class LoginCoordinator:
                     command="show-global-domain",
                     payload={"name": GLOBAL_DOMAIN_NAME, "details-level": "full"},
                     port=port,
+                    domain="",
                 )
         except Exception as exc:  # noqa: BLE001 - enrichment only; the login proceeds without it
             log().debug(f"show-global-domain failed on {system_ip}: {exc}; using the configured MDS for Global")
@@ -1495,9 +1556,7 @@ class LoginCoordinator:
                 row = await self._cache.get_domain(mdm_dmn=f"{mgmt_name}:{GLOBAL_DOMAIN_NAME}")
                 cached_uid = getattr(row, "domain_uid", "") if row is not None else ""
                 global_uid = cached_uid if isinstance(cached_uid, str) else ""
-            standby_ips = [
-                (mds_ips or {}).get(m, "") for m in global_layout.standby_mdss if (mds_ips or {}).get(m)
-            ]
+            standby_ips = [(mds_ips or {}).get(m, "") for m in global_layout.standby_mdss if (mds_ips or {}).get(m)]
             domain_record = Domain.build(
                 mgmt_name=mgmt_name,
                 domain_name=GLOBAL_DOMAIN_NAME,

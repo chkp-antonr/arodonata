@@ -520,7 +520,9 @@ class _FakeTransport:
         self._responses = list(responses or [])
         self.calls: list[SimpleNamespace] = []
 
-    async def api_call(self, *, server_ip, sid, command, payload, wait_for_task, timeout, port, task_timeout=-1):
+    async def api_call(
+        self, *, server_ip, sid, command, payload, wait_for_task, timeout, port, task_timeout=-1, domain=None
+    ):
         self.calls.append(
             SimpleNamespace(
                 sid=sid,

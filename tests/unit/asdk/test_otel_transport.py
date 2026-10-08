@@ -70,3 +70,23 @@ async def test_gating_disables_transport_spans(otel_spans, monkeypatch):
     set_trace_modules({"arodonata.asdk.transport": False})
     await transport.api_call("10.0.0.1", "sid123", "show-hosts")
     assert otel_spans.get_finished_spans() == ()
+
+
+async def test_api_call_span_records_the_callers_domain(otel_spans, monkeypatch):
+    monkeypatch.setattr(ApiTransport, "_client", _stub_client_factory(_response()))
+    transport = ApiTransport()
+    await transport.api_call("10.0.0.1", "sid123", "show-hosts", domain="Domain4")
+    await transport.api_call("10.0.0.1", "sid123", "show-domains", domain="")
+    await transport.api_call("10.0.0.1", "sid123", "show-hosts")
+    domains = [span.attributes.get("arodonata.domain") for span in otel_spans.get_finished_spans()]
+    # "" is the system domain, named as the login spans name it; no domain given leaves it unset.
+    assert domains == ["Domain4", "system", None]
+
+
+async def test_keepalive_span_records_the_sessions_domain(otel_spans, monkeypatch):
+    monkeypatch.setattr(ApiTransport, "_client", _stub_client_factory(_response()))
+    transport = ApiTransport()
+    await transport.keepalive("10.0.0.1", "sid123", domain="Domain4")
+    await transport.keepalive("10.0.0.1", "sid123")
+    domains = [span.attributes.get("arodonata.domain") for span in otel_spans.get_finished_spans()]
+    assert domains == ["Domain4", None]

@@ -262,6 +262,7 @@ class AMgmtClient:
                 timeout=timeout,
                 task_timeout=task_timeout,
                 port=port,
+                domain=domain,
             )
 
         return await self._execute_with_retry(
@@ -330,6 +331,7 @@ class AMgmtClient:
                 timeout=timeout,
                 task_timeout=task_timeout,
                 port=port,
+                domain=domain,
             )
 
         return response
@@ -445,6 +447,7 @@ class AMgmtClient:
                 wait_for_task=False,
                 timeout=-1,
                 port=port,
+                domain=domain,
             )
 
         return await self._execute_with_retry(mgmt_name, domain, cache_mode, _call)

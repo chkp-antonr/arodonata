@@ -536,7 +536,7 @@ async def test_fire_keepalive_success_updates_cache():
 
     await coord._fire_keepalive("mgmt1", "", "sid-x", "10.0.0.1", None)
 
-    transport.keepalive.assert_awaited_once_with("10.0.0.1", "sid-x", None)
+    transport.keepalive.assert_awaited_once_with("10.0.0.1", "sid-x", None, domain="")
     cache.update_keepalive.assert_awaited_once_with("mgmt1", "", username=None)
 
 
@@ -1832,7 +1832,7 @@ async def test_keepalive_takes_the_members_slot():
     await coord._fire_keepalive("home", "Domain4", "s", DOMAIN_IP, None)
 
     assert _slot_keys(rl) == [MEMBER_IP]
-    transport.keepalive.assert_awaited_once_with(DOMAIN_IP, "s", None)
+    transport.keepalive.assert_awaited_once_with(DOMAIN_IP, "s", None, domain="Domain4")
 
 
 async def test_keepalive_that_cannot_resolve_the_member_skips_without_evicting(caplog):
