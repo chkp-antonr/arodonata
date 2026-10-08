@@ -800,21 +800,22 @@ class AssetRefreshService:
                     domains=all_domain_names,
                 )
 
-                if vsx_vs_mappings:
-                    updated = await vsx_manager.update_vs_parent_asset_ids(
-                        mgmt_name=mgmt_name,
-                        vsx_vs_mappings=vsx_vs_mappings,
-                    )
+                # Called even with an empty mapping, so every VS left without a
+                # VSX is logged by update_vs_parent_asset_ids.
+                updated = await vsx_manager.update_vs_parent_asset_ids(
+                    mgmt_name=mgmt_name,
+                    vsx_vs_mappings=vsx_vs_mappings,
+                )
 
-                    yield SSEEvent(
-                        event_type=SSEEventType.LOG,
-                        mgmt_name=mgmt_name,
-                        data={
-                            "message": f"VSX relationships updated for {mgmt_name}",
-                            "phase": "vsx_processing",
-                            "relationships_updated": updated,
-                        },
-                    )
+                yield SSEEvent(
+                    event_type=SSEEventType.LOG,
+                    mgmt_name=mgmt_name,
+                    data={
+                        "message": f"VSX relationships updated for {mgmt_name}",
+                        "phase": "vsx_processing",
+                        "relationships_updated": updated,
+                    },
+                )
 
             except Exception as e:
                 yield SSEEvent(

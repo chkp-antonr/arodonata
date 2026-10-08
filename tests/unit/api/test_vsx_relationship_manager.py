@@ -366,3 +366,103 @@ async def test_update_swallows_exception_and_returns_zero():
     updated = await manager.update_vs_parent_asset_ids("mgmt1", {"vs-uid-a": "mgmt1:domainA:vsx-a"})
 
     assert updated == 0
+
+
+# --------------------------------------------------------------------------- #
+# Real slot shapes (mdsNP2 lab, 2026-10-08)
+# --------------------------------------------------------------------------- #
+# A VS's own object (CpmiVsNetobj / CpmiVsClusterNetobj) carries no reference to
+# its slot or its VSX, and its uid differs from the slot's uid and `vsUid`. Every
+# slot lives in the VSX's domain, also for a VS created in another domain; the
+# VS's own domain is in `targetCustomer` and the VSX gateway's uid in
+# `vsxGateway`. So the VS is matched by `targetCustomer` and name.
+
+
+def _lab_vsx_slot(domain):
+    return {
+        "type": "vsx_slot_obj",
+        "uid": "9162f143-a9d2-48b7-b5d2-cdc0d144c61c",
+        "name": "vsx1",
+        "vsid": 0,
+        "vsxGateway": "e9184e9d-473d-41c7-9887-4741946b0fdc",
+        "vsUid": "{9162F143-A9D2-48B7-B5D2-CDC0D144C61C}",
+        "domain": {"name": domain},
+    }
+
+
+def _lab_vs_slot(name, target_domain, slot_uid, vsid):
+    """A VS slot as stored in the VSX's domain (domainA) for a VS in target_domain."""
+    return {
+        "type": "vs_slot_obj",
+        "uid": slot_uid,
+        "name": name,
+        "vsid": vsid,
+        "vsxGateway": "e9184e9d-473d-41c7-9887-4741946b0fdc",
+        "vsUid": "{" + slot_uid.upper() + "}",
+        "targetCustomer": target_domain,
+        "domain": {"name": "domainA"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_vs_in_another_domain_and_vs_on_vsx_cluster_get_their_vsx():
+    """VSX in domainA holds every slot; a VS in domainB, and a VSX-cluster VS in domainA."""
+    manager, client = _make_manager()
+
+    async def api_query(mgmt_name, command, domain, details_level, payload):
+        if domain != "domainA":
+            return ApiQueryResult(success=True, objects=[])
+        if payload["class-name"].endswith("CpmiVsxSlotObj"):
+            return ApiQueryResult(success=True, objects=[_lab_vsx_slot("domainA")])
+        return ApiQueryResult(
+            success=True,
+            objects=[
+                _lab_vs_slot("vs-cl", "domainA", "2b0d9469-e86e-e14e-ac05-d571e77996ac", 1),
+                _lab_vs_slot("vs-b", "domainB", "6aa043d2-ef4e-744d-af76-64f123ea484e", 3),
+            ],
+        )
+
+    client.api_query = AsyncMock(side_effect=api_query)
+    vs_other_domain = _asset(
+        asset_id="mgmt1:domainB:vs-b",
+        asset_type="CpmiVsNetobj",
+        asset_uid="6e52b534-d694-4c72-9938-73c36bff732e",
+        domain_name="domainB",
+        name="vs-b",
+    )
+    vs_on_cluster = _asset(
+        asset_id="mgmt1:domainA:vs-cl",
+        asset_type="CpmiVsClusterNetobj",
+        asset_uid="d18a2b91-03ee-4e4b-9ae2-8c956a4944dd",
+        domain_name="domainA",
+        name="vs-cl",
+    )
+    client.cache = AsyncMock()
+    client.cache.get_assets = AsyncMock(return_value=[vs_other_domain, vs_on_cluster])
+
+    mapping = await manager.build_cross_domain_vsx_vs_mapping("mgmt1", ["domainA", "domainB"])
+    updated = await manager.update_vs_parent_asset_ids("mgmt1", mapping)
+
+    assert updated == 2
+    assert vs_other_domain.parent_asset_id == "mgmt1:domainA:vsx1"
+    assert vs_on_cluster.parent_asset_id == "mgmt1:domainA:vsx1"
+
+
+@pytest.mark.asyncio
+async def test_update_warns_about_each_vs_left_without_a_vsx(caplog):
+    vs_asset = _asset(
+        asset_id="mgmt1:domainB:orphan",
+        asset_type="CpmiVsClusterNetobj",
+        asset_uid="netobj-uid",
+        domain_name="domainB",
+        name="orphan",
+    )
+    manager, client = _make_manager()
+    client.cache = AsyncMock()
+    client.cache.get_assets = AsyncMock(return_value=[vs_asset])
+
+    with caplog.at_level("WARNING"):
+        updated = await manager.update_vs_parent_asset_ids("mgmt1", {"domainA:other": "mgmt1:domainA:vsx1"})
+
+    assert updated == 0
+    assert any("mgmt1:domainB:orphan" in r.getMessage() and "no VSX" in r.getMessage() for r in caplog.records)

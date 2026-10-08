@@ -13,6 +13,9 @@ from ..logger import lazy_logger
 
 log = lazy_logger("arodonata.vsx_relationship_manager")
 
+# Asset types of a Virtual System: on a single VSX gateway and on a VSX cluster.
+VS_ASSET_TYPES = ("CpmiVsNetobj", "CpmiVsClusterNetobj", "vs_slot_obj")
+
 
 class VSXRelationshipManager:
     """Manages VSX/VS relationships for Check Point objects."""
@@ -191,7 +194,10 @@ class VSXRelationshipManager:
             if isinstance(vs_obj, dict) and vs_obj.get("uid") and vs_obj.get("vsxGateway"):
                 vs_uid = vs_obj["uid"]
                 vsx_gateway_uid = vs_obj["vsxGateway"]
-                vs_domain = vs_obj.get("_domain", "")
+                # The slot is stored in the VSX's domain even when the VS itself
+                # was created in another one; `targetCustomer` names the VS's own
+                # domain, which is where its CpmiVsNetobj asset lives.
+                vs_domain = vs_obj.get("targetCustomer") or vs_obj.get("_domain", "")
                 vs_name = vs_obj.get("name", "unknown")
 
                 # Find the VSX info for this gateway UID (could be in any domain)
@@ -262,7 +268,7 @@ class VSXRelationshipManager:
             all_assets = await self._client.cache.get_assets(mgmt_names=[mgmt_name])
 
             # Debug: Log total assets found and VS assets specifically
-            vs_assets = [asset for asset in all_assets if asset.asset_type in ["CpmiVsNetobj", "vs_slot_obj"]]
+            vs_assets = [asset for asset in all_assets if asset.asset_type in VS_ASSET_TYPES]
 
             log().debug(f"Found {len(all_assets)} total assets for {mgmt_name}, {len(vs_assets)} VS assets")
 
@@ -273,10 +279,15 @@ class VSXRelationshipManager:
             assets_to_update = []
             for asset in all_assets:
                 # Check if this is a VS object that needs parent_asset_id update
-                if asset.asset_type in ["CpmiVsNetobj", "vs_slot_obj"]:
+                if asset.asset_type in VS_ASSET_TYPES:
                     vsx_asset_id = self._find_vsx_asset_id(asset, vsx_vs_mappings)
 
-                    if vsx_asset_id and asset.parent_asset_id != vsx_asset_id:
+                    if not vsx_asset_id:
+                        log().warning(
+                            f"VS {asset.asset_id} ({asset.asset_type}) has no VSX: no VS slot object "
+                            f"'{asset.domain_name}:{asset.name}' points to a known VSX on {mgmt_name}"
+                        )
+                    elif asset.parent_asset_id != vsx_asset_id:
                         # Update the asset in cache
                         old_parent_asset_id = asset.parent_asset_id
                         asset.parent_asset_id = vsx_asset_id
@@ -285,7 +296,7 @@ class VSXRelationshipManager:
                         log().debug(
                             f"Marked VS {asset.asset_id} for update from {old_parent_asset_id} to {vsx_asset_id}"
                         )
-                    elif vsx_asset_id:
+                    else:
                         log().trace(f"VS {asset.asset_id} already has correct parent {vsx_asset_id}")
 
             if assets_to_update:
