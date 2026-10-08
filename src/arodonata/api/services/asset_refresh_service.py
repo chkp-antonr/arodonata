@@ -564,6 +564,28 @@ class AssetRefreshService:
             if event.event_type == SSEEventType.LOG and event.data.get("relationships_updated"):
                 stats["vsx_relationships_count"] += event.data["relationships_updated"]
 
+    async def _keep_parent_links(self, assets: list[Asset]) -> None:
+        """Carry the stored parent_asset_id over to freshly transformed assets.
+
+        AssetTransformer.transform_to_asset never sets a parent: cluster members
+        and VSs get theirs from the relationship phase, and a VS's VSX can sit in
+        another domain. A per-domain refresh skips that phase, so without this
+        its upsert would erase every parent link in the domain. A full refresh
+        deletes the domain's rows first, finds nothing stored here, and writes
+        the links again afterwards.
+        """
+        unlinked_ids = [a.asset_id for a in assets if not a.parent_asset_id]
+        if not unlinked_ids:
+            return
+        stored_parents = {
+            a.asset_id: a.parent_asset_id
+            for a in await self._cache.get_assets(asset_ids=unlinked_ids)
+            if a.parent_asset_id
+        }
+        for asset in assets:
+            if not asset.parent_asset_id and asset.asset_id in stored_parents:
+                asset.parent_asset_id = stored_parents[asset.asset_id]
+
     async def _refresh_domain_assets_impl(
         self,
         mgmt_name: str,
@@ -637,6 +659,7 @@ class AssetRefreshService:
 
             collected_count = 0
             if assets_to_cache:
+                await self._keep_parent_links(assets_to_cache)
                 await self._cache.upsert_assets(assets_to_cache)
                 collected_count = len(assets_to_cache)
 
