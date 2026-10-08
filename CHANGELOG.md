@@ -8,6 +8,12 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 via [commitizen](https://commitizen-tools.github.io/commitizen/) — do not
 hand-edit released sections, only the `[Unreleased]` section above them.
 
+## v1.14.4 (2026-10-08)
+
+### Fix
+
+- link a VS on a VSX cluster or in another domain to its VSX (#42)
+
 ## v1.14.3 (2026-10-08)
 
 ### Fix
