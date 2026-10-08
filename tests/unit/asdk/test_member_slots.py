@@ -56,3 +56,17 @@ async def test_domains_on_one_member_share_its_slots():
 async def test_domains_on_different_members_do_not_block_each_other():
     started = await _run(["Domain4", "Domain5", "Domain6"], limit=2)
     assert started == ["192.168.5.184", "192.168.5.185", "192.168.5.186"]
+
+
+async def test_calls_tell_the_transport_their_domain():
+    """The transport only sees an IP; api_call, api_query pages and api_call_with_sid pass the domain for its span."""
+    client, release, _in_flight = _client(limit=4)
+    release.set()
+    await client.api_call("home", "show-hosts", domain="Domain4")
+    await client.api_query("home", "show-hosts", domain="Domain5")
+    await client.api_call_with_sid("home", "sid", "192.168.5.186", "publish", domain="Domain6")
+    client._login_coordinator.mds_host_for_ip = AsyncMock(return_value="192.168.5.171")
+    await client.api_call_with_sid("home", "sid", "192.168.5.186", "publish")
+    await client.close()
+    domains = [call.kwargs["domain"] for call in client._transport.api_call.await_args_list]
+    assert domains == ["Domain4", "Domain5", "Domain6", None]

@@ -30,6 +30,13 @@ log = lazy_logger("arodonata.asdk.transport")
 _LITERAL = {"markup": False}
 
 
+def _span_domain(domain: str | None) -> str | None:
+    """`arodonata.domain` as the login spans record it: "system" for the system domain, None (unset) if unknown."""
+    if domain is None:
+        return None
+    return domain or "system"
+
+
 def mask_secret(secret: SecretStr | str | None) -> str:
     """Log-safe stand-in for a credential: its last four characters at most.
 
@@ -344,6 +351,8 @@ class ApiTransport:
         timeout: int = -1,
         port: int | None = None,
         task_timeout: int = -1,
+        *,
+        domain: str | None = None,
     ) -> RawApiResponse:
         """Execute API call using sync SDK in async context.
 
@@ -363,6 +372,8 @@ class ApiTransport:
             task_timeout: Budget in seconds for waiting out the task alone, apart
                 from `timeout`. <= 0 means the wait gets what is left of `timeout`
                 (no bound when that is <= 0 too).
+            domain: The session's domain ("" for the system domain), for the span
+                only; None when the caller does not know it.
 
         Returns:
             API response dictionary. For a task-returning command with
@@ -382,7 +393,7 @@ class ApiTransport:
         if payload is None:
             payload = {}
 
-        span_attrs(command=command, server_ip=server_ip, port=port)
+        span_attrs(command=command, server_ip=server_ip, port=port, domain=_span_domain(domain))
         started = asyncio.get_running_loop().time()
 
         try:
@@ -730,6 +741,8 @@ class ApiTransport:
         server_ip: str,
         sid: str,
         port: int | None = None,
+        *,
+        domain: str | None = None,
     ) -> RawApiResponse:
         """Send keepalive ping to keep a session active.
 
@@ -737,11 +750,13 @@ class ApiTransport:
             server_ip: Management server IP address.
             sid: Session identifier to keep alive.
             port: Optional port number (defaults to 443 if not specified).
+            domain: The session's domain ("" for the system domain), for the span
+                only; None when the caller does not know it.
 
         Returns:
             API response dictionary.
         """
-        span_attrs(server_ip=server_ip, port=port)
+        span_attrs(server_ip=server_ip, port=port, domain=_span_domain(domain))
         try:
             log().trace(f"KEEPALIVE: {server_ip}")
             async with self._client(server_ip, port, sid) as client:

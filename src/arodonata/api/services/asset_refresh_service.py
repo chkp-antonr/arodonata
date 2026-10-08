@@ -5,7 +5,10 @@ Handles asset collection, transformation, and relationship processing.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Callable
+import asyncio
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Iterator
+from contextlib import aclosing
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from arodonata.api.schemas import SSEEvent, SSEEventType
@@ -23,6 +26,126 @@ if TYPE_CHECKING:
     from arodonata.config import ArodonataSettings
 
 log = lazy_logger("arodonata.api.services.asset_refresh_service")
+
+#: A job for `_merge_bounded`: its key and a factory for its event stream.
+_Job = tuple[Any, Callable[[], AsyncIterator[SSEEvent]]]
+
+
+class _LockLostError(Exception):
+    """The run's lock could not be renewed; `event` is the ERROR to yield."""
+
+    def __init__(self, event: SSEEvent) -> None:
+        super().__init__(event.data.get("error_message", ""))
+        self.event = event
+
+
+async def _jobs_for(keys: Iterable[str], stream: Callable[[str], AsyncIterator[SSEEvent]]) -> AsyncIterator[_Job]:
+    """One job per key, its stream `stream(key)`."""
+    for key in keys:
+        yield key, partial(stream, key)
+
+
+class _BoundedMerge:
+    """Run at most `limit` jobs' event streams at once; `events()` yields `(key, event)` as each event arrives.
+
+    The next job is taken from `jobs` only once a running stream has ended, so whatever `jobs` does
+    before handing out a job (renewing the lock) happens right before that job starts. A stream
+    that raises ends with the event `on_error(key, exc)`; the others go on. If `jobs` raises, the
+    streams still running are cancelled, the events they produced before that are yielded, and
+    the exception propagates. Closing `events()` cancels the running streams.
+
+    `limit=1` is a plain loop over the jobs, no task and no queue: a stream advances only when the
+    caller asks for its next event, as the one-domain-at-a-time loop this replaced did.
+    """
+
+    def __init__(self, jobs: AsyncIterator[_Job], limit: int, on_error: Callable[[Any, Exception], SSEEvent]) -> None:
+        self._jobs = jobs
+        self._limit = limit
+        self._on_error = on_error
+        self._queue: asyncio.Queue[tuple[Any, SSEEvent | None]] = asyncio.Queue()
+        self._running: set[asyncio.Task[None]] = set()
+        self._active = 0  # streams started and not yet ended
+
+    async def events(self) -> AsyncGenerator[tuple[Any, SSEEvent]]:
+        """The jobs' events, as they arrive."""
+        if self._limit == 1:
+            async for item in self._one_at_a_time():
+                yield item
+            return
+        exhausted = False
+        try:
+            while True:
+                if not exhausted:
+                    try:
+                        exhausted = await self._start_jobs()
+                    except Exception:
+                        await self._cancel_running()
+                        for item in self._queued():
+                            yield item
+                        raise
+                if not self._active:
+                    return
+                key, event = await self._queue.get()
+                if event is None:
+                    self._active -= 1
+                else:
+                    yield key, event
+        finally:
+            await self._cancel_running()
+
+    async def _one_at_a_time(self) -> AsyncGenerator[tuple[Any, SSEEvent]]:
+        async for key, stream in self._jobs:
+            async with aclosing(stream()) as events:  # type: ignore[type-var]
+                while True:
+                    try:
+                        event = await anext(events)
+                    except StopAsyncIteration:
+                        break
+                    except Exception as exc:  # noqa: BLE001 - as in _run
+                        yield key, self._on_error(key, exc)
+                        break
+                    yield key, event
+
+    async def _start_jobs(self) -> bool:
+        """Start jobs until `limit` run; True once `jobs` is exhausted."""
+        while self._active < self._limit:
+            try:
+                key, stream = await anext(self._jobs)
+            except StopAsyncIteration:
+                return True
+            task = asyncio.create_task(self._run(key, stream))
+            self._running.add(task)
+            task.add_done_callback(self._running.discard)
+            self._active += 1
+        return False
+
+    async def _run(self, key: Any, stream: Callable[[], AsyncIterator[SSEEvent]]) -> None:
+        try:
+            async for event in stream():
+                self._queue.put_nowait((key, event))
+        except Exception as exc:  # noqa: BLE001 - one job's failure is its own ERROR event, not the run's
+            self._queue.put_nowait((key, self._on_error(key, exc)))
+        finally:
+            self._queue.put_nowait((key, None))  # this stream has ended
+
+    async def _cancel_running(self) -> None:
+        for task in self._running:
+            task.cancel()
+        await asyncio.gather(*self._running, return_exceptions=True)
+
+    def _queued(self) -> Iterator[tuple[Any, SSEEvent]]:
+        """What is left in the queue, without the end-of-stream markers."""
+        while not self._queue.empty():
+            key, event = self._queue.get_nowait()
+            if event is not None:
+                yield key, event
+
+
+def _merge_bounded(
+    jobs: AsyncIterator[_Job], limit: int, on_error: Callable[[Any, Exception], SSEEvent]
+) -> AsyncGenerator[tuple[Any, SSEEvent]]:
+    """`(key, event)` from at most `limit` of `jobs` at once, as they arrive (see `_BoundedMerge`)."""
+    return _BoundedMerge(jobs, limit, on_error).events()
 
 
 class AssetRefreshService:
@@ -61,6 +184,11 @@ class AssetRefreshService:
         self._settings = settings
         self._api_query = api_query_method
         log().trace("AssetRefreshService initialized")
+
+    @property
+    def _concurrency(self) -> int:
+        """Domains (and management servers) one refresh run works on at once (`asset_refresh_concurrency`)."""
+        return max(1, int(self._settings.asset_refresh_concurrency))
 
     @staticmethod
     def _build_local_fields_snapshot(assets: list[Asset]) -> dict[str, dict[str, str]]:
@@ -186,52 +314,72 @@ class AssetRefreshService:
 
         Mutates target_servers_and_domains and all_domains_to_delete in place
         (both created empty by the caller) so later phases can read the
-        accumulated scope after this generator is exhausted.
+        accumulated scope after this generator is exhausted. Servers are
+        populated `asset_refresh_concurrency` at a time; the scope keeps the
+        order of `target_names` whichever finishes first.
 
         Yields:
             SSEEvent objects for progress, warnings, and errors.
         """
+        populated: dict[str, list[str]] = {}
+
+        def failed(mgmt_name: str, e: Exception) -> SSEEvent:
+            return SSEEvent(
+                event_type=SSEEventType.ERROR,
+                mgmt_name=mgmt_name,
+                data={"error_message": f"Failed to populate domains: {e}"},
+            )
+
+        stream = partial(
+            self._prepare_server, normalized_domains=normalized_domains, cache_mode=cache_mode, populated=populated
+        )
+        async with aclosing(_merge_bounded(_jobs_for(target_names, stream), self._concurrency, failed)) as events:
+            async for _mgmt_name, event in events:
+                yield event
+
         for mgmt_name in target_names:
-            try:
-                domain_names = await self._domain_service.populate_domain_cache(mgmt_name, cache_mode=cache_mode)
-
-                if normalized_domains:
-                    missing_domains = [d for d in normalized_domains if d and d not in domain_names]
-                    if missing_domains:
-                        yield SSEEvent(
-                            event_type=SSEEventType.WARNING,
-                            mgmt_name=mgmt_name,
-                            data={
-                                "message": f"Domains not found on {mgmt_name}: {', '.join(missing_domains)}",
-                                "missing_domains": missing_domains,
-                                "available_domains": domain_names,
-                            },
-                        )
-
-                    domain_names = [d for d in domain_names if d in normalized_domains]
-
-                target_servers_and_domains[mgmt_name] = domain_names
-
+            if mgmt_name in populated:
+                target_servers_and_domains[mgmt_name] = populated[mgmt_name]
                 if all_domains_to_delete is not None:
-                    all_domains_to_delete.update(domain_names)
+                    all_domains_to_delete.update(populated[mgmt_name])
 
+    async def _prepare_server(
+        self,
+        mgmt_name: str,
+        *,
+        normalized_domains: list[str],
+        cache_mode: str,
+        populated: dict[str, list[str]],
+    ) -> AsyncGenerator[SSEEvent]:
+        """Populate one server's domain cache and record its domains in scope in `populated`."""
+        domain_names = await self._domain_service.populate_domain_cache(mgmt_name, cache_mode=cache_mode)
+
+        if normalized_domains:
+            missing_domains = [d for d in normalized_domains if d and d not in domain_names]
+            if missing_domains:
                 yield SSEEvent(
-                    event_type=SSEEventType.LOG,
+                    event_type=SSEEventType.WARNING,
                     mgmt_name=mgmt_name,
                     data={
-                        "message": f"Populated domains for {mgmt_name}: {len(domain_names)}",
-                        "phase": "preparation",
-                        "domains_count": len(domain_names),
+                        "message": f"Domains not found on {mgmt_name}: {', '.join(missing_domains)}",
+                        "missing_domains": missing_domains,
+                        "available_domains": domain_names,
                     },
                 )
 
-            except Exception as e:
-                yield SSEEvent(
-                    event_type=SSEEventType.ERROR,
-                    mgmt_name=mgmt_name,
-                    data={"error_message": f"Failed to populate domains: {e}"},
-                )
-                continue
+            domain_names = [d for d in domain_names if d in normalized_domains]
+
+        populated[mgmt_name] = domain_names
+
+        yield SSEEvent(
+            event_type=SSEEventType.LOG,
+            mgmt_name=mgmt_name,
+            data={
+                "message": f"Populated domains for {mgmt_name}: {len(domain_names)}",
+                "phase": "preparation",
+                "domains_count": len(domain_names),
+            },
+        )
 
     async def _delete_existing_assets(
         self,
@@ -275,26 +423,37 @@ class AssetRefreshService:
         """Collect MDS assets for every MDM server in scope.
 
         Accumulates into the caller-owned `stats` dict (`total_collected`,
-        `errors`) in place.
+        `errors`) in place. Servers are collected `asset_refresh_concurrency`
+        at a time; `errors` keeps the order of `target_names`.
 
         Yields:
             SSEEvent objects for progress, results, and errors.
         """
-        for mgmt_name in target_names:
-            try:
-                server = await self._mgmt.get_server(mgmt_name)
-                if server and server.is_mdm:
-                    async for event in self._collect_mds_assets(mgmt_name, cache_mode=cache_mode):
-                        if event.event_type == SSEEventType.RESULT:
-                            stats["total_collected"] += event.data.get("count", 0)
-                        yield event
-            except Exception as e:
-                stats["errors"].append(f"{mgmt_name} MDS collection - {str(e)}")
-                yield SSEEvent(
-                    event_type=SSEEventType.ERROR,
-                    mgmt_name=mgmt_name,
-                    data={"error_message": f"Failed to collect MDS assets: {e}"},
-                )
+        failures: dict[str, str] = {}
+
+        def failed(mgmt_name: str, e: Exception) -> SSEEvent:
+            failures[mgmt_name] = f"{mgmt_name} MDS collection - {str(e)}"
+            return SSEEvent(
+                event_type=SSEEventType.ERROR,
+                mgmt_name=mgmt_name,
+                data={"error_message": f"Failed to collect MDS assets: {e}"},
+            )
+
+        stream = partial(self._collect_server_mds, cache_mode=cache_mode)
+        async with aclosing(_merge_bounded(_jobs_for(target_names, stream), self._concurrency, failed)) as events:
+            async for _mgmt_name, event in events:
+                if event.event_type == SSEEventType.RESULT:
+                    stats["total_collected"] += event.data.get("count", 0)
+                yield event
+
+        stats["errors"].extend(failures[m] for m in target_names if m in failures)
+
+    async def _collect_server_mds(self, mgmt_name: str, *, cache_mode: str) -> AsyncGenerator[SSEEvent]:
+        """MDS assets of one server, if it is an MDM."""
+        server = await self._mgmt.get_server(mgmt_name)
+        if server and server.is_mdm:
+            async for event in self._collect_mds_assets(mgmt_name, cache_mode=cache_mode):
+                yield event
 
     async def _collect_domain_phase(
         self,
@@ -302,54 +461,83 @@ class AssetRefreshService:
         cache_mode: str,
         stats: dict[str, Any],
     ) -> AsyncGenerator[SSEEvent]:
-        """Collect assets per domain, renewing the distributed lock as needed.
+        """Collect assets per domain, `asset_refresh_concurrency` domains at once.
 
-        Renews the lock before each management server and before each domain;
-        if renewal fails (lock lost), yields an ERROR, sets
-        `stats["aborted"] = True`, and stops iteration immediately.
+        Events reach the caller as each domain produces them, so with more
+        than one domain at once the domains' events interleave. A domain that
+        fails, or whose stream raises, ends with its own ERROR event and does
+        not stop the others. `stats["errors"]` gets the domains' errors in
+        scope order, as a one-at-a-time run would.
+
+        The lock is renewed from here only: before each management server and
+        before each domain is started (a domain starts once one of the running
+        ones has finished). If renewal fails (lock lost), the domains still
+        running are cancelled, the events they produced before that are
+        yielded, then one ERROR; `stats["aborted"]` is set to True.
 
         Yields:
             SSEEvent objects for progress, results, and errors.
         """
-        for mgmt_name, domain_names in target_servers_and_domains.items():
-            lock_context = get_current_lock_context()
+        lock_context = get_current_lock_context()
+        pairs = [(m, d) for m, domain_names in target_servers_and_domains.items() for d in domain_names if d]
+        position = {pair: i for i, pair in enumerate(pairs)}
+        errors: list[tuple[tuple[str, str], str]] = []
 
-            if lock_context:
-                try:
-                    await lock_context.renew_if_needed()
-                except Exception as e:
-                    log().warning(f"Failed to renew lock: {e}")
-                    yield SSEEvent(
-                        event_type=SSEEventType.ERROR,
-                        mgmt_name=mgmt_name,
-                        data={"error_message": f"Lock lost during operation: {e}"},
-                    )
-                    stats["aborted"] = True
-                    return
+        def failed(pair: tuple[str, str], e: Exception) -> SSEEvent:
+            return SSEEvent(
+                event_type=SSEEventType.ERROR, mgmt_name=pair[0], domain=pair[1], data={"error_message": str(e)}
+            )
 
-            actual_domains = [d for d in domain_names if d]
-
-            for domain_name in actual_domains:
-                if lock_context:
-                    try:
-                        await lock_context.renew_if_needed()
-                    except Exception as e:
-                        log().warning(f"Failed to renew lock: {e}")
-                        yield SSEEvent(
-                            event_type=SSEEventType.ERROR,
-                            mgmt_name=mgmt_name,
-                            domain=domain_name,
-                            data={"error_message": f"Lock lost during operation: {e}"},
-                        )
-                        stats["aborted"] = True
-                        return
-
-                async for event in self._refresh_domain_assets_impl(mgmt_name, domain_name, cache_mode=cache_mode):
+        jobs = self._domain_jobs(target_servers_and_domains, cache_mode, lock_context)
+        try:
+            async with aclosing(_merge_bounded(jobs, self._concurrency, failed)) as events:
+                async for (mgmt_name, domain_name), event in events:
                     if event.event_type == SSEEventType.ERROR:
-                        stats["errors"].append(f"{mgmt_name}:{domain_name} - {event.data.get('error_message', '')}")
+                        message = f"{mgmt_name}:{domain_name} - {event.data.get('error_message', '')}"
+                        errors.append(((mgmt_name, domain_name), message))
                     elif event.event_type == SSEEventType.RESULT:
                         stats["total_collected"] += event.data.get("count", 0)
                     yield event
+        except _LockLostError as lost:
+            yield lost.event
+            stats["aborted"] = True
+        finally:
+            # Stable sort: one domain's errors keep their own order.
+            stats["errors"].extend(message for _pair, message in sorted(errors, key=lambda e: position[e[0]]))
+
+    async def _domain_jobs(
+        self,
+        target_servers_and_domains: dict[str, list[str]],
+        cache_mode: str,
+        lock_context: Any,
+    ) -> AsyncIterator[_Job]:
+        """The domain phase's jobs, in scope order, renewing the lock before each server and each domain."""
+        for mgmt_name, domain_names in target_servers_and_domains.items():
+            await self._renew_lock(lock_context, mgmt_name)
+            for domain_name in [d for d in domain_names if d]:
+                await self._renew_lock(lock_context, mgmt_name, domain_name)
+                yield (
+                    (mgmt_name, domain_name),
+                    partial(self._refresh_domain_assets_impl, mgmt_name, domain_name, cache_mode=cache_mode),
+                )
+
+    @staticmethod
+    async def _renew_lock(lock_context: Any, mgmt_name: str, domain_name: str | None = None) -> None:
+        """Renew the run's lock if due; raise _LockLostError carrying the ERROR to yield when that fails."""
+        if not lock_context:
+            return
+        try:
+            await lock_context.renew_if_needed()
+        except Exception as e:
+            log().warning(f"Failed to renew lock: {e}")
+            raise _LockLostError(
+                SSEEvent(
+                    event_type=SSEEventType.ERROR,
+                    mgmt_name=mgmt_name,
+                    domain=domain_name,
+                    data={"error_message": f"Lock lost during operation: {e}"},
+                )
+            ) from e
 
     async def _process_relationships_phase(
         self,

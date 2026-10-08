@@ -84,6 +84,12 @@ DEFAULT_LOGIN_THROTTLE_INCREMENT_SECONDS: Final[int] = 5  # seconds
 # point of view*; overlapping ensure calls, other processes, long tasks and keepalives
 # can still take every slot of a member.
 DEFAULT_CONCURRENT_LIMIT: Final[int] = 4
+# Domains one `build_refresh_assets_cache` run collects at once (and management servers
+# it prepares and collects MDS assets for at once); 1 runs them one after another. The
+# RateLimiter above still bounds the requests a member sees. Lab, 2026-10-08: with one
+# domain at a time a run spent its time in serial logins and listings to five domain
+# servers that were idle while another domain was being collected.
+DEFAULT_ASSET_REFRESH_CONCURRENCY: Final[int] = 4
 # Page size of every api_query listing (asdk/pager.py) when the caller sends no `limit`; a caller's `limit` is
 # honoured up to QUERY_MAX_PAGE_SIZE, Check Point's maximum. Each page is its own call and holds a RateLimiter slot
 # only for that page, so other callers of the member get in between pages. 300, not 500: at `details-level full`
@@ -210,6 +216,7 @@ __all__ = [
     "QUERY_MAX_PAGE_SIZE",
     "QUERY_PAGE_SIZE",
     "SQLITE_BUSY_TIMEOUT_SECONDS",
+    "DEFAULT_ASSET_REFRESH_CONCURRENCY",
     "DEFAULT_CONCURRENT_LIMIT",
     "DEFAULT_LOGIN_BACKOFF",
     "DEFAULT_LOGIN_RETRIES",

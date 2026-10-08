@@ -7,7 +7,7 @@ Check Point management servers rate-limit and are slow to re-authenticate; Arodo
 ## Populating the cache
 
 - [`ArodonataClient.build_refresh_assets_cache()`](../api/arodonata/api/client.md)
-  — full refresh of domains and gateways.
+  — full refresh of domains and gateways. It works on `asset_refresh_concurrency` (`ARODONATA_ASSET_REFRESH_CONCURRENCY`, default 4) domains at once, and on as many management servers at once while it reads their domain lists and MDS members; 1 runs them one after another. The domains' events interleave, each carrying its `mgmt_name` and `domain`; the summary counts and error list do not depend on the order in which domains finish.
 - [`ArodonataClient.refresh_objects()`](../api/arodonata/api/client.md) — refresh
   of hosts, networks, groups, and address ranges.
 - [`ArodonataClient.refresh_rulebases()`](../api/arodonata/api/client.md) —

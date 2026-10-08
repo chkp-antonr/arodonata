@@ -291,6 +291,7 @@ async def test_api_call_success_on_first_attempt_no_retry():
         timeout=-1,
         task_timeout=-1,
         port=4434,
+        domain="",
     )
 
 
@@ -596,6 +597,7 @@ async def test_api_call_with_sid_bypasses_login_coordinator():
         timeout=-1,
         task_timeout=-1,
         port=4434,
+        domain=None,
     )
 
 
@@ -646,6 +648,7 @@ async def test_api_call_with_sid_defaults_payload_and_port():
         timeout=-1,
         task_timeout=-1,
         port=None,
+        domain=None,
     )
 
 

@@ -6,7 +6,7 @@
   handles initial login, and re-login/backoff if a session expires mid-use.
 - **[`session_cleaner.py`](../api/arodonata/asdk/session_cleaner.md)** —
   background cleanup of stale sessions, so long-running processes don't leak
-  SIDs on the management server.
+  SIDs on the management server. At startup the cleanup logs in to each server's system domain and keeps that session in the SID cache for the first real call, unless a SID is already cached or a login for it is in flight (then it logs the session out, as the cleanup after a max-sessions refusal always does).
 - **[`rate_limiter.py`](../api/arodonata/asdk/rate_limiter.md)** — per-MDS-member
   concurrency gating (`ArodonataSettings.concurrent_limit`), so a burst of
   cache-refresh work doesn't overload a single management server.

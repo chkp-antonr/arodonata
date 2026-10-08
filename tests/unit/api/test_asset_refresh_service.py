@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -32,6 +33,7 @@ def _make_service(
     domain_service=None,
     cluster_manager_class=None,
     vsx_manager_class=None,
+    concurrency=4,
 ):
     mgmt_client = MagicMock()
     mgmt_client.get_mgmt_names.return_value = mgmt_names or ["mgmt1"]
@@ -70,7 +72,7 @@ def _make_service(
         domain_service=domain_service,
         cluster_manager=cluster_manager_class() if cluster_manager_class else cluster_manager_instance,
         vsx_manager=vsx_manager_class() if vsx_manager_class else vsx_manager_instance,
-        settings=MagicMock(),
+        settings=MagicMock(asset_refresh_concurrency=concurrency),
         api_query_method=api_query,
     )
     return service, mgmt_client, domain_service, cache, api_query
@@ -1049,3 +1051,385 @@ async def test_build_refresh_assets_cache_emits_progress_events_for_full_run(mon
     complete_events = [e for e in events if e.event_type == SSEEventType.COMPLETE]
     assert len(complete_events) == 1
     assert complete_events[0].data["total_results"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Concurrent phases (asset_refresh_concurrency)
+# ---------------------------------------------------------------------------
+
+
+def _gateway_result(domain):
+    return _api_result(objects=[{"uid": f"{domain}-uid", "name": f"{domain}-gw"}])
+
+
+def _patch_transform(monkeypatch):
+    monkeypatch.setattr(
+        AssetTransformer,
+        "transform_to_asset",
+        MagicMock(side_effect=lambda obj, **kwargs: SimpleNamespace(asset_id=obj["uid"])),
+    )
+
+
+def _event_trace(events):
+    return [(e.event_type, e.mgmt_name, e.domain, e.data.get("count"), e.data.get("error_message")) for e in events]
+
+
+class _InFlight:
+    """Counts api_query calls in flight; each call waits until `release` is set (or its own gate opens)."""
+
+    def __init__(self):
+        self.current = 0
+        self.peak = 0
+        self.release = asyncio.Event()
+        self.started: list[str] = []
+
+    async def wait(self, domain):
+        self.current += 1
+        self.peak = max(self.peak, self.current)
+        self.started.append(domain)
+        try:
+            await self.release.wait()
+        finally:
+            self.current -= 1
+
+
+async def _wait_until(predicate, timeout=2.0):
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() > deadline:
+            raise AssertionError("condition not reached")
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_collect_domain_phase_runs_domains_concurrently_up_to_the_limit(monkeypatch):
+    _patch_transform(monkeypatch)
+    flight = _InFlight()
+
+    async def _api_query(mgmt_name, domain, **kwargs):
+        await flight.wait(domain)
+        return _gateway_result(domain)
+
+    service, *_ = _make_service(api_query_side_effect=_api_query, concurrency=2)
+    stats = {"total_collected": 0, "errors": [], "aborted": False}
+    target = {"mgmt1": ["d1", "d2", "d3"], "mgmt2": ["d4", "d5"]}
+
+    async def _collect():
+        return [e async for e in service._collect_domain_phase(target, "auto", stats)]
+
+    task = asyncio.create_task(_collect())
+    await _wait_until(lambda: flight.current == 2)
+    # Two in flight and no third started while they block.
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert flight.started == ["d1", "d2"]
+    flight.release.set()
+    events = await asyncio.wait_for(task, 2)
+
+    assert flight.peak == 2
+    assert flight.started == ["d1", "d2", "d3", "d4", "d5"]
+    assert stats["total_collected"] == 5
+    assert stats["errors"] == []
+    assert sorted(e.domain for e in events if e.event_type == SSEEventType.RESULT) == ["d1", "d2", "d3", "d4", "d5"]
+
+
+@pytest.mark.asyncio
+async def test_collect_domain_phase_forwards_events_as_they_happen(monkeypatch):
+    """A fast domain's RESULT reaches the caller while a slow one is still collecting."""
+    _patch_transform(monkeypatch)
+    slow_gate = asyncio.Event()
+
+    async def _api_query(mgmt_name, domain, **kwargs):
+        if domain == "slow":
+            await slow_gate.wait()
+        return _gateway_result(domain)
+
+    service, *_ = _make_service(api_query_side_effect=_api_query, concurrency=2)
+    stats = {"total_collected": 0, "errors": [], "aborted": False}
+    stream = service._collect_domain_phase({"mgmt1": ["slow", "fast"]}, "auto", stats)
+
+    seen = []
+
+    async def _until_first_result():
+        async for event in stream:
+            seen.append(event)
+            if event.event_type == SSEEventType.RESULT:
+                return
+
+    await asyncio.wait_for(_until_first_result(), 2)
+    assert seen[-1].domain == "fast"
+    slow_gate.set()
+    seen.extend([e async for e in stream])
+    assert [e.domain for e in seen if e.event_type == SSEEventType.RESULT] == ["fast", "slow"]
+    assert stats["total_collected"] == 2
+
+
+@pytest.mark.asyncio
+async def test_collect_domain_phase_stats_do_not_depend_on_completion_order(monkeypatch):
+    """Domains finishing in reverse order give the same errors (same order) and total as a sequential run."""
+    _patch_transform(monkeypatch)
+    target = {"mgmt1": ["d1", "bad1", "d2"], "mgmt2": ["bad2", "d3"]}
+    order = [d for ds in target.values() for d in ds]
+
+    def _make_query(reverse):
+        async def _api_query(mgmt_name, domain, **kwargs):
+            if reverse:
+                # The earlier the domain, the later it finishes.
+                for _ in range((len(order) - order.index(domain)) * 5):
+                    await asyncio.sleep(0)
+            if domain.startswith("bad"):
+                return _api_result(success=False, message=f"{domain} boom", code="E1", objects=None)
+            return _gateway_result(domain)
+
+        return _api_query
+
+    sequential, *_ = _make_service(api_query_side_effect=_make_query(False), concurrency=1)
+    concurrent, *_ = _make_service(api_query_side_effect=_make_query(True), concurrency=5)
+    seq_stats = {"total_collected": 0, "errors": ["earlier phase error"], "aborted": False}
+    con_stats = {"total_collected": 0, "errors": ["earlier phase error"], "aborted": False}
+
+    seq_events = [e async for e in sequential._collect_domain_phase(target, "auto", seq_stats)]
+    con_events = [e async for e in concurrent._collect_domain_phase(target, "auto", con_stats)]
+
+    # The concurrent run really did finish out of order...
+    con_results = [e.domain for e in con_events if e.event_type in (SSEEventType.RESULT, SSEEventType.ERROR)]
+    assert con_results != [e.domain for e in seq_events if e.event_type in (SSEEventType.RESULT, SSEEventType.ERROR)]
+    # ...and still produced the sequential stats, errors in scope order.
+    assert con_stats == seq_stats
+    assert con_stats["errors"] == [
+        "earlier phase error",
+        "mgmt1:bad1 - bad1 boom",
+        "mgmt2:bad2 - bad2 boom",
+    ]
+    assert con_stats["total_collected"] == 3
+    assert sorted(_event_trace(con_events), key=str) == sorted(_event_trace(seq_events), key=str)
+
+
+@pytest.mark.asyncio
+async def test_collect_domain_phase_one_raising_domain_does_not_stop_the_others(monkeypatch):
+    """An exception escaping one domain's stream becomes that domain's ERROR; the others finish."""
+    _patch_transform(monkeypatch)
+    service, *_ = _make_service(api_query_side_effect=lambda mgmt_name, domain, **kw: _gateway_result(domain))
+    original = service._refresh_domain_assets_impl
+
+    async def _impl(mgmt_name, domain_name, cache_mode="auto"):
+        if domain_name == "boom":
+            raise RuntimeError("stream exploded")
+        async for event in original(mgmt_name, domain_name, cache_mode=cache_mode):
+            yield event
+
+    service._refresh_domain_assets_impl = _impl
+    stats = {"total_collected": 0, "errors": [], "aborted": False}
+
+    events = [e async for e in service._collect_domain_phase({"mgmt1": ["d1", "boom", "d2"]}, "auto", stats)]
+
+    errors = [e for e in events if e.event_type == SSEEventType.ERROR]
+    assert [(e.mgmt_name, e.domain, e.data["error_message"]) for e in errors] == [("mgmt1", "boom", "stream exploded")]
+    assert sorted(e.domain for e in events if e.event_type == SSEEventType.RESULT) == ["d1", "d2"]
+    assert stats == {"total_collected": 2, "errors": ["mgmt1:boom - stream exploded"], "aborted": False}
+
+
+@pytest.mark.asyncio
+async def test_collect_domain_phase_lock_loss_cancels_outstanding_domains(monkeypatch):
+    """Renewal fails before the third domain: the one still running is cancelled, one lock ERROR, aborted."""
+    _patch_transform(monkeypatch)
+    lock_context = MagicMock()
+    # per-mgmt, d1, d2 renew fine; the renewal before d3 fails.
+    lock_context.renew_if_needed = AsyncMock(side_effect=[None, None, None, RuntimeError("lock expired")])
+    monkeypatch.setattr(
+        "arodonata.api.services.asset_refresh_service.get_current_lock_context",
+        lambda: lock_context,
+    )
+    cancelled = []
+    never = asyncio.Event()
+
+    async def _api_query(mgmt_name, domain, **kwargs):
+        if domain == "stuck":
+            try:
+                await never.wait()
+            except asyncio.CancelledError:
+                cancelled.append(domain)
+                raise
+        return _gateway_result(domain)
+
+    service, _mgmt, _ds, _cache, api_query = _make_service(api_query_side_effect=_api_query, concurrency=2)
+    stats = {"total_collected": 0, "errors": [], "aborted": False}
+
+    events = await asyncio.wait_for(
+        _collect_all(service._collect_domain_phase({"mgmt1": ["d1", "stuck", "d3"]}, "auto", stats)), 2
+    )
+
+    assert cancelled == ["stuck"]
+    assert [call.kwargs["domain"] for call in api_query.await_args_list] == ["d1", "stuck"]
+    lock_errors = [e for e in events if "Lock lost during operation" in (e.data.get("error_message") or "")]
+    assert len(lock_errors) == 1
+    assert events[-1] is lock_errors[0]
+    assert (lock_errors[0].mgmt_name, lock_errors[0].domain) == ("mgmt1", "d3")
+    assert stats["aborted"] is True
+    # d1 finished before the loss and is still counted; the cancelled domain yields nothing more.
+    assert stats["total_collected"] == 1
+    assert not any(e.domain == "stuck" and e.event_type != SSEEventType.LOG for e in events)
+
+
+async def _collect_all(stream):
+    return [e async for e in stream]
+
+
+@pytest.mark.asyncio
+async def test_collect_domain_phase_closing_the_stream_cancels_running_domains(monkeypatch):
+    _patch_transform(monkeypatch)
+    cancelled = []
+    never = asyncio.Event()
+
+    async def _api_query(mgmt_name, domain, **kwargs):
+        try:
+            await never.wait()
+        except asyncio.CancelledError:
+            cancelled.append(domain)
+            raise
+
+    service, *_ = _make_service(api_query_side_effect=_api_query, concurrency=3)
+    stats = {"total_collected": 0, "errors": [], "aborted": False}
+    stream = service._collect_domain_phase({"mgmt1": ["d1", "d2", "d3"]}, "auto", stats)
+
+    first = await asyncio.wait_for(stream.__anext__(), 2)
+    assert first.event_type == SSEEventType.LOG
+    for _ in range(10):
+        await asyncio.sleep(0)
+    await asyncio.wait_for(stream.aclose(), 2)
+
+    assert sorted(cancelled) == ["d1", "d2", "d3"]
+
+
+@pytest.mark.asyncio
+async def test_collect_domain_phase_concurrency_one_reproduces_the_sequential_sequence(monkeypatch):
+    """With concurrency 1 renewals, api calls and events interleave exactly as the old one-domain loop did.
+
+    The caller's handling of each event comes before the domain goes on: "Processing" is seen before the
+    domain's query starts, and the next renewal only after the previous domain's last event was taken.
+    """
+    _patch_transform(monkeypatch)
+    trace = []
+    lock_context = MagicMock()
+
+    async def _renew():
+        trace.append(("renew",))
+
+    lock_context.renew_if_needed = AsyncMock(side_effect=_renew)
+    monkeypatch.setattr(
+        "arodonata.api.services.asset_refresh_service.get_current_lock_context",
+        lambda: lock_context,
+    )
+
+    async def _api_query(mgmt_name, domain, **kwargs):
+        trace.append(("query", mgmt_name, domain))
+        await asyncio.sleep(0)
+        if domain == "bad":
+            return _api_result(success=False, message="boom", code="E1", objects=None)
+        return _gateway_result(domain)
+
+    service, *_ = _make_service(api_query_side_effect=_api_query, concurrency=1)
+    stats = {"total_collected": 0, "errors": [], "aborted": False}
+    target = {"mgmt1": ["d1", "", "bad"], "empty": [], "mgmt2": ["d2"]}
+
+    async for event in service._collect_domain_phase(target, "auto", stats):
+        trace.append(("event", event.event_type, event.mgmt_name, event.domain))
+
+    log, result, error = SSEEventType.LOG, SSEEventType.RESULT, SSEEventType.ERROR
+    assert trace == [
+        ("renew",),
+        ("renew",),
+        ("event", log, "mgmt1", "d1"),
+        ("query", "mgmt1", "d1"),
+        ("event", result, "mgmt1", "d1"),
+        ("renew",),
+        ("event", log, "mgmt1", "bad"),
+        ("query", "mgmt1", "bad"),
+        ("event", error, "mgmt1", "bad"),
+        ("renew",),
+        ("renew",),
+        ("renew",),
+        ("event", log, "mgmt2", "d2"),
+        ("query", "mgmt2", "d2"),
+        ("event", result, "mgmt2", "d2"),
+    ]
+    assert stats == {"total_collected": 2, "errors": ["mgmt1:bad - boom"], "aborted": False}
+
+
+@pytest.mark.asyncio
+async def test_prepare_scope_populates_servers_concurrently_and_keeps_scope_order():
+    """The second server finishing first still leaves the scope (and so the domain phase) in target order."""
+    first_gate = asyncio.Event()
+    domain_service = AsyncMock()
+
+    async def _populate(mgmt_name, cache_mode="auto"):
+        if mgmt_name == "mgmt1":
+            await first_gate.wait()
+        else:
+            first_gate.set()  # only reachable if mgmt2 runs while mgmt1 waits
+        return {"mgmt1": ["", "a"], "mgmt2": ["", "b"]}[mgmt_name]
+
+    domain_service.populate_domain_cache = AsyncMock(side_effect=_populate)
+    service, *_ = _make_service(domain_service=domain_service, concurrency=2)
+    scope: dict[str, list[str]] = {}
+    to_delete: set[str] = set()
+
+    events = await asyncio.wait_for(
+        _collect_all(service._prepare_scope(["mgmt1", "mgmt2"], ["a", "b"], "auto", scope, to_delete)), 2
+    )
+
+    assert list(scope) == ["mgmt1", "mgmt2"]
+    assert scope == {"mgmt1": ["a"], "mgmt2": ["b"]}
+    assert to_delete == {"a", "b"}
+    assert [e.mgmt_name for e in events if e.event_type == SSEEventType.LOG] == ["mgmt2", "mgmt1"]
+
+
+@pytest.mark.asyncio
+async def test_prepare_scope_exception_becomes_that_servers_error():
+    domain_service = AsyncMock()
+
+    async def _populate(mgmt_name, cache_mode="auto"):
+        if mgmt_name == "bad":
+            raise RuntimeError("no route")
+        return ["", "a"]
+
+    domain_service.populate_domain_cache = AsyncMock(side_effect=_populate)
+    service, *_ = _make_service(domain_service=domain_service)
+    scope: dict[str, list[str]] = {}
+
+    events = [e async for e in service._prepare_scope(["bad", "good"], [], "auto", scope, None)]
+
+    errors = [e for e in events if e.event_type == SSEEventType.ERROR]
+    assert [(e.mgmt_name, e.data["error_message"]) for e in errors] == [("bad", "Failed to populate domains: no route")]
+    assert scope == {"good": ["", "a"]}
+
+
+@pytest.mark.asyncio
+async def test_collect_mds_phase_collects_servers_concurrently_and_keeps_error_order(monkeypatch):
+    _patch_transform(monkeypatch)
+    gate = asyncio.Event()
+    service, mgmt_client, *_ = _make_service(is_mdm=True, concurrency=3)
+
+    async def _get_server(mgmt_name):
+        if mgmt_name == "bad1":
+            await gate.wait()  # finishes last
+            raise RuntimeError("first down")
+        if mgmt_name == "bad2":
+            raise RuntimeError("second down")
+        gate.set()
+        return SimpleNamespace(is_mdm=True)
+
+    mgmt_client.get_server = AsyncMock(side_effect=_get_server)
+
+    async def _api_query(mgmt_name, **kwargs):
+        return _api_result(objects=[{"uid": f"{mgmt_name}-mds", "domain": {"name": "System Data", "uid": "sd"}}])
+
+    service._api_query = AsyncMock(side_effect=_api_query)
+    stats = {"total_collected": 0, "errors": [], "aborted": False}
+
+    events = await asyncio.wait_for(_collect_all(service._collect_mds_phase(["bad1", "ok", "bad2"], "auto", stats)), 2)
+
+    assert stats["total_collected"] == 1
+    assert stats["errors"] == ["bad1 MDS collection - first down", "bad2 MDS collection - second down"]
+    assert [e.mgmt_name for e in events if e.event_type == SSEEventType.ERROR] == ["bad2", "bad1"]
