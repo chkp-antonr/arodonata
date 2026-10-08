@@ -7,10 +7,16 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import StaticPool
+from sqlmodel import SQLModel
 
 from arodonata.api.asset_transformer import AssetTransformer
 from arodonata.api.schemas import SSEEventType
 from arodonata.api.services.asset_refresh_service import AssetRefreshService
+from arodonata.cache.database import DatabaseManager
+from arodonata.cache.models import Asset
+from arodonata.cache.repository import CacheRepository
 
 
 def _api_result(objects=None, success=True, message="", code=None):
@@ -88,7 +94,7 @@ async def test_refresh_domain_assets_upserts_and_yields_result(monkeypatch):
     api_result = _api_result(objects=[{"uid": "gw-uid-1", "name": "gw1"}])
     service, _mgmt, domain_service, cache, api_query = _make_service(api_query_result=api_result)
 
-    fake_asset = SimpleNamespace(asset_id="mgmt1:domainA:gw1")
+    fake_asset = SimpleNamespace(asset_id="mgmt1:domainA:gw1", parent_asset_id="")
     monkeypatch.setattr(AssetTransformer, "transform_to_asset", MagicMock(return_value=fake_asset))
 
     events = [event async for event in service.refresh_domain_assets("mgmt1", "domainA")]
@@ -141,7 +147,7 @@ async def test_refresh_domain_assets_skips_transform_failures(monkeypatch):
     api_result = _api_result(objects=[{"uid": "gw-uid-1", "name": "gw1"}, {"bad": "object"}])
     service, _mgmt, _domain_service, cache, _api_query = _make_service(api_query_result=api_result)
 
-    fake_asset = SimpleNamespace(asset_id="mgmt1:domainA:gw1")
+    fake_asset = SimpleNamespace(asset_id="mgmt1:domainA:gw1", parent_asset_id="")
     monkeypatch.setattr(AssetTransformer, "transform_to_asset", MagicMock(side_effect=[fake_asset, None]))
 
     events = [event async for event in service.refresh_domain_assets("mgmt1", "domainA")]
@@ -165,6 +171,84 @@ async def test_refresh_domain_assets_catches_unexpected_exception():
     cache.upsert_assets.assert_not_awaited()
 
 
+@pytest.fixture
+async def sqlite_repo():
+    """A CacheRepository on a shared in-memory SQLite database."""
+    engine = create_async_engine(
+        "sqlite+aiosqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    yield CacheRepository(DatabaseManager(engine))
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_refresh_domain_assets_keeps_parent_links(sqlite_repo):
+    """A per-domain refresh does not run relationship processing, so it must
+    not erase the parent links a full refresh wrote: a VS whose VSX lives in
+    another domain, and a cluster member."""
+    await sqlite_repo.upsert_assets(
+        [
+            Asset(
+                asset_id="mgmt1:domainB:vsx1",
+                name="vsx1",
+                asset_type="CpmiVsxNetobj",
+                asset_uid="vsx-uid",
+                mgmt_name="mgmt1",
+                domain_name="domainB",
+            ),
+            Asset(
+                asset_id="mgmt1:domainA:cl1",
+                name="cl1",
+                asset_type="CpmiGatewayCluster",
+                asset_uid="cl-uid",
+                mgmt_name="mgmt1",
+                domain_name="domainA",
+            ),
+            Asset(
+                asset_id="mgmt1:domainA:vs1",
+                name="vs1",
+                asset_type="CpmiVsNetobj",
+                asset_uid="vs-uid",
+                mgmt_name="mgmt1",
+                domain_name="domainA",
+                parent_asset_id="mgmt1:domainB:vsx1",
+            ),
+            Asset(
+                asset_id="mgmt1:domainA:cl1_m1",
+                name="cl1_m1",
+                asset_type="cluster-member",
+                asset_uid="m1-uid",
+                mgmt_name="mgmt1",
+                domain_name="domainA",
+                parent_asset_id="mgmt1:domainA:cl1",
+            ),
+        ]
+    )
+    api_result = _api_result(
+        objects=[
+            {"uid": "cl-uid", "name": "cl1", "type": "CpmiGatewayCluster"},
+            {"uid": "vs-uid", "name": "vs1", "type": "CpmiVsNetobj", "policy": {"access-policy-name": "p2"}},
+            {"uid": "m1-uid", "name": "cl1_m1", "type": "cluster-member"},
+            {"uid": "gw-uid", "name": "gw1", "type": "simple-gateway"},
+        ]
+    )
+    service, *_ = _make_service(api_query_result=api_result, cache=sqlite_repo)
+
+    events = [event async for event in service.refresh_domain_assets("mgmt1", "domainA")]
+
+    assert not [e for e in events if e.event_type == SSEEventType.ERROR]
+    by_id = {a.asset_id: a for a in await sqlite_repo.get_assets(mgmt_names=["mgmt1"])}
+    assert by_id["mgmt1:domainA:vs1"].parent_asset_id == "mgmt1:domainB:vsx1"
+    assert by_id["mgmt1:domainA:vs1"].raw_data["policy"] == {"access-policy-name": "p2"}
+    assert by_id["mgmt1:domainA:cl1_m1"].parent_asset_id == "mgmt1:domainA:cl1"
+    assert by_id["mgmt1:domainA:cl1"].parent_asset_id is None
+    assert by_id["mgmt1:domainA:gw1"].parent_asset_id is None
+
+
 # ---------------------------------------------------------------------------
 # _collect_mds_assets / MDS phase across MDM servers
 # ---------------------------------------------------------------------------
@@ -177,7 +261,7 @@ async def test_collect_mds_assets_upserts_with_domain_from_object(monkeypatch):
     )
     service, _mgmt, _domain_service, cache, api_query = _make_service(api_query_result=api_result)
 
-    fake_asset = SimpleNamespace(asset_id="mgmt1:System Data:mds1")
+    fake_asset = SimpleNamespace(asset_id="mgmt1:System Data:mds1", parent_asset_id="")
     transform_mock = MagicMock(return_value=fake_asset)
     monkeypatch.setattr(AssetTransformer, "transform_to_asset", transform_mock)
 
@@ -204,7 +288,7 @@ async def test_collect_mds_assets_defaults_domain_when_not_a_dict(monkeypatch):
     api_result = _api_result(objects=[{"uid": "mds-uid-1", "name": "mds1", "domain": "unexpected-string"}])
     service, _mgmt, _domain_service, cache, _api_query = _make_service(api_query_result=api_result)
 
-    fake_asset = SimpleNamespace(asset_id="mgmt1:System Data:mds1")
+    fake_asset = SimpleNamespace(asset_id="mgmt1:System Data:mds1", parent_asset_id="")
     transform_mock = MagicMock(return_value=fake_asset)
     monkeypatch.setattr(AssetTransformer, "transform_to_asset", transform_mock)
 
@@ -502,7 +586,7 @@ async def test_collect_domain_phase_renews_lock_per_mgmt_and_per_domain(monkeypa
     api_result = _api_result(objects=[{"uid": "gw-uid-1", "name": "gw1"}])
     service, _mgmt, _domain_service, cache, _api_query = _make_service(api_query_result=api_result)
 
-    fake_asset = SimpleNamespace(asset_id="mgmt1:domainA:gw1")
+    fake_asset = SimpleNamespace(asset_id="mgmt1:domainA:gw1", parent_asset_id="")
     monkeypatch.setattr(AssetTransformer, "transform_to_asset", MagicMock(return_value=fake_asset))
 
     stats = {"total_collected": 0, "errors": [], "aborted": False}
@@ -575,7 +659,7 @@ async def test_collect_domain_phase_skips_renewal_when_no_lock_context(monkeypat
     api_result = _api_result(objects=[{"uid": "gw-uid-1", "name": "gw1"}])
     service, _mgmt, _domain_service, cache, _api_query = _make_service(api_query_result=api_result)
 
-    fake_asset = SimpleNamespace(asset_id="mgmt1:domainA:gw1")
+    fake_asset = SimpleNamespace(asset_id="mgmt1:domainA:gw1", parent_asset_id="")
     monkeypatch.setattr(AssetTransformer, "transform_to_asset", MagicMock(return_value=fake_asset))
 
     stats = {"total_collected": 0, "errors": [], "aborted": False}
@@ -843,7 +927,7 @@ async def test_build_refresh_assets_cache_single_domain_no_lock_collision(monkey
     api_result = _api_result(objects=[{"uid": "gw-uid-1", "name": "gw1"}])
     service, mgmt_client, _domain_service, cache, _api_query = _make_service(api_query_result=api_result)
 
-    fake_asset = SimpleNamespace(asset_id="mgmt1:domainA:gw1")
+    fake_asset = SimpleNamespace(asset_id="mgmt1:domainA:gw1", parent_asset_id="")
     monkeypatch.setattr(AssetTransformer, "transform_to_asset", MagicMock(return_value=fake_asset))
 
     events = [
@@ -912,7 +996,7 @@ async def test_build_refresh_assets_cache_continues_after_one_mgmt_name_domain_p
         api_query_result=api_result,
     )
 
-    fake_asset = SimpleNamespace(asset_id="good-mgmt:domainA:gw1")
+    fake_asset = SimpleNamespace(asset_id="good-mgmt:domainA:gw1", parent_asset_id="")
     monkeypatch.setattr(AssetTransformer, "transform_to_asset", MagicMock(return_value=fake_asset))
 
     events = [event async for event in service.build_refresh_assets_cache(mgmt_names=["bad-mgmt", "good-mgmt"])]
@@ -1038,7 +1122,7 @@ async def test_build_refresh_assets_cache_emits_progress_events_for_full_run(mon
     service._cluster_manager_class = MagicMock(return_value=cluster_manager_instance)
     service._vsx_manager_class = MagicMock(return_value=vsx_manager_instance)
 
-    fake_asset = SimpleNamespace(asset_id="mgmt1:domainA:gw1")
+    fake_asset = SimpleNamespace(asset_id="mgmt1:domainA:gw1", parent_asset_id="")
     monkeypatch.setattr(AssetTransformer, "transform_to_asset", MagicMock(return_value=fake_asset))
 
     events = [event async for event in service.build_refresh_assets_cache(mgmt_names="mgmt1", domains="domainA")]
@@ -1066,7 +1150,7 @@ def _patch_transform(monkeypatch):
     monkeypatch.setattr(
         AssetTransformer,
         "transform_to_asset",
-        MagicMock(side_effect=lambda obj, **kwargs: SimpleNamespace(asset_id=obj["uid"])),
+        MagicMock(side_effect=lambda obj, **kwargs: SimpleNamespace(asset_id=obj["uid"], parent_asset_id="")),
     )
 
 
