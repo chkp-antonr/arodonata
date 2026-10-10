@@ -136,3 +136,26 @@ async def test_search_objects_with_refresh_invokes_refresh_objects_fn():
     assert "Refreshing m1" in event_messages
     assert "Refresh done" not in event_messages
     assert events[-1].event_type == SSEEventType.COMPLETE
+
+
+@pytest.mark.asyncio
+async def test_search_objects_passes_search_comments():
+    mock_obj_svc = MagicMock()
+    mock_obj_svc._cache.get_objects_by_name = AsyncMock(return_value=[])
+
+    svc = SearchService(object_service=mock_obj_svc, refresh_objects_fn=AsyncMock())
+    _ = [e async for e in svc.search_objects("ticket-1234", search_comments=False)]
+    mock_obj_svc._cache.get_objects_by_name.assert_awaited_with(
+        name="ticket-1234",
+        mgmt_names=None,
+        domain_names=None,
+        search_comments=False,
+    )
+
+    _ = [e async for e in svc.search_objects("ticket-1234", search_comments=True)]
+    mock_obj_svc._cache.get_objects_by_name.assert_awaited_with(
+        name="ticket-1234",
+        mgmt_names=None,
+        domain_names=None,
+        search_comments=True,
+    )

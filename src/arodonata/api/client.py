@@ -1078,6 +1078,7 @@ class ArodonataClient:
         domain_names: list[str] | None = None,
         refresh: Literal["skip", "check", "force", "incremental"] = "skip",
         max_depth: int = 2,
+        search_comments: bool = True,
     ) -> AsyncGenerator[SSEEvent]:
         """Search for Check Point objects with cache-first queries.
 
@@ -1087,6 +1088,7 @@ class ArodonataClient:
             domain_names: Optional domain filter.
             refresh: Refresh mode - "skip", "check", "force", or "incremental".
             max_depth: Maximum depth for group membership traversal.
+            search_comments: Whether to include object comments in search matching.
 
         Yields:
             SSEEvent with refresh progress and domain-grouped search results.
@@ -1099,6 +1101,7 @@ class ArodonataClient:
             domain_names=domain_names,
             refresh=refresh,
             max_depth=max_depth,
+            search_comments=search_comments,
         ):
             yield event
 

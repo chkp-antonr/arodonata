@@ -912,3 +912,17 @@ async def test_update_keepalive_updates_memory_and_db(repo: CacheRepository) -> 
     async with open_session(repo) as session:
         row = (await session.execute(sa_select(SIDCache))).scalar_one()
     assert row.last_keepalive is not None and row.last_keepalive >= before
+
+
+async def test_get_objects_by_name_comments_toggle(repo):
+    await repo.upsert_objects(
+        [
+            make_object("c1", name="srv-app-1", comments="Decommission ticket CHG-9999"),
+            make_object("c2", name="srv-app-2", comments="Normal server"),
+        ]
+    )
+    found = await repo.get_objects_by_name("CHG-9999", search_comments=True)
+    assert {o.uid for o in found} == {"c1"}
+
+    not_found = await repo.get_objects_by_name("CHG-9999", search_comments=False)
+    assert len(not_found) == 0
