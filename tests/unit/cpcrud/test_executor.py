@@ -596,3 +596,6 @@ async def test_executor_dns_domain_defensive_default():
     assert report.results[1].outcome == Outcome.CREATE
     assert ("add-dns-domain", {"name": ".example.com", "is-sub-domain": True}) in client.calls
     assert ("add-dns-domain", {"name": "example.com", "is-sub-domain": False}) in client.calls
+    # Ensure PlannedAction.payload was not mutated in-place
+    assert plan.actions[0].payload is not None and "is-sub-domain" not in plan.actions[0].payload
+    assert plan.actions[1].payload is not None and "is-sub-domain" not in plan.actions[1].payload

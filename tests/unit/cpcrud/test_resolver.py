@@ -2061,6 +2061,7 @@ class TestNatObjectUidConstants:
 
         assert pkg_uid == NAT_ORIGINAL_OBJECT_UID
 
+    def test_nat_original_object_uid_exported_from_top_level_package(self):
         import arodonata
 
         assert arodonata.NAT_ORIGINAL_OBJECT_UID == NAT_ORIGINAL_OBJECT_UID
@@ -2081,7 +2082,7 @@ async def test_resolve_add_dns_domain_commands():
     fake_reader = AsyncMock()
     fake_reader.get_by_name = AsyncMock(return_value=None)
 
-    # Add
+    # Add (explicit is-sub-domain)
     act_add = await resolve_add(
         fake_reader,
         "dns-domain",
@@ -2094,6 +2095,22 @@ async def test_resolve_add_dns_domain_commands():
     )
     assert act_add.command == "add-dns-domain"
     assert act_add.outcome == Outcome.CREATE
+    assert act_add.payload["is-sub-domain"] is True
+
+    # Add (defaulted from leading dot)
+    act_add_default = await resolve_add(
+        fake_reader,
+        "dns-domain",
+        {"name": ".example.com"},
+        on_name=NameConflictPolicy.ERROR,
+        on_ip=IpConflictPolicy.REUSE,
+        mgmt="m1",
+        domain="d1",
+        action_id="act-0001b",
+    )
+    assert act_add_default.command == "add-dns-domain"
+    assert act_add_default.outcome == Outcome.CREATE
+    assert act_add_default.payload["is-sub-domain"] is True
 
     # Update (not found -> error)
     act_upd = await resolve_update(

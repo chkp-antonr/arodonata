@@ -57,8 +57,10 @@ def _prepare_action_payload(action: PlannedAction) -> dict[str, Any] | None:
     if action.payload is None:
         return None
     if action.type == "dns-domain" and action.command == "add-dns-domain" and "is-sub-domain" not in action.payload:
-        name = action.payload.get("name") or action.resolved_name or ""
-        action.payload["is-sub-domain"] = name.startswith(".")
+        payload = dict(action.payload)
+        name = payload.get("name") or action.resolved_name or ""
+        payload["is-sub-domain"] = name.startswith(".")
+        return payload
     return action.payload
 
 

@@ -175,6 +175,9 @@ exclude = [
     "**/__pycache__",
     "**/.*",
 ]
+ignore = [
+    "tests/**",
+]
 reportMissingImports = "warning"
 
 [tool.commitizen]

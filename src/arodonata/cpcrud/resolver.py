@@ -127,6 +127,9 @@ async def resolve_add(
     domain: str,
     action_id: str,
 ) -> PlannedAction:
+    if object_type == "dns-domain" and ("is-sub-domain" not in desired or desired.get("is-sub-domain") is None):
+        name = desired.get("name", "")
+        desired = {**desired, "is-sub-domain": name.startswith(".")}
     name = desired.get("name", "")
     suffix = _TYPE_CMD.get(object_type, object_type)
     base = PlannedAction(
