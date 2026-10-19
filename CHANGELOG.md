@@ -8,6 +8,13 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 via [commitizen](https://commitizen-tools.github.io/commitizen/) — do not
 hand-edit released sections, only the `[Unreleased]` section above them.
 
+## v1.15.0 (2026-10-19)
+
+### Feat
+
+- **cpcrud**: add Check Point dns-domain support to object cache and cpcrud (#45)
+- **cache**: add search_comments toggle to get_objects_by_name and search_objects
+
 ## v1.14.4 (2026-10-08)
 
 ### Fix
