@@ -2065,3 +2065,84 @@ class TestNatObjectUidConstants:
         import arodonata
 
         assert arodonata.NAT_ORIGINAL_OBJECT_UID == NAT_ORIGINAL_OBJECT_UID
+
+
+@pytest.mark.asyncio
+async def test_resolve_add_dns_domain_commands():
+    from unittest.mock import AsyncMock
+
+    from arodonata.cpcrud.models import IpConflictPolicy, NameConflictPolicy, Outcome
+    from arodonata.cpcrud.resolver import (
+        resolve_add,
+        resolve_delete,
+        resolve_show,
+        resolve_update,
+    )
+
+    fake_reader = AsyncMock()
+    fake_reader.get_by_name = AsyncMock(return_value=None)
+
+    # Add (explicit is-sub-domain)
+    act_add = await resolve_add(
+        fake_reader,
+        "dns-domain",
+        {"name": ".example.com", "is-sub-domain": True},
+        on_name=NameConflictPolicy.ERROR,
+        on_ip=IpConflictPolicy.REUSE,
+        mgmt="m1",
+        domain="d1",
+        action_id="act-0001",
+    )
+    assert act_add.command == "add-dns-domain"
+    assert act_add.outcome == Outcome.CREATE
+    assert act_add.payload["is-sub-domain"] is True
+
+    # Add (defaulted from leading dot)
+    act_add_default = await resolve_add(
+        fake_reader,
+        "dns-domain",
+        {"name": ".example.com"},
+        on_name=NameConflictPolicy.ERROR,
+        on_ip=IpConflictPolicy.REUSE,
+        mgmt="m1",
+        domain="d1",
+        action_id="act-0001b",
+    )
+    assert act_add_default.command == "add-dns-domain"
+    assert act_add_default.outcome == Outcome.CREATE
+    assert act_add_default.payload["is-sub-domain"] is True
+
+    # Update (not found -> error)
+    act_upd = await resolve_update(
+        fake_reader,
+        "dns-domain",
+        {"name": ".example.com"},
+        {"comments": "test"},
+        mgmt="m1",
+        domain="d1",
+        action_id="act-0002",
+    )
+    assert act_upd.outcome == Outcome.ERROR
+
+    # Delete (not found -> already absent)
+    act_del = await resolve_delete(
+        fake_reader,
+        "dns-domain",
+        {"name": ".example.com"},
+        mgmt="m1",
+        domain="d1",
+        action_id="act-0003",
+    )
+    assert act_del.outcome == Outcome.DELETE
+    assert act_del.message == "already absent"
+
+    # Show (not found -> error)
+    act_show = await resolve_show(
+        fake_reader,
+        "dns-domain",
+        {"name": ".example.com"},
+        mgmt="m1",
+        domain="d1",
+        action_id="act-0004",
+    )
+    assert act_show.outcome == Outcome.ERROR

@@ -320,7 +320,7 @@ class ObjectService:
     """
 
     # Object types to fetch from API
-    OBJECT_TYPES = ["host", "network", "address-range", "group"]
+    OBJECT_TYPES = ["host", "network", "address-range", "group", "dns-domain"]
 
     # Above this many collected objects held in memory before the atomic
     # swap, warn so operators can spot unexpectedly large domain refreshes.

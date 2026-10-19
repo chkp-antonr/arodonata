@@ -55,6 +55,31 @@ def _tcp_service_template(mgmt_name: str, domain: str, *, name: str, port: str) 
     }
 
 
+def _dns_domain_template(
+    mgmt_name: str, domain: str, *, name: str, is_sub_domain: bool | None = None, comments: str | None = None
+) -> dict:
+    data: dict = {"name": name}
+    if is_sub_domain is not None:
+        data["is-sub-domain"] = is_sub_domain
+    if comments is not None:
+        data["comments"] = comments
+    return {
+        "management_servers": [
+            {
+                "mgmt_name": mgmt_name,
+                "domains": [
+                    {
+                        "name": domain,
+                        "operations": [
+                            {"type": "dns-domain", "data": data},
+                        ],
+                    },
+                ],
+            },
+        ]
+    }
+
+
 @pytest.mark.cp_mutates
 async def test_apply_twice_is_idempotent(apikey_client, test_domain_a):
     """Applying the same template twice is idempotent: run 2 creates nothing (API-key auth path).
@@ -513,3 +538,78 @@ async def test_reapply_reports_symmetric_counts(admin_client, test_domain_a):
         assert second.summary.get(outcome, 0) == 0, f"second apply should be clean, got: {second.summary}"
 
     assert n1 == n2, f"re-apply result count must be symmetric (260727 asymmetry regressed): {n1} vs {n2}"
+
+
+@pytest.mark.cp_mutates
+async def test_apply_dns_domain_lifecycle_is_clean(admin_client, test_domain_a):
+    """Full lifecycle test for dns-domain: create -> idempotent noop -> update -> delete."""
+    client, mgmt_name = admin_client
+    domain_name = ".cpcrud-live-dns.example.com"
+    template = _dns_domain_template(
+        mgmt_name,
+        test_domain_a,
+        name=domain_name,
+        comments="Initial live dns-domain",
+    )
+
+    # 1. Create (relies on resolver auto-defaulting is-sub-domain=True due to leading dot)
+    first = [i async for i in client.cpcrud.apply(template)][-1]
+    for outcome in ("error", "conflict"):
+        assert first.summary.get(outcome, 0) == 0, f"Run 1 should have no {outcome}, got: {first.summary}"
+    assert first.summary.get("create") == 1
+
+    # 2. Idempotency: re-applying the exact same template produces unchanged
+    second = [i async for i in client.cpcrud.apply(template)][-1]
+    assert second.summary == {"unchanged": 1}
+    assert second.remaining is None
+
+    # 3. Update comments
+    update_template = {
+        "management_servers": [
+            {
+                "mgmt_name": mgmt_name,
+                "domains": [
+                    {
+                        "name": test_domain_a,
+                        "operations": [
+                            {
+                                "operation": "update",
+                                "type": "dns-domain",
+                                "key": {"name": domain_name},
+                                "data": {"comments": "Updated live dns-domain"},
+                            },
+                        ],
+                    },
+                ],
+            },
+        ]
+    }
+    third = [i async for i in client.cpcrud.apply(update_template)][-1]
+    for outcome in ("error", "conflict"):
+        assert third.summary.get(outcome, 0) == 0, f"Run 3 should have no {outcome}, got: {third.summary}"
+    assert third.summary.get("update") == 1
+
+    # 4. Delete
+    delete_template = {
+        "management_servers": [
+            {
+                "mgmt_name": mgmt_name,
+                "domains": [
+                    {
+                        "name": test_domain_a,
+                        "operations": [
+                            {
+                                "operation": "delete",
+                                "type": "dns-domain",
+                                "key": {"name": domain_name},
+                            },
+                        ],
+                    },
+                ],
+            },
+        ]
+    }
+    fourth = [i async for i in client.cpcrud.apply(delete_template)][-1]
+    for outcome in ("error", "conflict"):
+        assert fourth.summary.get(outcome, 0) == 0, f"Run 4 should have no {outcome}, got: {fourth.summary}"
+    assert fourth.summary.get("delete") == 1

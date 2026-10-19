@@ -248,3 +248,48 @@ def test_extract_common_optional_fields_absent_when_not_in_raw_data():
     assert "comments" not in result
     assert "color" not in result
     assert "tags" not in result
+
+
+def test_extract_dns_domain_object():
+    extractor = ObjectExtractor()
+    raw_data = {
+        "uid": "dns123",
+        "name": ".example.com",
+        "type": "dns-domain",
+        "is-sub-domain": True,
+        "comments": "Wildcard domain",
+        "color": "blue",
+        "tags": ["corp", "prod"],
+    }
+
+    result = extractor.extract(raw_data, _ctx("mgmt1", "dmn1"))
+
+    assert result["uid"] == "dns123"
+    assert result["name"] == ".example.com"
+    assert result["type"] == "dns-domain"
+    assert result["mgmt_name"] == "mgmt1"
+    assert result["domain_name"] == "dmn1"
+    assert result["is_sub_domain"] is True
+    assert result["is-sub-domain"] is True
+    assert result["comments"] == "Wildcard domain"
+    assert result["color"] == "blue"
+    assert result["tags"] == "corp,prod"
+    assert result["raw_data"] == raw_data
+
+
+def test_extract_dns_domain_without_subdomain():
+    extractor = ObjectExtractor()
+    raw_data = {
+        "uid": "dns456",
+        "name": "example.com",
+        "type": "dns-domain",
+        "is-sub-domain": False,
+    }
+
+    result = extractor.extract(raw_data, _ctx())
+
+    assert result["uid"] == "dns456"
+    assert result["name"] == "example.com"
+    assert result["type"] == "dns-domain"
+    assert result["is_sub_domain"] is False
+    assert result["is-sub-domain"] is False

@@ -1979,3 +1979,9 @@ async def test_get_last_rule_in_section_failed_read_raises():
 async def test_hybrid_get_last_rule_in_section_delegates_to_live():
     client = FakeClient({"show-access-rulebase": _section_page([], 0)})
     assert await HybridStateReader(client).get_last_rule_in_section("l", "s", "access", mgmt="m", domain="d") is None
+
+
+def test_hybrid_state_reader_caches_dns_domain():
+    from arodonata.cpcrud.statereader import _CACHED_TYPES
+
+    assert "dns-domain" in _CACHED_TYPES

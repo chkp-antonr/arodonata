@@ -580,6 +580,18 @@
         },
         {
           "$ref": "#/definitions/service_group_show"
+        },
+        {
+          "$ref": "#/definitions/dns_domain_add"
+        },
+        {
+          "$ref": "#/definitions/dns_domain_update"
+        },
+        {
+          "$ref": "#/definitions/dns_domain_delete"
+        },
+        {
+          "$ref": "#/definitions/dns_domain_show"
         }
       ]
     },
@@ -757,6 +769,176 @@
           "type": "string"
         },
         "ip-address": {
+          "type": "string"
+        },
+        "uid": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "dns_domain_add": {
+      "type": "object",
+      "required": [
+        "type",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "add"
+        },
+        "type": {
+          "const": "dns-domain"
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/name_conflict_enum"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "is-sub-domain": {
+              "type": "boolean"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "dns_domain_update": {
+      "type": "object",
+      "required": [
+        "type",
+        "key",
+        "data"
+      ],
+      "properties": {
+        "operation": {
+          "const": "update"
+        },
+        "type": {
+          "const": "dns-domain"
+        },
+        "key": {
+          "$ref": "#/definitions/dns_domain_key"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "new-name": {
+              "type": "string"
+            },
+            "is-sub-domain": {
+              "type": "boolean"
+            },
+            "comments": {
+              "type": "string"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/color_enum"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "dns_domain_delete": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "delete"
+        },
+        "type": {
+          "const": "dns-domain"
+        },
+        "key": {
+          "$ref": "#/definitions/dns_domain_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "dns_domain_show": {
+      "type": "object",
+      "required": [
+        "type",
+        "key"
+      ],
+      "properties": {
+        "operation": {
+          "const": "show"
+        },
+        "type": {
+          "const": "dns-domain"
+        },
+        "key": {
+          "$ref": "#/definitions/dns_domain_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "dns_domain_key": {
+      "type": "object",
+      "properties": {
+        "name": {
           "type": "string"
         },
         "uid": {

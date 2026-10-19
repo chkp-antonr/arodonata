@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 log = lazy_logger("arodonata.core.incremental_refresh")
 
 # Must match ObjectService.OBJECT_TYPES — the object kinds the cache holds.
-DEFAULT_IN_SCOPE_TYPES: frozenset[str] = frozenset({"host", "network", "address-range", "group"})
+DEFAULT_IN_SCOPE_TYPES: frozenset[str] = frozenset({"host", "network", "address-range", "group", "dns-domain"})
 DEFAULT_MAX_CHANGES = 500
 
 

@@ -32,6 +32,7 @@ _TYPE_ORDER = {
     "host": 0,
     "network": 0,
     "address-range": 0,
+    "dns-domain": 0,
     "network-group": 1,
     "tcp-service": 2,
     "udp-service": 2,
