@@ -36,6 +36,7 @@ _TYPE_CMD: dict[str, str] = {
     "udp-service": "service-udp",
     "icmp-service": "service-icmp",
     "service-group": "service-group",
+    "dns-domain": "dns-domain",
 }
 
 

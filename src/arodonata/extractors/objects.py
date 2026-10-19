@@ -79,6 +79,14 @@ class ObjectExtractor(BaseExtractor):
             "ipv4_address_last": raw_data.get("ipv4-address-last", ""),
         }
 
+    def _extract_dns_domain_fields(self, raw_data: dict[str, Any]) -> dict[str, Any]:
+        """Extract dns-domain-specific fields."""
+        is_sub = raw_data.get("is-sub-domain", False)
+        return {
+            "is_sub_domain": is_sub,
+            "is-sub-domain": is_sub,
+        }
+
     # Dispatch table: obj_type -> unbound extractor method. Looked up in
     # _extract_type_fields, which passes `self` explicitly.
     _TYPE_EXTRACTORS: dict[str, Any] = {
@@ -87,6 +95,7 @@ class ObjectExtractor(BaseExtractor):
         "group": _extract_group_fields,
         "service-group": _extract_group_fields,
         "address-range": _extract_address_range_fields,
+        "dns-domain": _extract_dns_domain_fields,
     }
 
     def _extract_common_optional_fields(self, raw_data: dict[str, Any]) -> dict[str, Any]:

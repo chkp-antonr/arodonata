@@ -32,6 +32,7 @@ _TYPE_ORDER = {
     "host": 0,
     "network": 0,
     "address-range": 0,
+    "dns-domain": 0,
     "network-group": 1,
     "tcp-service": 2,
     "udp-service": 2,
@@ -318,10 +319,14 @@ class Planner:
             return [*deps, action], counter
         if operation == "add":
             pol_name, pol_ip = self._policy(op, on_name, on_ip)
+            data = op.get("data", {})
+            if otype == "dns-domain" and ("is-sub-domain" not in data or data.get("is-sub-domain") is None):
+                name = data.get("name", "")
+                data = {**data, "is-sub-domain": name.startswith(".")}
             action = await resolve_add(
                 self._reader,
                 otype,
-                op.get("data", {}),
+                data,
                 on_name=pol_name,
                 on_ip=pol_ip,
                 mgmt=mgmt,

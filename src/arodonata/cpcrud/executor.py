@@ -15,6 +15,7 @@ from .resolver import StateReadError
 
 if TYPE_CHECKING:
     from ..api.client import ArodonataClient
+    from ..api.schemas import ApiCallResult
 
 _WRITE_OUTCOMES = (Outcome.CREATE, Outcome.UPDATE, Outcome.DELETE)
 _FAILURE_OUTCOMES = {Outcome.ERROR, Outcome.LOCKED, Outcome.CONFLICT, Outcome.SKIPPED_DEPENDENCY}
@@ -50,6 +51,15 @@ def classify_api_error(message: str, code: str) -> str | None:
     if "not found" in text or "object_not_found" in text:
         return "missing"
     return None
+
+
+def _prepare_action_payload(action: PlannedAction) -> dict[str, Any] | None:
+    if action.payload is None:
+        return None
+    if action.type == "dns-domain" and action.command == "add-dns-domain" and "is-sub-domain" not in action.payload:
+        name = action.payload.get("name") or action.resolved_name or ""
+        action.payload["is-sub-domain"] = name.startswith(".")
+    return action.payload
 
 
 class Executor:
@@ -258,12 +268,72 @@ class Executor:
             message=f"delete blocked: {reason}",
         )
 
+    async def _handle_api_failure(
+        self, mgmt: str, sid: str, server_ip: str, action: PlannedAction, res: ApiCallResult
+    ) -> ActionResult:
+        kind = classify_api_error(res.message, res.code)
+        if kind == "locked":
+            return ActionResult(
+                action_id=action.id,
+                outcome=Outcome.LOCKED,
+                type=action.type,
+                name=action.resolved_name,
+                mgmt_name=action.mgmt_name,
+                domain_name=action.domain_name,
+                uid=action.resolved_uid,
+                locking_session=await self._find_locking_session(mgmt, sid, server_ip, action.domain_name),
+                message=res.message,
+            )
+        if kind == "exists" and action.operation == "add":
+            message = "drift: object appeared since plan; reusing existing"
+            try:
+                live = await self._reader.get_by_name(
+                    action.type, action.resolved_name, mgmt=mgmt, domain=action.domain_name
+                )
+            except StateReadError as exc:  # the server said it exists; only its uid is unknown
+                live = None
+                message += f" (uid lookup failed: {exc})"
+            return ActionResult(
+                action_id=action.id,
+                outcome=Outcome.DRIFTED,
+                type=action.type,
+                name=action.resolved_name,
+                mgmt_name=action.mgmt_name,
+                domain_name=action.domain_name,
+                uid=live.uid if live else None,
+                message=message,
+            )
+        if kind == "missing" and action.operation in ("update", "delete"):
+            message = (
+                "drift: object already gone" if action.operation == "delete" else "drift: object vanished since plan"
+            )
+            return ActionResult(
+                action_id=action.id,
+                outcome=Outcome.DRIFTED,
+                type=action.type,
+                name=action.resolved_name,
+                mgmt_name=action.mgmt_name,
+                domain_name=action.domain_name,
+                uid=action.resolved_uid,
+                message=message,
+            )
+        return ActionResult(
+            action_id=action.id,
+            outcome=Outcome.ERROR,
+            type=action.type,
+            name=action.resolved_name,
+            mgmt_name=action.mgmt_name,
+            domain_name=action.domain_name,
+            message=res.message or "API call failed",
+        )
+
     async def _execute_action_inner(self, mgmt: str, sid: str, server_ip: str, action: PlannedAction) -> ActionResult:
         if action.operation == "delete" and action.command is not None and action.resolved_uid:
             blocked = await self._delete_blocked(mgmt, action, action.resolved_uid)
             if blocked is not None:
                 return blocked
-        if action.command is None or action.payload is None:
+        payload = _prepare_action_payload(action)
+        if action.command is None or payload is None:
             # UNCHANGED / REUSE / CONFLICT / ERROR decided at plan time -> no write
             return ActionResult(
                 action_id=action.id,
@@ -281,7 +351,7 @@ class Executor:
                 sid,
                 server_ip,
                 action.command,
-                payload=action.payload,
+                payload=payload,
                 wait_for_task=True,
                 domain=action.domain_name,
             )
@@ -296,63 +366,7 @@ class Executor:
                 message=f"{action.command} raised: {exc}",
             )
         if not res.success:
-            kind = classify_api_error(res.message, res.code)
-            if kind == "locked":
-                return ActionResult(
-                    action_id=action.id,
-                    outcome=Outcome.LOCKED,
-                    type=action.type,
-                    name=action.resolved_name,
-                    mgmt_name=action.mgmt_name,
-                    domain_name=action.domain_name,
-                    uid=action.resolved_uid,
-                    locking_session=await self._find_locking_session(mgmt, sid, server_ip, action.domain_name),
-                    message=res.message,
-                )
-            if kind == "exists" and action.operation == "add":
-                message = "drift: object appeared since plan; reusing existing"
-                try:
-                    live = await self._reader.get_by_name(
-                        action.type, action.resolved_name, mgmt=mgmt, domain=action.domain_name
-                    )
-                except StateReadError as exc:  # the server said it exists; only its uid is unknown
-                    live = None
-                    message += f" (uid lookup failed: {exc})"
-                return ActionResult(
-                    action_id=action.id,
-                    outcome=Outcome.DRIFTED,
-                    type=action.type,
-                    name=action.resolved_name,
-                    mgmt_name=action.mgmt_name,
-                    domain_name=action.domain_name,
-                    uid=live.uid if live else None,
-                    message=message,
-                )
-            if kind == "missing" and action.operation in ("update", "delete"):
-                message = (
-                    "drift: object already gone"
-                    if action.operation == "delete"
-                    else "drift: object vanished since plan"
-                )
-                return ActionResult(
-                    action_id=action.id,
-                    outcome=Outcome.DRIFTED,
-                    type=action.type,
-                    name=action.resolved_name,
-                    mgmt_name=action.mgmt_name,
-                    domain_name=action.domain_name,
-                    uid=action.resolved_uid,
-                    message=message,
-                )
-            return ActionResult(
-                action_id=action.id,
-                outcome=Outcome.ERROR,
-                type=action.type,
-                name=action.resolved_name,
-                mgmt_name=action.mgmt_name,
-                domain_name=action.domain_name,
-                message=res.message or "API call failed",
-            )
+            return await self._handle_api_failure(mgmt, sid, server_ip, action, res)
         data = extract_data_from_response(res)
         uid = data.get("uid") if isinstance(data, dict) else None
         return ActionResult(

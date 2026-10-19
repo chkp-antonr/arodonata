@@ -529,3 +529,70 @@ async def test_locked_lookup_carries_the_domain():
     commands = {c.args[3]: c.kwargs["domain"] for c in client.api_call_with_sid.await_args_list}
     assert commands["set-host"] == "d"
     assert commands["show-sessions"] == "d"
+
+
+@pytest.mark.asyncio
+async def test_executor_dns_domain_add_executes_add_dns_domain():
+    client = FakeClient()
+    reader = AsyncMock()
+    reader.get_last_publish_session.return_value = "sess-AFTER"
+    exe = Executor(client, reader)
+    plan = Plan(
+        actions=[
+            PlannedAction(
+                id="act-0001",
+                operation="add",
+                type="dns-domain",
+                outcome=Outcome.CREATE,
+                mgmt_name="m1",
+                domain_name="General",
+                resolved_name=".example.com",
+                command="add-dns-domain",
+                payload={"name": ".example.com", "is-sub-domain": True},
+            )
+        ]
+    )
+    report = await exe.execute(plan)
+    assert report.results[0].action_id == "act-0001"
+    assert report.results[0].outcome == Outcome.CREATE
+    assert report.results[0].type == "dns-domain"
+    assert ("add-dns-domain", {"name": ".example.com", "is-sub-domain": True}) in client.calls
+
+
+@pytest.mark.asyncio
+async def test_executor_dns_domain_defensive_default():
+    client = FakeClient()
+    reader = AsyncMock()
+    reader.get_last_publish_session.return_value = "sess-AFTER"
+    exe = Executor(client, reader)
+    plan = Plan(
+        actions=[
+            PlannedAction(
+                id="act-0001",
+                operation="add",
+                type="dns-domain",
+                outcome=Outcome.CREATE,
+                mgmt_name="m1",
+                domain_name="General",
+                resolved_name=".example.com",
+                command="add-dns-domain",
+                payload={"name": ".example.com"},
+            ),
+            PlannedAction(
+                id="act-0002",
+                operation="add",
+                type="dns-domain",
+                outcome=Outcome.CREATE,
+                mgmt_name="m1",
+                domain_name="General",
+                resolved_name="example.com",
+                command="add-dns-domain",
+                payload={"name": "example.com"},
+            ),
+        ]
+    )
+    report = await exe.execute(plan)
+    assert report.results[0].outcome == Outcome.CREATE
+    assert report.results[1].outcome == Outcome.CREATE
+    assert ("add-dns-domain", {"name": ".example.com", "is-sub-domain": True}) in client.calls
+    assert ("add-dns-domain", {"name": "example.com", "is-sub-domain": False}) in client.calls

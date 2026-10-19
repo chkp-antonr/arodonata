@@ -1965,3 +1965,20 @@ async def test_fetch_last_published_session_still_returns_none(object_service_wi
         assert await service.fetch_last_published_session("m1", "Domain4") is None
     client.api_call = AsyncMock(return_value=ApiCallResult(success=True, data=_HEAD))
     assert (await service.fetch_last_published_session("m1", "Domain4")).uid == "sess-1"
+
+
+def test_object_types_includes_dns_domain():
+    assert "dns-domain" in ObjectService.OBJECT_TYPES
+
+
+async def test_refresh_domain_calls_show_dns_domains(db):
+    mock_client = MagicMock()
+    mock_client.api_query = AsyncMock(return_value=ApiQueryResult(success=True, objects=[], total=0, message=""))
+    mock_client.api_call = AsyncMock(return_value=ApiCallResult(success=True, data=_HEAD))
+
+    service = ObjectService(db_manager=db, client=mock_client)
+    events = [event async for event in service._refresh_domain("m1", "Domain4")]
+    assert events
+
+    commands_called = [call.kwargs.get("command") for call in mock_client.api_query.call_args_list]
+    assert "show-dns-domains" in commands_called

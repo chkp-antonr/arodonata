@@ -232,3 +232,141 @@ def test_default_schema_ships_inside_the_package():
     path = _default_schema_path()
     assert path.is_file()
     assert path.resolve().is_relative_to(Path(arodonata.__file__).resolve().parent)
+
+
+def test_dns_domain_add_valid():
+    doc = {
+        "management_servers": [
+            {
+                "mgmt_name": "m1",
+                "domains": [
+                    {
+                        "name": "General",
+                        "operations": [
+                            {
+                                "operation": "add",
+                                "type": "dns-domain",
+                                "data": {
+                                    "name": ".example.com",
+                                    "is-sub-domain": True,
+                                    "comments": "Wildcard domain",
+                                    "color": "blue",
+                                    "tags": ["corp"],
+                                    "groups": ["grp1"],
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    assert validate_template(doc) == []
+
+
+def test_dns_domain_update_valid():
+    doc = {
+        "management_servers": [
+            {
+                "mgmt_name": "m1",
+                "domains": [
+                    {
+                        "name": "General",
+                        "operations": [
+                            {
+                                "operation": "update",
+                                "type": "dns-domain",
+                                "key": {"name": "example.com"},
+                                "data": {
+                                    "is-sub-domain": False,
+                                    "comments": "Updated comments",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    assert validate_template(doc) == []
+
+
+def test_dns_domain_delete_and_show_valid():
+    doc = {
+        "management_servers": [
+            {
+                "mgmt_name": "m1",
+                "domains": [
+                    {
+                        "name": "General",
+                        "operations": [
+                            {
+                                "operation": "delete",
+                                "type": "dns-domain",
+                                "key": {"uid": "1234-5678"},
+                            },
+                            {
+                                "operation": "show",
+                                "type": "dns-domain",
+                                "key": {"name": ".internal.net"},
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    assert validate_template(doc) == []
+
+
+def test_dns_domain_add_missing_name_rejected():
+    doc = {
+        "management_servers": [
+            {
+                "mgmt_name": "m1",
+                "domains": [
+                    {
+                        "name": "General",
+                        "operations": [
+                            {
+                                "operation": "add",
+                                "type": "dns-domain",
+                                "data": {
+                                    "is-sub-domain": True,
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    errors = validate_template(doc)
+    assert errors != []
+
+
+def test_dns_domain_disallowed_property_rejected():
+    doc = {
+        "management_servers": [
+            {
+                "mgmt_name": "m1",
+                "domains": [
+                    {
+                        "name": "General",
+                        "operations": [
+                            {
+                                "operation": "add",
+                                "type": "dns-domain",
+                                "data": {
+                                    "name": ".example.com",
+                                    "ip-address": "1.2.3.4",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    errors = validate_template(doc)
+    assert errors != []

@@ -661,7 +661,13 @@ def _ip_matches(type: str, ip_value: dict[str, Any], obj: dict[str, Any]) -> boo
 
 
 _CACHE_TYPE = {"network-group": "group"}  # template type -> cache CPObject.type
-_CACHED_TYPES = {"host", "network", "address-range", "network-group"}  # types the object cache actually indexes
+_CACHED_TYPES = {
+    "host",
+    "network",
+    "address-range",
+    "network-group",
+    "dns-domain",
+}  # types the object cache actually indexes
 
 
 def _state_from_cpobject(template_type: str, row: Any) -> ObjectState:

@@ -749,3 +749,84 @@ async def test_two_rules_at_a_sections_bottom_anchor_on_its_cleanup_rule_not_its
     rules = [a for a in _actions_for(plan, "m1", "General") if a.type == "access-rule"]
     assert [r.payload["position"] for r in rules] == [{"above": "r-cleanup"}, {"above": "r-cleanup"}]
     assert [r.resolved_name for r in rules] == ["r-a", "r-b"]
+
+
+@pytest.mark.asyncio
+async def test_planner_dns_domain_dot_defaults_to_subdomain_true():
+    reader = FakeReader()
+    planner = Planner(reader, settings=None)
+    plan = await planner.decide(_doc({"type": "dns-domain", "data": {"name": ".example.com"}}))
+    actions = _actions_for(plan, "m1", "General")
+    assert len(actions) == 1
+    act = actions[0]
+    assert act.outcome == Outcome.CREATE
+    assert act.type == "dns-domain"
+    assert act.command == "add-dns-domain"
+    assert act.payload["name"] == ".example.com"
+    assert act.payload["is-sub-domain"] is True
+
+
+@pytest.mark.asyncio
+async def test_planner_dns_domain_no_dot_defaults_to_subdomain_false():
+    reader = FakeReader()
+    planner = Planner(reader, settings=None)
+    plan = await planner.decide(_doc({"type": "dns-domain", "data": {"name": "example.com"}}))
+    actions = _actions_for(plan, "m1", "General")
+    assert len(actions) == 1
+    act = actions[0]
+    assert act.outcome == Outcome.CREATE
+    assert act.type == "dns-domain"
+    assert act.command == "add-dns-domain"
+    assert act.payload["name"] == "example.com"
+    assert act.payload["is-sub-domain"] is False
+
+
+@pytest.mark.asyncio
+async def test_planner_dns_domain_explicit_subdomain_preserved():
+    reader = FakeReader()
+    planner = Planner(reader, settings=None)
+    doc = _doc(
+        {"type": "dns-domain", "data": {"name": ".example.com", "is-sub-domain": False}},
+        {"type": "dns-domain", "data": {"name": "sub.example.com", "is-sub-domain": True}},
+    )
+    plan = await planner.decide(doc)
+    actions = _actions_for(plan, "m1", "General")
+    assert len(actions) == 2
+    assert actions[0].payload["is-sub-domain"] is False
+    assert actions[1].payload["is-sub-domain"] is True
+
+
+@pytest.mark.asyncio
+async def test_planner_dns_domain_update_and_delete():
+    reader = FakeReader(
+        by_name={
+            ("dns-domain", "example.com"): ObjectState(uid="uid-dns-1", name="example.com", type="dns-domain", raw={})
+        }
+    )
+    planner = Planner(reader, settings=None)
+    doc = _doc(
+        {
+            "operation": "update",
+            "type": "dns-domain",
+            "key": {"name": "example.com"},
+            "data": {"comments": "updated domain"},
+        },
+        {
+            "operation": "delete",
+            "type": "dns-domain",
+            "key": {"name": "example.com"},
+        },
+    )
+    plan = await planner.decide(doc)
+    actions = _actions_for(plan, "m1", "General")
+    assert len(actions) == 2
+    assert actions[0].outcome == Outcome.UPDATE
+    assert actions[0].command == "set-dns-domain"
+    assert actions[0].resolved_name == "example.com"
+    assert actions[0].payload["uid"] == "uid-dns-1"
+    assert actions[0].payload["comments"] == "updated domain"
+
+    assert actions[1].outcome == Outcome.DELETE
+    assert actions[1].command == "delete-dns-domain"
+    assert actions[1].resolved_name == "example.com"
+    assert actions[1].payload["uid"] == "uid-dns-1"
