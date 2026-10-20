@@ -328,14 +328,24 @@ async def test_hybrid_get_by_name_hits_cache_first():
 
 
 @pytest.mark.asyncio
-async def test_hybrid_get_by_name_falls_back_to_live_on_miss():
+async def test_hybrid_get_by_name_trusts_current_cache_on_miss_without_live_call():
     client = AsyncMock()
     client.cache.get_objects_by_name.return_value = []
-    client.api_call.return_value = SimpleNamespace(success=True, data={"uid": "u9", "name": "h9"}, message="", code="")
-    reader = HybridStateReader(client)
-    state = await reader.get_by_name("host", "h9", mgmt="m", domain="d")
-    assert state is not None and state.uid == "u9"
-    client.api_call.assert_awaited()  # live fallback used
+    reader = await _hybrid_with_head(client)
+    state = await reader.get_by_name("host", "nonexistent", mgmt="m", domain="d")
+    assert state is None
+    client.api_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_hybrid_find_by_ip_trusts_current_cache_on_miss_without_live_call():
+    client = AsyncMock()
+    client.cache.get_objects_by_ip.return_value = []
+    reader = await _hybrid_with_head(client)
+    matches = await reader.find_by_ip(type="host", ip_value={"ip-address": "10.0.0.99"}, mgmt="m", domain="d")
+    assert matches == []
+    client.api_call.assert_not_awaited()
+    client.api_query.assert_not_awaited()
 
 
 @pytest.mark.asyncio

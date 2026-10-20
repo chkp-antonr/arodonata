@@ -72,6 +72,7 @@ class CPCRUDService:
         on_ip_conflict: IpConflictPolicy | None = None,
         retry_remaining: int = 0,
         refresh: str | None = None,
+        keep_session: bool = False,
     ) -> AsyncIterator[SSEEvent | ApplyReport]:
         plan = (
             plan_or_template
@@ -110,6 +111,7 @@ class CPCRUDService:
                 session_name=session_name,
                 session_description=session_description,
                 refresh=refresh_mode,
+                keep_session=keep_session,
             ):
                 if isinstance(item, ApplyReport):
                     pass_report = item
@@ -135,5 +137,18 @@ class CPCRUDService:
             for mgmt, domain in remaining.domains():
                 self._client.invalidate_domain(mgmt, domain)  # MMP parity: refresh state before retrying
             current = remaining
-        yield SSEEvent(event_type=SSEEventType.COMPLETE, message="apply finished", data={"summary": report.summary})
+        if report and report.staged_sessions:
+            for s_info in report.staged_sessions.values():
+                yield SSEEvent(
+                    event_type=SSEEventType.LOG,
+                    message=f"Staged session ready: {s_info.get('session_name')}",
+                    data={"type": "staged_session", **s_info},
+                    mgmt_name=s_info.get("mgmt_name"),
+                    domain=s_info.get("domain_name"),
+                )
+        yield SSEEvent(
+            event_type=SSEEventType.COMPLETE,
+            message="apply finished",
+            data={"summary": report.summary if report else {}, "staged_sessions": report.staged_sessions if report else {}},
+        )
         yield report

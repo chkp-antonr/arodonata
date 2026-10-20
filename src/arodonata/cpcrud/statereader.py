@@ -753,7 +753,9 @@ class HybridStateReader:
         exact = [r for r in rows if r.name == name and r.type == cache_type]
         if exact:
             return _state_from_cpobject(type, exact[0])
-        return await self._live.get_by_name(type, name, mgmt=mgmt, domain=domain)
+        # When the cache is current for this revision, objects of cached types not found in the
+        # cache do not exist on the server in this revision. Do not fall back to the live API.
+        return None
 
     async def find_by_ip(self, *, type: str, ip_value: dict[str, Any], mgmt: str, domain: str) -> list[ObjectState]:
         if not await self._cache_is_current(mgmt, domain):
@@ -775,6 +777,9 @@ class HybridStateReader:
                 mgmt_names=[mgmt],
                 domain_names=[domain],
             )
+        else:
+            return await self._live.find_by_ip(type=type, ip_value=ip_value, mgmt=mgmt, domain=domain)
+
         typed = [r for r in rows if r.type == cache_type]
         if type == "network":
             # get_objects_by_subnet only matches the bare network address, not the mask, so two
@@ -783,13 +788,12 @@ class HybridStateReader:
             # supplied we can't verify it, so don't guess -- fall through to the live API instead.
             mask_length = ip_value.get("mask-length")
             if mask_length is None:
-                typed = []
-            else:
-                expected_mask = _mask_to_dotted(int(mask_length))
-                typed = [r for r in typed if r.subnet_mask == expected_mask]
-        if typed:
-            return [_state_from_cpobject(type, r) for r in typed]
-        return await self._live.find_by_ip(type=type, ip_value=ip_value, mgmt=mgmt, domain=domain)
+                return await self._live.find_by_ip(type=type, ip_value=ip_value, mgmt=mgmt, domain=domain)
+            expected_mask = _mask_to_dotted(int(mask_length))
+            typed = [r for r in typed if r.subnet_mask == expected_mask]
+        # When the cache is current, return the typed matches (or empty list if none).
+        # Do not fall back to live API for indexed types.
+        return [_state_from_cpobject(type, r) for r in typed]
 
     async def where_used(self, uid: str, *, mgmt: str, domain: str) -> int:
         return await self._live.where_used(uid, mgmt=mgmt, domain=domain)
