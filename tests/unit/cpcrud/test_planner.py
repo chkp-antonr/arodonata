@@ -830,3 +830,84 @@ async def test_planner_dns_domain_update_and_delete():
     assert actions[1].command == "delete-dns-domain"
     assert actions[1].resolved_name == "example.com"
     assert actions[1].payload["uid"] == "uid-dns-1"
+
+
+@pytest.mark.asyncio
+async def test_planner_batch_rules_single_rulebase_query():
+    """Verify that planning 3 rules in one layer executes exactly 1 show-access-rulebase call."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from arodonata.api.schemas import ApiCallResult
+    from arodonata.cpcrud.statereader import LiveStateReader
+    from tests.unit.cpcrud.test_statereader import FakeClient
+
+    rulebase_data = {
+        "uid": "l1",
+        "name": "Network",
+        "rulebase": [],
+        "objects-dictionary": [],
+        "total": 0,
+        "to": 0,
+    }
+    client = FakeClient(
+        {
+            "show-access-layer": ApiCallResult(success=True, data={"uid": "l1", "name": "Network"}, message="OK"),
+            "show-access-rulebase": ApiCallResult(success=True, data=rulebase_data, message="OK"),
+            "show-service-tcp": ApiCallResult(success=False, message="not found", code="object_not_found"),
+            "show-service-udp": ApiCallResult(success=False, message="not found", code="object_not_found"),
+            "show-service-other": ApiCallResult(success=False, message="not found", code="object_not_found"),
+            "show-service-icmp": ApiCallResult(success=False, message="not found", code="object_not_found"),
+            "show-services-tcp": ApiCallResult(success=True, data={"objects": []}, message="OK"),
+            "show-services-udp": ApiCallResult(success=True, data={"objects": []}, message="OK"),
+            "show-objects": ApiCallResult(success=True, data={"objects": []}, message="OK"),
+        }
+    )
+    client.fetch_last_published_session = AsyncMock(return_value=SimpleNamespace(uid="session-1"))
+    reader = LiveStateReader(client)
+    planner = Planner(reader, settings=None)
+
+    doc = {
+        "management_servers": [
+            {
+                "mgmt_name": "m1",
+                "domains": [
+                    {
+                        "name": "General",
+                        "operations": [
+                            {
+                                "type": "access-rule",
+                                "layer": "Network",
+                                "position": "bottom",
+                                "data": {"name": "Rule_1", "action": "Accept"},
+                            },
+                            {
+                                "type": "access-rule",
+                                "layer": "Network",
+                                "position": "bottom",
+                                "data": {"name": "Rule_2", "action": "Accept"},
+                            },
+                            {
+                                "type": "access-rule",
+                                "layer": "Network",
+                                "position": "bottom",
+                                "data": {"name": "Rule_3", "action": "Accept"},
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+    plan = await planner.decide(doc)
+    assert len(plan.actions) == 3
+
+    # show-access-rulebase must have been called EXACTLY ONCE across all 3 rules
+    rulebase_calls = [c for c in client.calls if c[0] == "show-access-rulebase"]
+    assert len(rulebase_calls) == 1
+
+    # show-access-layer must have been called EXACTLY ONCE
+    layer_calls = [c for c in client.calls if c[0] == "show-access-layer"]
+    assert len(layer_calls) == 1
+
