@@ -121,6 +121,33 @@ class LiveStateReader:
 
     def __init__(self, client: ArodonataClient) -> None:
         self._client = client
+        self._rulebase_cache: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+
+    async def _get_rulebase_data(
+        self,
+        mgmt: str,
+        domain: str,
+        command: str,
+        scope_key: str,
+        *,
+        is_package: bool = False,
+    ) -> dict[str, Any]:
+        cache_key = (mgmt, domain, command, scope_key)
+        if cache_key in self._rulebase_cache:
+            return self._rulebase_cache[cache_key]
+
+        payload: dict[str, Any] = {
+            "details-level": "full",
+            "use-object-dictionary": True,
+        }
+        if is_package:
+            payload["package"] = scope_key
+        else:
+            payload["uid"] = scope_key
+
+        data = await _paginate_rulebase(self._client, mgmt, command, domain, payload)
+        self._rulebase_cache[cache_key] = data
+        return data
 
     async def get_by_name(self, type: str, name: str, *, mgmt: str, domain: str) -> ObjectState | None:
         # map template type -> singular show command
@@ -328,9 +355,7 @@ class LiveStateReader:
         self, section_ref: str, layer_uid: str, layer_type: str, *, mgmt: str, domain: str
     ) -> SectionInfo | None:
         command = _RULEBASE_SHOW_COMMAND[layer_type]
-        data = await _paginate_rulebase(
-            self._client, mgmt, command, domain, {"uid": layer_uid, "details-level": "full"}
-        )
+        data = await self._get_rulebase_data(mgmt, domain, command, layer_uid)
         items = data.get("rulebase", [])
         section_type = _SECTION_TYPE[layer_type]
         for item in items:
@@ -348,13 +373,7 @@ class LiveStateReader:
         A section split across pages comes once per page here, so the last part holds its last rule.
         """
         command = _RULEBASE_SHOW_COMMAND[layer_type]
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            command,
-            domain,
-            {"uid": layer_uid, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, command, layer_uid)
         parts = [i for i in data.get("rulebase", []) if isinstance(i, dict) and i.get("uid") == section_uid]
         rules = _flatten_rulebase(parts[-1].get("rulebase", []) or []) if parts else []
         if not rules:
@@ -366,13 +385,7 @@ class LiveStateReader:
 
     async def get_last_rule(self, scope_uid: str, layer_type: str, *, mgmt: str, domain: str) -> RuleMatch | None:
         command = _RULEBASE_SHOW_COMMAND[layer_type]
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            command,
-            domain,
-            {"uid": scope_uid, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, command, scope_uid)
         flat = _flatten_rulebase(data.get("rulebase", []))
         if not flat:
             return None
@@ -394,13 +407,7 @@ class LiveStateReader:
         domain: str,
     ) -> list[RuleMatch]:
         command = _RULEBASE_SHOW_COMMAND[layer_type]
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            command,
-            domain,
-            {"uid": scope_uid, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, command, scope_uid)
         uid_to_name = _uid_to_name_map(data)
         target = traffic_tuple(source_uids, dest_uids, service_uids)
         matches = []
@@ -425,13 +432,7 @@ class LiveStateReader:
     async def find_nat_rules_by_tuple(
         self, package: str, tup: tuple[str, str, str, str, str, str], *, mgmt: str, domain: str
     ) -> list[RuleMatch]:
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            "show-nat-rulebase",
-            domain,
-            {"package": package, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, "show-nat-rulebase", package, is_package=True)
         uid_to_name = _uid_to_name_map(data)
         matches = []
         # NAT rules nest inside nat-section items exactly like access rules nest inside
@@ -464,13 +465,7 @@ class LiveStateReader:
         return matches
 
     async def get_last_nat_rule(self, package: str, *, mgmt: str, domain: str) -> RuleMatch | None:
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            "show-nat-rulebase",
-            domain,
-            {"package": package, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, "show-nat-rulebase", package, is_package=True)
         nat_rules = [r for r in _flatten_rulebase(data.get("rulebase", [])) if r.get("type") == "nat-rule"]
         if not nat_rules:
             return None
@@ -484,13 +479,7 @@ class LiveStateReader:
         self, scope_uid: str, layer_type: str, key: dict[str, Any], *, mgmt: str, domain: str
     ) -> RuleMatch | None:
         command = _RULEBASE_SHOW_COMMAND[layer_type]
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            command,
-            domain,
-            {"uid": scope_uid, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, command, scope_uid)
         uid_to_name = _uid_to_name_map(data)
         for raw_rule in _flatten_rulebase(data.get("rulebase", [])):
             if _rule_matches_key(raw_rule, key):
@@ -503,13 +492,7 @@ class LiveStateReader:
     async def get_nat_rule_by_key(
         self, package: str, key: dict[str, Any], *, mgmt: str, domain: str
     ) -> RuleMatch | None:
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            "show-nat-rulebase",
-            domain,
-            {"package": package, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, "show-nat-rulebase", package, is_package=True)
         uid_to_name = _uid_to_name_map(data)
         for raw_rule in _flatten_rulebase(data.get("rulebase", [])):
             if raw_rule.get("type") != "nat-rule":

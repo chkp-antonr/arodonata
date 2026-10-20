@@ -1985,3 +1985,97 @@ def test_hybrid_state_reader_caches_dns_domain():
     from arodonata.cpcrud.statereader import _CACHED_TYPES
 
     assert "dns-domain" in _CACHED_TYPES
+
+
+@pytest.mark.asyncio
+async def test_rulebase_cache_deduplicates_access_rulebase_reads():
+    """Verify that multiple reads against the same layer reuse the cached rulebase (1 API call)."""
+    rulebase_payload = {
+        "uid": "layer-1",
+        "name": "Network",
+        "rulebase": [
+            {
+                "uid": "sec-1",
+                "name": "MySection",
+                "type": "access-section",
+                "rulebase": [
+                    {
+                        "uid": "r1",
+                        "name": "Rule1",
+                        "type": "access-rule",
+                        "rule-number": 1,
+                        "source": ["Any"],
+                        "destination": ["Any"],
+                        "service": ["Any"],
+                        "action": "Accept",
+                    }
+                ],
+            }
+        ],
+        "objects-dictionary": [],
+        "total": 1,
+        "to": 1,
+    }
+    client = FakeClient({"show-access-rulebase": ApiCallResult(success=True, data=rulebase_payload, message="OK")})
+    reader = LiveStateReader(client)
+
+    # 1. Look up section
+    section = await reader.get_section("MySection", "layer-1", "access", mgmt="m", domain="d")
+    assert section is not None and section.uid == "sec-1"
+
+    # 2. Look up last rule
+    last_rule = await reader.get_last_rule("layer-1", "access", mgmt="m", domain="d")
+    assert last_rule is not None and last_rule.uid == "r1"
+
+    # 3. Look up last rule in section
+    sec_last = await reader.get_last_rule_in_section("layer-1", "sec-1", "access", mgmt="m", domain="d")
+    assert sec_last is not None and sec_last.uid == "r1"
+
+    # 4. Traffic tuple match
+    matches = await reader.find_rules_by_traffic(
+        "layer-1", "access", ["Any"], ["Any"], ["Any"], mgmt="m", domain="d"
+    )
+    assert len(matches) == 1 and matches[0].uid == "r1"
+
+    # Verify that show-access-rulebase was called EXACTLY ONCE despite 4 method calls
+    rb_calls = [c for c in client.calls if c[0] == "show-access-rulebase"]
+    assert len(rb_calls) == 1
+    assert rb_calls[0][1]["use-object-dictionary"] is True
+    assert rb_calls[0][1]["details-level"] == "full"
+
+
+@pytest.mark.asyncio
+async def test_rulebase_cache_deduplicates_nat_rulebase_reads():
+    """Verify that NAT rulebase reads against the same package are deduplicated."""
+    nat_payload = {
+        "rulebase": [
+            {
+                "uid": "nat-1",
+                "name": "NATRule1",
+                "type": "nat-rule",
+                "rule-number": 1,
+                "original-source": "Any",
+                "original-destination": "Any",
+                "original-service": "Any",
+                "translated-source": "Original",
+                "translated-destination": "Original",
+                "translated-service": "Original",
+            }
+        ],
+        "objects-dictionary": [],
+        "total": 1,
+        "to": 1,
+    }
+    client = FakeClient({"show-nat-rulebase": ApiCallResult(success=True, data=nat_payload, message="OK")})
+    reader = LiveStateReader(client)
+
+    tup = ("Any", "Any", "Any", "Original", "Original", "Original")
+    matches = await reader.find_nat_rules_by_tuple("Standard", tup, mgmt="m", domain="d")
+    assert len(matches) == 1
+
+    last_nat = await reader.get_last_nat_rule("Standard", mgmt="m", domain="d")
+    assert last_nat is not None and last_nat.uid == "nat-1"
+
+    rb_calls = [c for c in client.calls if c[0] == "show-nat-rulebase"]
+    assert len(rb_calls) == 1
+
