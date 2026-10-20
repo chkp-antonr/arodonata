@@ -2079,3 +2079,72 @@ async def test_rulebase_cache_deduplicates_nat_rulebase_reads():
     rb_calls = [c for c in client.calls if c[0] == "show-nat-rulebase"]
     assert len(rb_calls) == 1
 
+
+@pytest.mark.asyncio
+async def test_layer_cache_deduplicates_and_aliases_by_uid_and_name():
+    client = FakeClient(
+        {
+            "show-access-layer": ApiCallResult(
+                success=True,
+                data={"uid": "layer-uid-100", "name": "Network", "parent-layer": None},
+                message="OK",
+            )
+        }
+    )
+    reader = LiveStateReader(client)
+
+    # 1. Lookup by name -> calls API
+    layer1 = await reader.get_layer("Network", "access", mgmt="m", domain="d")
+    assert layer1 is not None and layer1.uid == "layer-uid-100"
+
+    # 2. Lookup by UID -> cache hit
+    layer2 = await reader.get_layer("layer-uid-100", "access", mgmt="m", domain="d")
+    assert layer2 is not None and layer2.uid == "layer-uid-100"
+
+    # 3. Lookup by name again -> cache hit
+    layer3 = await reader.get_layer("Network", "access", mgmt="m", domain="d")
+    assert layer3 is not None and layer3.uid == "layer-uid-100"
+
+    assert len([c for c in client.calls if c[0] == "show-access-layer"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_layer_cache_nested_hierarchy_and_get_layer_chain():
+    child_payload = {"uid": "sub-1", "name": "InlineAppControl", "parent-layer": "parent-1"}
+    parent_payload = {"uid": "parent-1", "name": "NetworkLayer", "parent-layer": None}
+
+    def custom_show_layer(mgmt_name, command, domain="", payload=None, **kw):
+        uid_or_name = (payload or {}).get("uid") or (payload or {}).get("name")
+        if uid_or_name in ("sub-1", "InlineAppControl"):
+            return ApiCallResult(success=True, data=child_payload, message="OK")
+        if uid_or_name in ("parent-1", "NetworkLayer"):
+            return ApiCallResult(success=True, data=parent_payload, message="OK")
+        return ApiCallResult(success=False, message="not found", code="object_not_found")
+
+    client = FakeClient({})
+    client.api_call = AsyncMock(side_effect=custom_show_layer)
+    reader = LiveStateReader(client)
+
+    chain = await reader.get_layer_chain("InlineAppControl", "access", mgmt="m", domain="d")
+    assert len(chain) == 2
+    assert chain[0].uid == "sub-1" and chain[0].parent_layer_uid == "parent-1"
+    assert chain[1].uid == "parent-1" and chain[1].parent_layer_uid is None
+
+    # Calling again should be 100% cached
+    client.api_call.reset_mock()
+    chain2 = await reader.get_layer_chain("sub-1", "access", mgmt="m", domain="d")
+    assert len(chain2) == 2
+    assert client.api_call.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_layer_cache_negative_caching():
+    client = FakeClient({"show-access-layer": ApiCallResult(success=False, message="not found", code="object_not_found")})
+    reader = LiveStateReader(client)
+
+    res1 = await reader.get_layer("GhostLayer", "access", mgmt="m", domain="d")
+    res2 = await reader.get_layer("GhostLayer", "access", mgmt="m", domain="d")
+    assert res1 is None and res2 is None
+    assert len([c for c in client.calls if c[0] == "show-access-layer"]) == 1
+
+

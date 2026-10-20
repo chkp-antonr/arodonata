@@ -122,6 +122,7 @@ class LiveStateReader:
     def __init__(self, client: ArodonataClient) -> None:
         self._client = client
         self._rulebase_cache: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        self._layer_cache: dict[tuple[str, str, str, str], LayerInfo | None] = {}
 
     async def _get_rulebase_data(
         self,
@@ -290,6 +291,10 @@ class LiveStateReader:
         return await self._probe_service_by_port(spec, mgmt=mgmt, domain=domain)
 
     async def get_layer(self, layer_ref: str, layer_type: str, *, mgmt: str, domain: str) -> LayerInfo | None:
+        cache_key = (mgmt, domain, layer_type, layer_ref)
+        if cache_key in self._layer_cache:
+            return self._layer_cache[cache_key]
+
         command = _LAYER_SHOW_COMMAND[layer_type]
         # A layer name can collide across domains in an MDS environment (a domain-local layer
         # and a Global-assigned layer sharing the same name -- a real, Check-Point-recognized
@@ -310,13 +315,17 @@ class LiveStateReader:
         if not result.success:
             if key == "name" and "not_unique" in (result.code or ""):
                 uid = await self._domain_layer_uid(layer_ref, layer_type, mgmt=mgmt, domain=domain)
-                return await self.get_layer(uid, layer_type, mgmt=mgmt, domain=domain)
+                res = await self.get_layer(uid, layer_type, mgmt=mgmt, domain=domain)
+                self._layer_cache[cache_key] = res
+                return res
             if _not_found(result):
+                self._layer_cache[cache_key] = None
                 return None
             # Not "no such layer": the error would name the wrong problem (Backlog #37).
             raise StateReadError(f"{command} failed: {result.code}: {result.message}")
         data = extract_data_from_response(result)
         if not isinstance(data, dict) or "uid" not in data:
+            self._layer_cache[cache_key] = None
             return None
         # Task 4's caveat: the field NAME "parent-layer" was a correct plan-time guess (confirmed
         # against the live lab and Check Point's own show-access-layer docs), but the VALUE shape
@@ -331,9 +340,32 @@ class LiveStateReader:
             parent_uid = parent.get("uid")
         else:
             parent_uid = None
-        return LayerInfo(
+        info = LayerInfo(
             uid=data["uid"], name=data.get("name", layer_ref), type=layer_type, parent_layer_uid=parent_uid
         )
+        self._layer_cache[cache_key] = info
+        self._layer_cache[(mgmt, domain, layer_type, info.uid)] = info
+        if info.name:
+            self._layer_cache[(mgmt, domain, layer_type, info.name)] = info
+        return info
+
+    async def get_layer_chain(
+        self, layer_ref: str, layer_type: str, *, mgmt: str, domain: str
+    ) -> list[LayerInfo]:
+        """Returns the ancestor hierarchy: [target_layer, parent_layer, grandparent_layer, ...]."""
+        chain: list[LayerInfo] = []
+        current_ref: str | None = layer_ref
+        visited: set[str] = set()
+
+        while current_ref:
+            layer = await self.get_layer(current_ref, layer_type, mgmt=mgmt, domain=domain)
+            if layer is None or layer.uid in visited:
+                break
+            chain.append(layer)
+            visited.add(layer.uid)
+            current_ref = layer.parent_layer_uid
+
+        return chain
 
     async def _domain_layer_uid(self, name: str, layer_type: str, *, mgmt: str, domain: str) -> str:
         """The uid of the layer named `name` that belongs to `domain` itself, among same-named layers."""
@@ -739,6 +771,11 @@ class HybridStateReader:
 
     async def get_layer(self, layer_ref: str, layer_type: str, *, mgmt: str, domain: str) -> LayerInfo | None:
         return await self._live.get_layer(layer_ref, layer_type, mgmt=mgmt, domain=domain)
+
+    async def get_layer_chain(
+        self, layer_ref: str, layer_type: str, *, mgmt: str, domain: str
+    ) -> list[LayerInfo]:
+        return await self._live.get_layer_chain(layer_ref, layer_type, mgmt=mgmt, domain=domain)
 
     async def get_section(
         self, section_ref: str, layer_uid: str, layer_type: str, *, mgmt: str, domain: str
