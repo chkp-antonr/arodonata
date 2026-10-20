@@ -148,6 +148,7 @@ class ActionResult(BaseModel):
 class ApplyReport(BaseModel):
     results: list[ActionResult] = Field(default_factory=list)
     published_domains: list[DomainStamp] = Field(default_factory=list)
+    staged_sessions: dict[str, dict[str, Any]] = Field(default_factory=dict)
     remaining: Plan | None = None
     summary: dict[str, int] = Field(default_factory=dict)
 

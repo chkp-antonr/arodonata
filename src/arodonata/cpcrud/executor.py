@@ -36,6 +36,7 @@ def fold_reports(first: ApplyReport, second: ApplyReport) -> ApplyReport:
     return ApplyReport(
         results=results,
         published_domains=[*first.published_domains, *second.published_domains],
+        staged_sessions={**first.staged_sessions, **second.staged_sessions},
         remaining=second.remaining,
         summary=summary,
     )
@@ -61,7 +62,39 @@ def _prepare_action_payload(action: PlannedAction) -> dict[str, Any] | None:
         name = payload.get("name") or action.resolved_name or ""
         payload["is-sub-domain"] = name.startswith(".")
         return payload
+    if action.command in ("add-service-tcp", "add-service-udp", "add-service-other", "add-service-icmp"):
+        payload = dict(action.payload)
+        payload.setdefault("ignore-warnings", True)
+        return payload
     return action.payload
+
+
+def _extract_item_msg(item: Any, prefix: str = "") -> str | None:
+    if isinstance(item, dict):
+        msg = item.get("message") or item.get("description")
+        obj = item.get("object")
+        text = f"{obj}: {msg}" if (msg and obj and str(obj) not in str(msg)) else str(msg or "")
+        return f"{prefix}{text}" if (prefix and text) else (text or None)
+    return str(item) if item else None
+
+
+def _format_api_failure_message(res: ApiCallResult, action: PlannedAction) -> str:
+    details: list[str] = []
+    if isinstance(res.data, dict):
+        for key, pfx in (("errors", ""), ("blocking-errors", "Blocking: "), ("warnings", "Warning: ")):
+            for item in res.data.get(key) or []:
+                msg = _extract_item_msg(item, pfx)
+                if msg:
+                    details.append(msg)
+
+    action_label = f"{action.operation} {action.type} '{action.resolved_name or action.id}'"
+    if details:
+        details_text = " | ".join(details)
+        if res.message and res.message not in details_text:
+            return f"{action_label}: {res.message} -> {details_text}"
+        return f"{action_label}: {details_text}"
+
+    return f"{action_label}: {res.message or 'API call failed'}"
 
 
 class Executor:
@@ -80,6 +113,7 @@ class Executor:
         session_name: str | None = None,
         session_description: str | None = None,
         refresh: str = "invalidate",
+        keep_session: bool = False,
     ) -> AsyncIterator[ActionResult | ApplyReport]:
         if dry_run:
             dry_results = [
@@ -104,6 +138,7 @@ class Executor:
         results: list[ActionResult] = []
         published: list[DomainStamp] = []
         stale_domains: set[tuple[str, str]] = set()
+        staged_sessions: dict[str, dict[str, Any]] = {}
         for mgmt, domain in plan.domains():
             domain_actions = [a for a in plan.actions if (a.mgmt_name, a.domain_name) == (mgmt, domain)]
             stamped = stamps.get((mgmt, domain), "")
@@ -133,6 +168,8 @@ class Executor:
                 discard=discard,
                 session_name=session_name,
                 session_description=session_description,
+                keep_session=keep_session,
+                staged_sessions=staged_sessions,
             ):
                 domain_results.append(result)
                 results.append(result)
@@ -145,7 +182,7 @@ class Executor:
                 published.append(DomainStamp(mgmt_name=mgmt, domain_name=domain, last_publish_session=after))
                 self._client.invalidate_domain(mgmt, domain)
                 await self._maybe_force_refresh(refresh, mgmt, domain)
-        yield self._report(plan, results, published, stale_domains)
+        yield self._report(plan, results, published, stale_domains, staged_sessions=staged_sessions)
 
     async def _stale_reason(self, mgmt: str, domain: str, stamped: str) -> str | None:
         """Why the domain's plan may not be applied, or None when its head still is the planned one."""
@@ -172,6 +209,52 @@ class Executor:
         assert report is not None
         return report
 
+    async def _record_staged_session(
+        self,
+        mgmt: str,
+        domain: str,
+        sid: str,
+        server_ip: str,
+        sess_name: str,
+        staged_sessions: dict[str, dict[str, Any]],
+    ) -> None:
+        sess_uid = None
+        try:
+            sess_res = await self._client.api_call_with_sid(
+                mgmt, sid, server_ip, "show-session", payload={}, domain=domain
+            )
+            if sess_res.success and isinstance(sess_res.data, dict):
+                sess_uid = sess_res.data.get("uid")
+        except Exception:
+            pass
+
+        staged_sessions[f"{mgmt}:{domain}"] = {
+            "mgmt_name": mgmt,
+            "domain_name": domain,
+            "session_name": sess_name,
+            "session_uid": sess_uid,
+            "sid": sid,
+            "server_ip": server_ip,
+        }
+
+    async def _finalize_domain_session(
+        self,
+        mgmt: str,
+        domain: str,
+        sid: str,
+        server_ip: str,
+        results: list[ActionResult],
+        *,
+        discard: bool,
+        no_publish: bool,
+    ) -> None:
+        if discard:
+            await self._client.api_call_with_sid(mgmt, sid, server_ip, "discard", payload={}, domain=domain)
+        elif not no_publish and any(r.outcome in _WRITE_OUTCOMES for r in results):
+            await self._client.api_call_with_sid(
+                mgmt, sid, server_ip, "publish", payload={}, wait_for_task=True, domain=domain
+            )
+
     async def _stream_domain(
         self,
         mgmt: str,
@@ -182,16 +265,22 @@ class Executor:
         discard: bool,
         session_name: str | None,
         session_description: str | None,
+        keep_session: bool = False,
+        staged_sessions: dict[str, dict[str, Any]] | None = None,
     ) -> AsyncIterator[ActionResult]:
         results: list[ActionResult] = []
         sid, server_ip = "", ""
         try:
+            sess_name = session_name or f"cpcrud-{mgmt}-{domain}"
             sid, server_ip = await self._client.create_dedicated_session(
                 mgmt,
                 domain,
-                session_name=session_name or f"cpcrud-{mgmt}-{domain}",
+                session_name=sess_name,
                 session_description=session_description,
             )
+            if (no_publish or keep_session) and staged_sessions is not None:
+                await self._record_staged_session(mgmt, domain, sid, server_ip, sess_name, staged_sessions)
+
             failed: set[str] = set()
             for action in actions:
                 bad_deps = [d for d in action.depends_on if d in failed]
@@ -211,12 +300,9 @@ class Executor:
                     failed.add(action.id)
                 results.append(result)
                 yield result
-            if discard:
-                await self._client.api_call_with_sid(mgmt, sid, server_ip, "discard", payload={}, domain=domain)
-            elif not no_publish and any(r.outcome in _WRITE_OUTCOMES for r in results):
-                await self._client.api_call_with_sid(
-                    mgmt, sid, server_ip, "publish", payload={}, wait_for_task=True, domain=domain
-                )
+            await self._finalize_domain_session(
+                mgmt, domain, sid, server_ip, results, discard=discard, no_publish=no_publish
+            )
         except Exception as exc:  # session-open failure -> every not-yet-run action errors
             done_ids = {r.action_id for r in results}
             for action in actions:
@@ -231,7 +317,7 @@ class Executor:
                         message=str(exc),
                     )
         finally:
-            if sid:
+            if sid and not keep_session:
                 await self._client.logout_sid(sid, server_ip, mgmt)
 
     @traced
@@ -319,6 +405,7 @@ class Executor:
                 uid=action.resolved_uid,
                 message=message,
             )
+        detailed_msg = _format_api_failure_message(res, action)
         return ActionResult(
             action_id=action.id,
             outcome=Outcome.ERROR,
@@ -326,7 +413,7 @@ class Executor:
             name=action.resolved_name,
             mgmt_name=action.mgmt_name,
             domain_name=action.domain_name,
-            message=res.message or "API call failed",
+            message=detailed_msg,
         )
 
     async def _execute_action_inner(self, mgmt: str, sid: str, server_ip: str, action: PlannedAction) -> ActionResult:
@@ -403,6 +490,7 @@ class Executor:
         results: list[ActionResult],
         published: list[DomainStamp],
         stale_domains: AbstractSet[tuple[str, str]] = frozenset(),
+        staged_sessions: dict[str, dict[str, Any]] | None = None,
     ) -> ApplyReport:
         summary: dict[str, int] = {}
         for r in results:
@@ -428,4 +516,10 @@ class Executor:
                 ],
                 template_hash=plan.template_hash,
             )
-        return ApplyReport(results=results, published_domains=published, remaining=remaining, summary=summary)
+        return ApplyReport(
+            results=results,
+            published_domains=published,
+            staged_sessions=staged_sessions or {},
+            remaining=remaining,
+            summary=summary,
+        )

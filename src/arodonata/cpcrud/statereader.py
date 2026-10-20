@@ -121,8 +121,42 @@ class LiveStateReader:
 
     def __init__(self, client: ArodonataClient) -> None:
         self._client = client
+        self._rulebase_cache: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        self._layer_cache: dict[tuple[str, str, str, str], LayerInfo | None] = {}
+        self._service_cache: dict[tuple[str, str, str], ObjectState | None] = {}
+        self._object_cache: dict[tuple[str, str, str, str], ObjectState | None] = {}
+
+    async def _get_rulebase_data(
+        self,
+        mgmt: str,
+        domain: str,
+        command: str,
+        scope_key: str,
+        *,
+        is_package: bool = False,
+    ) -> dict[str, Any]:
+        cache_key = (mgmt, domain, command, scope_key)
+        if cache_key in self._rulebase_cache:
+            return self._rulebase_cache[cache_key]
+
+        payload: dict[str, Any] = {
+            "details-level": "full",
+            "use-object-dictionary": True,
+        }
+        if is_package:
+            payload["package"] = scope_key
+        else:
+            payload["uid"] = scope_key
+
+        data = await _paginate_rulebase(self._client, mgmt, command, domain, payload)
+        self._rulebase_cache[cache_key] = data
+        return data
 
     async def get_by_name(self, type: str, name: str, *, mgmt: str, domain: str) -> ObjectState | None:
+        cache_key = (mgmt, domain, type, name)
+        if cache_key in self._object_cache:
+            return self._object_cache[cache_key]
+
         # map template type -> singular show command
         suffix = _TYPE_CMD.get(type, type)
         # resolve_update/resolve_delete/resolve_show (resolver.py) collapse a template's
@@ -137,13 +171,20 @@ class LiveStateReader:
         )
         if not result.success:
             if _not_found(result):
+                self._object_cache[cache_key] = None
                 return None
             # Not "absent": an add would plan a create, a delete "already absent" (Backlog #37).
             raise StateReadError(f"show-{suffix} failed: {result.code}: {result.message}")
         data = extract_data_from_response(result)
         if not isinstance(data, dict) or "uid" not in data:
+            self._object_cache[cache_key] = None
             return None
-        return ObjectState(uid=data["uid"], name=data.get("name", name), type=type, raw=data)
+        res = ObjectState(uid=data["uid"], name=data.get("name", name), type=type, raw=data)
+        self._object_cache[cache_key] = res
+        self._object_cache[(mgmt, domain, type, res.uid)] = res
+        if res.name:
+            self._object_cache[(mgmt, domain, type, res.name)] = res
+        return res
 
     async def find_by_ip(self, *, type: str, ip_value: dict[str, Any], mgmt: str, domain: str) -> list[ObjectState]:
         # show-objects is a listing endpoint (default page limit 50, per Check Point's own API
@@ -254,15 +295,40 @@ class LiveStateReader:
         return None
 
     async def get_service(self, spec: Any, original_text: str, *, mgmt: str, domain: str) -> ObjectState | None:
+        cache_key = (mgmt, domain, original_text)
+        if cache_key in self._service_cache:
+            return self._service_cache[cache_key]
+
         named = await self._probe_named_service(original_text, mgmt=mgmt, domain=domain)
         if named is not None:
+            self._service_cache[cache_key] = named
+            if named.name:
+                self._service_cache[(mgmt, domain, named.name)] = named
             return named
         canonical = await self._probe_canonical_service(spec, mgmt=mgmt, domain=domain)
         if canonical is not None:
+            self._service_cache[cache_key] = canonical
+            if canonical.name:
+                self._service_cache[(mgmt, domain, canonical.name)] = canonical
             return canonical
-        return await self._probe_service_by_port(spec, mgmt=mgmt, domain=domain)
+        by_port = await self._probe_service_by_port(spec, mgmt=mgmt, domain=domain)
+        self._service_cache[cache_key] = by_port
+        if by_port is not None and by_port.name:
+            self._service_cache[(mgmt, domain, by_port.name)] = by_port
+        return by_port
+
+    def clear_cache(self) -> None:
+        """Clear all in-memory caches."""
+        self._rulebase_cache.clear()
+        self._layer_cache.clear()
+        self._service_cache.clear()
+        self._object_cache.clear()
 
     async def get_layer(self, layer_ref: str, layer_type: str, *, mgmt: str, domain: str) -> LayerInfo | None:
+        cache_key = (mgmt, domain, layer_type, layer_ref)
+        if cache_key in self._layer_cache:
+            return self._layer_cache[cache_key]
+
         command = _LAYER_SHOW_COMMAND[layer_type]
         # A layer name can collide across domains in an MDS environment (a domain-local layer
         # and a Global-assigned layer sharing the same name -- a real, Check-Point-recognized
@@ -283,13 +349,17 @@ class LiveStateReader:
         if not result.success:
             if key == "name" and "not_unique" in (result.code or ""):
                 uid = await self._domain_layer_uid(layer_ref, layer_type, mgmt=mgmt, domain=domain)
-                return await self.get_layer(uid, layer_type, mgmt=mgmt, domain=domain)
+                res = await self.get_layer(uid, layer_type, mgmt=mgmt, domain=domain)
+                self._layer_cache[cache_key] = res
+                return res
             if _not_found(result):
+                self._layer_cache[cache_key] = None
                 return None
             # Not "no such layer": the error would name the wrong problem (Backlog #37).
             raise StateReadError(f"{command} failed: {result.code}: {result.message}")
         data = extract_data_from_response(result)
         if not isinstance(data, dict) or "uid" not in data:
+            self._layer_cache[cache_key] = None
             return None
         # Task 4's caveat: the field NAME "parent-layer" was a correct plan-time guess (confirmed
         # against the live lab and Check Point's own show-access-layer docs), but the VALUE shape
@@ -304,9 +374,32 @@ class LiveStateReader:
             parent_uid = parent.get("uid")
         else:
             parent_uid = None
-        return LayerInfo(
+        info = LayerInfo(
             uid=data["uid"], name=data.get("name", layer_ref), type=layer_type, parent_layer_uid=parent_uid
         )
+        self._layer_cache[cache_key] = info
+        self._layer_cache[(mgmt, domain, layer_type, info.uid)] = info
+        if info.name:
+            self._layer_cache[(mgmt, domain, layer_type, info.name)] = info
+        return info
+
+    async def get_layer_chain(
+        self, layer_ref: str, layer_type: str, *, mgmt: str, domain: str
+    ) -> list[LayerInfo]:
+        """Returns the ancestor hierarchy: [target_layer, parent_layer, grandparent_layer, ...]."""
+        chain: list[LayerInfo] = []
+        current_ref: str | None = layer_ref
+        visited: set[str] = set()
+
+        while current_ref:
+            layer = await self.get_layer(current_ref, layer_type, mgmt=mgmt, domain=domain)
+            if layer is None or layer.uid in visited:
+                break
+            chain.append(layer)
+            visited.add(layer.uid)
+            current_ref = layer.parent_layer_uid
+
+        return chain
 
     async def _domain_layer_uid(self, name: str, layer_type: str, *, mgmt: str, domain: str) -> str:
         """The uid of the layer named `name` that belongs to `domain` itself, among same-named layers."""
@@ -328,9 +421,7 @@ class LiveStateReader:
         self, section_ref: str, layer_uid: str, layer_type: str, *, mgmt: str, domain: str
     ) -> SectionInfo | None:
         command = _RULEBASE_SHOW_COMMAND[layer_type]
-        data = await _paginate_rulebase(
-            self._client, mgmt, command, domain, {"uid": layer_uid, "details-level": "full"}
-        )
+        data = await self._get_rulebase_data(mgmt, domain, command, layer_uid)
         items = data.get("rulebase", [])
         section_type = _SECTION_TYPE[layer_type]
         for item in items:
@@ -348,13 +439,7 @@ class LiveStateReader:
         A section split across pages comes once per page here, so the last part holds its last rule.
         """
         command = _RULEBASE_SHOW_COMMAND[layer_type]
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            command,
-            domain,
-            {"uid": layer_uid, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, command, layer_uid)
         parts = [i for i in data.get("rulebase", []) if isinstance(i, dict) and i.get("uid") == section_uid]
         rules = _flatten_rulebase(parts[-1].get("rulebase", []) or []) if parts else []
         if not rules:
@@ -366,13 +451,7 @@ class LiveStateReader:
 
     async def get_last_rule(self, scope_uid: str, layer_type: str, *, mgmt: str, domain: str) -> RuleMatch | None:
         command = _RULEBASE_SHOW_COMMAND[layer_type]
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            command,
-            domain,
-            {"uid": scope_uid, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, command, scope_uid)
         flat = _flatten_rulebase(data.get("rulebase", []))
         if not flat:
             return None
@@ -394,13 +473,7 @@ class LiveStateReader:
         domain: str,
     ) -> list[RuleMatch]:
         command = _RULEBASE_SHOW_COMMAND[layer_type]
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            command,
-            domain,
-            {"uid": scope_uid, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, command, scope_uid)
         uid_to_name = _uid_to_name_map(data)
         target = traffic_tuple(source_uids, dest_uids, service_uids)
         matches = []
@@ -425,13 +498,7 @@ class LiveStateReader:
     async def find_nat_rules_by_tuple(
         self, package: str, tup: tuple[str, str, str, str, str, str], *, mgmt: str, domain: str
     ) -> list[RuleMatch]:
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            "show-nat-rulebase",
-            domain,
-            {"package": package, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, "show-nat-rulebase", package, is_package=True)
         uid_to_name = _uid_to_name_map(data)
         matches = []
         # NAT rules nest inside nat-section items exactly like access rules nest inside
@@ -464,13 +531,7 @@ class LiveStateReader:
         return matches
 
     async def get_last_nat_rule(self, package: str, *, mgmt: str, domain: str) -> RuleMatch | None:
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            "show-nat-rulebase",
-            domain,
-            {"package": package, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, "show-nat-rulebase", package, is_package=True)
         nat_rules = [r for r in _flatten_rulebase(data.get("rulebase", [])) if r.get("type") == "nat-rule"]
         if not nat_rules:
             return None
@@ -484,13 +545,7 @@ class LiveStateReader:
         self, scope_uid: str, layer_type: str, key: dict[str, Any], *, mgmt: str, domain: str
     ) -> RuleMatch | None:
         command = _RULEBASE_SHOW_COMMAND[layer_type]
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            command,
-            domain,
-            {"uid": scope_uid, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, command, scope_uid)
         uid_to_name = _uid_to_name_map(data)
         for raw_rule in _flatten_rulebase(data.get("rulebase", [])):
             if _rule_matches_key(raw_rule, key):
@@ -503,13 +558,7 @@ class LiveStateReader:
     async def get_nat_rule_by_key(
         self, package: str, key: dict[str, Any], *, mgmt: str, domain: str
     ) -> RuleMatch | None:
-        data = await _paginate_rulebase(
-            self._client,
-            mgmt,
-            "show-nat-rulebase",
-            domain,
-            {"package": package, "details-level": "full", "use-object-dictionary": True},
-        )
+        data = await self._get_rulebase_data(mgmt, domain, "show-nat-rulebase", package, is_package=True)
         uid_to_name = _uid_to_name_map(data)
         for raw_rule in _flatten_rulebase(data.get("rulebase", [])):
             if raw_rule.get("type") != "nat-rule":
@@ -704,7 +753,9 @@ class HybridStateReader:
         exact = [r for r in rows if r.name == name and r.type == cache_type]
         if exact:
             return _state_from_cpobject(type, exact[0])
-        return await self._live.get_by_name(type, name, mgmt=mgmt, domain=domain)
+        # When the cache is current for this revision, objects of cached types not found in the
+        # cache do not exist on the server in this revision. Do not fall back to the live API.
+        return None
 
     async def find_by_ip(self, *, type: str, ip_value: dict[str, Any], mgmt: str, domain: str) -> list[ObjectState]:
         if not await self._cache_is_current(mgmt, domain):
@@ -726,6 +777,9 @@ class HybridStateReader:
                 mgmt_names=[mgmt],
                 domain_names=[domain],
             )
+        else:
+            return await self._live.find_by_ip(type=type, ip_value=ip_value, mgmt=mgmt, domain=domain)
+
         typed = [r for r in rows if r.type == cache_type]
         if type == "network":
             # get_objects_by_subnet only matches the bare network address, not the mask, so two
@@ -734,13 +788,12 @@ class HybridStateReader:
             # supplied we can't verify it, so don't guess -- fall through to the live API instead.
             mask_length = ip_value.get("mask-length")
             if mask_length is None:
-                typed = []
-            else:
-                expected_mask = _mask_to_dotted(int(mask_length))
-                typed = [r for r in typed if r.subnet_mask == expected_mask]
-        if typed:
-            return [_state_from_cpobject(type, r) for r in typed]
-        return await self._live.find_by_ip(type=type, ip_value=ip_value, mgmt=mgmt, domain=domain)
+                return await self._live.find_by_ip(type=type, ip_value=ip_value, mgmt=mgmt, domain=domain)
+            expected_mask = _mask_to_dotted(int(mask_length))
+            typed = [r for r in typed if r.subnet_mask == expected_mask]
+        # When the cache is current, return the typed matches (or empty list if none).
+        # Do not fall back to live API for indexed types.
+        return [_state_from_cpobject(type, r) for r in typed]
 
     async def where_used(self, uid: str, *, mgmt: str, domain: str) -> int:
         return await self._live.where_used(uid, mgmt=mgmt, domain=domain)
@@ -756,6 +809,11 @@ class HybridStateReader:
 
     async def get_layer(self, layer_ref: str, layer_type: str, *, mgmt: str, domain: str) -> LayerInfo | None:
         return await self._live.get_layer(layer_ref, layer_type, mgmt=mgmt, domain=domain)
+
+    async def get_layer_chain(
+        self, layer_ref: str, layer_type: str, *, mgmt: str, domain: str
+    ) -> list[LayerInfo]:
+        return await self._live.get_layer_chain(layer_ref, layer_type, mgmt=mgmt, domain=domain)
 
     async def get_section(
         self, section_ref: str, layer_uid: str, layer_type: str, *, mgmt: str, domain: str
@@ -802,3 +860,7 @@ class HybridStateReader:
         self, package: str, key: dict[str, Any], *, mgmt: str, domain: str
     ) -> RuleMatch | None:
         return await self._live.get_nat_rule_by_key(package, key, mgmt=mgmt, domain=domain)
+
+    def clear_cache(self) -> None:
+        self._live.clear_cache()
+
