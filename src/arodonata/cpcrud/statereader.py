@@ -123,6 +123,8 @@ class LiveStateReader:
         self._client = client
         self._rulebase_cache: dict[tuple[str, str, str, str], dict[str, Any]] = {}
         self._layer_cache: dict[tuple[str, str, str, str], LayerInfo | None] = {}
+        self._service_cache: dict[tuple[str, str, str], ObjectState | None] = {}
+        self._object_cache: dict[tuple[str, str, str, str], ObjectState | None] = {}
 
     async def _get_rulebase_data(
         self,
@@ -151,6 +153,10 @@ class LiveStateReader:
         return data
 
     async def get_by_name(self, type: str, name: str, *, mgmt: str, domain: str) -> ObjectState | None:
+        cache_key = (mgmt, domain, type, name)
+        if cache_key in self._object_cache:
+            return self._object_cache[cache_key]
+
         # map template type -> singular show command
         suffix = _TYPE_CMD.get(type, type)
         # resolve_update/resolve_delete/resolve_show (resolver.py) collapse a template's
@@ -165,13 +171,20 @@ class LiveStateReader:
         )
         if not result.success:
             if _not_found(result):
+                self._object_cache[cache_key] = None
                 return None
             # Not "absent": an add would plan a create, a delete "already absent" (Backlog #37).
             raise StateReadError(f"show-{suffix} failed: {result.code}: {result.message}")
         data = extract_data_from_response(result)
         if not isinstance(data, dict) or "uid" not in data:
+            self._object_cache[cache_key] = None
             return None
-        return ObjectState(uid=data["uid"], name=data.get("name", name), type=type, raw=data)
+        res = ObjectState(uid=data["uid"], name=data.get("name", name), type=type, raw=data)
+        self._object_cache[cache_key] = res
+        self._object_cache[(mgmt, domain, type, res.uid)] = res
+        if res.name:
+            self._object_cache[(mgmt, domain, type, res.name)] = res
+        return res
 
     async def find_by_ip(self, *, type: str, ip_value: dict[str, Any], mgmt: str, domain: str) -> list[ObjectState]:
         # show-objects is a listing endpoint (default page limit 50, per Check Point's own API
@@ -282,13 +295,34 @@ class LiveStateReader:
         return None
 
     async def get_service(self, spec: Any, original_text: str, *, mgmt: str, domain: str) -> ObjectState | None:
+        cache_key = (mgmt, domain, original_text)
+        if cache_key in self._service_cache:
+            return self._service_cache[cache_key]
+
         named = await self._probe_named_service(original_text, mgmt=mgmt, domain=domain)
         if named is not None:
+            self._service_cache[cache_key] = named
+            if named.name:
+                self._service_cache[(mgmt, domain, named.name)] = named
             return named
         canonical = await self._probe_canonical_service(spec, mgmt=mgmt, domain=domain)
         if canonical is not None:
+            self._service_cache[cache_key] = canonical
+            if canonical.name:
+                self._service_cache[(mgmt, domain, canonical.name)] = canonical
             return canonical
-        return await self._probe_service_by_port(spec, mgmt=mgmt, domain=domain)
+        by_port = await self._probe_service_by_port(spec, mgmt=mgmt, domain=domain)
+        self._service_cache[cache_key] = by_port
+        if by_port is not None and by_port.name:
+            self._service_cache[(mgmt, domain, by_port.name)] = by_port
+        return by_port
+
+    def clear_cache(self) -> None:
+        """Clear all in-memory caches."""
+        self._rulebase_cache.clear()
+        self._layer_cache.clear()
+        self._service_cache.clear()
+        self._object_cache.clear()
 
     async def get_layer(self, layer_ref: str, layer_type: str, *, mgmt: str, domain: str) -> LayerInfo | None:
         cache_key = (mgmt, domain, layer_type, layer_ref)
@@ -822,3 +856,7 @@ class HybridStateReader:
         self, package: str, key: dict[str, Any], *, mgmt: str, domain: str
     ) -> RuleMatch | None:
         return await self._live.get_nat_rule_by_key(package, key, mgmt=mgmt, domain=domain)
+
+    def clear_cache(self) -> None:
+        self._live.clear_cache()
+

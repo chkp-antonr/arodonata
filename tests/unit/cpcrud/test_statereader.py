@@ -2148,3 +2148,64 @@ async def test_layer_cache_negative_caching():
     assert len([c for c in client.calls if c[0] == "show-access-layer"]) == 1
 
 
+@pytest.mark.asyncio
+async def test_service_cache_negative_caching_skips_probe_cascade():
+    client = FakeClient(
+        {
+            "show-services-tcp": ApiCallResult(success=True, data={"objects": []}, message="OK"),
+            "show-services-udp": ApiCallResult(success=True, data={"objects": []}, message="OK"),
+        }
+    )  # probe commands return not_found
+    reader = LiveStateReader(client)
+    spec = ServiceSpec(kind="tcp", port="9443", name="TCP_9443")
+
+    res1 = await reader.get_service(spec, "TCP_9443", mgmt="m", domain="d")
+    assert res1 is None
+    first_call_count = len(client.calls)
+    assert first_call_count > 0
+
+    # Second call should return None with 0 additional API calls
+    res2 = await reader.get_service(spec, "TCP_9443", mgmt="m", domain="d")
+    assert res2 is None
+    assert len(client.calls) == first_call_count
+
+
+@pytest.mark.asyncio
+async def test_service_cache_hits_on_existing_service():
+    client = FakeClient(
+        {
+            "show-service-tcp": ApiCallResult(
+                success=True, data={"uid": "s-http", "name": "http", "port": "80"}, message="OK"
+            )
+        }
+    )
+    reader = LiveStateReader(client)
+    spec = ServiceSpec(kind="tcp", port="80", name="http")
+
+    res1 = await reader.get_service(spec, "http", mgmt="m", domain="d")
+    assert res1 is not None and res1.uid == "s-http"
+
+    res2 = await reader.get_service(spec, "http", mgmt="m", domain="d")
+    assert res2 is not None and res2.uid == "s-http"
+    assert len(client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_clear_cache_resets_all_caches():
+    client = FakeClient(
+        {
+            "show-host": ApiCallResult(
+                success=True, data={"uid": "u1", "name": "h1", "ipv4-address": "10.0.0.1"}, message="OK"
+            )
+        }
+    )
+    reader = LiveStateReader(client)
+    await reader.get_by_name("host", "h1", mgmt="m", domain="d")
+    assert len(client.calls) == 1
+
+    reader.clear_cache()
+    await reader.get_by_name("host", "h1", mgmt="m", domain="d")
+    assert len(client.calls) == 2
+
+
+
