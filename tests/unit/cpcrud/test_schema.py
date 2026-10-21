@@ -222,6 +222,28 @@ def test_access_rule_add_with_section_relative_position_valid():
     assert validate_template(doc) == []
 
 
+def _access_rule_with_custom_fields(operation: str, custom: dict) -> dict:
+    doc = copy.deepcopy(_BASE)
+    op = {"operation": operation, "type": "access-rule", "layer": "Network", "data": {"custom-fields": custom}}
+    if operation == "add":
+        op["position"] = "bottom"
+        op["data"]["name"] = "r1"
+    else:
+        op["key"] = {"name": "r1"}
+    doc["management_servers"][0]["domains"][0]["operations"] = [op]
+    return doc
+
+
+def test_access_rule_custom_fields_valid():
+    custom = {"field-1": "Updated at x", "field-2": "TAS1", "field-3": ""}
+    assert validate_template(_access_rule_with_custom_fields("add", custom)) == []
+    assert validate_template(_access_rule_with_custom_fields("update", custom)) == []
+
+
+def test_access_rule_unknown_custom_field_rejected():
+    assert validate_template(_access_rule_with_custom_fields("add", {"field-4": "x"})) != []
+
+
 def test_default_schema_ships_inside_the_package():
     """The wheel packages only src/arodonata, so the default schema must live there."""
     from pathlib import Path

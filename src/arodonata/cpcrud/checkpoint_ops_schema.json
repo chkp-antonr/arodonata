@@ -225,6 +225,24 @@
         },
         "vpn": {
           "type": "string"
+        },
+        "custom-fields": {
+          "$ref": "#/definitions/rule_custom_fields"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rule_custom_fields": {
+      "type": "object",
+      "properties": {
+        "field-1": {
+          "type": "string"
+        },
+        "field-2": {
+          "type": "string"
+        },
+        "field-3": {
+          "type": "string"
         }
       },
       "additionalProperties": false
@@ -1578,6 +1596,9 @@
             },
             "vpn": {
               "type": "string"
+            },
+            "custom-fields": {
+              "$ref": "#/definitions/rule_custom_fields"
             }
           },
           "additionalProperties": false
@@ -1659,6 +1680,9 @@
             },
             "vpn": {
               "type": "string"
+            },
+            "custom-fields": {
+              "$ref": "#/definitions/rule_custom_fields"
             }
           },
           "additionalProperties": false

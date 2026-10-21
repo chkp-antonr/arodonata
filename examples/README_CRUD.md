@@ -51,6 +51,28 @@ Controls what happens when another object already uses the same IP address.
 | `error` | Raise an error and skip the operation |
 | `create_new` | Create a new object sharing the IP address |
 
+## Access-rule custom fields
+
+`access-rule` operations (`add` and `update`) accept the Check Point rule custom fields:
+
+```yaml
+- type: "access-rule"
+  layer: "Network"
+  position: "bottom"
+  data:
+    name: "web-access"
+    source: ["Any"]
+    destination: ["web-srv"]
+    service: ["https"]
+    action: "accept"
+    custom-fields:
+      field-1: "Updated at 2026-10-21 10:00:00"
+      field-2: "TAS000111222333"
+```
+
+- Only `field-1`, `field-2` and `field-3` are allowed, each a string. Other keys fail validation.
+- On an existing rule, only the fields declared in the template are compared. Fields the template omits never cause an `update`.
+
 ## Result Summary
 
 Each `client.cpcrud.apply()` call yields SSE events and finishes with an `ApplyReport` whose `summary` attribute holds per-outcome counts, keyed by the lowercase `Outcome` values: `create`, `update`, `reuse`, `unchanged`, `delete`, `conflict`, `error`, `locked`, `drifted`, `skipped_dependency`, `plan_stale`.

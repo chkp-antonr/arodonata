@@ -8,6 +8,12 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 via [commitizen](https://commitizen-tools.github.io/commitizen/) — do not
 hand-edit released sections, only the `[Unreleased]` section above them.
 
+## Unreleased
+
+### Feat
+
+- **cpcrud**: support `custom-fields` (`field-1`..`field-3`) on access-rule add/update
+
 ## v1.15.0 (2026-10-19)
 
 ### Feat
