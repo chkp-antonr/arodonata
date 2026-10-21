@@ -875,6 +875,47 @@ async def test_resolve_rule_update_when_track_actually_differs():
 
 
 @pytest.mark.asyncio
+async def test_resolve_rule_create_carries_custom_fields():
+    layer = LayerInfo(uid="layer-u1", name="Network", type="access")
+    reader = RuleFakeReader(layer=layer, by_ip=[])
+    custom = {"field-1": "Updated at 2026-10-19 10:00:00:000000", "field-2": "TAS000111222333"}
+    op = {
+        "type": "access-rule",
+        "layer": "Network",
+        "position": "bottom",
+        "data": {"name": "r", "source": ["any"], "destination": ["any"], "service": ["any"], "custom-fields": custom},
+    }
+    action, _, _ = await resolve_rule(reader, "access-rule", op, mgmt="m", domain="d", action_id="act-0001", counter=1)
+    assert action.outcome == Outcome.CREATE
+    assert action.payload["custom-fields"] == custom
+
+
+@pytest.mark.asyncio
+async def test_resolve_rule_custom_fields_compare_declared_keys_only():
+    layer = LayerInfo(uid="layer-u1", name="Network", type="access")
+    raw = {
+        "uid": "r1",
+        "name": "r",
+        "source": [],
+        "destination": [],
+        "service": [],
+        "custom-fields": {"field-1": "a", "field-2": "T1", "field-3": ""},
+    }
+    reader = RuleFakeReader(layer=layer, existing_rules=[RuleMatch(uid="r1", name="r", rule_number=1, raw=raw)])
+    base_data = {"name": "r", "source": [], "destination": [], "service": []}
+
+    same = {"type": "access-rule", "layer": "Network", "position": "bottom"}
+    same["data"] = {**base_data, "custom-fields": {"field-2": "T1"}}
+    action, _, _ = await resolve_rule(reader, "access-rule", same, mgmt="m", domain="d", action_id="a1", counter=1)
+    assert action.outcome == Outcome.UNCHANGED
+
+    changed = {**same, "data": {**base_data, "custom-fields": {"field-1": "b", "field-2": "T1"}}}
+    action, _, _ = await resolve_rule(reader, "access-rule", changed, mgmt="m", domain="d", action_id="a2", counter=1)
+    assert action.outcome == Outcome.UPDATE
+    assert action.payload["custom-fields"] == {"field-1": "b", "field-2": "T1"}
+
+
+@pytest.mark.asyncio
 async def test_resolve_rule_unchanged_when_install_on_live_shape_is_list_of_dicts():
     """`install-on` (and similarly time/protected-scope/site-category/blade) may come back from
     the live API as a list of {"name": ..., "uid": ...} dicts even though the template declares
