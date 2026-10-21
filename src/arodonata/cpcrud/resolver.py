@@ -530,7 +530,7 @@ _RULE_CMD: dict[str, str] = {
 # source/destination/service are deliberately excluded here -- their identity is decided by
 # the traffic-tuple match (find_rules_by_traffic), never by direct field comparison.
 _RULE_DATA_FIELDS: dict[str, tuple[str, ...]] = {
-    "access-rule": ("enabled", "comments", "action", "track", "install-on", "time", "vpn"),
+    "access-rule": ("enabled", "comments", "action", "track", "install-on", "time", "vpn", "custom-fields"),
     "threat-prevention-rule": ("enabled", "comments", "protected-scope", "action", "track", "install-on"),
     "https-rule": ("enabled", "comments", "site-category", "action", "track", "blade", "certificate", "install-on"),
 }
