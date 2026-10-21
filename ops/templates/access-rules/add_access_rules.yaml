@@ -33,3 +33,7 @@ management_servers:
                 - "Gateway_Cluster"
               time: []
               vpn: "None"
+              custom-fields:
+                field-1: "Additional Rule Info"
+                field-2: "Ticket Number"
+                field-3: "Ticket Requester"
