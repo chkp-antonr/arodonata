@@ -410,13 +410,29 @@ class ArodonataClient:
         """Async context manager exit with cleanup."""
         await self.close()
 
-    async def close(self) -> None:
+    async def close(self, *, logout: bool | None = None) -> None:
         """Close client and release resources.
+
+        Args:
+            logout: Whether to log out of all active Check Point sessions.
+                - True: explicitly log out of all active sessions on the server.
+                - False: do not log out; preserve sessions in the database for reuse.
+                - None (default / auto): automatically log out if Arodonata auto-created
+                  an in-memory database (``self._owns_engine``), since in-memory sessions
+                  cannot be reused after process termination. If an external persistent
+                  database engine was provided, sessions are preserved.
 
         If the client owns the engine (auto-created for credential mode),
         it will be disposed here. App-provided engines are NOT closed.
         """
         if not self._closed:
+            should_logout = logout if logout is not None else self._owns_engine
+            if should_logout:
+                try:
+                    await self._mgmt.logout_all()
+                except Exception as exc:
+                    log().warning(f"Failed to logout sessions on close: {exc}")
+
             self._closed = True
             # An object-cache warm-up can run for hours: cancel it at once (each domain's objects are replaced
             # atomically, so a cancelled warm-up leaves whole domains) instead of letting it fail domain by domain on
@@ -432,6 +448,12 @@ class ArodonataClient:
                 await self._db.engine.dispose()
                 log().debug("Disposed auto-created engine")
             log().debug("ArodonataClient closed")
+
+    @traced
+    async def logout_all(self) -> None:
+        """Explicitly logout of all active sessions across all management servers."""
+        self._ensure_open()
+        await self._mgmt.logout_all()
 
     @traced
     async def logout(self, mgmt_name: str, domain: str = "") -> bool:

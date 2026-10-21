@@ -778,3 +778,62 @@ async def test_warm_up_logs_an_identity_error_at_error():
 
     log.return_value.error.assert_called_once()
     assert client._warm_ups["mgmt1"].state == "failed"
+
+
+# --------------------------------------------------------------------------- #
+# Close session logout behavior (owned vs external engines, explicit flags)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_close_auto_logout_when_owns_engine():
+    mgmt = AsyncMock()
+    client = make_client(mgmt=mgmt)
+    client._owns_engine = True
+
+    await client.close()
+
+    mgmt.logout_all.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_close_no_logout_when_app_owned_engine():
+    mgmt = AsyncMock()
+    client = make_client(mgmt=mgmt)
+    assert client._owns_engine is False
+
+    await client.close()
+
+    mgmt.logout_all.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_close_explicit_logout_true_overrides_app_engine():
+    mgmt = AsyncMock()
+    client = make_client(mgmt=mgmt)
+    assert client._owns_engine is False
+
+    await client.close(logout=True)
+
+    mgmt.logout_all.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_close_explicit_logout_false_overrides_owned_engine():
+    mgmt = AsyncMock()
+    client = make_client(mgmt=mgmt)
+    client._owns_engine = True
+
+    await client.close(logout=False)
+
+    mgmt.logout_all.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_logout_all_delegates_to_mgmt():
+    mgmt = AsyncMock()
+    client = make_client(mgmt=mgmt)
+
+    await client.logout_all()
+
+    mgmt.logout_all.assert_awaited_once()
