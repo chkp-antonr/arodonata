@@ -779,6 +779,7 @@ class CacheRepository:
         mgmt_names: list[str] | None = None,
         domain_names: list[str] | None = None,
         search_comments: bool = True,
+        exact_match: bool = False,
     ) -> list[CPObject]:
         """Retrieve objects by name or comments with optional wildcards.
 
@@ -787,24 +788,30 @@ class CacheRepository:
             mgmt_names: Optional list of management servers to filter by.
             domain_names: Optional list of domains to filter by.
             search_comments: Whether to include comments in matching.
+            exact_match: Whether to perform case-insensitive exact matching (supports * and ?).
 
         Returns:
             List of matching CPObject records.
         """
         async with self._db.session() as session:
-            if "*" in name or "?" in name:
+            has_wildcard = "*" in name or "?" in name
+            if has_wildcard:
                 pattern = name.replace("*", "%").replace("?", "_")
+            elif exact_match:
+                pattern = name
             else:
                 pattern = f"%{name}%" if search_comments else name
 
-            if search_comments:
+            if exact_match:
+                stmt = select(CPObject).where(CPObject.name.ilike(pattern))  # type: ignore[attr-defined]
+            elif search_comments:
                 stmt = select(CPObject).where(
                     or_(
                         CPObject.name.ilike(pattern),  # type: ignore[attr-defined]
                         CPObject.comments.ilike(pattern),  # type: ignore[attr-defined]
                     )
                 )
-            elif "*" in name or "?" in name:
+            elif has_wildcard:
                 stmt = select(CPObject).where(CPObject.name.like(pattern))  # type: ignore[attr-defined]
             else:
                 stmt = select(CPObject).where(CPObject.name == name)  # type: ignore[arg-type]

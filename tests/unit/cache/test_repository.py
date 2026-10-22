@@ -606,6 +606,31 @@ async def test_get_objects_by_name_exact_and_wildcard(repo):
     assert {o.uid for o in wild} == {"u1", "u2"}
 
 
+async def test_get_objects_by_name_exact_match(repo):
+    await repo.upsert_objects(
+        [
+            make_object("u1", name=".xxx.yy", comments="prod dns"),
+            make_object("u2", name="zzz.xxx.yy", comments="sub dns"),
+            make_object("u3", name="x123x.yy", comments="host match"),
+        ]
+    )
+    # Exact match for .xxx.yy should return ONLY u1, not u2
+    exact_results = await repo.get_objects_by_name(".xxx.yy", exact_match=True)
+    assert {o.uid for o in exact_results} == {"u1"}
+
+    # Case-insensitive exact match
+    exact_ci = await repo.get_objects_by_name(".XXX.yy", exact_match=True)
+    assert {o.uid for o in exact_ci} == {"u1"}
+
+    # Wildcard exact match x*x.yy should return u3, not u1
+    wild_results = await repo.get_objects_by_name("x*x.yy", exact_match=True)
+    assert {o.uid for o in wild_results} == {"u3"}
+
+    # Non-exact match should return both u1 and u2
+    loose_results = await repo.get_objects_by_name(".xxx.yy", exact_match=False)
+    assert {o.uid for o in loose_results} == {"u1", "u2"}
+
+
 async def test_get_objects_by_uids_empty_returns_empty(repo):
     assert await repo.get_objects_by_uids([]) == []
 
