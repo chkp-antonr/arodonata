@@ -150,6 +150,7 @@ async def test_search_objects_passes_search_comments():
         mgmt_names=None,
         domain_names=None,
         search_comments=False,
+        exact_match=False,
     )
 
     _ = [e async for e in svc.search_objects("ticket-1234", search_comments=True)]
@@ -158,4 +159,14 @@ async def test_search_objects_passes_search_comments():
         mgmt_names=None,
         domain_names=None,
         search_comments=True,
+        exact_match=False,
+    )
+
+    _ = [e async for e in svc.search_objects("ticket-1234", exact_match=True)]
+    mock_obj_svc._cache.get_objects_by_name.assert_awaited_with(
+        name="ticket-1234",
+        mgmt_names=None,
+        domain_names=None,
+        search_comments=True,
+        exact_match=True,
     )
