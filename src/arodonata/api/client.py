@@ -1113,6 +1113,7 @@ class ArodonataClient:
         refresh: Literal["skip", "check", "force", "incremental"] = "skip",
         max_depth: int = 2,
         search_comments: bool = True,
+        exact_match: bool = False,
     ) -> AsyncGenerator[SSEEvent]:
         """Search for Check Point objects with cache-first queries.
 
@@ -1136,6 +1137,7 @@ class ArodonataClient:
             refresh=refresh,
             max_depth=max_depth,
             search_comments=search_comments,
+            exact_match=exact_match,
         ):
             yield event
 

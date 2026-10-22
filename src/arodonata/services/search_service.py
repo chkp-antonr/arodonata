@@ -106,6 +106,7 @@ class SearchService:
         mgmt_names: list[str] | None,
         domain_names: list[str] | None,
         search_comments: bool = True,
+        exact_match: bool = False,
     ) -> list[Any]:
         """Fetch objects from cache based on search type."""
         objects = []
@@ -137,6 +138,7 @@ class SearchService:
                 mgmt_names=mgmt_names,
                 domain_names=domain_names,
                 search_comments=search_comments,
+                exact_match=exact_match,
             )
         return objects
 
@@ -208,6 +210,7 @@ class SearchService:
         domain_names: list[str] | None,
         max_depth: int,
         search_comments: bool = True,
+        exact_match: bool = False,
     ) -> AsyncGenerator[SSEEvent]:
         """Execute lookup and group membership resolution for a single term."""
         yield SSEEvent(
@@ -215,7 +218,9 @@ class SearchService:
             message=f" > '{cleaned}' ({search_type.value})",
         )
 
-        objects = await self._fetch_objects_for_search(search_type, cleaned, mgmt_names, domain_names, search_comments)
+        objects = await self._fetch_objects_for_search(
+            search_type, cleaned, mgmt_names, domain_names, search_comments, exact_match=exact_match
+        )
         grouped = self._group_search_objects(objects)
 
         for m_name, domains in grouped.items():
@@ -261,6 +266,7 @@ class SearchService:
         refresh: Literal["skip", "check", "force", "incremental"] = "skip",
         max_depth: int = 2,
         search_comments: bool = True,
+        exact_match: bool = False,
     ) -> AsyncGenerator[SSEEvent]:
         """Search for Check Point objects with cache-first queries and SSE streaming.
 
@@ -289,7 +295,7 @@ class SearchService:
         # Process each search term
         for _term_idx, (search_type, cleaned) in enumerate(classified, 1):
             async for event in self._process_search_term(
-                search_type, cleaned, mgmt_names, domain_names, max_depth, search_comments
+                search_type, cleaned, mgmt_names, domain_names, max_depth, search_comments, exact_match=exact_match
             ):
                 yield event
 
