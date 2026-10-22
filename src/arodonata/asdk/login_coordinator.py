@@ -924,7 +924,10 @@ class LoginCoordinator:
         """Logout of all active sessions and clear cache."""
         sids = await self._cache.list_all_sids()
         for record in sids:
-            mgmt, domain, _ = self._split_key(record.mgmt_dmn_key)
+            mgmt, domain, user = self._split_key(record.mgmt_dmn_key)
+            if self._auth_mode == "credential" and self._username:
+                if user and user != self._username:
+                    continue
             await self.logout(mgmt, domain)
 
     async def _execute_login_request(

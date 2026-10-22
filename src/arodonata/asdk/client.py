@@ -92,6 +92,11 @@ class AMgmtClient:
         self._ensure_not_closed()
         return await self._login_coordinator.logout(mgmt_name, domain)
 
+    async def logout_all(self) -> None:
+        """Explicitly logout of all active sessions."""
+        self._ensure_not_closed()
+        await self._login_coordinator.logout_all()
+
     def _ensure_not_closed(self) -> None:
         """Ensure client has not been closed."""
         if self._closed:

@@ -20,7 +20,11 @@ from ..asdk import AMgmtClient, ApiTransport, LoginCoordinator, RateLimiter, Ser
 from ..cache import CacheRepository, DatabaseManager
 from ..config import ArodonataSettings
 from ..config.constants import TASK_QUERY_COMMANDS, TASK_QUERY_MAX_PAGE_SIZE, TASK_QUERY_PAGE_SIZE
-from ..core.exceptions import MissingConfigurationError
+from ..core.exceptions import (
+    AuthenticationError,
+    InvalidCredentialsError,
+    MissingConfigurationError,
+)
 from ..logger import lazy_logger
 from ..utils.background_tasks import DEFAULT_CLOSE_GRACE_SECONDS, drain_background_tasks
 from .schemas import ApiCallResult, ApiQueryResult, ObjectCacheWarmUp, SSEEvent, SSEEventType
@@ -406,19 +410,37 @@ class ArodonataClient:
         """Async context manager exit with cleanup."""
         await self.close()
 
-    async def close(self) -> None:
+    async def close(self, *, logout: bool | None = None) -> None:
         """Close client and release resources.
+
+        Args:
+            logout: Whether to log out of all active Check Point sessions.
+                - True: explicitly log out of all active sessions on the server.
+                - False: do not log out; preserve sessions in the database for reuse.
+                - None (default / auto): automatically log out if Arodonata auto-created
+                  an in-memory database (``self._owns_engine``), since in-memory sessions
+                  cannot be reused after process termination. If an external persistent
+                  database engine was provided, sessions are preserved.
 
         If the client owns the engine (auto-created for credential mode),
         it will be disposed here. App-provided engines are NOT closed.
         """
         if not self._closed:
+            should_logout = logout if logout is not None else self._owns_engine
+            if should_logout:
+                try:
+                    await self._mgmt.logout_all()
+                except Exception as exc:
+                    log().warning(f"Failed to logout sessions on close: {exc}")
+
             self._closed = True
             # An object-cache warm-up can run for hours: cancel it at once (each domain's objects are replaced
             # atomically, so a cancelled warm-up leaves whole domains) instead of letting it fail domain by domain on
             # the closed client during the grace period.
             for task in self._warm_up_tasks:
                 task.cancel()
+            if self._warm_up_tasks:
+                await asyncio.gather(*self._warm_up_tasks, return_exceptions=True)
             # Let other background work (startup cleanup) finish rather than cancel it mid-query.
             await drain_background_tasks(set(self._background_tasks), self._close_grace_seconds)
             await self._mgmt.close()
@@ -426,6 +448,12 @@ class ArodonataClient:
                 await self._db.engine.dispose()
                 log().debug("Disposed auto-created engine")
             log().debug("ArodonataClient closed")
+
+    @traced
+    async def logout_all(self) -> None:
+        """Explicitly logout of all active sessions across all management servers."""
+        self._ensure_open()
+        await self._mgmt.logout_all()
 
     @traced
     async def logout(self, mgmt_name: str, domain: str = "") -> bool:
@@ -445,6 +473,11 @@ class ArodonataClient:
         """Ensure client has not been closed."""
         if self._closed:
             raise RuntimeError("Client has been closed and cannot be used")
+
+    async def _ensure_db_initialized(self) -> None:
+        """Ensure database tables are initialized before cache access."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
 
     @property
     def settings(self) -> ArodonataSettings:
@@ -558,6 +591,7 @@ class ArodonataClient:
             Validated API call result.
         """
         self._ensure_open()
+        await self._ensure_db_initialized()
 
         response = await self._mgmt.api_call(
             mgmt_name=mgmt_name,
@@ -1281,6 +1315,7 @@ class ArodonataClient:
     ) -> list[PackageLayout]:
         """Policy packages of a domain with their ordered layers per rulebase type (from the rulebase cache)."""
         self._ensure_open()
+        await self._ensure_db_initialized()
         if not domain_name:
             raise ValueError("domain_name is required")
         mgmt = self._rulebase_mgmt(mgmt_name)
@@ -1303,6 +1338,7 @@ class ArodonataClient:
         Numbers reflect the cached snapshot's session (``snapshot_session_uid``).
         """
         self._ensure_open()
+        await self._ensure_db_initialized()
         mgmt = self._rulebase_mgmt(mgmt_name)
         domain = await self._resolve_rulebase_domain(
             mgmt, domain_name, package, lambda: self._rulebase_source.find_package_domains(mgmt, package)
@@ -1446,6 +1482,7 @@ class ArodonataClient:
         from ..core.cache_policy import CachePolicy
 
         self._ensure_open()
+        await self._ensure_db_initialized()
         mode = CachePolicy.resolve(cache_mode, cache_ttl, self._refresh_coordinator.default_policy).mode
         if mode != CacheMode.CACHE:
             targets = list(mgmt_names) if mgmt_names else self.get_mgmt_names()[:1]
@@ -1465,6 +1502,8 @@ class ArodonataClient:
                 return
         try:
             await self._domain_service.populate_domain_cache(mgmt_name)
+        except (InvalidCredentialsError, AuthenticationError):
+            raise
         except Exception as exc:
             from ..core.exceptions import ServerIdentityError
 
