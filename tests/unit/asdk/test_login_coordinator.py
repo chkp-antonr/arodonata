@@ -19,7 +19,12 @@ from arodonata.asdk.domain_servers import GlobalDomainMdss
 from arodonata.asdk.login_coordinator import LoginCoordinator
 from arodonata.asdk.login_gate import LoginGateDeadlineError
 from arodonata.asdk.server_registry import ServerConfig
-from arodonata.core.exceptions import AuthenticationError, InvalidCredentialsError, ThrottlingError
+from arodonata.core.exceptions import (
+    AccountLockedError,
+    AuthenticationError,
+    InvalidCredentialsError,
+    ThrottlingError,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -435,6 +440,33 @@ def test_parse_login_response_credential_rejection_raises_invalid_credentials():
     resp = {"success": False, "code": "err_login_failed", "message": "Authentication to server failed."}
     with pytest.raises(InvalidCredentialsError, match="Authentication to server failed"):
         coord._parse_login_response(resp, "m", "d", "ip")
+
+
+def test_parse_login_response_locked_account_raises_account_locked_error():
+    """An 'Administrator account is locked.' response must raise AccountLockedError."""
+    coord = _make_coordinator()
+    resp = {"success": False, "code": "err_login_failed", "message": "Administrator account is locked."}
+    with pytest.raises(AccountLockedError, match="Administrator account is locked"):
+        coord._parse_login_response(resp, "m", "d", "ip")
+
+
+def test_parse_login_response_err_login_failed_raises_invalid_credentials():
+    """Any err_login_failed code represents permanent auth rejection and raises InvalidCredentialsError."""
+    coord = _make_coordinator()
+    resp = {"success": False, "code": "err_login_failed", "message": "Wrong credentials provided"}
+    with pytest.raises(InvalidCredentialsError, match="Wrong credentials provided"):
+        coord._parse_login_response(resp, "m", "d", "ip")
+
+
+def test_parse_login_response_includes_username_in_error_and_log():
+    """When username is configured, it is included in the exception message and failure log."""
+    settings = _make_settings(auth_mode="credential", username="admin_svc")
+    coord = _make_coordinator(settings=settings)
+    resp = {"success": False, "code": "err_login_failed", "message": "Administrator account is locked."}
+    with pytest.raises(AccountLockedError) as exc_info:
+        coord._parse_login_response(resp, "m", "d", "ip")
+    assert "user='admin_svc'" in str(exc_info.value)
+    assert "Administrator account is locked" in str(exc_info.value)
 
 
 def test_parse_login_response_transient_refusal_is_not_invalid_credentials():

@@ -635,6 +635,24 @@ async def test_login_with_credentials_failure_logs_and_returns_result():
     assert result["message"] == "Wrong password"
 
 
+async def test_login_with_credentials_failure_logs_username(caplog):
+    transport = ApiTransport()
+    mock_response = _make_response(
+        success=False, data={"message": "Administrator account is locked.", "code": "err_login_failed"}
+    )
+    mock_client = MagicMock()
+    mock_client.login.return_value = mock_response
+
+    p1, p2, p3 = _patch_sdk(mock_client)
+    with p1, p2, p3:
+        await transport.login_with_credentials("10.0.0.1", "admin_super", "some-pw")
+
+    assert any(
+        "LOGIN (credentials) FAILED" in record.message and "user='admin_super'" in record.message
+        for record in caplog.records
+    )
+
+
 # --------------------------------------------------------------------------
 # logout
 # --------------------------------------------------------------------------

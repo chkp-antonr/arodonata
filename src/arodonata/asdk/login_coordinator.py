@@ -836,8 +836,10 @@ class LoginCoordinator:
             log().error(f"{operation_name} failed: {type(exc).__name__} (TLS identity - not retrying)")
             raise exc
 
-        if isinstance(exc, (TypeError, InvalidCredentialsError)) or (
-            CREDENTIAL_REJECTION_MESSAGE in str(exc) and type(exc) is not AuthenticationError
+        if (
+            isinstance(exc, (TypeError, InvalidCredentialsError))
+            or (CREDENTIAL_REJECTION_MESSAGE in str(exc) and type(exc) is not AuthenticationError)
+            or ("locked" in str(exc).lower() and "account" in str(exc).lower())
         ):
             log().error(f"{operation_name} failed: {exc} (Fatal error - not retrying)")
             raise exc
@@ -996,7 +998,10 @@ class LoginCoordinator:
         from ..core.exceptions import AuthenticationError
 
         if self._auth_mode == "credential":
-            raise AuthenticationError(f"Credential authentication failed for '{mgmt_name}:{domain}': {exc}") from exc
+            user_info = f", user='{self._username}'" if self._username else ""
+            raise AuthenticationError(
+                f"Credential authentication failed for '{mgmt_name}:{domain}'{user_info}: {exc}"
+            ) from exc
         raise AuthenticationError(f"Login failed after {self._settings.login_max_retries} attempts: {exc}") from exc
 
     def _raise_gate_deadline_as_auth_error(
@@ -1033,21 +1038,44 @@ class LoginCoordinator:
             raise ThrottlingError(f"Login throttled: {code}")
 
         error_msg = response.get("message", "Unknown login error")
+        user_info = f", user='{self._username}'" if self._username else ""
         log().error(
             f"AUTHENTICATION FAILURE DETAILS: "
-            f"mgmt='{mgmt_name}', domain='{domain}', ip={server_ip}, "
+            f"mgmt='{mgmt_name}', domain='{domain}', ip={server_ip}{user_info}, "
             f"error_code='{code}', error_msg='{error_msg}', "
             f"response_data_keys={list(response.get('data', {}).keys()) if response.get('data') else 'None'}"
         )
-        from ..core.exceptions import AuthenticationError, InvalidCredentialsError
+        from ..core.exceptions import AccountLockedError, AuthenticationError, InvalidCredentialsError
 
-        # A rejected password/key is the one login failure that never clears on
+        user_suffix = f" (user='{self._username}')" if self._username else ""
+
+        if "locked" in error_msg.lower():
+            raise AccountLockedError(f"Login failed{user_suffix}: {error_msg}")
+
+        # A rejected password/key or permanent login refusal never clears on
         # retry, so it gets its own subclass: callers can tell it apart from a
         # transient refusal ("Database revision is in progress", server
         # restarting, ...) by type instead of by matching on message text.
-        if CREDENTIAL_REJECTION_MESSAGE in error_msg and code != "generic_server_initializing":
-            raise InvalidCredentialsError(f"Login failed: {error_msg}")
-        raise AuthenticationError(f"Login failed: {error_msg}")
+        if code != "generic_server_initializing" and (
+            code.startswith("err_login_failed")
+            or CREDENTIAL_REJECTION_MESSAGE in error_msg
+            or any(
+                phrase in error_msg.lower()
+                for phrase in (
+                    "wrong username or password",
+                    "account is disabled",
+                    "account disabled",
+                    "account has expired",
+                    "account expired",
+                    "password has expired",
+                    "password expired",
+                    "not authorized",
+                    "permission denied",
+                )
+            )
+        ):
+            raise InvalidCredentialsError(f"Login failed{user_suffix}: {error_msg}")
+        raise AuthenticationError(f"Login failed{user_suffix}: {error_msg}")
 
     def _extract_uid_from_response(self, response: dict[str, Any]) -> str | None:
         """Extract user ID from login response.
@@ -1742,8 +1770,9 @@ class LoginCoordinator:
         api_key = server_config.api_key
         port = server_config.port
 
+        user_info = f", user='{self._username}'" if self._username else ""
         log().debug(
-            f"LOGIN ATTEMPT: mgmt='{mgmt_name}', domain='{domain}', ip={server_ip}:{port or 443}, "
+            f"LOGIN ATTEMPT: mgmt='{mgmt_name}', domain='{domain}', ip={server_ip}:{port or 443}{user_info}, "
             f"force={force}, entry_time={entry_time.isoformat()}, "
             f"cached {sid_prefix(cached.sid if cached else None)}, "
             f"cached_created={cached.created_at.isoformat() if cached and cached.created_at else 'None'}"

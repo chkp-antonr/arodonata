@@ -20,6 +20,7 @@ _HIERARCHY = [
     (exc.AuthenticationError, exc.ArodonataError),
     (exc.SessionExpiredError, exc.AuthenticationError),
     (exc.InvalidCredentialsError, exc.AuthenticationError),
+    (exc.AccountLockedError, exc.InvalidCredentialsError),
     (exc.ApiError, exc.ArodonataError),
     (exc.ApiCallError, exc.ApiError),
     (exc.ApiQueryError, exc.ApiError),

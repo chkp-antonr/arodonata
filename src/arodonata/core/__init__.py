@@ -9,6 +9,7 @@ from .cache_policy import CachePolicy
 from .cache_refresh_coordinator import CacheRefreshCoordinator
 from .change_processor import ChangeProcessor, ChangeType, ObjectChange
 from .exceptions import (
+    AccountLockedError,
     ApiCallError,
     ApiConnectionError,
     ApiError,
@@ -84,6 +85,7 @@ __all__ = [
     "AuthenticationError",
     "SessionExpiredError",
     "InvalidCredentialsError",
+    "AccountLockedError",
     "ApiError",
     "ApiCallError",
     "ApiQueryError",
