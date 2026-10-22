@@ -89,6 +89,12 @@ class InvalidCredentialsError(AuthenticationError):
     pass
 
 
+class AccountLockedError(InvalidCredentialsError):
+    """Administrator account is locked."""
+
+    pass
+
+
 class PublishedHeadError(Exception):
     """``show-last-published-session`` could not tell where a domain's head is (failed call, exception, no timestamp)."""
 
@@ -284,6 +290,7 @@ __all__ = [
     "AuthenticationError",
     "SessionExpiredError",
     "InvalidCredentialsError",
+    "AccountLockedError",
     "PublishedHeadError",
     "ApiError",
     "ApiCallError",

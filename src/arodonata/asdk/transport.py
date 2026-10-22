@@ -663,7 +663,8 @@ class ApiTransport:
             login_payload["session-timeout"] = session_timeout
 
         domain_context = f" domain={domain}" if domain else " (system domain)"
-        log().trace(f"LOGIN (credentials) request: {server_ip}{domain_context}, user={username}")
+        user_context = f", user='{username}'" if username else ""
+        log().trace(f"LOGIN (credentials) request: {server_ip}{domain_context}{user_context}")
 
         span_attrs(server_ip=server_ip, domain=domain or "system", port=port)
 
@@ -689,16 +690,18 @@ class ApiTransport:
                 raise ValueError("API credential login returned None response")
 
             result = self._build_login_response(response)
-            self._log_credentials_login(result, f"{server_ip}{domain_context}")
+            self._log_credentials_login(result, f"{server_ip}{domain_context}{user_context}")
             return result
         except ApiTimeoutError:
-            log().error(f"LOGIN (credentials) TIMEOUT: {server_ip}{domain_context} (socket, timeout={timeout}s)")
+            log().error(
+                f"LOGIN (credentials) TIMEOUT: {server_ip}{domain_context}{user_context} (socket, timeout={timeout}s)"
+            )
             raise
         except TimeoutError as e:
-            log().error(f"LOGIN (credentials) TIMEOUT: {server_ip}{domain_context} (timeout={timeout}s)")
+            log().error(f"LOGIN (credentials) TIMEOUT: {server_ip}{domain_context}{user_context} (timeout={timeout}s)")
             raise TimeoutError(f"Credential login timed out after {timeout}s") from e
         except Exception as e:
-            log().error(f"LOGIN (credentials) ERROR: {server_ip}{domain_context} - {e}", extra=_LITERAL)
+            log().error(f"LOGIN (credentials) ERROR: {server_ip}{domain_context}{user_context} - {e}", extra=_LITERAL)
             raise
 
     @traced

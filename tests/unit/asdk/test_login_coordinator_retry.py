@@ -17,6 +17,7 @@ from arodonata.asdk.session_cleaner import CleanupResult, SessionCleaner
 from arodonata.cache.lock_manager import LockAcquisitionError, LockOwnershipError
 from arodonata.config import CREDENTIAL_REJECTION_MESSAGE, LOGIN_THROTTLE_WINDOW_SECONDS
 from arodonata.core.exceptions import (
+    AccountLockedError,
     ApiTimeoutError,
     AuthenticationError,
     CertificateMismatchError,
@@ -1178,6 +1179,23 @@ async def test_create_dedicated_session_rejected_credentials_stay_invalid_creden
             await coord.create_dedicated_session("mgmt1", "")
 
     # Fatal: not retried.
+    assert coord._execute_login_request.await_count == 1
+
+
+async def test_locked_account_fails_fast_without_retry():
+    """When Check Point reports 'Administrator account is locked.', login must not retry."""
+    registry = MagicMock()
+    registry.get_server.return_value = MagicMock(server_ip="10.0.0.1", api_key=SecretStr("key"), port=None)
+    coord = _make_coordinator(registry=registry, settings=_make_settings(max_retries=5))
+    coord._execute_login_request = AsyncMock(
+        return_value={"success": False, "code": "err_login_failed", "message": "Administrator account is locked."}
+    )
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(AccountLockedError):
+            await coord.create_dedicated_session("mgmt1", "")
+
+    # Fatal: must be called exactly once, no retries!
     assert coord._execute_login_request.await_count == 1
 
 
