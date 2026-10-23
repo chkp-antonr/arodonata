@@ -1,5 +1,6 @@
 """Arodonata v2 — Async-first Python SDK for Check Point Management & MDSM."""
 
+from arodonata.adapters.checkpoint import AMgmtClient
 from arodonata.core.config import ArodonataSettings, AuthMode, ServerEndpointConfig, TlsTrustMode
 from arodonata.core.context import (
     AuthContext,
@@ -41,6 +42,7 @@ from arodonata.core.errors import (
 )
 
 __all__ = [
+    "AMgmtClient",
     "AmbiguousLayerName",
     "ApiTimeoutError",
     "ArodonataError",
