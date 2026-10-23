@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines the declarative, idempotent Check Point CRUD engine (`CPCRUDService`, `Planner`, `HybridStateReader`, `Executor`, `Differ`, `build_inverse_template`) for validating, planning, applying, and rolling back security object and rulebase changes across management servers and domains.
+Defines the declarative, idempotent Check Point CRUD engine (`CPCRUDService`, `Planner`, `HybridStateReader`, `Executor`, `Differ`, `build_inverse_template`) for validating, planning, applying, and rolling back security object, service, and rulebase changes across management servers and domains.
 
 ## Requirements
 
@@ -17,11 +17,11 @@ Defines the declarative, idempotent Check Point CRUD engine (`CPCRUDService`, `P
 
 ### Requirement: Two-Axis Conflict Resolution and Idempotent Planning
 
-`CPCRUDService.plan()` (`Planner.decide`) SHALL inspect state via an isolated `HybridStateReader` per run, evaluate `NameConflictPolicy` (`update` | `error`) and `IpConflictPolicy` (`reuse` | `create_new` | `error`), compute field-level diffs (`differ.py`), and produce a deterministic `Plan` with `DomainStamp` records (`last_publish_session`) read BEFORE any domain lookups.
+`CPCRUDService.plan()` (`Planner.decide`) SHALL inspect state via an isolated `HybridStateReader` per run (querying `arodonata_objects` and `arodonata_services` when `domain_sync_state` matches the domain head), evaluate `NameConflictPolicy` (`update` | `error`) and `IpConflictPolicy` (`reuse` | `create_new` | `error`), compute field-level diffs (`differ.py`), and produce a deterministic `Plan` with `DomainStamp` records read BEFORE any domain lookups.
 
 #### Scenario: Re-planning an already-applied template yields UNCHANGED or REUSE
 
-- **WHEN** `plan(template)` runs against a domain where all desired objects and rules already exist with matching attributes
+- **WHEN** `plan(template)` runs against a domain where all desired objects, services, and rules already exist with matching attributes
 - **THEN** every planned action SHALL have `Outcome.UNCHANGED` or `Outcome.REUSE` and require zero API write operations during `apply()`
 
 #### Scenario: IP conflict with create_new auto-names object using NamingPrefixes
@@ -36,8 +36,8 @@ Defines the declarative, idempotent Check Point CRUD engine (`CPCRUDService`, `P
 
 #### Scenario: Cache-first object lookups gated by exact domain head stamp
 
-- **WHEN** `HybridStateReader` looks up a host, network, address range, or group during `plan()`
-- **THEN** it SHALL read from the local object cache ONLY while the domain's stored `last_published_sessions` UID equals the head UID read by the planner at the start of that `plan()` run, falling back to live API queries otherwise
+- **WHEN** `HybridStateReader` looks up a host, network, address range, dns-domain, group, or service during `plan()`
+- **THEN** it SHALL read from `arodonata_objects` or `arodonata_services` ONLY while the domain's stored `domain_sync_state` row for that specific `(scope, item_type)` matches the head `last_published_at` and `last_session_uid` read by the planner at the start of `plan()`, falling back to live API queries otherwise
 
 ### Requirement: Rule Identity Matching, Cleanup-Aware Positioning, and NAT Sentinels
 
@@ -55,7 +55,7 @@ The planner and position helper SHALL resolve access, HTTPS, threat-prevention, 
 
 ### Requirement: Dedicated-Session Execution, Stale Plan Safeguard, and Session Staging
 
-`CPCRUDService.apply()` (`Executor.stream`) SHALL execute planned actions in a dedicated session per `(mgmt_name, domain_name)`, verify that the domain's published head has not drifted since `plan()`, stream `SSEEvent` updates, and yield a final `ApplyReport`.
+`CPCRUDService` SHALL provide both `await apply(plan, ...) -> ApplyReport` and `stream_apply(plan, ...) -> AsyncIterator[CPCRUDEvent]`, executing planned actions in an isolated `WriteSession` per `(mgmt_name, domain_name)` (updating `SessionOverlay` as each action succeeds) and verifying that the domain's published head has not drifted since `plan()`.
 
 #### Scenario: Stale plan abort when domain published after planning
 
@@ -65,7 +65,7 @@ The planner and position helper SHALL resolve access, HTTPS, threat-prevention, 
 #### Scenario: Keep-session staging mode preserves unpublished session for external workflow
 
 - **WHEN** `apply(plan, no_publish=True, keep_session=True)` is called
-- **THEN** the executor SHALL leave the dedicated write session open without publishing, record its details (`sid`, `server_ip`, `session_uid`, `session_name`) in `ApplyReport.staged_sessions`, and emit a `staged_session` `SSEEvent`
+- **THEN** the executor SHALL leave the dedicated write session open without publishing, record its details (`sid`, `server_ip`, `session_uid`, `session_name`) in `ApplyReport.staged_sessions`, and emit a `StagedSessionEvent` (`CPCRUDEvent`) in `stream_apply()`
 
 #### Scenario: Post-publish domain cache invalidation and retry_remaining folding
 

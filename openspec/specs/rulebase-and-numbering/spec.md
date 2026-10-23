@@ -2,23 +2,23 @@
 
 ## Purpose
 
-Defines multi-domain rulebase snapshot caching (`RulebaseRefreshService`, `RulebaseRefreshCoordinator`), rulebase pagination (`rulebase/pager.py`), SmartConsole-accurate hierarchical rule numbering (`rulebase/numbering.py`, `CachedRulebaseSource`), and package/layer introspection APIs (`get_policy_packages`, `get_package_rulebase`, `get_layer_rulebase`, `locate_rules`).
+Defines multi-domain rulebase snapshot caching (`RulebaseRefreshService`, `DomainSyncCoordinator`), rulebase pagination (`rulebase/pager.py`), SmartConsole-accurate hierarchical rule numbering (`rulebase/numbering.py`, `CachedRulebaseSource`), and package/layer introspection APIs (`get_policy_packages`, `get_package_rulebase`, `get_layer_rulebase`, `locate_rules`).
 
 ## Requirements
 
 ### Requirement: Session-Aware Atomic Rulebase Snapshot Refresh
 
-`RulebaseRefreshService` (`refresh_rulebases`) SHALL refresh a domain's entire rulebase snapshot (`rulebase_access`, `rulebase_nat`, `rulebase_https`, `rulebase_threat`, `rulebase_layer`, `rulebase_section`, `rulebase_package_layer`, and `rulebase_sync_state`) in a single atomic transaction per domain, tracking freshness against the domain's last published session UID independently of the object cache.
+`RulebaseRefreshService` (`refresh_rulebases`, `stream_refresh_rulebases`) SHALL refresh a domain's entire rulebase snapshot (`rulebase_access`, `rulebase_nat`, `rulebase_https`, `rulebase_threat`, `rulebase_layer`, `rulebase_section`, `rulebase_package_layer`) and `domain_sync_state` (`scope="rulebase"`) in a single atomic transaction protected by a per-domain distributed lock, tracking freshness against the domain's last published session UID.
 
 #### Scenario: Refusal to refresh when shared session is dirty
 
 - **WHEN** `refresh_rulebases` runs for a domain whose shared API session currently holds unpublished changes or object locks (`number-of-published-changes` / `locks` non-zero)
-- **THEN** the refresh for that domain SHALL refuse to proceed with a `dirty session` error, preserve any existing cached rulebase snapshot, and mark `rulebase_sync_state.status = "failed"` with `last_error`
+- **THEN** the refresh for that domain SHALL refuse to proceed with a `dirty session` error, preserve any existing cached rulebase snapshot, and mark `domain_sync_state.status = "failed"` (`scope="rulebase"`) with `last_error`
 
 #### Scenario: Complete traversal of packages, ordered layers, inline layers, and global placeholders
 
 - **WHEN** `refresh_rulebases` reads a clean domain
-- **THEN** it SHALL fetch `show-packages`, the NAT rulebase of every package with `nat-policy`, every access/HTTPS/threat layer reachable from packages, layer listings, or inline-layer rule references, and for any global layer containing a domain `place-holder`, query the global layer with `package` context to resolve the parent rule and nested domain layer
+- **THEN** it SHALL fetch `show-packages`, the NAT rulebase of every package with `nat-policy`, every access/HTTPS/threat layer reachable from packages, layer listings, or inline-layer rule references, and for any global layer containing a domain `place-holder`, query the global layer with `package` context to resolve the parent rule and nested domain layer, replacing the domain's snapshot atomically under the domain lock
 
 #### Scenario: Rulebase pager merges split sections across page boundaries
 

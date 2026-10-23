@@ -97,13 +97,15 @@ Configured in `.ruff.toml`:
 
 - Line length limit: 120 characters.
 - Double quotes for strings.
-- Known third-party imports: `arlogi` and `cpapi`.
+- Known third-party imports: `arlogi`.
 - Strict typing with `mypy`.
 
 ---
 
 ## 5. Git Branching, Commit Discipline & PR Workflow
 
+- **Git Workflow Command (`/git-workflow`)**:
+  - Use `/git-workflow <pr|pr nomerge|merge|cleanup|release>` (`.agents/workflows/git-workflow.md`, `.claude/commands/git-workflow.md`) to push topic branches to `chkpar`, open Pull Requests targeting `master`, squash-merge (`gh pr merge --squash --delete-branch`), fast-forward sync `master`, and prune merged local branches.
 - **Dedicated Branches Only**:
   - All operations, bug fixes, refactoring, and feature work MUST be performed in dedicated branches (e.g. `feat/<topic>`, `fix/<topic>`, `chore/<topic>`).
   - Direct commits and direct pushes to `master` are strictly prohibited.

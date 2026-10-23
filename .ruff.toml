@@ -24,7 +24,7 @@ ignore = [
 max-complexity = 10
 
 [lint.isort]
-known-third-party = ["arlogi", "cpapi"]
+known-third-party = ["arlogi"]
 
 [lint.per-file-ignores]
 "**/tests/**/*" = ["ARG", "SIM"]

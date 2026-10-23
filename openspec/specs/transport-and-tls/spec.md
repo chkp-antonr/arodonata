@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines the low-level Check Point Management API transport (`ApiTransport`), SHA-256 certificate fingerprint identity verification (`TrustPolicy` and `TrustStore`), socket-level timeout enforcement, transport-owned asynchronous task polling (`TaskWaiter`), and continuity-verified pagination (`asdk/pager.py`).
+Defines the native `asyncio` Check Point Management API transport (`ApiTransport` over `aiohttp`), SHA-256 certificate fingerprint identity verification (`TrustPolicy` and `TrustStore`), verified read-only connection pooling (`VerifiedConnectionPool`), socket-level timeout enforcement, transport-owned asynchronous task polling (`TaskWaiter`), and continuity-verified pagination (`pager.py`).
 
 ## Requirements
 
@@ -37,7 +37,7 @@ The transport SHALL verify the SHA-256 fingerprint of the server certificate pre
 
 ### Requirement: Socket-Level Connect and Read Timeouts Without Automatic Resend
 
-The transport SHALL enforce explicit TCP/TLS connect (`connect_timeout`) and socket read timeouts on every Check Point API connection and SHALL NEVER automatically re-send an API request after a read timeout.
+The native `aiohttp` transport SHALL enforce explicit TCP/TLS connect (`connect_timeout`) and socket read timeouts on every Check Point Web API (`/web_api/<command>`) connection and SHALL NEVER automatically re-send an API request after request bytes have been written to the socket (whether on read timeout, `ConnectionResetError`, or `BrokenPipeError`).
 
 #### Scenario: Socket connect or handshake timeout
 
@@ -49,9 +49,28 @@ The transport SHALL enforce explicit TCP/TLS connect (`connect_timeout`) and soc
 - **WHEN** waiting for the server's HTTP response exceeds the call's read timeout
 - **THEN** the transport SHALL raise `ApiTimeoutError` with `phase="read"`, naming the server and command, and warning that the command may still have run on the server
 
+#### Scenario: Connection reset or broken pipe after request transmission never resends
+
+- **WHEN** the peer resets or closes the connection (`ConnectionResetError` or `BrokenPipeError`) after HTTP request bytes were written
+- **THEN** the transport SHALL propagate the transport error immediately without re-sending the request
+
+### Requirement: Verified Connection Pooling for Read-Only Commands
+
+`ApiTransport` SHALL pool and reuse fingerprint-verified keep-alive HTTPS connections (`VerifiedConnectionPool`) per `(server_ip, port)` for up to 10 seconds idle exclusively for read-only `show-*` commands, while always establishing a fresh connection for login, logout, keepalive, publish, discard, and mutating commands.
+
+#### Scenario: Consecutive show commands reuse verified keep-alive connection
+
+- **WHEN** two `show-*` API calls target the same `(server_ip, port)` within 10 seconds and the pooled socket remains open
+- **THEN** the second call SHALL reuse the pooled verified connection without repeating the TCP/TLS handshake
+
+#### Scenario: Mutating commands and idle connections bypass reuse
+
+- **WHEN** a non-`show-*` command is executed or a pooled connection has been idle for more than 10 seconds
+- **THEN** `ApiTransport` SHALL close any expired pooled socket and open a fresh TLS-verified connection
+
 ### Requirement: Self-Managed Asynchronous Task Polling
 
-The transport SHALL execute `cpapi` calls with `wait_for_task=False` and poll any returned `task-id` / `tasks` entries via `TaskWaiter` using exponential backoff (`2s` up to `10s`) under the separate `task_timeout` budget.
+The native `aiohttp` transport SHALL execute Check Point Web API commands asynchronously without blocking worker threads and poll any returned `task-id` / `tasks` entries via `TaskWaiter` using exponential backoff (`2s` up to `10s`) under the separate `task_timeout` budget.
 
 #### Scenario: Successful task completion returns final show-task response
 
@@ -70,7 +89,7 @@ The transport SHALL execute `cpapi` calls with `wait_for_task=False` and poll an
 
 ### Requirement: Continuity-Verified Object Listing Pagination
 
-The `api_query` pager (`asdk/pager.py`) SHALL page object listings in chunks (default 300, max 500), acquiring and releasing a `RateLimiter` slot per page so short API calls can interleave between pages, and verifying `from`, `to`, `total`, and object UID uniqueness across pages.
+The `api_query` pager (`pager.py`) SHALL page object listings in chunks (default 300, max 500), acquiring and releasing a `RateLimiter` slot per page so short API calls can interleave between pages, and verifying `from`, `to`, `total`, and object UID uniqueness across pages.
 
 #### Scenario: Boundary swap duplicate UID recovery
 
