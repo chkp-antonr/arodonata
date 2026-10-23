@@ -1,0 +1,38 @@
+{
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll": "explicit",
+      "source.organizeImports": "explicit"
+    },
+    "editor.defaultFormatter": "charliermarsh.ruff"
+  },
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python.terminal.useEnvFile": true,
+  "python.terminal.activateEnvInCurrentTerminal": true,
+  "ruff.configuration": ".ruff.toml",
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestPath": "uv run pytest",
+  "markdownlint.configFile": "./.markdownlint.yaml",
+  "[markdown]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "DavidAnson.vscode-markdownlint",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.markdownlint": "explicit"
+    }
+  },
+  "workbench.colorCustomizations": {
+    "titleBar.activeBackground": "#b45309",
+    "titleBar.activeForeground": "#ffffff",
+    "titleBar.border": "#b45309",
+    "statusBar.background": "#b45309",
+    "statusBar.foreground": "#ffffff"
+  },
+  "editor.autoIndentOnPaste": true,
+  "files.watcherExclude": {
+    "**/node_modules/*": true,
+    "**/.venv/*": true
+  },
+  "security.workspace.trust.enabled": true
+}
