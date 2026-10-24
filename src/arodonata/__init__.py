@@ -1,5 +1,7 @@
 """Arodonata v2 — Async-first Python SDK for Check Point Management & MDSM."""
 
+__version__ = "2.0.0a0"
+
 from arodonata.adapters.checkpoint import AMgmtClient
 from arodonata.client import ArodonataClient
 from arodonata.core.config import ArodonataSettings, AuthMode, ServerEndpointConfig, TlsTrustMode
@@ -75,6 +77,15 @@ from arodonata.cpcrud import (
     build_inverse_template,
     validate_template,
 )
+from arodonata.mcp import (
+    ArodonataASGIApp,
+    ArodonataMCPSettings,
+    MCPAuthMode,
+    StaticTokenVerifier,
+    ToolFailure,
+    create_asgi_app,
+    create_mcp_server,
+)
 from arodonata.reports import (
     CURRENT_FORMAT_VERSION,
     MAX_UID_LOOKUPS,
@@ -117,8 +128,10 @@ __all__ = [
     "AmbiguousLayerName",
     "ApiTimeoutError",
     "ApplyReport",
+    "ArodonataASGIApp",
     "ArodonataClient",
     "ArodonataError",
+    "ArodonataMCPSettings",
     "ArodonataSettings",
     "AssetRefreshService",
     "AuthContext",
@@ -150,6 +163,7 @@ __all__ = [
     "LayerPrefixLocation",
     "LockAcquisitionError",
     "MAX_UID_LOOKUPS",
+    "MCPAuthMode",
     "MissingConfigurationError",
     "NAT_ANY_OBJECT_UID",
     "NAT_ORIGINAL_OBJECT_UID",
@@ -190,10 +204,12 @@ __all__ = [
     "SessionScope",
     "StagedSessionInfo",
     "StateLookupError",
+    "StaticTokenVerifier",
     "TaskError",
     "TaskPollError",
     "TaskTimeoutError",
     "TlsTrustMode",
+    "ToolFailure",
     "TransportError",
     "TrustStoreError",
     "UnknownServerCertificateError",
@@ -206,6 +222,8 @@ __all__ = [
     "build_change_report",
     "build_inverse_template",
     "collect_change_report",
+    "create_asgi_app",
+    "create_mcp_server",
     "fetch_paged_rulebase",
     "get_auth_context",
     "get_user_context",
@@ -215,5 +233,3 @@ __all__ = [
     "validate_template",
     "write_session_context",
 ]
-
-__version__ = "2.0.0a0"
