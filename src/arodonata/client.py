@@ -58,6 +58,7 @@ from arodonata.core.models.rulebase import (
     AccessRuleEntry,
     HttpsRuleEntry,
     NatRuleEntry,
+    RulebaseType,
     ThreatRuleEntry,
 )
 from arodonata.core.models.services import CPService
@@ -74,6 +75,32 @@ from arodonata.core.services import (
     VSXRelationshipManager,
 )
 from arodonata.core.telemetry import span_attrs, traced
+from arodonata.reports import (
+    MAX_UID_LOOKUPS,
+    ChangeReport,
+    RenderedReportBundle,
+    RenderOptions,
+    ReportScope,
+)
+from arodonata.reports import (
+    build_change_report as _build_change_report,
+)
+from arodonata.reports import (
+    collect_change_report as _collect_change_report,
+)
+from arodonata.reports import (
+    render_change_report as _render_change_report,
+)
+from arodonata.rulebase import (
+    CachedRulebaseSource,
+    FilteredRulebaseResult,
+    NumberedLayerRulebase,
+    PackageRulebase,
+    PolicyPackageInfo,
+    RulebaseRefreshService,
+    RuleFormat,
+    RuleLocations,
+)
 
 
 class ArodonataClient:
@@ -189,6 +216,20 @@ class ArodonataClient:
             service_cache=self._service_cache,
             now_fn=now_fn,
         )
+        self._rulebase_refresh = RulebaseRefreshService(
+            settings=self._settings,
+            api=self._api,
+            cache=self._cache,
+            coordinator=self._sync_coordinator,
+            now_fn=now_fn,
+        )
+        self._rulebase_source = CachedRulebaseSource(
+            cache=self._cache,
+            refresh_service=self._rulebase_refresh,
+            object_service=self._object_service,
+            service_cache=self._service_cache,
+            now_fn=now_fn,
+        )
         self._warmup_tasks: set[asyncio.Task[Any]] = set()
 
     # ------------------------------------------------------------------
@@ -259,6 +300,16 @@ class ArodonataClient:
     def search_service(self) -> SearchService:
         """Core `SearchService`."""
         return self._search_service
+
+    @property
+    def rulebase_refresh(self) -> RulebaseRefreshService:
+        """Rulebase snapshot refresh service (`RulebaseRefreshService`)."""
+        return self._rulebase_refresh
+
+    @property
+    def rulebase_source(self) -> CachedRulebaseSource:
+        """Cached rulebase introspection and numbering source (`CachedRulebaseSource`)."""
+        return self._rulebase_source
 
     @property
     def warmup_tasks(self) -> set[asyncio.Task[Any]]:
@@ -744,6 +795,48 @@ class ArodonataClient:
         ):
             yield ev
 
+    @traced
+    async def refresh_rulebases(
+        self,
+        *,
+        mgmt_name: str | None = None,
+        domains: Sequence[str] | str | None = None,
+        include_global: bool = False,
+        mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> RefreshOutcome:
+        """Synchronize policy rulebase snapshots across target domains and return `RefreshOutcome`."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._rulebase_refresh.refresh_rulebases(
+            mgmt_name=mgmt_name,
+            domains=domains,
+            include_global=include_global,
+            mode=mode,
+            cache_ttl=cache_ttl,
+        )
+
+    async def stream_refresh_rulebases(
+        self,
+        *,
+        mgmt_name: str | None = None,
+        domains: Sequence[str] | str | None = None,
+        include_global: bool = False,
+        mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> AsyncIterator[SyncProgressEvent]:
+        """Stream `SyncProgressEvent` items while synchronizing policy rulebase snapshots."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        async for ev in self._rulebase_refresh.stream_refresh_rulebases(
+            mgmt_name=mgmt_name,
+            domains=domains,
+            include_global=include_global,
+            mode=mode,
+            cache_ttl=cache_ttl,
+        ):
+            yield ev
+
     # ------------------------------------------------------------------
     # Typed Read Facade
     # ------------------------------------------------------------------
@@ -1077,6 +1170,180 @@ class ArodonataClient:
         if layer_name is not None:
             rules = [r for r in rules if r.layer_name == layer_name]
         return rules
+
+    @traced
+    async def get_policy_packages(
+        self,
+        mgmt_name: str,
+        domain_name: str | None = None,
+        *,
+        cache_mode: CacheMode = "cache",
+        cache_ttl: float | None = None,
+    ) -> list[PolicyPackageInfo]:
+        """Return cached `PolicyPackageInfo` entries for `(mgmt_name, domain_name)`."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._rulebase_source.get_policy_packages(
+            mgmt_name,
+            domain_name,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+
+    @traced
+    async def get_package_rulebase(
+        self,
+        mgmt_name: str,
+        domain_name: str | None,
+        package: str,
+        *,
+        rulebase_type: RulebaseType = "access",
+        cache_mode: CacheMode = "cache",
+        cache_ttl: float | None = None,
+    ) -> PackageRulebase:
+        """Return a SmartConsole-numbered `PackageRulebase` for `package` in `(mgmt_name, domain_name)`."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._rulebase_source.get_package_rulebase(
+            mgmt_name,
+            domain_name,
+            package,
+            rulebase_type=rulebase_type,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+
+    @traced
+    async def get_layer_rulebase(
+        self,
+        mgmt_name: str,
+        domain_name: str | None,
+        layer: str,
+        *,
+        rulebase_type: RulebaseType | None = None,
+        cache_mode: CacheMode = "cache",
+        cache_ttl: float | None = None,
+    ) -> NumberedLayerRulebase:
+        """Return a SmartConsole-numbered `NumberedLayerRulebase` for `layer` in `(mgmt_name, domain_name)`."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._rulebase_source.get_layer_rulebase(
+            mgmt_name,
+            domain_name,
+            layer,
+            rulebase_type=rulebase_type,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+
+    @traced
+    async def locate_rules(
+        self,
+        mgmt_name: str,
+        domain_name: str | None = None,
+        *,
+        rule_uids: Sequence[str] | None = None,
+        layer_uids: Sequence[str] | None = None,
+        cache_mode: CacheMode = "cache",
+        cache_ttl: float | None = None,
+    ) -> RuleLocations:
+        """Locate SmartConsole rule numbers and layer prefixes across all packages and layers of a domain."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._rulebase_source.locate_rules(
+            mgmt_name,
+            domain_name,
+            rule_uids=rule_uids,
+            layer_uids=layer_uids,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+
+    @traced
+    async def filter_rulebase(
+        self,
+        mgmt_name: str,
+        domain_name: str | None = None,
+        *,
+        package: str | None = None,
+        layer: str | None = None,
+        rulebase_type: RulebaseType = "access",
+        filter_query: str = "",
+        output_format: RuleFormat = "model_friendly",
+        cache_mode: CacheMode = "cache",
+        cache_ttl: float | None = None,
+    ) -> FilteredRulebaseResult:
+        """Evaluate `filter_query` locally against cached rulebase and cached objects/services."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._rulebase_source.filter_rulebase(
+            mgmt_name,
+            domain_name,
+            package=package,
+            layer=layer,
+            rulebase_type=rulebase_type,
+            filter_query=filter_query,
+            output_format=output_format,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+
+    @traced
+    async def collect_change_report(
+        self,
+        scopes: Sequence[ReportScope | dict[str, Any]],
+        *,
+        options: RenderOptions | None = None,
+        max_uid_lookups: int = MAX_UID_LOOKUPS,
+    ) -> ChangeReport:
+        """Collect read-only auditable session change evidence (`ChangeReport`) across `scopes`."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await _collect_change_report(
+            self._api,
+            self._cache,
+            scopes,
+            options=options,
+            max_uid_lookups=max_uid_lookups,
+            now_fn=self._now,
+        )
+
+    @traced
+    def render_change_report(
+        self,
+        report: ChangeReport,
+        *,
+        formats: Sequence[str] = ("html", "markdown", "json"),
+        options: RenderOptions | None = None,
+    ) -> RenderedReportBundle:
+        """Render a `ChangeReport` offline into any requested subset of `'html'`, `'json'`, and `'markdown'`."""
+        return _render_change_report(
+            report,
+            formats=formats,
+            options=options,
+        )
+
+    @traced
+    async def build_change_report(
+        self,
+        scopes: Sequence[ReportScope | dict[str, Any]],
+        *,
+        formats: Sequence[str] = ("html", "markdown", "json"),
+        options: RenderOptions | None = None,
+        max_uid_lookups: int = MAX_UID_LOOKUPS,
+    ) -> RenderedReportBundle:
+        """Collect and render a `ChangeReport` across `scopes` into `formats`."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await _build_change_report(
+            self._api,
+            self._cache,
+            scopes,
+            formats=formats,
+            options=options,
+            max_uid_lookups=max_uid_lookups,
+            now_fn=self._now,
+        )
 
     # ------------------------------------------------------------------
     # Search, Structured Aggregation, and Domain Helper Methods

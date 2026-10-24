@@ -8,7 +8,10 @@ from typing import Any
 
 import pytest
 
-from arodonata import ArodonataClient
+from arodonata import (
+    ArodonataClient,
+    SessionScope,
+)
 from arodonata.adapters.storage import DatabaseManager
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import AuthContext, get_auth_context
@@ -75,7 +78,56 @@ class FacadeFakeApi:
                 data={"uid": self.published_uid, "publish-time": {"iso-8601": self.published_iso}},
             )
         if command == "show-session":
+            if payload and payload.get("uid") == "sess-rep-1":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "uid": "sess-rep-1",
+                        "name": "CHG-1",
+                        "user-name": "admin",
+                        "state": "published",
+                        "publish-time": {"iso-8601": "2026-10-23T18:00:00Z"},
+                    },
+                )
             return ApiCallResult(success=True, data={"locks": 0, "changes": 0, "number-of-published-changes": 0})
+        if command == "show-changes":
+            return ApiCallResult(success=True, data={"tasks": [{"task-details": [{"operations": {}}]}]})
+        if command == "show-packages":
+            return ApiCallResult(
+                success=True,
+                data={
+                    "packages": [
+                        {
+                            "uid": "p1",
+                            "name": "Standard",
+                            "access": True,
+                            "access-layers": [{"uid": "l1", "name": "Network", "position": 1}],
+                        }
+                    ],
+                    "to": 1,
+                    "total": 1,
+                },
+            )
+        if command == "show-access-rulebase":
+            return ApiCallResult(
+                success=True,
+                data={
+                    "uid": "l1",
+                    "name": "Network",
+                    "rulebase": [
+                        {
+                            "uid": "ar1",
+                            "name": "Allow Web",
+                            "type": "access-rule",
+                            "rule-number": 1,
+                            "enabled": True,
+                            "action": {"name": "Accept"},
+                        }
+                    ],
+                    "to": 1,
+                    "total": 1,
+                },
+            )
         if command.startswith(("add-", "set-")) and payload:
             _, _, obj_type = command.partition("-")
             name = str(payload.get("name") or payload.get("new-name") or "unnamed")
@@ -368,3 +420,48 @@ async def test_client_external_engine_logout_policy_warmup_cancellation_and_rule
     assert fake_api.close_logout_args == [False]
 
     await ext_db.close()
+
+
+@pytest.mark.asyncio
+async def test_client_rulebase_and_change_report_facade_methods() -> None:
+    """`ArodonataClient` delegates rulebase refresh, numbering, locate, filter, and change report methods."""
+    fake_api = FacadeFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        # Refresh rulebases via client
+        outcome = await client.refresh_rulebases(mgmt_name="mds1", domains=["Corp"])
+        assert "mds1:Corp" in outcome.refreshed_domains
+
+        pkgs = await client.get_policy_packages("mds1", "Corp")
+        assert len(pkgs) == 1 and pkgs[0].name == "Standard"
+
+        pkg_rb = await client.get_package_rulebase("mds1", "Corp", "Standard")
+        assert pkg_rb.package_name == "Standard"
+        assert len(pkg_rb.layers) == 1
+
+        layer_rb = await client.get_layer_rulebase("mds1", "Corp", "Network")
+        assert layer_rb.layer_name == "Network"
+        assert layer_rb.rules[0].rule_number == "1"
+
+        locs = await client.locate_rules("mds1", "Corp", rule_uids=["ar1"])
+        assert len(locs.rule_locations["ar1"]) == 1
+
+        filtered = await client.filter_rulebase(
+            "mds1",
+            "Corp",
+            layer="Network",
+            filter_query="Allow Web",
+        )
+        assert filtered.matched_count == 1 and filtered.rules[0].uid == "ar1"
+
+        # Change report collection & rendering via client
+        bundle = await client.build_change_report(
+            [SessionScope(mgmt_name="mds1", domain="Corp", session_uids=["sess-rep-1"])],
+            formats=("markdown", "json"),
+        )
+        assert bundle.markdown is not None
+        assert "CHG-1" in bundle.markdown
+        re_rendered = client.render_change_report(bundle.report, formats=("json",))
+        assert re_rendered.json_text is not None
+        assert '"format_version": 1' in re_rendered.json_text
