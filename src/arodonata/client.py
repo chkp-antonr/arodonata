@@ -75,6 +75,7 @@ from arodonata.core.services import (
     VSXRelationshipManager,
 )
 from arodonata.core.telemetry import span_attrs, traced
+from arodonata.cpcrud import CPCRUDService
 from arodonata.reports import (
     MAX_UID_LOOKUPS,
     ChangeReport,
@@ -230,7 +231,19 @@ class ArodonataClient:
             service_cache=self._service_cache,
             now_fn=now_fn,
         )
+        self._cpcrud = CPCRUDService(
+            settings=self._settings,
+            api=self._api,
+            cache=self._cache,
+            on_domain_invalidated=self.invalidate_domain,
+            ensure_initialized=self._ensure_db_initialized,
+            now_fn=now_fn,
+        )
         self._warmup_tasks: set[asyncio.Task[Any]] = set()
+
+    async def _ensure_db_initialized(self) -> None:
+        if not self._db.is_initialized:
+            await self._db.initialize()
 
     # ------------------------------------------------------------------
     # Properties
@@ -310,6 +323,11 @@ class ArodonataClient:
     def rulebase_source(self) -> CachedRulebaseSource:
         """Cached rulebase introspection and numbering source (`CachedRulebaseSource`)."""
         return self._rulebase_source
+
+    @property
+    def cpcrud(self) -> CPCRUDService:
+        """Declarative Check Point Policy-as-Code CRUD engine (`CPCRUDService`)."""
+        return self._cpcrud
 
     @property
     def warmup_tasks(self) -> set[asyncio.Task[Any]]:

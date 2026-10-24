@@ -465,3 +465,44 @@ async def test_client_rulebase_and_change_report_facade_methods() -> None:
         re_rendered = client.render_change_report(bundle.report, formats=("json",))
         assert re_rendered.json_text is not None
         assert '"format_version": 1' in re_rendered.json_text
+
+
+@pytest.mark.asyncio
+async def test_client_cpcrud_facade_validate_plan_apply_and_inverse() -> None:
+    """`client.cpcrud` exposes `validate`, `plan`, `apply`, `stream_apply`, and `inverse` end-to-end."""
+    fake_api = FacadeFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        # Warm host cache so HybridStateReader has a fresh slice matching `pub-sess-1`
+        await client.get_hosts("mds1", "Corp")
+
+        template: dict[str, Any] = {
+            "version": 1,
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "objects": [
+                # Existing host-base-1 (10.1.1.1) -> UNCHANGED
+                {"type": "host", "name": "host-base-1", "ipv4-address": "10.1.1.1"},
+                # New host -> CREATE
+                {"type": "host", "name": "host-cpcrud-new", "ipv4-address": "10.1.1.99"},
+            ],
+        }
+
+        assert client.cpcrud.validate(template) == []
+
+        plan = await client.cpcrud.plan(template)
+        assert len(plan.actions) == 2
+        assert plan.actions[0].outcome.value == "unchanged"
+        assert plan.actions[1].outcome.value == "create"
+
+        report = await client.cpcrud.apply(plan)
+        assert report.has_failures is False
+        assert report.published_domains == ["mds1:Corp"]
+        assert ("mds1", "Corp") in client.sync_coordinator.invalidated_domains
+
+        inv = client.cpcrud.inverse(plan, report)
+        assert client.cpcrud.validate(inv) == []
+        assert len(inv["operations"]) == 1
+        assert inv["operations"][0]["operation"] == "delete"
+        assert inv["operations"][0]["name"] == "host-cpcrud-new"

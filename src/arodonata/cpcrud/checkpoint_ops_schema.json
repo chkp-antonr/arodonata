@@ -1,0 +1,1035 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://arodonata.local/schemas/checkpoint_ops_schema.json",
+  "title": "Check Point Declarative Policy-as-Code Template Schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": ["integer", "string"],
+      "enum": [1, "1", "1.0"]
+    },
+    "mgmt_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "domain": {
+      "type": ["string", "null"]
+    },
+    "domain_name": {
+      "type": ["string", "null"]
+    },
+    "conflict_policy": {
+      "$ref": "#/definitions/ConflictPolicy"
+    },
+    "on_name_conflict": {
+      "$ref": "#/definitions/NameConflictPolicy"
+    },
+    "on_ip_conflict": {
+      "$ref": "#/definitions/IpConflictPolicy"
+    },
+    "naming_prefixes": {
+      "$ref": "#/definitions/NamingPrefixes"
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ObjectOperation"
+      }
+    },
+    "services": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ServiceOperation"
+      }
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/GroupOperation"
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/RuleOperation"
+      }
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/GenericOperation"
+      }
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/TargetSpec"
+      }
+    },
+    "domains": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/TargetSpec"
+      }
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "anyOf": [
+    {
+      "required": ["targets"]
+    },
+    {
+      "required": ["domains"]
+    },
+    {
+      "required": ["objects"]
+    },
+    {
+      "required": ["services"]
+    },
+    {
+      "required": ["groups"]
+    },
+    {
+      "required": ["rules"]
+    },
+    {
+      "required": ["operations"]
+    }
+  ],
+  "definitions": {
+    "NameConflictPolicy": {
+      "type": "string",
+      "enum": ["update", "error"]
+    },
+    "IpConflictPolicy": {
+      "type": "string",
+      "enum": ["reuse", "create_new", "error"]
+    },
+    "ConflictPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "on_name_conflict": {
+          "$ref": "#/definitions/NameConflictPolicy"
+        },
+        "on_ip_conflict": {
+          "$ref": "#/definitions/IpConflictPolicy"
+        }
+      }
+    },
+    "NamingPrefixes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "network": {
+          "type": "string",
+          "minLength": 1
+        },
+        "address_range": {
+          "type": "string",
+          "minLength": 1
+        },
+        "address-range": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tcp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "service_tcp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "service-tcp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "udp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "service_udp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "service-udp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "icmp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "service_icmp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "service-icmp": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ActionVerb": {
+      "type": "string",
+      "enum": ["present", "absent", "add", "set", "update", "delete"]
+    },
+    "TargetSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mgmt_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "domain": {
+          "type": ["string", "null"]
+        },
+        "domain_name": {
+          "type": ["string", "null"]
+        },
+        "conflict_policy": {
+          "$ref": "#/definitions/ConflictPolicy"
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/NameConflictPolicy"
+        },
+        "on_ip_conflict": {
+          "$ref": "#/definitions/IpConflictPolicy"
+        },
+        "naming_prefixes": {
+          "$ref": "#/definitions/NamingPrefixes"
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ObjectOperation"
+          }
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ServiceOperation"
+          }
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/GroupOperation"
+          }
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuleOperation"
+          }
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/GenericOperation"
+          }
+        }
+      }
+    },
+    "ObjectOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/definitions/ActionVerb"
+        },
+        "operation": {
+          "$ref": "#/definitions/ActionVerb"
+        },
+        "mgmt_name": {
+          "type": "string"
+        },
+        "domain": {
+          "type": ["string", "null"]
+        },
+        "domain_name": {
+          "type": ["string", "null"]
+        },
+        "type": {
+          "type": "string",
+          "enum": ["host", "network", "address-range", "dns-domain", "group"]
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "new_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "new-name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ipv4_address": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ipv4-address": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ip_address": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ip-address": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ipv6_address": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ipv6-address": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subnet4": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subnet": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mask_length4": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        },
+        "mask-length4": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        },
+        "subnet_mask": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subnet-mask": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ipv4_address_first": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ipv4-address-first": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ipv4_address_last": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ipv4-address-last": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fqdn": {
+          "type": "string",
+          "minLength": 1
+        },
+        "is_sub_domain": {
+          "type": "boolean"
+        },
+        "is-sub-domain": {
+          "type": "boolean"
+        },
+        "members": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "add": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "remove": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "comments": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "nat_settings": {
+          "type": "object"
+        },
+        "nat-settings": {
+          "type": "object"
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/NameConflictPolicy"
+        },
+        "on_ip_conflict": {
+          "$ref": "#/definitions/IpConflictPolicy"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "anyOf": [
+        {
+          "required": ["name"]
+        },
+        {
+          "required": ["uid"]
+        }
+      ]
+    },
+    "ServiceOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/definitions/ActionVerb"
+        },
+        "operation": {
+          "$ref": "#/definitions/ActionVerb"
+        },
+        "mgmt_name": {
+          "type": "string"
+        },
+        "domain": {
+          "type": ["string", "null"]
+        },
+        "domain_name": {
+          "type": ["string", "null"]
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "service-tcp",
+            "service-udp",
+            "service-icmp",
+            "service-icmp6",
+            "service-other",
+            "service-group"
+          ]
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "new_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "new-name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": ["string", "integer"]
+        },
+        "protocol": {
+          "type": ["string", "integer"]
+        },
+        "ip_protocol": {
+          "type": ["string", "integer"]
+        },
+        "ip-protocol": {
+          "type": ["string", "integer"]
+        },
+        "icmp_type": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "icmp-type": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "icmp_code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "icmp-code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "session_timeout": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "session-timeout": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "match_for_any": {
+          "type": "boolean"
+        },
+        "match-for-any": {
+          "type": "boolean"
+        },
+        "members": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "add": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "remove": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "comments": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/NameConflictPolicy"
+        },
+        "on_ip_conflict": {
+          "$ref": "#/definitions/IpConflictPolicy"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "anyOf": [
+        {
+          "required": ["name"]
+        },
+        {
+          "required": ["uid"]
+        }
+      ]
+    },
+    "GroupOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/definitions/ActionVerb"
+        },
+        "operation": {
+          "$ref": "#/definitions/ActionVerb"
+        },
+        "mgmt_name": {
+          "type": "string"
+        },
+        "domain": {
+          "type": ["string", "null"]
+        },
+        "domain_name": {
+          "type": ["string", "null"]
+        },
+        "type": {
+          "type": "string",
+          "enum": ["group", "service-group"]
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "new_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "new-name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "members": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "add": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "remove": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "comments": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/NameConflictPolicy"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "anyOf": [
+        {
+          "required": ["name"]
+        },
+        {
+          "required": ["uid"]
+        }
+      ]
+    },
+    "RulePosition": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": ["top", "bottom"]
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "maxProperties": 1,
+          "properties": {
+            "top": {
+              "type": "string",
+              "minLength": 1
+            },
+            "bottom": {
+              "type": "string",
+              "minLength": 1
+            },
+            "above": {
+              "type": "string",
+              "minLength": 1
+            },
+            "below": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "RuleOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "operation": {
+          "$ref": "#/definitions/ActionVerb"
+        },
+        "state": {
+          "type": "string",
+          "enum": ["present", "absent"]
+        },
+        "mgmt_name": {
+          "type": "string"
+        },
+        "domain": {
+          "type": ["string", "null"]
+        },
+        "domain_name": {
+          "type": ["string", "null"]
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "access-rule",
+            "nat-rule",
+            "https-rule",
+            "threat-rule",
+            "access",
+            "nat",
+            "https",
+            "threat"
+          ]
+        },
+        "rulebase_type": {
+          "type": "string",
+          "enum": ["access", "nat", "https", "threat"]
+        },
+        "layer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "package": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string"
+        },
+        "new_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "new-name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rule_number": {
+          "type": ["integer", "string"]
+        },
+        "rule-number": {
+          "type": ["integer", "string"]
+        },
+        "position": {
+          "$ref": "#/definitions/RulePosition"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "rule_action": {
+          "type": "string"
+        },
+        "source": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "destination": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "service": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "source_negate": {
+          "type": "boolean"
+        },
+        "source-negate": {
+          "type": "boolean"
+        },
+        "destination_negate": {
+          "type": "boolean"
+        },
+        "destination-negate": {
+          "type": "boolean"
+        },
+        "service_negate": {
+          "type": "boolean"
+        },
+        "service-negate": {
+          "type": "boolean"
+        },
+        "track": {
+          "type": ["string", "object"]
+        },
+        "install_on": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "install-on": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "inline_layer": {
+          "type": "string"
+        },
+        "inline-layer": {
+          "type": "string"
+        },
+        "protected_scope": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "protected-scope": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "site_category": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "site-category": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "certificate": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string",
+          "enum": ["static", "hide", "nat64", "nat46", "cgnat"]
+        },
+        "original_source": {
+          "type": ["string", "null"]
+        },
+        "original-source": {
+          "type": ["string", "null"]
+        },
+        "original_destination": {
+          "type": ["string", "null"]
+        },
+        "original-destination": {
+          "type": ["string", "null"]
+        },
+        "original_service": {
+          "type": ["string", "null"]
+        },
+        "original-service": {
+          "type": ["string", "null"]
+        },
+        "translated_source": {
+          "type": ["string", "null"]
+        },
+        "translated-source": {
+          "type": ["string", "null"]
+        },
+        "translated_destination": {
+          "type": ["string", "null"]
+        },
+        "translated-destination": {
+          "type": ["string", "null"]
+        },
+        "translated_service": {
+          "type": ["string", "null"]
+        },
+        "translated-service": {
+          "type": ["string", "null"]
+        },
+        "comments": {
+          "type": "string"
+        },
+        "on_name_conflict": {
+          "$ref": "#/definitions/NameConflictPolicy"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "anyOf": [
+        {
+          "required": ["layer"]
+        },
+        {
+          "required": ["package"]
+        }
+      ]
+    },
+    "GenericOperation": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/ObjectOperation"
+        },
+        {
+          "$ref": "#/definitions/ServiceOperation"
+        },
+        {
+          "$ref": "#/definitions/GroupOperation"
+        },
+        {
+          "$ref": "#/definitions/RuleOperation"
+        }
+      ]
+    }
+  }
+}
