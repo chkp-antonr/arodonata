@@ -1,6 +1,7 @@
 """Arodonata v2 — Async-first Python SDK for Check Point Management & MDSM."""
 
 from arodonata.adapters.checkpoint import AMgmtClient
+from arodonata.client import ArodonataClient
 from arodonata.core.config import ArodonataSettings, AuthMode, ServerEndpointConfig, TlsTrustMode
 from arodonata.core.context import (
     AuthContext,
@@ -40,28 +41,48 @@ from arodonata.core.errors import (
     UnknownServerCertificateError,
     UnsupportedFormat,
 )
+from arodonata.core.services import (
+    AssetRefreshService,
+    ClusterRelationshipManager,
+    DomainListRefreshTracker,
+    DomainService,
+    DomainSyncCoordinator,
+    ObjectService,
+    SearchService,
+    ServiceCacheService,
+    VSXRelationshipManager,
+)
 
 __all__ = [
     "AMgmtClient",
     "AmbiguousLayerName",
     "ApiTimeoutError",
+    "ArodonataClient",
     "ArodonataError",
     "ArodonataSettings",
+    "AssetRefreshService",
     "AuthContext",
     "AuthMode",
     "AuthenticationError",
     "CacheError",
     "CertificateMismatchError",
     "ChangeReportInputError",
+    "ClusterRelationshipManager",
     "ConfigurationError",
     "DirtySessionError",
+    "DomainListRefreshTracker",
     "DomainNotFoundError",
+    "DomainService",
+    "DomainSyncCoordinator",
     "InvalidCredentialsError",
     "LockAcquisitionError",
     "MissingConfigurationError",
+    "ObjectService",
     "RateLimitTimeoutError",
+    "SearchService",
     "ServerEndpointConfig",
     "ServerIdentityError",
+    "ServiceCacheService",
     "SessionError",
     "SessionExpiredError",
     "SessionOverlay",
@@ -74,6 +95,7 @@ __all__ = [
     "UnknownServerCertificateError",
     "UnsupportedFormat",
     "UserContext",
+    "VSXRelationshipManager",
     "WriteSession",
     "__version__",
     "auth_context",
