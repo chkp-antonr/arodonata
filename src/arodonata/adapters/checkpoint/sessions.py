@@ -90,6 +90,7 @@ def is_login_throttled_result(result: ApiCallResult) -> bool:
         for token in (
             "too many login",
             "too many requests",
+            "err_too_many_requests",
             "login rate",
             "throttl",
             "exceeded the maximum number of login",
@@ -133,6 +134,7 @@ def is_invalid_credentials_result(result: ApiCallResult) -> bool:
             "access denied",
             "err_login_failed",
             "generic_err_login_failed",
+            "administrator account is locked",
         )
     )
 
@@ -172,12 +174,17 @@ def is_failover_or_unreachable_result(result: ApiCallResult) -> bool:
     )
 
 
-def parse_domain_entry(mgmt_name: str, raw: dict[str, Any]) -> DomainInfo:
-    """Parse a raw Check Point `show-domains` / `show-domain` dictionary into `DomainInfo`."""
+def parse_domain_entry(
+    mgmt_name: str,
+    raw: dict[str, Any],
+    *,
+    mds_ip_by_name: dict[str, str] | None = None,
+) -> DomainInfo:
+    """Parse a raw Check Point `show-domains` / `show-domain` / `show-global-domain` dictionary into `DomainInfo`."""
     uid = str(raw.get("uid") or "")
     name = str(raw.get("name") or "")
     dom_type = str(raw.get("type") or raw.get("domain-type") or "domain")
-    is_global = dom_type == "global" or name == "Global"
+    is_global = dom_type in ("global", "global-domain") or name == "Global" or bool(raw.get("is_global"))
 
     servers_raw = raw.get("servers")
     servers_list: list[dict[str, Any]] = (
@@ -194,6 +201,10 @@ def parse_domain_entry(mgmt_name: str, raw: dict[str, Any]) -> DomainInfo:
         mds_ip: str | None = None
         if isinstance(mds_obj, dict):
             mds_ip = mds_obj.get("ipv4-address") or mds_obj.get("ip")
+            if not mds_ip and mds_ip_by_name and isinstance(mds_obj.get("name"), str):
+                mds_ip = mds_ip_by_name.get(mds_obj["name"])
+        elif isinstance(mds_obj, str) and mds_ip_by_name:
+            mds_ip = mds_ip_by_name.get(mds_obj)
         elif isinstance(srv.get("multi-domain-server-ip"), str):
             mds_ip = srv.get("multi-domain-server-ip")
 
@@ -206,6 +217,9 @@ def parse_domain_entry(mgmt_name: str, raw: dict[str, Any]) -> DomainInfo:
         elif isinstance(srv_ip, str) and srv_ip:
             standby_ips.append(srv_ip)
 
+    if active_ip is None and is_global and active_mds_ip:
+        active_ip = active_mds_ip
+
     if active_ip is None and servers_list:
         first_ip = servers_list[0].get("ipv4-address") or servers_list[0].get("ip")
         if isinstance(first_ip, str) and first_ip:
@@ -216,7 +230,7 @@ def parse_domain_entry(mgmt_name: str, raw: dict[str, Any]) -> DomainInfo:
         mgmt_name=mgmt_name,
         uid=uid,
         name=name,
-        domain_type=dom_type,
+        domain_type="global" if is_global else dom_type,
         active_ip=active_ip,
         active_mds_ip=active_mds_ip or active_ip,
         standby_ips=standby_ips,
@@ -373,6 +387,14 @@ class LoginCoordinator:
         age = (now - entry.created_at).total_seconds()
         return age < float(self._settings.session_expire_seconds)
 
+    def _is_sid_entry_usable(self, entry: SIDCacheEntry, auth: AuthContext) -> bool:
+        """Return `True` if `entry` is fresh and belongs to the exact same `auth.identity_key` (`C4`)."""
+        if not self._is_sid_entry_fresh(entry):
+            return False
+        if not entry.auth_identity:
+            return False
+        return entry.auth_identity == auth.identity_key
+
     @traced
     async def get_readonly_session(
         self,
@@ -382,27 +404,29 @@ class LoginCoordinator:
         server_ip: str | None = None,
         force_new: bool = False,
     ) -> tuple[str, str]:
-        """Return `(sid, server_ip)` for a shared read-only session, reusing `sid_cache` when fresh."""
+        """Return `(sid, server_ip)` for a shared read-only session, reusing `arodonata_sid_cache` when fresh."""
         dom_key = normalize_domain_key(domain)
-        lock_key = f"{mgmt_name}:{dom_key}"
         span_attrs(mgmt_name=mgmt_name, domain=dom_key, force_new=force_new)
 
+        auth = await self.resolve_credentials(mgmt_name, domain)
+        identity = auth.identity_key
+        lock_key = f"{mgmt_name}:{dom_key}:{identity}"
+
         if not force_new:
-            cached = await self._cache.get_sid(mgmt_name, dom_key)
-            if cached is not None and self._is_sid_entry_fresh(cached):
+            cached = await self._cache.get_sid(mgmt_name, dom_key, auth_identity=identity)
+            if cached is not None and self._is_sid_entry_usable(cached, auth):
                 span_attrs(sid_reused=True)
                 return cached.sid, (server_ip or cached.server_ip)
 
         async with self._domain_login_locks[lock_key]:
             if not force_new:
-                cached = await self._cache.get_sid(mgmt_name, dom_key)
-                if cached is not None and self._is_sid_entry_fresh(cached):
+                cached = await self._cache.get_sid(mgmt_name, dom_key, auth_identity=identity)
+                if cached is not None and self._is_sid_entry_usable(cached, auth):
                     span_attrs(sid_reused=True)
                     return cached.sid, (server_ip or cached.server_ip)
 
-            self._inflight_logins.add(lock_key)
+            self._inflight_logins.add(f"{mgmt_name}:{dom_key}")
             try:
-                auth = await self.resolve_credentials(mgmt_name, domain)
                 sid, resolved_ip, session_uid = await self._perform_gated_login(
                     mgmt_name,
                     domain,
@@ -412,12 +436,13 @@ class LoginCoordinator:
                 )
                 now = self._now()
                 entry = SIDCacheEntry(
-                    id=f"{mgmt_name}:{dom_key}",
+                    id=f"{mgmt_name}:{dom_key}:{identity}",
                     mgmt_name=mgmt_name,
                     domain_name=dom_key,
                     sid=sid,
                     server_ip=resolved_ip,
                     session_uid=session_uid,
+                    auth_identity=identity,
                     created_at=now,
                     last_used_at=now,
                     expires_at=now + timedelta(seconds=self._settings.session_expire_seconds),
@@ -426,7 +451,7 @@ class LoginCoordinator:
                 span_attrs(sid_reused=False, server_ip=resolved_ip)
                 return sid, resolved_ip
             finally:
-                self._inflight_logins.discard(lock_key)
+                self._inflight_logins.discard(f"{mgmt_name}:{dom_key}")
 
     @traced
     async def create_dedicated_session(
@@ -501,7 +526,11 @@ class LoginCoordinator:
         failover_attempted = False
 
         while True:
-            async with self._login_gate.acquire(mds_ip, wait_timeout=self._settings.login_max_wait):
+            rem_wait = max(0.1, deadline - self._monotonic())
+            transport_exc: Exception | None = None
+            res: ApiCallResult | None = None
+
+            async with self._login_gate.acquire(mds_ip, wait_timeout=rem_wait):
                 try:
                     res = await self._transport.execute(
                         target_ip,
@@ -514,21 +543,30 @@ class LoginCoordinator:
                     # Never retry TLS identity errors
                     raise
                 except (ApiTimeoutError, TransportError) as exc:
-                    if not failover_attempted and dom_key != SYSTEM_DOMAIN_SENTINEL and explicit_server_ip is None:
-                        failover_attempted = True
-                        refreshed = await self.refresh_domain_active_ip(mgmt_name, dom_key)
-                        if refreshed is not None and refreshed.active_ip and refreshed.active_ip != target_ip:
-                            target_ip = refreshed.active_ip
-                            mds_ip = refreshed.active_mds_ip or target_ip
-                            continue
-                    if self._monotonic() + transient_delay >= deadline:
-                        raise AuthenticationError(
-                            f"Login to {mgmt_name!r} ({dom_key!r} at {target_ip}) timed out or failed: {exc}"
-                        ) from exc
-                    await self._sleep(transient_delay)
-                    transient_delay = min(15.0, transient_delay * 2.0)
-                    continue
+                    transport_exc = exc
 
+            # Handle transport / timeout errors OUTSIDE LoginGate so refresh_domain_active_ip
+            # and backoff sleep never hold or deadlock LoginGate(mds_ip) (C7, W4, W5)
+            if transport_exc is not None:
+                if not failover_attempted and dom_key != SYSTEM_DOMAIN_SENTINEL and explicit_server_ip is None:
+                    failover_attempted = True
+                    refreshed = await self.refresh_domain_active_ip(mgmt_name, dom_key)
+                    if refreshed is not None and refreshed.active_ip and refreshed.active_ip != target_ip:
+                        target_ip = refreshed.active_ip
+                        mds_ip = refreshed.active_mds_ip or target_ip
+                        continue
+                # Record exponential backoff in LoginGate when login read times out (W5)
+                if isinstance(transport_exc, ApiTimeoutError) and transport_exc.phase == "read":
+                    self._login_gate.record_cooldown(mds_ip, transient_delay)
+                if self._monotonic() + transient_delay >= deadline:
+                    raise AuthenticationError(
+                        f"Login to {mgmt_name!r} ({dom_key!r} at {target_ip}) timed out or failed: {transport_exc}"
+                    ) from transport_exc
+                await self._sleep(transient_delay)
+                transient_delay = min(15.0, transient_delay * 2.0)
+                continue
+
+            assert res is not None
             if res.success:
                 sid = str(res.data.get("sid") or "")
                 if not sid:
@@ -544,9 +582,10 @@ class LoginCoordinator:
             if is_invalid_credentials_result(res):
                 await self._handle_invalid_credentials(mgmt_name, dom_key, auth, res)
 
-            # 2. Check Point per-IP login rate limit / throttling -> wait login_throttle_window (70s)
+            # 2. Check Point per-IP login rate limit / throttling -> record shared gate cooldown & wait (W4)
             if is_login_throttled_result(res):
                 wait_sec = float(self._settings.login_throttle_window)
+                self._login_gate.record_cooldown(mds_ip, wait_sec)
                 if self._monotonic() + wait_sec > deadline:
                     raise AuthenticationError(
                         f"Login to {mgmt_name!r} ({dom_key!r}) throttled and exceeded login_max_wait="
@@ -555,12 +594,12 @@ class LoginCoordinator:
                 await self._sleep(wait_sec)
                 continue
 
-            # 3. Active domain server failover -> re-query MDS system domain and update active_ip
+            # 3. Active domain server failover or cold domain IP resolution -> re-query MDS system domain
             if (
                 not failover_attempted
                 and dom_key != SYSTEM_DOMAIN_SENTINEL
                 and explicit_server_ip is None
-                and is_failover_or_unreachable_result(res)
+                and (is_failover_or_unreachable_result(res) or target_ip == self.get_server_endpoint(mgmt_name).host)
             ):
                 failover_attempted = True
                 refreshed = await self.refresh_domain_active_ip(mgmt_name, dom_key)
@@ -599,7 +638,7 @@ class LoginCoordinator:
         res: ApiCallResult,
     ) -> None:
         """Immediately evict cached SID and credentials, notify `AuthProvider`, and raise `InvalidCredentialsError`."""
-        await self._cache.evict_sid(mgmt_name, dom_key)
+        await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=auth.identity_key)
         if self._settings.auth_mode == "dynamic" or get_auth_context() is not None or self._auth_provider is not None:
             self._evicted_auth_identities.add((mgmt_name, auth.identity_key))
 
@@ -613,7 +652,7 @@ class LoginCoordinator:
 
     @traced
     async def refresh_domain_active_ip(self, mgmt_name: str, domain_name: str) -> DomainInfo | None:
-        """Query the MDS system domain (`show-domains` / `show-domain`) to update `active_ip` and `active_mds_ip`."""
+        """Query the MDS system domain (`show-domains` / `show-global-domain` / `show-mdss`) to update `active_ip` and `active_mds_ip`."""
         endpoint = self.get_server_endpoint(mgmt_name)
         span_attrs(mgmt_name=mgmt_name, domain=domain_name)
 
@@ -627,7 +666,7 @@ class LoginCoordinator:
                 res = await self._transport.execute(
                     sys_ip,
                     "show-domains",
-                    {"details-level": "full", "limit": 500},
+                    {"details-level": "full", "limit": 500, "offset": 0},
                     port=endpoint.port,
                     sid=sys_sid,
                     timeout=self._settings.api_timeout,
@@ -644,7 +683,7 @@ class LoginCoordinator:
                     res = await self._transport.execute(
                         sys_ip,
                         "show-domains",
-                        {"details-level": "full", "limit": 500},
+                        {"details-level": "full", "limit": 500, "offset": 0},
                         port=endpoint.port,
                         sid=sys_sid,
                         timeout=self._settings.api_timeout,
@@ -657,20 +696,104 @@ class LoginCoordinator:
         if not res.success:
             return None
 
-        raw_domains = res.data.get("objects")
-        if not isinstance(raw_domains, list):
+        first_page_objs = res.data.get("objects")
+        if not isinstance(first_page_objs, list):
             return None
+        raw_domains: list[Any] = list(first_page_objs)
+        total_domains = int(res.data.get("total") or len(raw_domains))
+        page_offset = len(raw_domains)
+        while page_offset < total_domains and len(first_page_objs) > 0:
+            try:
+                async with self._rate_limiter.slot(endpoint.host):
+                    page_res = await self._transport.execute(
+                        sys_ip,
+                        "show-domains",
+                        {"details-level": "full", "limit": 500, "offset": page_offset},
+                        port=endpoint.port,
+                        sid=sys_sid,
+                        timeout=self._settings.api_timeout,
+                    )
+                if not page_res.success:
+                    break
+                next_objs = page_res.data.get("objects")
+                if not isinstance(next_objs, list) or not next_objs:
+                    break
+                raw_domains.extend(next_objs)
+                page_offset += len(next_objs)
+            except ServerIdentityError:
+                raise
+            except Exception:
+                break
+
+        # Check if any domain server entry names its MDS member as a string rather than a dict with IP
+        mds_ip_by_name: dict[str, str] = {}
+        needs_mdss = domain_name == "Global" or any(
+            isinstance(srv.get("multi-domain-server"), str)
+            for item in raw_domains
+            if isinstance(item, dict) and isinstance(item.get("servers"), list)
+            for srv in item["servers"]
+            if isinstance(srv, dict)
+        )
+        if needs_mdss:
+            try:
+                async with self._rate_limiter.slot(endpoint.host):
+                    mdss_res = await self._transport.execute(
+                        sys_ip,
+                        "show-mdss",
+                        {"details-level": "full", "limit": 500},
+                        port=endpoint.port,
+                        sid=sys_sid,
+                        timeout=self._settings.api_timeout,
+                    )
+                if mdss_res.success and isinstance(mdss_res.data.get("objects"), list):
+                    for m_obj in mdss_res.data["objects"]:
+                        if isinstance(m_obj, dict):
+                            m_name = m_obj.get("name")
+                            m_ip = m_obj.get("ipv4-address") or m_obj.get("ip")
+                            if isinstance(m_name, str) and m_name and isinstance(m_ip, str) and m_ip:
+                                mds_ip_by_name[m_name] = m_ip
+            except ServerIdentityError:
+                raise
+            except Exception:
+                pass
 
         parsed_domains: list[DomainInfo] = []
         matched: DomainInfo | None = None
         for item in raw_domains:
             if isinstance(item, dict) and item.get("name"):
-                dom_info = parse_domain_entry(mgmt_name, item)
+                dom_info = parse_domain_entry(mgmt_name, item, mds_ip_by_name=mds_ip_by_name)
                 if not dom_info.active_mds_ip:
                     dom_info.active_mds_ip = endpoint.host
                 parsed_domains.append(dom_info)
                 if dom_info.name == domain_name:
                     matched = dom_info
+
+        if domain_name == "Global" and matched is None:
+            try:
+                async with self._rate_limiter.slot(endpoint.host):
+                    g_res = await self._transport.execute(
+                        sys_ip,
+                        "show-global-domain",
+                        {"name": "Global", "details-level": "full"},
+                        port=endpoint.port,
+                        sid=sys_sid,
+                        timeout=self._settings.api_timeout,
+                    )
+                if g_res.success and isinstance(g_res.data, dict):
+                    g_raw = dict(g_res.data)
+                    g_raw.setdefault("name", "Global")
+                    g_raw["is_global"] = True
+                    g_info = parse_domain_entry(mgmt_name, g_raw, mds_ip_by_name=mds_ip_by_name)
+                    if not g_info.active_ip:
+                        g_info.active_ip = endpoint.host
+                    if not g_info.active_mds_ip:
+                        g_info.active_mds_ip = g_info.active_ip
+                    parsed_domains.append(g_info)
+                    matched = g_info
+            except ServerIdentityError:
+                raise
+            except Exception:
+                pass
 
         if parsed_domains:
             await self._cache.upsert_domains(parsed_domains)
@@ -710,12 +833,12 @@ class LoginCoordinator:
             raise
         except Exception:
             if cached is not None and cached.sid == target_sid:
-                await self._cache.evict_sid(mgmt_name, dom_key)
+                await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=cached.auth_identity)
             return False
 
         if not res.success:
             if cached is not None and cached.sid == target_sid:
-                await self._cache.evict_sid(mgmt_name, dom_key)
+                await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=cached.auth_identity)
             return False
 
         if cached is not None and cached.sid == target_sid:
@@ -757,17 +880,21 @@ class LoginCoordinator:
         *,
         server_ip: str | None = None,
     ) -> bool:
-        """Log out a specific session identifier and remove it from `sid_cache` / dedicated tracking."""
+        """Log out a specific session identifier and remove it from `arodonata_sid_cache` / dedicated tracking (`W7`)."""
         if not sid:
             return False
         endpoint = self.get_server_endpoint(mgmt_name)
-        dedicated_ip = self._active_dedicated_sids.pop((mgmt_name, sid), None)
+        dedicated_ip = self._active_dedicated_sids.get((mgmt_name, sid))
         target_ip = server_ip or dedicated_ip or endpoint.host
 
         # Also evict from sid_cache if this sid was cached there
         for entry in await self._cache.list_sids(mgmt_name=mgmt_name):
             if entry.sid == sid:
-                await self._cache.evict_sid(entry.mgmt_name, entry.domain_name)
+                await self._cache.evict_sid(
+                    entry.mgmt_name,
+                    entry.domain_name,
+                    auth_identity=entry.auth_identity,
+                )
 
         try:
             async with self._rate_limiter.slot(endpoint.host):
@@ -779,10 +906,12 @@ class LoginCoordinator:
                     sid=sid,
                     timeout=self._settings.api_timeout,
                 )
+            if res.success:
+                self._active_dedicated_sids.pop((mgmt_name, sid), None)
             return res.success
         except ServerIdentityError:
             raise
-        except Exception:
+        except BaseException:
             return False
 
     @traced
@@ -896,6 +1025,16 @@ class SessionCleaner:
         span_attrs(mgmt_name=mgmt_name, domain=dom_key, seed_system_sid=seed_system_sid)
 
         existing_cached = await self._cache.get_sid(mgmt_name, dom_key)
+        now = self._login_coordinator._now()
+        if (
+            seed_system_sid
+            and existing_cached is not None
+            and existing_cached.expires_at is not None
+            and existing_cached.expires_at > now
+            and existing_cached.sid
+        ):
+            return True
+
         had_cached_or_inflight = existing_cached is not None or self._login_coordinator.has_inflight_or_cached_login(
             mgmt_name, domain
         )
@@ -929,15 +1068,13 @@ class SessionCleaner:
                         target_uid = sess_obj.get("uid")
                         if not isinstance(target_uid, str) or not target_uid or target_uid == session_uid:
                             continue
-                        is_stale = bool(
-                            sess_obj.get("expired-session")
-                            or (
-                                sess_obj.get("application") == "WEB_API"
-                                and int(sess_obj.get("changes") or 0) == 0
-                                and int(sess_obj.get("locks") or 0) == 0
-                                and str(sess_obj.get("session-name") or "").startswith("arodonata")
-                            )
+                        app_name = str(sess_obj.get("application") or "").strip().lower()
+                        sess_name = str(sess_obj.get("session-name") or "").strip().lower()
+                        is_arodonata_owned = app_name == "arodonata" or sess_name.startswith("arodonata")
+                        has_no_changes_or_locks = (
+                            int(sess_obj.get("changes") or 0) == 0 and int(sess_obj.get("locks") or 0) == 0
                         )
+                        is_stale = is_arodonata_owned and has_no_changes_or_locks
                         if is_stale:
                             async with self._rate_limiter.slot(endpoint.host):
                                 await self._transport.execute(
@@ -949,20 +1086,25 @@ class SessionCleaner:
                                     timeout=self._settings.api_timeout,
                                 )
 
-            # Check if we should seed `sid_cache` with this session instead of logging it out
+            # Check if we should seed `arodonata_sid_cache` with this session instead of logging it out
             if seed_system_sid and dom_key == SYSTEM_DOMAIN_SENTINEL and not had_cached_or_inflight:
                 current_cached = await self._cache.get_sid(mgmt_name, dom_key)
                 if current_cached is None and not self._login_coordinator.has_inflight_or_cached_login(
                     mgmt_name, domain
                 ):
+                    resolved_auth = await self._login_coordinator.resolve_credentials(
+                        mgmt_name, domain, explicit_auth=auth
+                    )
+                    identity = resolved_auth.identity_key
                     now = self._login_coordinator._now()
                     entry = SIDCacheEntry(
-                        id=f"{mgmt_name}:{dom_key}",
+                        id=f"{mgmt_name}:{dom_key}:{identity}",
                         mgmt_name=mgmt_name,
                         domain_name=dom_key,
                         sid=sid,
                         server_ip=server_ip,
                         session_uid=session_uid,
+                        auth_identity=identity,
                         created_at=now,
                         last_used_at=now,
                         expires_at=now + timedelta(seconds=self._settings.session_expire_seconds),
@@ -973,7 +1115,7 @@ class SessionCleaner:
             return True
         finally:
             if not retain_in_cache:
-                await self._login_coordinator.logout_sid(mgmt_name, sid, server_ip=server_ip)
+                await asyncio.shield(self._login_coordinator.logout_sid(mgmt_name, sid, server_ip=server_ip))
 
     async def drain_startup_tasks(self, timeout: float = 5.0) -> None:
         """Wait up to `timeout` seconds for any background startup cleanup tasks to finish."""

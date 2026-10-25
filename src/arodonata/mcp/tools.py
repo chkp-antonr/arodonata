@@ -18,6 +18,12 @@ Exposes:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import secrets
+import uuid
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any, Literal
@@ -25,8 +31,10 @@ from typing import Any, Literal
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult
 
+from arodonata.adapters.checkpoint.client import is_readonly_command
+from arodonata.adapters.checkpoint.transport import validate_command_name
 from arodonata.client import ArodonataClient
-from arodonata.core.errors import InvalidCredentialsError, redact_sid, sanitize_mapping
+from arodonata.core.errors import InvalidCredentialsError, ValidationError, redact_sid, sanitize_mapping
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import CacheMode, SyncScope, utc_now
 from arodonata.core.models.domains import DomainInfo
@@ -34,10 +42,12 @@ from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import RulebaseType
 from arodonata.core.models.services import CPService
 from arodonata.core.services.search_service import classify_search_term, matches_classified_term
-from arodonata.cpcrud import IpConflictPolicy, NameConflictPolicy, Plan
+from arodonata.cpcrud import ApplyReport, IpConflictPolicy, NameConflictPolicy, Plan
+from arodonata.cpcrud.state_reader import OBJECT_ITEM_TYPES, SERVICE_ITEM_TYPES
 from arodonata.mcp.config import ArodonataMCPSettings
 from arodonata.mcp.errors import (
     ToolFailure,
+    collect_known_sids,
     json_tool_result,
     mcp_tool_guard,
     resolve_mgmt_name,
@@ -47,6 +57,35 @@ from arodonata.reports import RangeScope, RenderOptions, ReportScope, SessionSco
 from arodonata.rulebase import RuleFormat
 
 MCPCacheModeInput = Literal["cache", "smart", "smart-fast", "force", "live"]
+MAX_MCP_API_TIMEOUT_SECONDS: float = 300.0
+MAX_STORED_PLANS: int = 256
+CANONICAL_SHOW_OBJECT_TYPES: frozenset[str] = (
+    OBJECT_ITEM_TYPES
+    | SERVICE_ITEM_TYPES
+    | frozenset(
+        {
+            "simple-gateway",
+            "simple-cluster",
+            "checkpoint-host",
+            "vsx-gateway",
+            "vsx-cluster",
+            "interoperable-device",
+            "generic-object",
+        }
+    )
+)
+
+
+def _canonical_plan_payload(plan_dict: dict[str, Any]) -> bytes:
+    """Return canonical JSON bytes for a CPCRUD `Plan` dictionary excluding `plan_id` / `plan_signature`."""
+    stripped = {k: v for k, v in plan_dict.items() if k not in ("plan_id", "plan_signature")}
+    normalized = Plan.model_validate(stripped).model_dump(mode="json")
+    return json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _sign_plan(hmac_key: bytes, plan_dict: dict[str, Any]) -> str:
+    """Compute HMAC-SHA256 hex digest over the canonical serialized `Plan`."""
+    return hmac.new(hmac_key, _canonical_plan_payload(plan_dict), hashlib.sha256).hexdigest()
 
 
 def _normalize_cache_mode(mode: str | None, *, default: CacheMode = "smart") -> tuple[CacheMode, bool]:
@@ -733,12 +772,31 @@ def register_mcp_tools(
         target_domain = eff_domain or "default"
         mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
 
+        clean_obj_type: str | None = None
+        if obj_type is not None and obj_type.strip():
+            raw_type = obj_type.strip()
+            try:
+                validated_cmd = validate_command_name(f"show-{raw_type}")
+            except ValidationError as exc:
+                raise ToolFailure(
+                    f"Invalid obj_type {obj_type!r}: {exc}",
+                    mgmt_name=eff_mgmt,
+                    domain=eff_domain,
+                ) from exc
+            clean_obj_type = validated_cmd.removeprefix("show-")
+            if clean_obj_type not in CANONICAL_SHOW_OBJECT_TYPES:
+                raise ToolFailure(
+                    f"Unsupported obj_type {obj_type!r}. Expected a canonical Check Point object or service type.",
+                    mgmt_name=eff_mgmt,
+                    domain=eff_domain,
+                )
+
         if not is_live:
             found = await client.find_object(
                 eff_mgmt,
                 target_domain,
                 uid_or_name,
-                obj_type=obj_type,
+                obj_type=clean_obj_type,
                 cache_mode=mode,
             )
             if found is not None:
@@ -769,24 +827,27 @@ def register_mcp_tools(
                 )
 
         # Fallback to live show-object or type-specific command
-        cmd = f"show-{obj_type}" if obj_type else "show-object"
+        cmd = f"show-{clean_obj_type}" if clean_obj_type else "show-object"
         payload: dict[str, Any] = {"details-level": details_level}
-        if "-" in uid_or_name and len(uid_or_name) == 36 and not obj_type:
+        if "-" in uid_or_name and len(uid_or_name) == 36 and not clean_obj_type:
             payload["uid"] = uid_or_name
-        elif obj_type:
+        elif clean_obj_type:
             payload["name"] = uid_or_name
         else:
             payload["uid"] = uid_or_name
 
         res = await client.api_call(eff_mgmt, cmd, payload, domain=eff_domain)
         if not res.success:
+            known_sids = await collect_known_sids(client, eff_mgmt)
             raise ToolFailure(
                 f"Object {uid_or_name!r} not found on {eff_mgmt!r} ({target_domain}): "
-                f"{res.error_message or 'not found'}",
+                f"{redact_sid(res.error_message or 'not found', known_sids=known_sids)}",
                 mgmt_name=eff_mgmt,
                 domain=eff_domain,
+                known_sids=known_sids,
             )
         obj_payload = res.data.get("object", res.data)
+        known_sids = await collect_known_sids(client, eff_mgmt)
         return json_tool_result(
             {
                 "from": 1,
@@ -798,7 +859,8 @@ def register_mcp_tools(
                 "domain": target_domain,
                 "object": obj_payload,
                 "objects": [obj_payload],
-            }
+            },
+            known_sids=known_sids,
         )
 
     @server.tool(
@@ -835,6 +897,7 @@ def register_mcp_tools(
         types: list[str] | None = None,
         include_global: bool = False,
         max_depth: int = 2,
+        exact_match: bool = False,
         limit: int = 100,
         offset: int = 0,
         cache_mode: str = "smart",
@@ -855,6 +918,7 @@ def register_mcp_tools(
             types=types,
             include_global=include_global,
             max_depth=max_depth,
+            exact_match=exact_match,
             cache_mode=mode,
         )
         age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "*")
@@ -1608,7 +1672,8 @@ def register_mcp_tools(
         name="api_call",
         description=(
             "Execute a direct Check Point Management Web API command. "
-            "By default only read-only 'show-*' commands are permitted unless ARODONATA_MCP_ALLOW_WRITE_API=true."
+            "By default only read-only commands ('show-*', 'where-used', 'verify-policy') are permitted "
+            "unless ARODONATA_MCP_ALLOW_WRITE_API=true."
         ),
     )
     @mcp_tool_guard("api_call", client_getter)
@@ -1620,34 +1685,73 @@ def register_mcp_tools(
         wait_for_task: bool = True,
         timeout: float | None = None,
     ) -> CallToolResult:
-        clean_cmd = command.strip().lstrip("/").lower()
-        if not clean_cmd:
+        if not isinstance(command, str) or not command.strip():
             raise ToolFailure("Command must not be empty.")
 
-        if not mcp_settings.allow_write_api and not clean_cmd.startswith("show-"):
+        try:
+            clean_cmd = validate_command_name(command)
+        except ValidationError as exc:
+            raise ToolFailure(str(exc), mgmt_name=mgmt_name, domain=domain) from exc
+
+        if not mcp_settings.allow_write_api and not is_readonly_command(clean_cmd):
             raise ToolFailure(
-                f"Write or non-'show-*' command {clean_cmd!r} is prohibited when "
-                "ARODONATA_MCP_ALLOW_WRITE_API=false. Only read-only 'show-*' commands are permitted."
+                f"Write or non-read-only command {clean_cmd!r} is prohibited when "
+                "ARODONATA_MCP_ALLOW_WRITE_API=false. Only read-only 'show-*', 'where-used', and 'verify-policy' "
+                "commands are permitted."
             )
 
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
         eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
 
-        res = await client.api_call(
-            eff_mgmt,
-            clean_cmd,
-            payload or {},
-            domain=eff_domain,
-            wait_for_task=wait_for_task,
-            timeout=timeout,
-        )
+        eff_timeout: float | None = None
+        if timeout is not None:
+            if timeout <= 0:
+                raise ToolFailure(
+                    "timeout must be a positive number of seconds.", mgmt_name=eff_mgmt, domain=eff_domain
+                )
+            eff_timeout = min(float(timeout), MAX_MCP_API_TIMEOUT_SECONDS)
+
+        if is_readonly_command(clean_cmd):
+            res = await client.api_call(
+                eff_mgmt,
+                clean_cmd,
+                payload or {},
+                domain=eff_domain,
+                wait_for_task=wait_for_task,
+                timeout=eff_timeout,
+            )
+        else:
+            # Isolate mutating api_call inside a dedicated session so shared sid_cache is never dirtied (W25/C8)
+            sid, srv_ip = await client.api.create_dedicated_session(
+                eff_mgmt,
+                eff_domain,
+                session_name="arodonata-mcp-api-call",
+                session_description=f"MCP api_call: {clean_cmd}",
+            )
+            try:
+                res = await client.api_call(
+                    eff_mgmt,
+                    clean_cmd,
+                    payload or {},
+                    domain=eff_domain,
+                    sid=sid,
+                    server_ip=srv_ip,
+                    wait_for_task=wait_for_task,
+                    timeout=eff_timeout,
+                )
+            finally:
+                if clean_cmd != "logout":
+                    await client.api.logout_sid(eff_mgmt, sid, server_ip=srv_ip)
+
+        known_sids = await collect_known_sids(client, eff_mgmt)
         if not res.success:
-            err_msg = redact_sid(res.error_message or f"API command {clean_cmd!r} failed")
+            err_msg = redact_sid(res.error_message or f"API command {clean_cmd!r} failed", known_sids=known_sids)
             raise ToolFailure(
                 f"{clean_cmd} failed (status {res.status_code}): {err_msg}",
                 mgmt_name=eff_mgmt,
                 domain=eff_domain,
+                known_sids=known_sids,
             )
 
         return json_tool_result(
@@ -1658,8 +1762,9 @@ def register_mcp_tools(
                 "status_code": res.status_code,
                 "source": "live",
                 "cache_age_seconds": None,
-                "data": sanitize_mapping(res.data),
-            }
+                "data": sanitize_mapping(res.data, known_sids=known_sids),
+            },
+            known_sids=known_sids,
         )
 
     # ------------------------------------------------------------------
@@ -1823,6 +1928,49 @@ def register_mcp_tools(
     # ------------------------------------------------------------------
 
     if mcp_settings.cpcrud:
+        plan_hmac_key = secrets.token_bytes(32)
+        plan_store: OrderedDict[str, tuple[Plan, ApplyReport | None]] = OrderedDict()
+
+        def _store_plan_entry(plan_id: str, plan_obj: Plan, report_obj: ApplyReport | None = None) -> None:
+            plan_store[plan_id] = (plan_obj, report_obj)
+            plan_store.move_to_end(plan_id)
+            while len(plan_store) > MAX_STORED_PLANS:
+                plan_store.popitem(last=False)
+
+        def _resolve_verified_plan(
+            plan: dict[str, Any] | None,
+            plan_id: str | None,
+        ) -> tuple[str | None, Plan, ApplyReport | None]:
+            if plan_id and plan is None:
+                entry = plan_store.get(plan_id)
+                if entry is None:
+                    raise ToolFailure(f"Unknown or expired CPCRUD plan_id {plan_id!r}. Run cpcrud_plan first.")
+                return plan_id, entry[0], entry[1]
+
+            if not isinstance(plan, dict):
+                raise ToolFailure("Provide a signed 'plan' dictionary returned by cpcrud_plan or a 'plan_id'.")
+
+            sig = plan.get("plan_signature")
+            embedded_id = plan.get("plan_id") if isinstance(plan.get("plan_id"), str) else plan_id
+
+            try:
+                expected_sig = _sign_plan(plan_hmac_key, plan)
+                parsed_plan = Plan.model_validate(
+                    {k: v for k, v in plan.items() if k not in ("plan_id", "plan_signature")}
+                )
+            except Exception as exc:
+                raise ToolFailure(f"Invalid or tampered CPCRUD plan payload: {exc}") from exc
+
+            if not isinstance(sig, str) or not hmac.compare_digest(sig, expected_sig):
+                raise ToolFailure(
+                    "Untrusted or tampered CPCRUD plan: plans passed to cpcrud_apply/cpcrud_inverse must be "
+                    "created and signed by cpcrud_plan on this server."
+                )
+
+            stored_report: ApplyReport | None = None
+            if embedded_id and embedded_id in plan_store:
+                stored_report = plan_store[embedded_id][1]
+            return embedded_id, parsed_plan, stored_report
 
         @server.tool(
             name="cpcrud_validate",
@@ -1854,59 +2002,182 @@ def register_mcp_tools(
             template: dict[str, Any] | str,
             on_name_conflict: NameConflictPolicy | None = None,
             on_ip_conflict: IpConflictPolicy | None = None,
-            validate_schema: bool = True,
         ) -> CallToolResult:
             client = client_getter()
             plan = await client.cpcrud.plan(
                 template,
                 on_name_conflict=on_name_conflict,
                 on_ip_conflict=on_ip_conflict,
-                validate_schema=validate_schema,
+                validate_schema=True,
             )
-            return json_tool_result(plan.model_dump(mode="json"))
+            plan_id = str(uuid.uuid4())
+            _store_plan_entry(plan_id, plan, None)
+            plan_dict = plan.model_dump(mode="json")
+            plan_dict["plan_id"] = plan_id
+            plan_dict["plan_signature"] = _sign_plan(plan_hmac_key, plan_dict)
+            known_sids = await collect_known_sids(client)
+            return json_tool_result(plan_dict, known_sids=known_sids)
 
         @server.tool(
             name="cpcrud_apply",
             description=(
-                "Execute a CPCRUD Plan inside an isolated WriteSession per domain with stale-plan verification, "
-                "optional session staging, and post-publish cache invalidation."
+                "Execute a verified CPCRUD Plan inside an isolated WriteSession per domain with stale-plan "
+                "verification, optional session staging, and post-publish cache invalidation."
             ),
         )
         @mcp_tool_guard("cpcrud_apply", client_getter)
         async def cpcrud_apply(
-            plan: dict[str, Any],
-            force: bool = False,
+            plan: dict[str, Any] | None = None,
+            plan_id: str | None = None,
             no_publish: bool = False,
             keep_session: bool = False,
             retry_remaining: int = 0,
             session_name: str | None = None,
             session_description: str | None = None,
         ) -> CallToolResult:
+            if retry_remaining < 0 or retry_remaining > 3:
+                raise ToolFailure("retry_remaining must be between 0 and 3.")
+
+            eff_plan_id, parsed_plan, _ = _resolve_verified_plan(plan, plan_id)
             client = client_getter()
-            parsed_plan = Plan.model_validate(plan)
             report = await client.cpcrud.apply(
                 parsed_plan,
-                force=force,
+                force=False,
                 no_publish=no_publish,
                 keep_session=keep_session,
                 retry_remaining=retry_remaining,
                 session_name=session_name,
                 session_description=session_description,
             )
-            return json_tool_result(report.model_dump(mode="json"))
+            if eff_plan_id:
+                _store_plan_entry(eff_plan_id, parsed_plan, report)
+            report_dict = report.model_dump(mode="json")
+            if eff_plan_id:
+                report_dict["plan_id"] = eff_plan_id
+            known_sids = await collect_known_sids(client)
+            return json_tool_result(report_dict, known_sids=known_sids)
 
         @server.tool(
             name="cpcrud_inverse",
-            description="Generate a schema-valid compensating rollback template from a CPCRUD Plan and optional ApplyReport.",
+            description="Generate a schema-valid compensating rollback template from a verified CPCRUD Plan and ApplyReport.",
         )
         @mcp_tool_guard("cpcrud_inverse", client_getter)
         async def cpcrud_inverse(
-            plan: dict[str, Any],
+            plan: dict[str, Any] | None = None,
+            plan_id: str | None = None,
+            report: dict[str, Any] | None = None,
         ) -> CallToolResult:
+            _, parsed_plan, stored_report = _resolve_verified_plan(plan, plan_id)
             client = client_getter()
-            parsed_plan = Plan.model_validate(plan)
-            inverse_tpl = client.cpcrud.inverse(parsed_plan)
-            return json_tool_result(inverse_tpl)
+            eff_report: ApplyReport | None = None
+            if isinstance(report, dict):
+                eff_report = ApplyReport.model_validate(report)
+            elif stored_report is not None:
+                eff_report = stored_report
+            elif client.cpcrud.last_report is not None:
+                eff_report = client.cpcrud.last_report
+
+            if eff_report is None:
+                raise ToolFailure(
+                    "cpcrud_inverse requires an ApplyReport (pass 'report', use a 'plan_id' that was applied, "
+                    "or call cpcrud_apply before cpcrud_inverse)."
+                )
+            inverse_tpl = client.cpcrud.inverse(parsed_plan, eff_report)
+            known_sids = await collect_known_sids(client)
+            return json_tool_result(inverse_tpl, known_sids=known_sids)
+
+        @server.tool(
+            name="cpcrud_publish_staged",
+            description=(
+                "Adopt a staged Check Point session (created with keep_session=True) via take-over-session, "
+                "publish it, log out cleanly, and invalidate the domain cache."
+            ),
+        )
+        @mcp_tool_guard("cpcrud_publish_staged", client_getter)
+        async def cpcrud_publish_staged(
+            session_uid: str,
+            mgmt_name: str | None = None,
+            domain: str | None = None,
+            server_ip: str | None = None,
+            timeout: float | None = None,
+        ) -> CallToolResult:
+            if not session_uid or not session_uid.strip():
+                raise ToolFailure("session_uid must not be empty.")
+            client = client_getter()
+            eff_mgmt = resolve_mgmt_name(client, mgmt_name)
+            eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
+            eff_timeout = min(float(timeout), MAX_MCP_API_TIMEOUT_SECONDS) if timeout and timeout > 0 else None
+            res = await client.cpcrud.publish_staged_session(
+                eff_mgmt,
+                eff_domain,
+                session_uid=session_uid.strip(),
+                server_ip=server_ip,
+                timeout=eff_timeout,
+            )
+            known_sids = await collect_known_sids(client, eff_mgmt)
+            if not res.success:
+                raise ToolFailure(
+                    f"cpcrud_publish_staged failed for session {session_uid!r}: "
+                    f"{redact_sid(res.error_message or 'publish failed', known_sids=known_sids)}",
+                    mgmt_name=eff_mgmt,
+                    domain=eff_domain,
+                    known_sids=known_sids,
+                )
+            return json_tool_result(
+                {
+                    "mgmt_name": eff_mgmt,
+                    "domain": eff_domain,
+                    "session_uid": session_uid.strip(),
+                    "published": True,
+                    "data": sanitize_mapping(res.data, known_sids=known_sids),
+                },
+                known_sids=known_sids,
+            )
+
+        @server.tool(
+            name="cpcrud_discard_staged",
+            description=(
+                "Adopt a staged Check Point session (created with keep_session=True) via take-over-session, "
+                "discard uncommitted changes, and log out cleanly."
+            ),
+        )
+        @mcp_tool_guard("cpcrud_discard_staged", client_getter)
+        async def cpcrud_discard_staged(
+            session_uid: str,
+            mgmt_name: str | None = None,
+            domain: str | None = None,
+            server_ip: str | None = None,
+        ) -> CallToolResult:
+            if not session_uid or not session_uid.strip():
+                raise ToolFailure("session_uid must not be empty.")
+            client = client_getter()
+            eff_mgmt = resolve_mgmt_name(client, mgmt_name)
+            eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
+            res = await client.cpcrud.discard_staged_session(
+                eff_mgmt,
+                eff_domain,
+                session_uid=session_uid.strip(),
+                server_ip=server_ip,
+            )
+            known_sids = await collect_known_sids(client, eff_mgmt)
+            if not res.success:
+                raise ToolFailure(
+                    f"cpcrud_discard_staged failed for session {session_uid!r}: "
+                    f"{redact_sid(res.error_message or 'discard failed', known_sids=known_sids)}",
+                    mgmt_name=eff_mgmt,
+                    domain=eff_domain,
+                    known_sids=known_sids,
+                )
+            return json_tool_result(
+                {
+                    "mgmt_name": eff_mgmt,
+                    "domain": eff_domain,
+                    "session_uid": session_uid.strip(),
+                    "discarded": True,
+                    "data": sanitize_mapping(res.data, known_sids=known_sids),
+                },
+                known_sids=known_sids,
+            )
 
 
 __all__ = [

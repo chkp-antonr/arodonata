@@ -19,6 +19,8 @@ from arodonata.cpcrud.state_reader import OBJECT_ITEM_TYPES, SERVICE_ITEM_TYPES
 def _invert_single_action(
     action: PlannedAction,
     result: ActionResult | None = None,
+    *,
+    report_supplied: bool = False,
 ) -> tuple[str, dict[str, Any]] | None:
     """Invert a single `PlannedAction` into `(bucket_name, op_dict)` or `None` if no-op."""
     effective_outcome = result.outcome if result is not None else action.outcome
@@ -30,6 +32,11 @@ def _invert_single_action(
     obj_type = action.object_type
     prior = dict(action.prior_state or {})
     created_uid = (result.target_uid if result is not None else None) or action.target_uid
+    if created_uid and created_uid.startswith("planned:"):
+        created_uid = None
+    # When a report is supplied for a CREATE action, refuse unsafe delete-by-name if no concrete UID was created
+    if effective_outcome == Outcome.CREATE and report_supplied and not created_uid:
+        return None
 
     if obj_type.endswith("-rule") or obj_type in ("access", "nat", "https", "threat"):
         rule_op = _invert_rule_action(action, effective_outcome, prior, created_uid)
@@ -96,7 +103,10 @@ def _invert_object_action(
             "comments",
             "color",
             "tags",
+            "groups",
             "nat-settings",
+            "ignore-warnings",
+            "set-if-exists",
         ):
             if field_key in prior and prior[field_key] is not None:
                 op[field_key] = prior[field_key]
@@ -121,7 +131,10 @@ def _invert_object_action(
             "comments",
             "color",
             "tags",
+            "groups",
             "nat-settings",
+            "ignore-warnings",
+            "set-if-exists",
         ):
             if field_key in prior and prior[field_key] is not None:
                 op[field_key] = prior[field_key]
@@ -174,6 +187,9 @@ def _invert_service_action(
             "comments",
             "color",
             "tags",
+            "groups",
+            "ignore-warnings",
+            "set-if-exists",
         ):
             if field_key in prior and prior[field_key] is not None:
                 op[field_key] = prior[field_key]
@@ -197,6 +213,9 @@ def _invert_service_action(
             "comments",
             "color",
             "tags",
+            "groups",
+            "ignore-warnings",
+            "set-if-exists",
         ):
             if field_key in prior and prior[field_key] is not None:
                 op[field_key] = prior[field_key]
@@ -311,9 +330,16 @@ def _invert_rule_action(
             "source",
             "destination",
             "service",
+            "source-negate",
+            "destination-negate",
+            "service-negate",
             "rule_action",
             "track",
             "install-on",
+            "inline-layer",
+            "protected-scope",
+            "site-category",
+            "certificate",
             "method",
             "original-source",
             "original-destination",
@@ -352,9 +378,16 @@ def _invert_rule_action(
             "source",
             "destination",
             "service",
+            "source-negate",
+            "destination-negate",
+            "service-negate",
             "rule_action",
             "track",
             "install-on",
+            "inline-layer",
+            "protected-scope",
+            "site-category",
+            "certificate",
             "method",
             "original-source",
             "original-destination",
@@ -411,7 +444,7 @@ def build_inverse_template(
             res_item = result_by_id.get(act.action_id) if report is not None else None
             if report is not None and res_item is None:
                 continue
-            inverted = _invert_single_action(act, res_item)
+            inverted = _invert_single_action(act, res_item, report_supplied=(report is not None))
             if inverted is None:
                 continue
             bucket_name, op_dict = inverted

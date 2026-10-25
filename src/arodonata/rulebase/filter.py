@@ -3,17 +3,29 @@
 Evaluates search/filter expressions locally against a numbered rulebase (`PackageRulebase`
 or `NumberedLayerRulebase`) and cached `CPObject` / `CPService` dictionaries without
 Check Point Management API round-trips, formatting output as `"markdown"`,
-`"model_friendly"`, or `"raw"`.
+`"model_friendly"`, `"raw"`, or `"cpcrud"`.
 """
 
 from __future__ import annotations
 
 import ipaddress
+import json
 import shlex
 from collections.abc import Sequence
+from typing import Any, Literal
 
 from arodonata.core.models.objects import CPObject
+from arodonata.core.models.rulebase import (
+    AccessRuleEntry,
+    HttpsRuleEntry,
+    NatRuleEntry,
+    ThreatRuleEntry,
+)
 from arodonata.core.models.services import CPService
+from arodonata.cpcrud.rule_identity import (
+    normalize_any_sentinel,
+    normalize_nat_original_sentinel,
+)
 from arodonata.rulebase.models import (
     FilteredRulebaseResult,
     NumberedLayerRulebase,
@@ -432,6 +444,143 @@ def format_rules_model_friendly(
     return "\n".join(lines)
 
 
+def rule_to_cpcrud_operation(
+    rule: AccessRuleEntry | NatRuleEntry | HttpsRuleEntry | ThreatRuleEntry | NumberedRule,
+    *,
+    operation: Literal["add", "set", "delete", "present", "absent"] = "set",
+    package: str | None = None,
+    layer: str | None = None,
+) -> dict[str, Any]:
+    """Convert a cached or numbered rule into a schema-valid `cpcrud` `RuleOperation` dict.
+
+    Normalizes Check Point NAT `"Original"` (`NAT_ORIGINAL_OBJECT_UID`) and `"Any"`
+    (`NAT_ANY_OBJECT_UID`) sentinel UIDs so the resulting dict passes
+    `CPCRUDService.validate()` and `Planner.decide()` without false diffs.
+    """
+    is_nat = isinstance(rule, NatRuleEntry) or (isinstance(rule, NumberedRule) and rule.rulebase_type == "nat")
+    is_https = isinstance(rule, HttpsRuleEntry) or (isinstance(rule, NumberedRule) and rule.rulebase_type == "https")
+    is_threat = isinstance(rule, ThreatRuleEntry) or (isinstance(rule, NumberedRule) and rule.rulebase_type == "threat")
+
+    if is_nat:
+        rb_type = "nat"
+        rule_type = "nat-rule"
+    elif is_https:
+        rb_type = "https"
+        rule_type = "https-rule"
+    elif is_threat:
+        rb_type = "threat"
+        rule_type = "threat-rule"
+    else:
+        rb_type = "access"
+        rule_type = "access-rule"
+
+    op: dict[str, Any] = {
+        "operation": operation,
+        "type": rule_type,
+        "rulebase_type": rb_type,
+        "uid": rule.uid,
+        "name": rule.name,
+        "enabled": rule.enabled,
+    }
+
+    if rule.rule_number:
+        op["rule_number"] = rule.rule_number
+    if rule.position > 0:
+        op["position"] = rule.position
+    if rule.comments:
+        op["comments"] = rule.comments
+
+    if is_nat:
+        eff_pkg = package
+        if not eff_pkg:
+            if isinstance(rule, NatRuleEntry):
+                eff_pkg = rule.package_name or rule.package_uid
+            elif isinstance(rule, NumberedRule):
+                eff_pkg = rule.package_name or rule.layer_name or rule.package_uid or rule.layer_uid
+        op["package"] = eff_pkg or "Standard"
+
+        raw = rule.raw_data or {}
+        method_raw = getattr(rule, "method", None) or raw.get("method") or "static"
+        method_str = str(method_raw).strip().lower()
+        op["method"] = method_str if method_str in {"static", "hide", "nat64", "nat46", "cgnat"} else "static"
+
+        orig_src = getattr(rule, "original_source", None)
+        if orig_src is None:
+            orig_src = raw.get("original-source")
+        orig_dst = getattr(rule, "original_destination", None)
+        if orig_dst is None:
+            orig_dst = raw.get("original-destination")
+        orig_svc = getattr(rule, "original_service", None)
+        if orig_svc is None:
+            orig_svc = raw.get("original-service")
+
+        trans_src = getattr(rule, "translated_source", None)
+        if trans_src is None:
+            trans_src = raw.get("translated-source")
+        trans_dst = getattr(rule, "translated_destination", None)
+        if trans_dst is None:
+            trans_dst = raw.get("translated-destination")
+        trans_svc = getattr(rule, "translated_service", None)
+        if trans_svc is None:
+            trans_svc = raw.get("translated-service")
+
+        op["original-source"] = normalize_any_sentinel(orig_src)
+        op["original-destination"] = normalize_any_sentinel(orig_dst)
+        op["original-service"] = normalize_any_sentinel(orig_svc)
+        op["translated-source"] = normalize_nat_original_sentinel(trans_src)
+        op["translated-destination"] = normalize_nat_original_sentinel(trans_dst)
+        op["translated-service"] = normalize_nat_original_sentinel(trans_svc)
+    else:
+        eff_layer = layer or getattr(rule, "layer_name", "") or getattr(rule, "layer_uid", "")
+        op["layer"] = eff_layer or "Network"
+        eff_pkg_opt = package or getattr(rule, "package_name", None)
+        if eff_pkg_opt:
+            op["package"] = eff_pkg_opt
+
+        src_list = [normalize_any_sentinel(s) for s in (getattr(rule, "source", None) or [])]
+        dst_list = [normalize_any_sentinel(d) for d in (getattr(rule, "destination", None) or [])]
+        svc_list = [normalize_any_sentinel(s) for s in (getattr(rule, "service", None) or [])]
+        op["source"] = src_list if src_list else ["Any"]
+        op["destination"] = dst_list if dst_list else ["Any"]
+        op["service"] = svc_list if svc_list else ["Any"]
+
+        rule_act = getattr(rule, "action", None)
+        if rule_act:
+            op["rule_action"] = rule_act
+        track_val = getattr(rule, "track", None)
+        if track_val:
+            op["track"] = track_val
+
+        if isinstance(rule, (AccessRuleEntry, NumberedRule)):
+            if getattr(rule, "source_negate", False):
+                op["source-negate"] = True
+            if getattr(rule, "destination_negate", False):
+                op["destination-negate"] = True
+            if getattr(rule, "service_negate", False):
+                op["service-negate"] = True
+            inline_layer = getattr(rule, "inline_layer_name", None) or getattr(rule, "inline_layer_uid", None)
+            if inline_layer:
+                op["inline-layer"] = inline_layer
+
+        if is_https:
+            site_cat = getattr(rule, "site_category", None)
+            if site_cat:
+                op["site-category"] = list(site_cat)
+            cert = getattr(rule, "certificate", None)
+            if cert:
+                op["certificate"] = cert
+
+        if is_threat:
+            prot_scope = getattr(rule, "protected_scope", None)
+            if prot_scope:
+                op["protected-scope"] = list(prot_scope)
+
+    if rule.install_on:
+        op["install-on"] = list(rule.install_on)
+
+    return op
+
+
 def filter_numbered_rulebase(
     rulebase: PackageRulebase | NumberedLayerRulebase,
     *,
@@ -449,23 +598,28 @@ def filter_numbered_rulebase(
     if isinstance(rulebase, PackageRulebase):
         target_name = rulebase.package_name
         target_uid = rulebase.package_uid
+        pkg_ctx: str | None = rulebase.package_name
     else:
         target_name = rulebase.layer_name
         target_uid = rulebase.layer_uid
+        pkg_ctx = rulebase.package_name
 
-    if output_format == "markdown":
-        rendered = format_rules_markdown(
-            target_name,
-            rulebase.rulebase_type,
-            matched_rules,
-            sections=rulebase.sections if not tokens else None,
-        )
-    elif output_format == "raw":
-        rendered = ""
+    if output_format == "cpcrud":
+        raw_items = [rule_to_cpcrud_operation(r, package=pkg_ctx) for r in matched_rules]
+        rendered = json.dumps(raw_items, indent=2)
     else:
-        rendered = format_rules_model_friendly(target_name, rulebase.rulebase_type, matched_rules)
-
-    raw_items = [r.model_dump(mode="json") for r in matched_rules]
+        if output_format == "markdown":
+            rendered = format_rules_markdown(
+                target_name,
+                rulebase.rulebase_type,
+                matched_rules,
+                sections=rulebase.sections if not tokens else None,
+            )
+        elif output_format == "raw":
+            rendered = ""
+        else:
+            rendered = format_rules_model_friendly(target_name, rulebase.rulebase_type, matched_rules)
+        raw_items = [r.model_dump(mode="json") for r in matched_rules]
 
     return FilteredRulebaseResult(
         mgmt_name=rulebase.mgmt_name,
@@ -492,4 +646,5 @@ __all__ = [
     "format_rules_markdown",
     "format_rules_model_friendly",
     "rule_matches_filter",
+    "rule_to_cpcrud_operation",
 ]

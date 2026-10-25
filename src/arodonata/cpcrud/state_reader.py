@@ -19,8 +19,8 @@ from __future__ import annotations
 import ipaddress
 from typing import Any
 
-from arodonata.core.errors import ArodonataError, ServerIdentityError
-from arodonata.core.models.common import SyncScope
+from arodonata.core.errors import ArodonataError, ServerIdentityError, ValidationError
+from arodonata.core.models.common import SyncScope, to_naive_utc
 from arodonata.core.models.domains import DomainSyncState
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import RulebaseType
@@ -138,7 +138,7 @@ def _sync_state_matches_stamp(
         return False
 
     if stamp.last_published_at is not None:
-        if sync_state.last_published_at != stamp.last_published_at:
+        if to_naive_utc(sync_state.last_published_at) != to_naive_utc(stamp.last_published_at):
             return False
     elif sync_state.last_published_at is not None:
         return False
@@ -297,6 +297,8 @@ class HybridStateReader:
         name: str,
     ) -> CPObject | None:
         """Look up a network object by `(mgmt_name, domain_name, obj_type, name)`."""
+        if obj_type not in OBJECT_ITEM_TYPES:
+            raise ValidationError(f"Unsupported CPCRUD object type: {obj_type!r}")
         dom_key = (mgmt_name, domain_name)
         del_set = self._deleted_objects.get(dom_key, set())
         if f"name:{obj_type}:{name}" in del_set:
@@ -323,7 +325,7 @@ class HybridStateReader:
             return None
 
         # Fallback to live API call
-        cmd = TYPE_TO_SHOW_SINGLE_CMD.get(obj_type, f"show-{obj_type}")
+        cmd = TYPE_TO_SHOW_SINGLE_CMD[obj_type]
         payload: dict[str, Any] = {"name": name}
         if obj_type == "dns-domain" and not name.startswith("."):
             payload["name"] = name
@@ -345,12 +347,19 @@ class HybridStateReader:
             if is_not_found_error(res.status_code, res.error_code, res.error_message):
                 # For dns-domain, Check Point often stores names with a leading dot (e.g. ".example.com")
                 if obj_type == "dns-domain" and not name.startswith("."):
-                    dot_res = await self._api.api_call(
-                        mgmt_name,
-                        cmd,
-                        {"name": f".{name}"},
-                        domain=domain_name or None,
-                    )
+                    try:
+                        dot_res = await self._api.api_call(
+                            mgmt_name,
+                            cmd,
+                            {"name": f".{name}"},
+                            domain=domain_name or None,
+                        )
+                    except ServerIdentityError:
+                        raise
+                    except Exception as exc:
+                        raise StateLookupError(
+                            f"Live API lookup ({cmd}) failed for .{name!r} in {mgmt_name}:{domain_name}: {exc}"
+                        ) from exc
                     if dot_res.success and isinstance(dot_res.data, dict):
                         return CPObject.from_cp_dict(mgmt_name, domain_name, dot_res.data)
                     if not dot_res.success and not is_not_found_error(
@@ -378,6 +387,8 @@ class HybridStateReader:
         uid: str,
     ) -> CPObject | None:
         """Look up a network object by `(mgmt_name, domain_name, obj_type, uid)`."""
+        if obj_type not in OBJECT_ITEM_TYPES:
+            raise ValidationError(f"Unsupported CPCRUD object type: {obj_type!r}")
         dom_key = (mgmt_name, domain_name)
         del_set = self._deleted_objects.get(dom_key, set())
         if f"uid:{uid}" in del_set:
@@ -397,7 +408,7 @@ class HybridStateReader:
                 return obj
             return None
 
-        cmd = TYPE_TO_SHOW_SINGLE_CMD.get(obj_type, f"show-{obj_type}")
+        cmd = TYPE_TO_SHOW_SINGLE_CMD[obj_type]
         try:
             res = await self._api.api_call(
                 mgmt_name,
@@ -431,6 +442,8 @@ class HybridStateReader:
         obj_type: str,
     ) -> list[CPObject]:
         """Return all objects of `obj_type` in `(mgmt_name, domain_name)` from fresh cache or live `api_query`."""
+        if obj_type not in OBJECT_ITEM_TYPES:
+            raise ValidationError(f"Unsupported CPCRUD object type: {obj_type!r}")
         dom_key = (mgmt_name, domain_name)
         del_set = self._deleted_objects.get(dom_key, set())
         virt_map = self._virtual_objects.get(dom_key, {})
@@ -452,7 +465,7 @@ class HybridStateReader:
             if memo_key in self._live_objects_memo:
                 base_list = list(self._live_objects_memo[memo_key])
             else:
-                plural_cmd = TYPE_TO_SHOW_PLURAL_CMD.get(obj_type, f"show-{obj_type}s")
+                plural_cmd = TYPE_TO_SHOW_PLURAL_CMD[obj_type]
                 try:
                     q_res = await self._api.api_query(
                         mgmt_name,
@@ -562,6 +575,8 @@ class HybridStateReader:
         name: str,
     ) -> CPService | None:
         """Look up a service object by `(mgmt_name, domain_name, svc_type, name)`."""
+        if svc_type not in SERVICE_ITEM_TYPES:
+            raise ValidationError(f"Unsupported CPCRUD service type: {svc_type!r}")
         dom_key = (mgmt_name, domain_name)
         del_set = self._deleted_services.get(dom_key, set())
         if f"name:{svc_type}:{name}" in del_set:
@@ -587,7 +602,7 @@ class HybridStateReader:
                     return item
             return None
 
-        cmd = TYPE_TO_SHOW_SINGLE_CMD.get(svc_type, f"show-{svc_type}")
+        cmd = TYPE_TO_SHOW_SINGLE_CMD[svc_type]
         try:
             res = await self._api.api_call(
                 mgmt_name,
@@ -622,6 +637,8 @@ class HybridStateReader:
         uid: str,
     ) -> CPService | None:
         """Look up a service object by `(mgmt_name, domain_name, svc_type, uid)`."""
+        if svc_type not in SERVICE_ITEM_TYPES:
+            raise ValidationError(f"Unsupported CPCRUD service type: {svc_type!r}")
         dom_key = (mgmt_name, domain_name)
         del_set = self._deleted_services.get(dom_key, set())
         if f"uid:{uid}" in del_set:
@@ -641,7 +658,7 @@ class HybridStateReader:
                 return svc
             return None
 
-        cmd = TYPE_TO_SHOW_SINGLE_CMD.get(svc_type, f"show-{svc_type}")
+        cmd = TYPE_TO_SHOW_SINGLE_CMD[svc_type]
         try:
             res = await self._api.api_call(
                 mgmt_name,
@@ -675,6 +692,8 @@ class HybridStateReader:
         svc_type: str,
     ) -> list[CPService]:
         """Return all services of `svc_type` in `(mgmt_name, domain_name)` from fresh cache or live `api_query`."""
+        if svc_type not in SERVICE_ITEM_TYPES:
+            raise ValidationError(f"Unsupported CPCRUD service type: {svc_type!r}")
         dom_key = (mgmt_name, domain_name)
         del_set = self._deleted_services.get(dom_key, set())
         virt_map = self._virtual_services.get(dom_key, {})
@@ -696,7 +715,7 @@ class HybridStateReader:
             if memo_key in self._live_services_memo:
                 base_list = list(self._live_services_memo[memo_key])
             else:
-                plural_cmd = TYPE_TO_SHOW_PLURAL_CMD.get(svc_type, f"show-{svc_type}s")
+                plural_cmd = TYPE_TO_SHOW_PLURAL_CMD[svc_type]
                 try:
                     q_res = await self._api.api_query(
                         mgmt_name,

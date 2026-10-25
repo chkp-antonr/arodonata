@@ -15,10 +15,12 @@ Implements `Executor`:
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from datetime import datetime
+from typing import Any
 
 from arodonata.adapters.checkpoint.client import _update_overlay_from_command
 from arodonata.adapters.checkpoint.sessions import normalize_domain_key
@@ -31,7 +33,7 @@ from arodonata.core.context import (
     get_user_context,
     write_session_context,
 )
-from arodonata.core.errors import ServerIdentityError, redact_sid
+from arodonata.core.errors import ServerIdentityError, ValidationError, redact_sid
 from arodonata.core.events import (
     CPCRUDActionEvent,
     CPCRUDCompletedEvent,
@@ -40,7 +42,7 @@ from arodonata.core.events import (
     CPCRUDStartedEvent,
     StagedSessionEvent,
 )
-from arodonata.core.models.common import utc_now
+from arodonata.core.models.common import ApiCallResult, to_naive_utc, utc_now
 from arodonata.core.ports import ApiPort
 from arodonata.core.services.sync_coordinator import parse_cp_publish_timestamp
 from arodonata.core.telemetry import span_attrs, traced
@@ -54,6 +56,37 @@ from arodonata.cpcrud.models import (
     StagedSessionInfo,
 )
 from arodonata.cpcrud.planner import _extract_group_references, _extract_rule_references
+from arodonata.cpcrud.state_reader import OBJECT_ITEM_TYPES, SERVICE_ITEM_TYPES
+
+EXECUTABLE_RULE_TYPES: frozenset[str] = frozenset(
+    {
+        "access-rule",
+        "nat-rule",
+        "https-rule",
+        "threat-rule",
+    }
+)
+
+ALLOWED_COMMAND_MAP: dict[tuple[str, Outcome], str] = {
+    **{(t, Outcome.CREATE): f"add-{t}" for t in OBJECT_ITEM_TYPES | SERVICE_ITEM_TYPES | EXECUTABLE_RULE_TYPES},
+    **{(t, Outcome.UPDATE): f"set-{t}" for t in OBJECT_ITEM_TYPES | SERVICE_ITEM_TYPES | EXECUTABLE_RULE_TYPES},
+    **{(t, Outcome.DELETE): f"delete-{t}" for t in OBJECT_ITEM_TYPES | SERVICE_ITEM_TYPES | EXECUTABLE_RULE_TYPES},
+}
+
+
+def resolve_allowlisted_command(action: PlannedAction) -> str:
+    """Derive the canonical Web API write command for `action` from the strict `(object_type, outcome)` allowlist."""
+    expected = ALLOWED_COMMAND_MAP.get((action.object_type, action.outcome))
+    if expected is None:
+        raise ValidationError(
+            f"Unsupported CPCRUD action pair ({action.object_type!r}, {action.outcome.value!r}) for action {action.action_id!r}."
+        )
+    if action.command and action.command != expected:
+        raise ValidationError(
+            f"PlannedAction.command {action.command!r} disagrees with allowlisted command {expected!r} "
+            f"for ({action.object_type!r}, {action.outcome.value!r})."
+        )
+    return expected
 
 
 def _is_domain_head_stale(
@@ -65,9 +98,15 @@ def _is_domain_head_stale(
     """Return `True` if a domain's current published head cannot be read or drifted since `stamp`."""
     if not head_readable or stamp is None or not stamp.readable:
         return True
-    if stamp.last_session_uid is not None and current_uid != stamp.last_session_uid:
+    if stamp.last_session_uid is not None:
+        if current_uid != stamp.last_session_uid:
+            return True
+    elif current_uid is not None:
         return True
-    return bool(stamp.last_published_at is not None and current_published_at != stamp.last_published_at)
+
+    if stamp.last_published_at is not None:
+        return to_naive_utc(current_published_at) != to_naive_utc(stamp.last_published_at)
+    return current_published_at is not None
 
 
 class Executor:
@@ -84,6 +123,7 @@ class Executor:
         self._on_domain_invalidated = on_domain_invalidated
         self._now = now_fn
         self._last_report: ApplyReport | None = None
+        self._last_staged_publish_result: ApiCallResult | None = None
 
     @property
     def last_report(self) -> ApplyReport | None:
@@ -166,6 +206,8 @@ class Executor:
         domain_groups: dict[tuple[str, str], list[PlannedAction]] = defaultdict(list)
         domain_order: list[tuple[str, str]] = []
         for act in plan.actions:
+            if act.is_write_action:
+                resolve_allowlisted_command(act)
             key = (act.mgmt_name, act.domain_name)
             if key not in domain_groups:
                 domain_order.append(key)
@@ -339,6 +381,34 @@ class Executor:
             runtime_failed_ids: set[str] = set()
             any_write_succeeded = False
             session_uid: str | None = ws.session_uid
+            staged_info: StagedSessionInfo | None = None
+
+            if no_publish and keep_session:
+                if not session_uid:
+                    with suppress(Exception):
+                        s_info = await self._api.api_call(
+                            mgmt_name,
+                            "show-session",
+                            {},
+                            domain=dom_name or None,
+                            sid=ws.sid,
+                            server_ip=ws.server_ip,
+                        )
+                        if s_info.success and isinstance(s_info.data, dict):
+                            s_uid_val = s_info.data.get("uid")
+                            if isinstance(s_uid_val, str) and s_uid_val:
+                                session_uid = s_uid_val
+                            if not eff_session_name and isinstance(s_info.data.get("name"), str):
+                                eff_session_name = str(s_info.data["name"])
+                staged_info = StagedSessionInfo(
+                    mgmt_name=mgmt_name,
+                    domain_name=dom_name,
+                    sid=ws.sid,
+                    server_ip=ws.server_ip,
+                    session_uid=session_uid,
+                    session_name=eff_session_name,
+                )
+                staged_sessions.append(staged_info)
 
             try:
                 with write_session_context(ws):
@@ -440,6 +510,7 @@ class Executor:
                             )
                             continue
 
+                        cmd = resolve_allowlisted_command(act)
                         events.append(
                             CPCRUDActionEvent(
                                 phase="action_started",
@@ -450,11 +521,9 @@ class Executor:
                                 object_type=act.object_type,
                                 object_name=act.name,
                                 outcome=act.outcome.value,
-                                message=f"Executing {act.command} for {act.name!r}.",
+                                message=f"Executing {cmd} for {act.name!r}.",
                             )
                         )
-
-                        cmd = act.command or f"add-{act.object_type}"
                         try:
                             call_res = await self._api.api_call(
                                 mgmt_name,
@@ -592,33 +661,6 @@ class Executor:
 
                     # 4. Handle session finalization: keep_session staging vs publish vs discard
                     if no_publish and keep_session:
-                        # Query show-session to obtain session_uid if not already populated
-                        if not session_uid:
-                            with suppress(Exception):
-                                s_info = await self._api.api_call(
-                                    mgmt_name,
-                                    "show-session",
-                                    {},
-                                    domain=dom_name or None,
-                                    sid=ws.sid,
-                                    server_ip=ws.server_ip,
-                                )
-                                if s_info.success and isinstance(s_info.data, dict):
-                                    s_uid_val = s_info.data.get("uid")
-                                    if isinstance(s_uid_val, str) and s_uid_val:
-                                        session_uid = s_uid_val
-                                    if not eff_session_name and isinstance(s_info.data.get("name"), str):
-                                        eff_session_name = str(s_info.data["name"])
-
-                        staged_info = StagedSessionInfo(
-                            mgmt_name=mgmt_name,
-                            domain_name=dom_name,
-                            sid=ws.sid,
-                            server_ip=ws.server_ip,
-                            session_uid=session_uid,
-                            session_name=eff_session_name,
-                        )
-                        staged_sessions.append(staged_info)
                         events.append(
                             StagedSessionEvent(
                                 mgmt_name=mgmt_name,
@@ -632,27 +674,89 @@ class Executor:
                         )
                     elif no_publish:
                         with suppress(Exception):
-                            await self._api.api_call(
-                                mgmt_name,
-                                "discard",
-                                {},
-                                domain=dom_name or None,
-                                sid=ws.sid,
-                                server_ip=ws.server_ip,
+                            await asyncio.shield(
+                                self._api.api_call(
+                                    mgmt_name,
+                                    "discard",
+                                    {},
+                                    domain=dom_name or None,
+                                    sid=ws.sid,
+                                    server_ip=ws.server_ip,
+                                )
                             )
                         ws.discarded = True
                         ws.overlay.clear()
                     elif any_write_succeeded:
+                        # Re-verify domain head immediately prior to publish when force=False
+                        if not force and stamp is not None:
+                            pre_pub_ok, pre_pub_uid, pre_pub_at, pre_pub_err = await self._check_current_domain_head(
+                                mgmt_name, dom_name
+                            )
+                            if _is_domain_head_stale(stamp, pre_pub_uid, pre_pub_at, pre_pub_ok):
+                                stale_domains.append(dom_label)
+                                expected_uid = stamp.last_session_uid if stamp else None
+                                stale_msg = (
+                                    f"Plan became stale before publish for {dom_label}: expected session head "
+                                    f"{expected_uid!r}, got {pre_pub_uid!r} ({pre_pub_err or 'domain published concurrently'})."
+                                )
+                                with suppress(Exception):
+                                    await asyncio.shield(
+                                        self._api.api_call(
+                                            mgmt_name,
+                                            "discard",
+                                            {},
+                                            domain=dom_name or None,
+                                            sid=ws.sid,
+                                            server_ip=ws.server_ip,
+                                        )
+                                    )
+                                ws.discarded = True
+                                ws.overlay.clear()
+                                for act in dom_actions:
+                                    prev_r = results_by_id.get(act.action_id)
+                                    if prev_r is not None:
+                                        results_by_id[act.action_id] = prev_r.model_copy(
+                                            update={
+                                                "outcome": Outcome.PLAN_STALE,
+                                                "status": "plan_stale",
+                                                "success": False,
+                                                "error": stale_msg,
+                                                "message": stale_msg,
+                                            }
+                                        )
+                                events.append(
+                                    CPCRUDActionEvent(
+                                        phase="failed",
+                                        mgmt_name=mgmt_name,
+                                        domain=dom_name or None,
+                                        outcome=Outcome.PLAN_STALE.value,
+                                        error=stale_msg,
+                                        message=stale_msg,
+                                    )
+                                )
+                                continue
+
                         # Query session UID if needed before or from publish
-                        pub_res = await self._api.api_call(
-                            mgmt_name,
-                            "publish",
-                            {},
-                            domain=dom_name or None,
-                            sid=ws.sid,
-                            server_ip=ws.server_ip,
-                            wait_for_task=True,
-                        )
+                        try:
+                            pub_res = await self._api.api_call(
+                                mgmt_name,
+                                "publish",
+                                {},
+                                domain=dom_name or None,
+                                sid=ws.sid,
+                                server_ip=ws.server_ip,
+                                wait_for_task=True,
+                            )
+                        except ServerIdentityError:
+                            raise
+                        except Exception as exc:
+                            safe_pub_exc = redact_sid(str(exc), known_sids=[ws.sid])
+                            pub_res = ApiCallResult(
+                                success=False,
+                                status_code=500,
+                                error_code="publish_failed",
+                                error_message=safe_pub_exc,
+                            )
                         ws.overlay.clear()
                         if pub_res.success:
                             ws.published = True
@@ -676,13 +780,15 @@ class Executor:
                                 known_sids=[ws.sid],
                             )
                             with suppress(Exception):
-                                await self._api.api_call(
-                                    mgmt_name,
-                                    "discard",
-                                    {},
-                                    domain=dom_name or None,
-                                    sid=ws.sid,
-                                    server_ip=ws.server_ip,
+                                await asyncio.shield(
+                                    self._api.api_call(
+                                        mgmt_name,
+                                        "discard",
+                                        {},
+                                        domain=dom_name or None,
+                                        sid=ws.sid,
+                                        server_ip=ws.server_ip,
+                                    )
                                 )
                             ws.discarded = True
                             # Mark write actions in this domain as failed due to publish error
@@ -712,12 +818,40 @@ class Executor:
                                     message=f"Publish failed on {dom_label}: {pub_err}",
                                 )
                             )
+            except BaseException:
+                if not (no_publish and keep_session) and not ws.published and not ws.discarded:
+                    with suppress(BaseException):
+                        await asyncio.shield(
+                            self._api.api_call(
+                                mgmt_name,
+                                "discard",
+                                {},
+                                domain=dom_name or None,
+                                sid=ws.sid,
+                                server_ip=ws.server_ip,
+                            )
+                        )
+                    ws.discarded = True
+                raise
             finally:
                 # Only keep session open when both no_publish=True and keep_session=True
                 if not (no_publish and keep_session):
                     ws.overlay.clear()
-                    with suppress(Exception):
-                        await self._api.logout_sid(mgmt_name, ws.sid, server_ip=ws.server_ip)
+                    if not ws.published and not ws.discarded:
+                        with suppress(BaseException):
+                            await asyncio.shield(
+                                self._api.api_call(
+                                    mgmt_name,
+                                    "discard",
+                                    {},
+                                    domain=dom_name or None,
+                                    sid=ws.sid,
+                                    server_ip=ws.server_ip,
+                                )
+                            )
+                        ws.discarded = True
+                    with suppress(BaseException):
+                        await asyncio.shield(self._api.logout_sid(mgmt_name, ws.sid, server_ip=ws.server_ip))
 
         ordered_results = [results_by_id[a.action_id] for a in plan.actions if a.action_id in results_by_id]
         completed_at = self._now()
@@ -762,6 +896,9 @@ class Executor:
         # Handle retry_remaining > 0 for failed/remaining write actions (when not PLAN_STALE)
         max_retries = max(0, int(retry_remaining))
         retry_pass = 0
+        current_stamps = dict(plan.domain_stamps)
+        last_pass_published_sessions = dict(cumulative_report.published_sessions)
+
         while retry_pass < max_retries and not cumulative_report.stale_domains:
             failed_ids = {
                 r.action_id
@@ -771,21 +908,33 @@ class Executor:
             if not failed_ids:
                 break
 
+            # Advance domain_stamps ONLY for domains that THIS executor itself published in the previous pass
+            for dom_label, own_pub_uid in last_pass_published_sessions.items():
+                if dom_label in current_stamps:
+                    m_part, _, d_part = dom_label.partition(":")
+                    r_ok, r_uid, r_pub_at, _ = await self._check_current_domain_head(m_part, d_part)
+                    if r_ok and r_uid == own_pub_uid:
+                        current_stamps[dom_label] = current_stamps[dom_label].model_copy(
+                            update={
+                                "last_session_uid": r_uid,
+                                "last_published_at": r_pub_at,
+                            }
+                        )
+
             retry_pass += 1
             remaining_actions = [a for a in plan.actions if a.action_id in failed_ids]
             retry_plan = Plan(
                 created_at=self._now(),
-                domain_stamps=plan.domain_stamps,
+                domain_stamps=dict(current_stamps),
                 actions=remaining_actions,
                 name_resolutions=plan.name_resolutions,
                 template=plan.template,
             )
 
-            # Retry passes run with force=True because an earlier pass may have published other domains
-            # or refreshed domain stamps, and fold their ApplyReport into cumulative_report
+            # Retry passes honor the caller's force flag (never forcing force=True automatically)
             r_events, r_report = await self._stream_single_pass(
                 retry_plan,
-                force=True,
+                force=force,
                 no_publish=no_publish,
                 keep_session=keep_session,
                 auth=auth,
@@ -797,6 +946,7 @@ class Executor:
                 if not isinstance(ev, (CPCRUDStartedEvent, CPCRUDCompletedEvent)):
                     yield ev
 
+            last_pass_published_sessions = dict(r_report.published_sessions)
             _fold_retry_report(cumulative_report, r_report)
 
         succeeded_cnt = sum(1 for r in cumulative_report.results if r.success)
@@ -856,6 +1006,314 @@ class Executor:
         assert self._last_report is not None
         return self._last_report
 
+    async def _adopt_staged_session(
+        self,
+        mgmt_name: str,
+        domain: str | None,
+        *,
+        session_uid: str,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        auth: AuthContext | None = None,
+    ) -> tuple[str | None, str | None, ApiCallResult]:
+        """Adopt ownership of `session_uid` via `take-over-session`, falling back to a fresh dedicated session if `sid` expired."""
+        resolved_auth = auth or get_auth_context()
+        takeover_payload: dict[str, Any] = {
+            "uid": session_uid,
+            "take-over-lock": True,
+        }
+
+        if sid:
+            try:
+                take_res = await self._api.api_call(
+                    mgmt_name,
+                    "take-over-session",
+                    takeover_payload,
+                    domain=domain or None,
+                    sid=sid,
+                    server_ip=server_ip,
+                )
+                if take_res.success:
+                    return sid, server_ip, take_res
+            except ServerIdentityError:
+                raise
+            except Exception:
+                pass
+
+        try:
+            fresh_sid, fresh_ip = await self._api.create_dedicated_session(
+                mgmt_name,
+                domain or None,
+                auth=resolved_auth,
+            )
+        except ServerIdentityError:
+            raise
+        except Exception as exc:
+            safe_err = redact_sid(str(exc), known_sids=[sid] if sid else None)
+            return (
+                None,
+                None,
+                ApiCallResult(
+                    success=False,
+                    status_code=500,
+                    error_message=f"Failed to open session for staged takeover: {safe_err}",
+                    error_code="session_open_failed",
+                ),
+            )
+
+        try:
+            take_res = await self._api.api_call(
+                mgmt_name,
+                "take-over-session",
+                takeover_payload,
+                domain=domain or None,
+                sid=fresh_sid,
+                server_ip=fresh_ip,
+            )
+        except ServerIdentityError:
+            with suppress(Exception):
+                await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+            raise
+        except Exception as exc:
+            with suppress(Exception):
+                await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+            safe_err = redact_sid(str(exc), known_sids=[s for s in (sid, fresh_sid) if s])
+            return (
+                None,
+                None,
+                ApiCallResult(
+                    success=False,
+                    status_code=500,
+                    error_message=f"Failed to take over staged session {session_uid}: {safe_err}",
+                    error_code="takeover_failed",
+                ),
+            )
+
+        if not take_res.success:
+            with suppress(Exception):
+                await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+            safe_err = redact_sid(
+                take_res.error_message or take_res.error_code or "take-over-session failed",
+                known_sids=[s for s in (sid, fresh_sid) if s],
+            )
+            return (
+                None,
+                None,
+                take_res.model_copy(update={"error_message": safe_err}),
+            )
+
+        return fresh_sid, fresh_ip, take_res
+
+    async def stream_publish_staged_session(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        session_uid: str,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        timeout: float | None = None,
+        auth: AuthContext | None = None,
+    ) -> AsyncIterator[CPCRUDEvent]:
+        """Adopt `session_uid` via `take-over-session`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate domain cache."""
+        dom_label = f"{mgmt_name}:{domain}" if domain else mgmt_name
+        yield CPCRUDStartedEvent(
+            mgmt_name=mgmt_name,
+            domain=domain or None,
+            message=f"Publishing staged session {session_uid} on {dom_label}...",
+            details={"session_uid": session_uid},
+        )
+
+        active_sid, active_ip, take_res = await self._adopt_staged_session(
+            mgmt_name,
+            domain,
+            session_uid=session_uid,
+            sid=sid,
+            server_ip=server_ip,
+            auth=auth,
+        )
+        if not take_res.success or active_sid is None:
+            err_msg = take_res.error_message or take_res.error_code or "take-over-session failed"
+            self._last_staged_publish_result = take_res
+            yield CPCRUDActionEvent(
+                phase="failed",
+                mgmt_name=mgmt_name,
+                domain=domain or None,
+                outcome=Outcome.ERROR.value,
+                error=err_msg,
+                message=f"Failed to adopt staged session {session_uid} on {dom_label}: {err_msg}",
+            )
+            yield CPCRUDCompletedEvent(
+                phase="failed",
+                mgmt_name=mgmt_name,
+                domain=domain or None,
+                succeeded_count=0,
+                failed_count=1,
+                skipped_count=0,
+                error=err_msg,
+                message=f"Failed to publish staged session {session_uid} on {dom_label}: {err_msg}",
+            )
+            return
+
+        known_sids = [s for s in (sid, active_sid) if s]
+        try:
+            pub_res = await self._api.api_call(
+                mgmt_name,
+                "publish",
+                {},
+                domain=domain or None,
+                sid=active_sid,
+                server_ip=active_ip,
+                wait_for_task=True,
+                timeout=timeout,
+            )
+        except ServerIdentityError:
+            raise
+        except Exception as exc:
+            safe_err = redact_sid(str(exc), known_sids=known_sids)
+            pub_res = ApiCallResult(
+                success=False,
+                status_code=500,
+                error_message=safe_err,
+                error_code="publish_failed",
+            )
+        finally:
+            with suppress(Exception):
+                await self._api.logout_sid(mgmt_name, active_sid, server_ip=active_ip)
+            if sid and sid != active_sid:
+                with suppress(Exception):
+                    await self._api.logout_sid(mgmt_name, sid, server_ip=server_ip)
+
+        if pub_res.success:
+            self._invalidate_domain(mgmt_name, domain)
+            self._last_staged_publish_result = pub_res
+            yield CPCRUDDomainPublishedEvent(
+                mgmt_name=mgmt_name,
+                domain=domain or None,
+                session_uid=session_uid,
+                message=f"Published staged session {session_uid} on {dom_label}.",
+            )
+            yield CPCRUDCompletedEvent(
+                phase="completed",
+                mgmt_name=mgmt_name,
+                domain=domain or None,
+                succeeded_count=1,
+                failed_count=0,
+                skipped_count=0,
+                message=f"Published staged session {session_uid} on {dom_label}.",
+                details={"published_domains": [dom_label], "session_uid": session_uid},
+            )
+        else:
+            safe_err = redact_sid(
+                pub_res.error_message or pub_res.error_code or "publish failed",
+                known_sids=known_sids,
+            )
+            pub_res = pub_res.model_copy(update={"error_message": safe_err})
+            self._last_staged_publish_result = pub_res
+            yield CPCRUDActionEvent(
+                phase="failed",
+                mgmt_name=mgmt_name,
+                domain=domain or None,
+                outcome=Outcome.ERROR.value,
+                error=safe_err,
+                message=f"Publish failed for staged session {session_uid} on {dom_label}: {safe_err}",
+            )
+            yield CPCRUDCompletedEvent(
+                phase="failed",
+                mgmt_name=mgmt_name,
+                domain=domain or None,
+                succeeded_count=0,
+                failed_count=1,
+                skipped_count=0,
+                error=safe_err,
+                message=f"Publish failed for staged session {session_uid} on {dom_label}: {safe_err}",
+            )
+
+    @traced
+    async def publish_staged_session(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        session_uid: str,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        timeout: float | None = None,
+        auth: AuthContext | None = None,
+    ) -> ApiCallResult:
+        """Adopt `session_uid` via `take-over-session`, publish it, log out, and invalidate the domain cache."""
+        span_attrs(mgmt_name=mgmt_name, domain=domain, session_uid=session_uid)
+        async for _ in self.stream_publish_staged_session(
+            mgmt_name,
+            domain,
+            session_uid=session_uid,
+            sid=sid,
+            server_ip=server_ip,
+            timeout=timeout,
+            auth=auth,
+        ):
+            pass
+        assert self._last_staged_publish_result is not None
+        return self._last_staged_publish_result
+
+    @traced
+    async def discard_staged_session(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        session_uid: str,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        auth: AuthContext | None = None,
+    ) -> ApiCallResult:
+        """Adopt `session_uid` via `take-over-session`, discard all uncommitted changes in the session, and log out."""
+        span_attrs(mgmt_name=mgmt_name, domain=domain, session_uid=session_uid)
+        active_sid, active_ip, take_res = await self._adopt_staged_session(
+            mgmt_name,
+            domain,
+            session_uid=session_uid,
+            sid=sid,
+            server_ip=server_ip,
+            auth=auth,
+        )
+        if not take_res.success or active_sid is None:
+            return take_res
+
+        known_sids = [s for s in (sid, active_sid) if s]
+        try:
+            disc_res = await self._api.api_call(
+                mgmt_name,
+                "discard",
+                {},
+                domain=domain or None,
+                sid=active_sid,
+                server_ip=active_ip,
+            )
+            if not disc_res.success:
+                safe_err = redact_sid(
+                    disc_res.error_message or disc_res.error_code or "discard failed",
+                    known_sids=known_sids,
+                )
+                return disc_res.model_copy(update={"error_message": safe_err})
+            return disc_res
+        except ServerIdentityError:
+            raise
+        except Exception as exc:
+            safe_err = redact_sid(str(exc), known_sids=known_sids)
+            return ApiCallResult(
+                success=False,
+                status_code=500,
+                error_message=safe_err,
+                error_code="discard_failed",
+            )
+        finally:
+            with suppress(Exception):
+                await self._api.logout_sid(mgmt_name, active_sid, server_ip=active_ip)
+            if sid and sid != active_sid:
+                with suppress(Exception):
+                    await self._api.logout_sid(mgmt_name, sid, server_ip=server_ip)
+
 
 def _fold_retry_report(cumulative: ApplyReport, retry_rep: ApplyReport) -> None:
     """Fold a retry pass's `ApplyReport` into the cumulative `ApplyReport`."""
@@ -869,10 +1327,15 @@ def _fold_retry_report(cumulative: ApplyReport, retry_rep: ApplyReport) -> None:
     for dom in retry_rep.published_domains:
         if dom not in cumulative.published_domains:
             cumulative.published_domains.append(dom)
+    for s_dom in retry_rep.stale_domains:
+        if s_dom not in cumulative.stale_domains:
+            cumulative.stale_domains.append(s_dom)
     cumulative.published_sessions.update(retry_rep.published_sessions)
     cumulative.staged_sessions.extend(retry_rep.staged_sessions)
 
 
 __all__ = [
+    "ALLOWED_COMMAND_MAP",
     "Executor",
+    "resolve_allowlisted_command",
 ]

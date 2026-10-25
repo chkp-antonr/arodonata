@@ -16,13 +16,20 @@ Implements `Planner` (`Planner.decide`):
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from datetime import datetime
 from typing import Any
 
-from arodonata.core.errors import ServerIdentityError
+from arodonata.core.errors import ServerIdentityError, ValidationError, redact_sid
 from arodonata.core.models.common import utc_now
 from arodonata.core.models.objects import CPObject
-from arodonata.core.models.rulebase import NatRuleEntry, RulebaseType
+from arodonata.core.models.rulebase import (
+    AccessRuleEntry,
+    HttpsRuleEntry,
+    NatRuleEntry,
+    RulebaseType,
+    ThreatRuleEntry,
+)
 from arodonata.core.models.services import CPService
 from arodonata.core.ports import ApiPort, CachePort
 from arodonata.core.services.sync_coordinator import parse_cp_publish_timestamp
@@ -85,9 +92,27 @@ def _normalize_verb(spec: Mapping[str, Any], *, is_rule: bool = False) -> str:
     return "present"
 
 
+RULE_OPERATION_TYPES: frozenset[str] = frozenset(
+    {
+        "access-rule",
+        "nat-rule",
+        "https-rule",
+        "threat-rule",
+        "access",
+        "nat",
+        "https",
+        "threat",
+    }
+)
+
+CANONICAL_CPCRUD_TYPES: frozenset[str] = OBJECT_ITEM_TYPES | SERVICE_ITEM_TYPES | RULE_OPERATION_TYPES
+
+
 def _resolve_rulebase_type(spec: Mapping[str, Any]) -> tuple[RulebaseType, str]:
     """Return `(rulebase_type, canonical_rule_type)` for a rule operation dict."""
     raw_rb = str(spec.get("rulebase_type") or spec.get("type") or "").strip().lower()
+    if raw_rb and raw_rb not in RULE_OPERATION_TYPES:
+        raise ValidationError(f"Unsupported CPCRUD rule type: {raw_rb!r}")
     if raw_rb in ("nat", "nat-rule") or any(
         k in spec
         for k in (
@@ -211,6 +236,16 @@ def _build_prior_object_state(obj: CPObject) -> dict[str, Any]:
             state["members"] = list(obj.members)
     if obj.nat_settings:
         state["nat-settings"] = dict(obj.nat_settings)
+    if isinstance(obj.raw_data, dict):
+        raw_grps = obj.raw_data.get("groups")
+        if isinstance(raw_grps, list) and raw_grps:
+            grp_names = [
+                str(g.get("name") or g.get("uid")) if isinstance(g, dict) else str(g)
+                for g in raw_grps
+                if (isinstance(g, dict) and (g.get("name") or g.get("uid"))) or (isinstance(g, str) and g)
+            ]
+            if grp_names:
+                state["groups"] = grp_names
     return state
 
 
@@ -249,6 +284,16 @@ def _build_prior_service_state(svc: CPService) -> dict[str, Any]:
             state["members"] = names if names else list(svc.members)
         else:
             state["members"] = list(svc.members)
+    if isinstance(svc.raw_data, dict):
+        raw_grps = svc.raw_data.get("groups")
+        if isinstance(raw_grps, list) and raw_grps:
+            grp_names = [
+                str(g.get("name") or g.get("uid")) if isinstance(g, dict) else str(g)
+                for g in raw_grps
+                if (isinstance(g, dict) and (g.get("name") or g.get("uid"))) or (isinstance(g, str) and g)
+            ]
+            if grp_names:
+                state["groups"] = grp_names
     return state
 
 
@@ -293,6 +338,21 @@ def _build_prior_rule_state(
             state["track"] = rule.track
         if rule.install_on:
             state["install-on"] = list(rule.install_on)
+        if isinstance(rule, AccessRuleEntry):
+            state["source-negate"] = bool(rule.source_negate)
+            state["destination-negate"] = bool(rule.destination_negate)
+            state["service-negate"] = bool(rule.service_negate)
+            if rule.inline_layer_name or rule.inline_layer_uid:
+                state["inline-layer"] = rule.inline_layer_name or rule.inline_layer_uid
+        elif isinstance(rule, HttpsRuleEntry):
+            if rule.site_category:
+                state["site-category"] = list(rule.site_category)
+            if rule.certificate:
+                state["certificate"] = rule.certificate
+            if rule.inline_layer_uid:
+                state["inline-layer"] = rule.inline_layer_uid
+        elif isinstance(rule, ThreatRuleEntry) and rule.protected_scope:
+            state["protected-scope"] = list(rule.protected_scope)
     return state
 
 
@@ -312,6 +372,22 @@ class Planner:
         self._default_mgmt_name = default_mgmt_name or ""
         self._now = now_fn
 
+    async def _collect_known_sids(self, mgmt_name: str) -> list[str]:
+        """Collect cached and active SIDs for `mgmt_name` so `redact_sid` can scrub non-header tokens."""
+        sids: list[str] = []
+        with suppress(Exception):
+            rows = await self._cache.list_sids(mgmt_name=mgmt_name)
+            for row in rows:
+                if row.sid:
+                    sids.append(row.sid)
+        with suppress(Exception):
+            active = getattr(self._api, "active_sids", None)
+            if callable(active):
+                sids.extend(s for s in active(mgmt_name) if s)
+            elif isinstance(active, (list, tuple, set)):
+                sids.extend(str(s) for s in active if s)
+        return sids
+
     async def _capture_domain_stamp(self, mgmt_name: str, domain_name: str) -> DomainStamp:
         """Read `show-last-published-session` for `(mgmt_name, domain_name)` BEFORE any domain lookups."""
         try:
@@ -324,21 +400,23 @@ class Planner:
         except ServerIdentityError:
             raise
         except Exception as exc:
+            known_sids = await self._collect_known_sids(mgmt_name)
             return DomainStamp(
                 mgmt_name=mgmt_name,
                 domain_name=domain_name,
                 readable=False,
-                error=str(exc),
+                error=redact_sid(str(exc), known_sids=known_sids),
                 captured_at=self._now(),
             )
 
         if not res.success:
             err_msg = res.error_message or res.error_code or f"HTTP {res.status_code}"
+            known_sids = await self._collect_known_sids(mgmt_name)
             return DomainStamp(
                 mgmt_name=mgmt_name,
                 domain_name=domain_name,
                 readable=False,
-                error=err_msg,
+                error=redact_sid(err_msg, known_sids=known_sids),
                 captured_at=self._now(),
             )
 
@@ -417,9 +495,31 @@ class Planner:
     def _collect_ordered_steps(self, target: Mapping[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         """Collect operations for a target in deterministic order (`object`, `service`, `group`, `rule`)."""
         steps: list[tuple[str, dict[str, Any]]] = []
+        raw_operations = target.get("operations")
+        if isinstance(raw_operations, list) and raw_operations:
+            for op in raw_operations:
+                if not isinstance(op, dict):
+                    continue
+                op_type = str(op.get("type") or "").strip().lower()
+                if op_type and op_type not in CANONICAL_CPCRUD_TYPES:
+                    raise ValidationError(f"Unsupported CPCRUD operation type: {op_type!r}")
+                if op_type in RULE_OPERATION_TYPES or "layer" in op or "package" in op:
+                    steps.append(("rule", dict(op)))
+                elif op_type in ("group", "service-group"):
+                    steps.append(("group", dict(op)))
+                elif op_type in SERVICE_ITEM_TYPES:
+                    steps.append(("service", dict(op)))
+                else:
+                    if not op_type:
+                        raise ValidationError("CPCRUD operation is missing a required 'type' field.")
+                    steps.append(("object", dict(op)))
+            return steps
+
         for obj in target.get("objects") or []:
             if isinstance(obj, dict):
                 o_type = str(obj.get("type") or "host").strip().lower()
+                if o_type not in OBJECT_ITEM_TYPES:
+                    raise ValidationError(f"Unsupported CPCRUD object type: {o_type!r}")
                 if o_type == "group":
                     steps.append(("group", dict(obj)))
                 else:
@@ -427,32 +527,22 @@ class Planner:
         for svc in target.get("services") or []:
             if isinstance(svc, dict):
                 s_type = str(svc.get("type") or "service-tcp").strip().lower()
+                if s_type not in SERVICE_ITEM_TYPES:
+                    raise ValidationError(f"Unsupported CPCRUD service type: {s_type!r}")
                 if s_type == "service-group":
                     steps.append(("group", dict(svc)))
                 else:
                     steps.append(("service", dict(svc)))
         for grp in target.get("groups") or []:
             if isinstance(grp, dict):
+                g_type = str(grp.get("type") or "group").strip().lower()
+                if g_type not in ("group", "service-group"):
+                    raise ValidationError(f"Unsupported CPCRUD group type: {g_type!r}")
                 steps.append(("group", dict(grp)))
         for rule in target.get("rules") or []:
             if isinstance(rule, dict):
+                _resolve_rulebase_type(rule)
                 steps.append(("rule", dict(rule)))
-        for op in target.get("operations") or []:
-            if not isinstance(op, dict):
-                continue
-            op_type = str(op.get("type") or "").strip().lower()
-            if (
-                op_type in ("access-rule", "nat-rule", "https-rule", "threat-rule", "access", "nat", "https", "threat")
-                or "layer" in op
-                or "package" in op
-            ):
-                steps.append(("rule", dict(op)))
-            elif op_type in ("group", "service-group"):
-                steps.append(("group", dict(op)))
-            elif op_type in SERVICE_ITEM_TYPES:
-                steps.append(("service", dict(op)))
-            else:
-                steps.append(("object", dict(op)))
         return steps
 
     @traced
@@ -471,6 +561,7 @@ class Planner:
         # 1. Discover all unique (mgmt_name, domain_name) pairs across targets and step-level overrides
         domain_pairs: list[tuple[str, str]] = []
         seen_pairs: set[tuple[str, str]] = set()
+        seen_explicit_ids: set[str] = set()
         for t in targets:
             t_mgmt = str(t.get("mgmt_name") or self._default_mgmt_name).strip()
             t_dom = str(t.get("domain_name") or "").strip()
@@ -479,6 +570,12 @@ class Planner:
                 seen_pairs.add((t_mgmt, t_dom))
                 domain_pairs.append((t_mgmt, t_dom))
             for _kind, step_spec in steps:
+                explicit_id = step_spec.get("id")
+                if explicit_id is not None and str(explicit_id).strip():
+                    id_str = str(explicit_id).strip()
+                    if id_str in seen_explicit_ids:
+                        raise ValidationError(f"Duplicate CPCRUD operation id: {id_str!r}")
+                    seen_explicit_ids.add(id_str)
                 s_mgmt = str(step_spec.get("mgmt_name") or t_mgmt).strip()
                 s_dom = str(
                     step_spec.get("domain") if "domain" in step_spec else step_spec.get("domain_name", t_dom) or ""
@@ -959,7 +1056,8 @@ class Planner:
             )
 
         except StateLookupError as exc:
-            err_msg = f"{LOOKUP_ERROR_PREFIX}{exc}"
+            known_sids = await self._collect_known_sids(mgmt_name)
+            err_msg = redact_sid(f"{LOOKUP_ERROR_PREFIX}{exc}", known_sids=known_sids)
             return PlannedAction(
                 action_id=action_id,
                 mgmt_name=mgmt_name,
@@ -1237,7 +1335,8 @@ class Planner:
             )
 
         except StateLookupError as exc:
-            err_msg = f"{LOOKUP_ERROR_PREFIX}{exc}"
+            known_sids = await self._collect_known_sids(mgmt_name)
+            err_msg = redact_sid(f"{LOOKUP_ERROR_PREFIX}{exc}", known_sids=known_sids)
             return PlannedAction(
                 action_id=action_id,
                 mgmt_name=mgmt_name,
@@ -1523,7 +1622,8 @@ class Planner:
             )
 
         except StateLookupError as exc:
-            err_msg = f"{LOOKUP_ERROR_PREFIX}{exc}"
+            known_sids = await self._collect_known_sids(mgmt_name)
+            err_msg = redact_sid(f"{LOOKUP_ERROR_PREFIX}{exc}", known_sids=known_sids)
             return PlannedAction(
                 action_id=action_id,
                 mgmt_name=mgmt_name,
@@ -1736,7 +1836,8 @@ class Planner:
             )
 
         except StateLookupError as exc:
-            err_msg = f"{LOOKUP_ERROR_PREFIX}{exc}"
+            known_sids = await self._collect_known_sids(mgmt_name)
+            err_msg = redact_sid(f"{LOOKUP_ERROR_PREFIX}{exc}", known_sids=known_sids)
             return PlannedAction(
                 action_id=action_id,
                 mgmt_name=mgmt_name,
@@ -1797,6 +1898,14 @@ def _build_add_object_payload(
     nat_s = spec.get("nat_settings") if "nat_settings" in spec else spec.get("nat-settings")
     if isinstance(nat_s, dict):
         payload["nat-settings"] = dict(nat_s)
+    if "groups" in spec and isinstance(spec["groups"], list):
+        payload["groups"] = [str(g) for g in spec["groups"]]
+    ig_warn = spec.get("ignore_warnings") if "ignore_warnings" in spec else spec.get("ignore-warnings")
+    if isinstance(ig_warn, bool):
+        payload["ignore-warnings"] = ig_warn
+    set_exist = spec.get("set_if_exists") if "set_if_exists" in spec else spec.get("set-if-exists")
+    if isinstance(set_exist, bool):
+        payload["set-if-exists"] = set_exist
     return payload
 
 
@@ -1832,6 +1941,14 @@ def _build_add_service_payload(
         payload["color"] = str(spec["color"])
     if "tags" in spec and isinstance(spec["tags"], list):
         payload["tags"] = [str(t) for t in spec["tags"]]
+    if "groups" in spec and isinstance(spec["groups"], list):
+        payload["groups"] = [str(g) for g in spec["groups"]]
+    ig_warn = spec.get("ignore_warnings") if "ignore_warnings" in spec else spec.get("ignore-warnings")
+    if isinstance(ig_warn, bool):
+        payload["ignore-warnings"] = ig_warn
+    set_exist = spec.get("set_if_exists") if "set_if_exists" in spec else spec.get("set-if-exists")
+    if isinstance(set_exist, bool):
+        payload["set-if-exists"] = set_exist
     return payload
 
 
@@ -1923,6 +2040,26 @@ def _build_add_rule_payload(
         if "track" in spec and spec["track"] is not None:
             t_val = spec["track"]
             payload["track"] = {"type": t_val} if isinstance(t_val, str) else t_val
+        for snake_k, kebab_k in (
+            ("source_negate", "source-negate"),
+            ("destination_negate", "destination-negate"),
+            ("service_negate", "service-negate"),
+        ):
+            if snake_k in spec or kebab_k in spec:
+                neg_v = spec.get(snake_k) if snake_k in spec else spec.get(kebab_k)
+                if neg_v is not None:
+                    payload[kebab_k] = bool(neg_v)
+        inline_val = spec.get("inline_layer") or spec.get("inline-layer")
+        if isinstance(inline_val, str) and inline_val.strip():
+            payload["inline-layer"] = inline_val.strip()
+        sc_val = spec.get("site_category") if "site_category" in spec else spec.get("site-category")
+        if sc_val is not None:
+            payload["site-category"] = list(normalize_traffic_list(sc_val, name_resolutions=name_resolutions))
+        if isinstance(spec.get("certificate"), str) and spec["certificate"].strip():
+            payload["certificate"] = spec["certificate"].strip()
+        ps_val = spec.get("protected_scope") if "protected_scope" in spec else spec.get("protected-scope")
+        if ps_val is not None:
+            payload["protected-scope"] = list(normalize_traffic_list(ps_val, name_resolutions=name_resolutions))
 
     inst_val = spec.get("install_on") if "install_on" in spec else spec.get("install-on")
     if inst_val is not None:
@@ -1932,7 +2069,9 @@ def _build_add_rule_payload(
 
 
 __all__ = [
+    "CANONICAL_CPCRUD_TYPES",
     "LOOKUP_ERROR_PREFIX",
     "OBJECT_ITEM_TYPES",
     "Planner",
+    "RULE_OPERATION_TYPES",
 ]

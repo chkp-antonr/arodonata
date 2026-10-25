@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Literal
 
 REDACTED_PLACEHOLDER = "***REDACTED***"
 
@@ -27,6 +27,8 @@ SENSITIVE_FIELD_NAMES: frozenset[str] = frozenset(
         "api_keys",
         "password",
         "passwd",
+        "one_time_password",
+        "shared_secret",
         "secret",
         "token",
         "access_token",
@@ -65,6 +67,21 @@ def redact_sid(text: str, known_sids: Iterable[str] | None = None) -> str:
     return sanitized
 
 
+def _sanitize_sequence(seq: Iterable[Any], known_sids: Iterable[str] | None = None) -> list[Any]:
+    """Recursively redact items in a list, tuple, or set."""
+    items: list[Any] = []
+    for item in seq:
+        if isinstance(item, dict):
+            items.append(sanitize_mapping(item, known_sids=known_sids))
+        elif isinstance(item, (list, tuple, set, frozenset)):
+            items.append(_sanitize_sequence(item, known_sids=known_sids))
+        elif isinstance(item, str):
+            items.append(redact_sid(item, known_sids=known_sids))
+        else:
+            items.append(item)
+    return items
+
+
 def sanitize_mapping(data: dict[str, Any], known_sids: Iterable[str] | None = None) -> dict[str, Any]:
     """Recursively redact sensitive keys and SID strings from a dictionary."""
     result: dict[str, Any] = {}
@@ -73,13 +90,8 @@ def sanitize_mapping(data: dict[str, Any], known_sids: Iterable[str] | None = No
             result[key] = REDACTED_PLACEHOLDER if val is not None else None
         elif isinstance(val, dict):
             result[key] = sanitize_mapping(val, known_sids=known_sids)
-        elif isinstance(val, list):
-            result[key] = [
-                sanitize_mapping(item, known_sids=known_sids)
-                if isinstance(item, dict)
-                else (redact_sid(item, known_sids=known_sids) if isinstance(item, str) else item)
-                for item in val
-            ]
+        elif isinstance(val, (list, tuple, set, frozenset)):
+            result[key] = _sanitize_sequence(val, known_sids=known_sids)
         elif isinstance(val, str):
             result[key] = redact_sid(val, known_sids=known_sids)
         else:
@@ -94,6 +106,10 @@ class ArodonataError(Exception):
         sanitized_message = redact_sid(message, known_sids=known_sids)
         super().__init__(sanitized_message)
         self.message = sanitized_message
+
+
+class ValidationError(ArodonataError, ValueError):
+    """Raised when a command, object type, template, or input parameter fails validation."""
 
 
 class ConfigurationError(ArodonataError):
@@ -124,6 +140,10 @@ class DirtySessionError(SessionError):
     """Raised when a shared read session holds unpublished changes or object locks."""
 
 
+class SessionStateError(SessionError):
+    """Raised when an operation violates session isolation or lifecycle constraints."""
+
+
 class ServerIdentityError(ArodonataError):
     """Base exception for TLS certificate fingerprint verification failures (never retried)."""
 
@@ -140,8 +160,23 @@ class TrustStoreError(ServerIdentityError):
     """Raised when the TLS trust store file cannot be read, parsed, or safely written."""
 
 
+TransportPhase = Literal["connect", "post-send", "read"]
+
+
 class TransportError(ArodonataError):
     """Raised when low-level HTTP/TCP transport communication fails."""
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        phase: TransportPhase = "post-send",
+        request_sent: bool | None = None,
+        known_sids: Iterable[str] | None = None,
+    ) -> None:
+        super().__init__(message, known_sids=known_sids)
+        self.phase: TransportPhase = phase
+        self.request_sent: bool = (phase != "connect") if request_sent is None else bool(request_sent)
 
 
 class ApiTimeoutError(TransportError, TimeoutError):
@@ -151,14 +186,19 @@ class ApiTimeoutError(TransportError, TimeoutError):
         self,
         message: str,
         *,
-        phase: str = "read",
+        phase: TransportPhase = "read",
+        request_sent: bool | None = None,
         host: str | None = None,
         port: int | None = None,
         command: str | None = None,
         known_sids: Iterable[str] | None = None,
     ) -> None:
-        super().__init__(message, known_sids=known_sids)
-        self.phase = phase
+        super().__init__(
+            message,
+            phase=phase,
+            request_sent=request_sent,
+            known_sids=known_sids,
+        )
         self.host = host
         self.port = port
         self.command = command

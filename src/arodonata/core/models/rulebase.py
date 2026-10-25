@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arodonata.core.models.common import utc_now
+from arodonata.core.models.common import to_naive_utc, utc_now
 
 RulebaseType = Literal["access", "nat", "https", "threat"]
 
@@ -35,6 +35,7 @@ class RulebasePackageLayerEntry(BaseModel):
                 f"{self.mgmt_name}:{self.domain_name}:{self.package_uid}:"
                 f"{self.rulebase_type}:{self.layer_uid}:{self.position}"
             )
+        self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
 
 class RulebaseLayerEntry(BaseModel):
@@ -59,6 +60,7 @@ class RulebaseLayerEntry(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
             self.id = f"{self.mgmt_name}:{self.domain_name}:{self.rulebase_type}:{self.uid}"
+        self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
 
 class RulebaseSectionEntry(BaseModel):
@@ -84,6 +86,7 @@ class RulebaseSectionEntry(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
             self.id = f"{self.mgmt_name}:{self.domain_name}:{self.layer_uid}:{self.uid}"
+        self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
 
 class AccessRuleEntry(BaseModel):
@@ -123,6 +126,7 @@ class AccessRuleEntry(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
             self.id = f"{self.mgmt_name}:{self.domain_name}:{self.layer_uid}:{self.uid}"
+        self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
 
 class NatRuleEntry(BaseModel):
@@ -159,6 +163,7 @@ class NatRuleEntry(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
             self.id = f"{self.mgmt_name}:{self.domain_name}:{self.package_uid}:{self.uid}"
+        self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
 
 class HttpsRuleEntry(BaseModel):
@@ -195,6 +200,7 @@ class HttpsRuleEntry(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
             self.id = f"{self.mgmt_name}:{self.domain_name}:{self.layer_uid}:{self.uid}"
+        self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
 
 class ThreatRuleEntry(BaseModel):
@@ -229,6 +235,7 @@ class ThreatRuleEntry(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
             self.id = f"{self.mgmt_name}:{self.domain_name}:{self.layer_uid}:{self.uid}"
+        self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
 
 class DomainRulebaseSnapshot(BaseModel):

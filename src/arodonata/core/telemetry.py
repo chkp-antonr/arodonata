@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
+import contextlib
+import functools
+import inspect
+from collections.abc import Callable, Sequence
+from typing import Any, overload
 
-from arlogi.otel import set_trace_modules, traced
+from arlogi.otel import set_trace_modules
+from arlogi.otel import traced as _arlogi_traced
 from opentelemetry import trace
 
 from arodonata.core.errors import ConfigurationError, is_sensitive_key, redact_sid
@@ -107,3 +111,97 @@ def span_attrs(**attrs: Any) -> None:
             continue
         namespaced_key = key if key.startswith("arodonata.") else f"arodonata.{key}"
         span.set_attribute(namespaced_key, _coerce_span_value(value))
+
+
+def _sanitize_exception_chain(exc: BaseException, seen: set[int] | None = None) -> None:
+    """Recursively scrub SID/secret patterns from `exc.args`, `__cause__`, and `__context__` in-place."""
+    if seen is None:
+        seen = set()
+    obj_id = id(exc)
+    if obj_id in seen:
+        return
+    seen.add(obj_id)
+
+    if exc.args:
+        new_args = tuple(redact_sid(arg) if isinstance(arg, str) else arg for arg in exc.args)
+        if new_args != exc.args:
+            with contextlib.suppress(Exception):
+                exc.args = new_args
+    if hasattr(exc, "message") and isinstance(exc.message, str):
+        with contextlib.suppress(Exception):
+            exc.message = redact_sid(exc.message)
+
+    if exc.__cause__ is not None:
+        _sanitize_exception_chain(exc.__cause__, seen)
+    if exc.__context__ is not None:
+        _sanitize_exception_chain(exc.__context__, seen)
+
+
+@overload
+def traced[**P, R](func: Callable[P, R]) -> Callable[P, R]: ...
+@overload
+def traced[**P, R](
+    *, name: str | None = None, attrs: dict[str, Any] | None = None
+) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
+
+
+def traced[**P, R](
+    func: Callable[P, R] | None = None,
+    *,
+    name: str | None = None,
+    attrs: dict[str, Any] | None = None,
+) -> Any:
+    """Wrap a function in `@arlogi.otel.traced` while scrubbing chained `__cause__`/`__context__` exceptions."""
+
+    def decorate(fn: Callable[P, R]) -> Callable[P, R]:
+        if inspect.isasyncgenfunction(fn):
+
+            @functools.wraps(fn)
+            async def agen_sanitized(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    async for item in fn(*args, **kwargs):
+                        yield item
+                except Exception as exc:
+                    _sanitize_exception_chain(exc)
+                    raise
+
+            target: Any = agen_sanitized
+        elif inspect.isgeneratorfunction(fn):
+
+            @functools.wraps(fn)
+            def gen_sanitized(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    yield from fn(*args, **kwargs)
+                except Exception as exc:
+                    _sanitize_exception_chain(exc)
+                    raise
+
+            target = gen_sanitized
+        elif inspect.iscoroutinefunction(fn):
+
+            @functools.wraps(fn)
+            async def async_sanitized(*args: P.args, **kwargs: P.kwargs) -> R:
+                try:
+                    return await fn(*args, **kwargs)  # type: ignore[no-any-return]
+                except Exception as exc:
+                    _sanitize_exception_chain(exc)
+                    raise
+
+            target = async_sanitized
+        else:
+
+            @functools.wraps(fn)
+            def sync_sanitized(*args: P.args, **kwargs: P.kwargs) -> R:
+                try:
+                    return fn(*args, **kwargs)
+                except Exception as exc:
+                    _sanitize_exception_chain(exc)
+                    raise
+
+            target = sync_sanitized
+
+        if name is not None or attrs is not None:
+            return _arlogi_traced(name=name, attrs=attrs)(target)
+        return _arlogi_traced(target)
+
+    return decorate(func) if func is not None else decorate

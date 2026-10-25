@@ -13,6 +13,7 @@ Provides:
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 from collections.abc import Sequence
 
@@ -27,6 +28,14 @@ from arodonata.core.errors import REDACTED_PLACEHOLDER
 from arodonata.mcp.config import ArodonataMCPSettings
 
 logger = arlogi.get_logger(__name__)
+
+
+def _is_valid_port_suffix(port_str: str) -> bool:
+    """Return `True` if `port_str` is strictly digits representing a valid TCP port (1..65535)."""
+    if not port_str or not port_str.isascii() or not port_str.isdigit():
+        return False
+    port_num = int(port_str)
+    return 1 <= port_num <= 65535
 
 
 def host_matches_allowed(host: str | None, allowed_hosts: Sequence[str]) -> bool:
@@ -47,8 +56,12 @@ def host_matches_allowed(host: str | None, allowed_hosts: Sequence[str]) -> bool
             return True
         if allowed.endswith(":*"):
             base_host = allowed[:-2]
-            if clean_host == base_host or clean_host.startswith(f"{base_host}:"):
+            if clean_host == base_host:
                 return True
+            if clean_host.startswith(f"{base_host}:"):
+                port_part = clean_host[len(base_host) + 1 :]
+                if _is_valid_port_suffix(port_part):
+                    return True
     return False
 
 
@@ -68,8 +81,12 @@ def origin_matches_allowed(origin: str | None, allowed_origins: Sequence[str]) -
             return True
         if allowed.endswith(":*"):
             base_origin = allowed[:-2]
-            if clean_origin == base_origin or clean_origin.startswith(f"{base_origin}:"):
+            if clean_origin == base_origin:
                 return True
+            if clean_origin.startswith(f"{base_origin}:"):
+                port_part = clean_origin[len(base_origin) + 1 :]
+                if _is_valid_port_suffix(port_part):
+                    return True
     return False
 
 
@@ -78,12 +95,13 @@ class StaticTokenVerifier(TokenVerifier):
 
     Maps the matching environment variable name from `ARODONATA_MCP_TOKEN_VARS` (e.g.
     `TEAM_A_TOKEN`) to the caller's `client_id` and records `client_id` in structured
-    logs without ever logging the token value.
+    logs without ever logging the token value. Hashes both sides with SHA-256 before
+    `hmac.compare_digest` so token length is never leaked via timing (`W26`).
     """
 
     def __init__(self, token_pairs: Sequence[tuple[str, str]]) -> None:
         self._pairs: list[tuple[str, bytes]] = [
-            (client_id.strip(), secret.encode("utf-8"))
+            (client_id.strip(), hashlib.sha256(secret.encode("utf-8")).digest())
             for client_id, secret in token_pairs
             if client_id.strip() and secret
         ]
@@ -105,16 +123,16 @@ class StaticTokenVerifier(TokenVerifier):
         return [cid for cid, _ in self._pairs]
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        """Verify `token` using `hmac.compare_digest` across all configured pairs without early exit."""
+        """Verify `token` using SHA-256 digest + `hmac.compare_digest` across all configured pairs without early exit."""
         if not token or not self._pairs:
             logger.warning("MCP static bearer token rejected", reason="empty_or_unconfigured")
             return None
 
-        candidate_bytes = token.encode("utf-8")
+        candidate_digest = hashlib.sha256(token.encode("utf-8")).digest()
         matched_client_id: str | None = None
 
-        for client_id, expected_bytes in self._pairs:
-            is_match = hmac.compare_digest(candidate_bytes, expected_bytes)
+        for client_id, expected_digest in self._pairs:
+            is_match = hmac.compare_digest(candidate_digest, expected_digest)
             if is_match and matched_client_id is None:
                 matched_client_id = client_id
 

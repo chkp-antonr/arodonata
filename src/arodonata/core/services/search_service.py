@@ -28,6 +28,7 @@ from arodonata.core.models.common import (
     DEFAULT_OBJECT_TYPES,
     CacheMode,
     SyncScope,
+    to_naive_utc,
     utc_now,
 )
 from arodonata.core.models.objects import (
@@ -130,7 +131,12 @@ def _object_ipv4_bounds(obj: CPObject) -> tuple[int, int] | None:
     return None
 
 
-def matches_classified_term(obj: CPObject, term: ClassifiedSearchTerm) -> bool:
+def matches_classified_term(
+    obj: CPObject,
+    term: ClassifiedSearchTerm,
+    *,
+    exact_match: bool = False,
+) -> bool:
     """Return `True` if `obj` matches `term`."""
     if term.kind == "uid":
         return obj.uid.lower() == term.raw.lower()
@@ -176,6 +182,16 @@ def matches_classified_term(obj: CPObject, term: ClassifiedSearchTerm) -> bool:
 
     # kind == "name"
     needle = term.raw.lower()
+    if exact_match:
+        exact_candidates = [
+            obj.name,
+            obj.uid,
+            obj.fqdn or "",
+            obj.ipv4_address or "",
+            obj.subnet4 or "",
+        ]
+        return any(c.lower() == needle for c in exact_candidates if c)
+
     candidates = [
         obj.name,
         obj.uid,
@@ -201,7 +217,7 @@ class SearchService:
         self._cache = cache
         self._object_service = object_service
         self._service_cache = service_cache
-        self._now = now_fn
+        self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
 
     @traced
     async def search_objects(
@@ -213,6 +229,7 @@ class SearchService:
         types: Sequence[str] | None = None,
         include_global: bool = False,
         max_depth: int = 2,
+        exact_match: bool = False,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
     ) -> SearchResult:
@@ -223,6 +240,7 @@ class SearchService:
             query=query,
             mgmt_name=mgmt_name,
             max_depth=max_depth,
+            exact_match=exact_match,
             cache_mode=cache_mode,
             term_count=len(classified_terms),
         )
@@ -274,7 +292,7 @@ class SearchService:
         for obj in all_objects:
             if allowed_match_types is not None and obj.type not in allowed_match_types:
                 continue
-            if any(matches_classified_term(obj, term) for term in classified_terms):
+            if any(matches_classified_term(obj, term, exact_match=exact_match) for term in classified_terms):
                 matched_objects.append(obj)
 
         memberships: dict[str, list[GroupMembershipNode]] = {}

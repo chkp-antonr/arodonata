@@ -43,7 +43,7 @@ from arodonata.core.context import (
     user_context as _ctx_user_context,
 )
 from arodonata.core.errors import SessionError
-from arodonata.core.events import SyncProgressEvent
+from arodonata.core.events import CPCRUDEvent, SyncProgressEvent
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
     ApiCallResult,
@@ -141,7 +141,7 @@ class ArodonataClient:
         else:
             eff_engine = engine if engine is not None else self._settings.database_url
             self._db = DatabaseManager(
-                engine=eff_engine if engine is not None else None,
+                engine=eff_engine,
                 busy_timeout_ms=self._settings.sqlite_busy_timeout_ms,
             )
             self._owns_engine = self._db.owns_engine
@@ -363,8 +363,9 @@ class ArodonataClient:
             await asyncio.gather(*active_warmups, return_exceptions=True)
         self._warmup_tasks.clear()
 
-        # 2. Determine automatic logout policy: True if client auto-created in-memory DB, False if external engine
-        should_logout = self._owns_engine if logout is None else bool(logout)
+        # 2. Determine automatic logout policy: True if client auto-created in-memory DB, False if persistent DB or external engine
+        is_ephemeral_db = self._owns_engine and ":memory:" in (self._settings.database_url or "")
+        should_logout = is_ephemeral_db if logout is None else bool(logout)
 
         # 3. Close AMgmtClient / ApiPort (drains startup cleanup tasks & logs out according to policy)
         await self._api.close(logout=should_logout)
@@ -639,14 +640,16 @@ class ArodonataClient:
                     yield ws
                 except BaseException:
                     if not ws.discarded and not ws.published:
-                        with suppress(Exception):
-                            await self.api_call(
-                                mgmt_name,
-                                "discard",
-                                {},
-                                domain=domain,
-                                sid=ws.sid,
-                                server_ip=ws.server_ip,
+                        with suppress(BaseException):
+                            await asyncio.shield(
+                                self.api_call(
+                                    mgmt_name,
+                                    "discard",
+                                    {},
+                                    domain=domain,
+                                    sid=ws.sid,
+                                    server_ip=ws.server_ip,
+                                )
                             )
                         ws.discarded = True
                         ws.overlay.clear()
@@ -663,6 +666,18 @@ class ArodonataClient:
                         wait_for_task=True,
                     )
                     if not pub_res.success:
+                        with suppress(BaseException):
+                            await asyncio.shield(
+                                self.api_call(
+                                    mgmt_name,
+                                    "discard",
+                                    {},
+                                    domain=domain,
+                                    sid=ws.sid,
+                                    server_ip=ws.server_ip,
+                                )
+                            )
+                        ws.discarded = True
                         ws.overlay.clear()
                         raise SessionError(
                             f"Failed to publish WriteSession on {mgmt_name!r} ({dom_key!r}): "
@@ -673,7 +688,8 @@ class ArodonataClient:
                     self.invalidate_domain(mgmt_name, domain)
         finally:
             ws.overlay.clear()
-            await self.logout_sid(mgmt_name, ws.sid, server_ip=ws.server_ip)
+            with suppress(BaseException):
+                await asyncio.shield(self.logout_sid(mgmt_name, ws.sid, server_ip=ws.server_ip))
 
     # ------------------------------------------------------------------
     # Paired Refresh & Streaming Methods
@@ -1377,6 +1393,7 @@ class ArodonataClient:
         types: Sequence[str] | None = None,
         include_global: bool = False,
         max_depth: int = 2,
+        exact_match: bool = False,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
     ) -> SearchResult:
@@ -1390,6 +1407,7 @@ class ArodonataClient:
             types=types,
             include_global=include_global,
             max_depth=max_depth,
+            exact_match=exact_match,
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
         )
@@ -1484,9 +1502,20 @@ class ArodonataClient:
         sid: str | None = None,
         server_ip: str | None = None,
     ) -> ApiCallResult:
-        """Create a Check Point object (`add-<obj_type>`) using active `WriteSession` context or explicit `sid`."""
+        """Create a Check Point object (`add-<obj_type>`) using active `WriteSession` context, explicit `sid`, or an automatic isolated `write_session` (`C8`)."""
         clean_type = obj_type.strip().lower().removeprefix("add-")
         span_attrs(mgmt_name=mgmt_name, domain=domain, object_type=clean_type)
+        dom_key = normalize_domain_key(domain) if domain is not None else None
+        if sid is None and get_write_session(mgmt_name=mgmt_name, domain_name=dom_key) is None:
+            async with self.write_session(mgmt_name, domain) as ws:
+                return await self.api_call(
+                    mgmt_name,
+                    f"add-{clean_type}",
+                    payload,
+                    domain=domain,
+                    sid=ws.sid,
+                    server_ip=server_ip or ws.server_ip,
+                )
         return await self.api_call(
             mgmt_name,
             f"add-{clean_type}",
@@ -1507,9 +1536,20 @@ class ArodonataClient:
         sid: str | None = None,
         server_ip: str | None = None,
     ) -> ApiCallResult:
-        """Update a Check Point object (`set-<obj_type>`) using active `WriteSession` context or explicit `sid`."""
+        """Update a Check Point object (`set-<obj_type>`) using active `WriteSession` context, explicit `sid`, or an automatic isolated `write_session` (`C8`)."""
         clean_type = obj_type.strip().lower().removeprefix("set-")
         span_attrs(mgmt_name=mgmt_name, domain=domain, object_type=clean_type)
+        dom_key = normalize_domain_key(domain) if domain is not None else None
+        if sid is None and get_write_session(mgmt_name=mgmt_name, domain_name=dom_key) is None:
+            async with self.write_session(mgmt_name, domain) as ws:
+                return await self.api_call(
+                    mgmt_name,
+                    f"set-{clean_type}",
+                    payload,
+                    domain=domain,
+                    sid=ws.sid,
+                    server_ip=server_ip or ws.server_ip,
+                )
         return await self.api_call(
             mgmt_name,
             f"set-{clean_type}",
@@ -1532,7 +1572,7 @@ class ArodonataClient:
         sid: str | None = None,
         server_ip: str | None = None,
     ) -> ApiCallResult:
-        """Delete a Check Point object (`delete-<obj_type>`) by `uid` or `name`."""
+        """Delete a Check Point object (`delete-<obj_type>`) by `uid` or `name` using active `WriteSession`, explicit `sid`, or automatic isolated `write_session` (`C8`)."""
         clean_type = obj_type.strip().lower().removeprefix("delete-")
         req_payload: dict[str, Any] = dict(payload or {})
         if uid is not None:
@@ -1540,6 +1580,17 @@ class ArodonataClient:
         if name is not None:
             req_payload["name"] = name
         span_attrs(mgmt_name=mgmt_name, domain=domain, object_type=clean_type)
+        dom_key = normalize_domain_key(domain) if domain is not None else None
+        if sid is None and get_write_session(mgmt_name=mgmt_name, domain_name=dom_key) is None:
+            async with self.write_session(mgmt_name, domain) as ws:
+                return await self.api_call(
+                    mgmt_name,
+                    f"delete-{clean_type}",
+                    req_payload,
+                    domain=domain,
+                    sid=ws.sid,
+                    server_ip=server_ip or ws.server_ip,
+                )
         return await self.api_call(
             mgmt_name,
             f"delete-{clean_type}",
@@ -1640,6 +1691,73 @@ class ArodonataClient:
             max_depth=max_depth,
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
+        )
+
+    @traced
+    async def publish_staged_session(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        session_uid: str,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        timeout: float | None = None,
+        auth: AuthContext | None = None,
+    ) -> ApiCallResult:
+        """Adopt `session_uid` via `take-over-session`, publish it, log out, and invalidate the domain cache."""
+        return await self._cpcrud.publish_staged_session(
+            mgmt_name,
+            domain,
+            session_uid=session_uid,
+            sid=sid,
+            server_ip=server_ip,
+            timeout=timeout,
+            auth=auth,
+        )
+
+    async def stream_publish_staged_session(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        session_uid: str,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        timeout: float | None = None,
+        auth: AuthContext | None = None,
+    ) -> AsyncIterator[CPCRUDEvent]:
+        """Adopt `session_uid` via `take-over-session`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate the domain cache."""
+        async for ev in self._cpcrud.stream_publish_staged_session(
+            mgmt_name,
+            domain,
+            session_uid=session_uid,
+            sid=sid,
+            server_ip=server_ip,
+            timeout=timeout,
+            auth=auth,
+        ):
+            yield ev
+
+    @traced
+    async def discard_staged_session(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        session_uid: str,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        auth: AuthContext | None = None,
+    ) -> ApiCallResult:
+        """Adopt `session_uid` via `take-over-session`, discard uncommitted changes, and log out."""
+        return await self._cpcrud.discard_staged_session(
+            mgmt_name,
+            domain,
+            session_uid=session_uid,
+            sid=sid,
+            server_ip=server_ip,
+            auth=auth,
         )
 
 

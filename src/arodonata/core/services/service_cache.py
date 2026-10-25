@@ -21,6 +21,7 @@ from arodonata.core.events import DomainSyncProgressEvent, SyncProgressEvent
 from arodonata.core.models.common import (
     DEFAULT_SERVICE_TYPES,
     CacheMode,
+    to_naive_utc,
     utc_now,
 )
 from arodonata.core.models.domains import DomainSyncState, RefreshOutcome
@@ -73,7 +74,7 @@ class ServiceCacheService:
         self._api = api
         self._cache = cache
         self._coordinator = coordinator
-        self._now = now_fn
+        self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
 
     def _normalize_types(self, types: Sequence[str] | None) -> list[str]:
         if types is None:
@@ -184,14 +185,14 @@ class ServiceCacheService:
 
         earliest_state = min(
             baseline_states,
-            key=lambda s: s.last_published_at.timestamp() if s.last_published_at is not None else float("inf"),
+            key=lambda s: (s.last_published_at is None, s.last_published_at or datetime.max),
         )
 
         payload: dict[str, Any] = {"details-level": "standard"}
-        if earliest_state.last_published_at is not None:
-            payload["from-date"] = earliest_state.last_published_at.isoformat()
-        elif earliest_state.last_session_uid is not None:
+        if earliest_state.last_session_uid is not None:
             payload["from-session"] = earliest_state.last_session_uid
+        elif earliest_state.last_published_at is not None:
+            payload["from-date"] = to_naive_utc(earliest_state.last_published_at).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         try:
             res = await self._api.api_call(
@@ -232,26 +233,40 @@ class ServiceCacheService:
                 if cp_svc.type in stale_set:
                     fetched_services.append(cp_svc)
 
-            if fetched_services:
-                await self._cache.upsert_services(fetched_services)
-
             now = self._now()
+            existing_by_type: dict[str, list[CPService]] = {}
             for item_type in probe.stale_types:
-                type_svcs = await self._cache.get_services(mgmt_name, dom_name, types=[item_type])
-                await self._cache.upsert_sync_state(
+                existing_by_type[item_type] = await self._cache.get_services(mgmt_name, dom_name, types=[item_type])
+
+            fetched_by_type: dict[str, dict[str, CPService]] = {t: {} for t in probe.stale_types}
+            for svc in fetched_services:
+                if svc.type in fetched_by_type:
+                    fetched_by_type[svc.type][svc.uid] = svc
+
+            sync_states: list[DomainSyncState] = []
+            for item_type in probe.stale_types:
+                uid_set = {s.uid for s in existing_by_type.get(item_type, [])}
+                uid_set.update(fetched_by_type.get(item_type, {}).keys())
+                sync_states.append(
                     DomainSyncState(
                         mgmt_name=mgmt_name,
                         domain_name=dom_name,
                         scope="services",
                         item_type=item_type,
-                        last_published_at=probe.remote_published_at or now,
+                        last_published_at=probe.remote_published_at,
                         last_session_uid=probe.remote_session_uid,
                         synced_at=now,
                         status="ok",
-                        object_count=len(type_svcs),
+                        object_count=len(uid_set),
                         last_error=None,
                     )
                 )
+
+            if fetched_services:
+                await self._cache.upsert_services(fetched_services, sync_states=sync_states)
+            else:
+                for st in sync_states:
+                    await self._cache.upsert_sync_state(st)
 
             await emit(
                 DomainSyncProgressEvent(
@@ -326,30 +341,29 @@ class ServiceCacheService:
                 )
             )
 
+        now = self._now()
+        sync_states = [
+            DomainSyncState(
+                mgmt_name=mgmt_name,
+                domain_name=dom_name,
+                scope="services",
+                item_type=item_type,
+                last_published_at=probe.remote_published_at,
+                last_session_uid=probe.remote_session_uid,
+                synced_at=now,
+                status="ok",
+                object_count=len(collected_by_type.get(item_type, [])),
+                last_error=None,
+            )
+            for item_type in probe.stale_types
+        ]
         await self._cache.replace_domain_services(
             mgmt_name,
             dom_name,
             all_collected,
             types=probe.stale_types,
+            sync_states=sync_states,
         )
-
-        now = self._now()
-        for item_type in probe.stale_types:
-            items = collected_by_type.get(item_type, [])
-            await self._cache.upsert_sync_state(
-                DomainSyncState(
-                    mgmt_name=mgmt_name,
-                    domain_name=dom_name,
-                    scope="services",
-                    item_type=item_type,
-                    last_published_at=probe.remote_published_at or now,
-                    last_session_uid=probe.remote_session_uid,
-                    synced_at=now,
-                    status="ok",
-                    object_count=len(items),
-                    last_error=None,
-                )
-            )
 
         return len(all_collected)
 

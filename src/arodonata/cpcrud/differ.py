@@ -460,6 +460,61 @@ def compute_rule_diff(
                 diffs["track"] = FieldChange(field="track", old_value=existing.track, new_value=req_track)
                 update_payload["track"] = req_track
 
+    if isinstance(existing, AccessRuleEntry):
+        for snake_k, kebab_k, exist_neg in (
+            ("source_negate", "source-negate", existing.source_negate),
+            ("destination_negate", "destination-negate", existing.destination_negate),
+            ("service_negate", "service-negate", existing.service_negate),
+        ):
+            if snake_k in desired or kebab_k in desired:
+                raw_neg = desired.get(snake_k) if snake_k in desired else desired.get(kebab_k)
+                if raw_neg is not None and bool(raw_neg) != bool(exist_neg):
+                    diffs[kebab_k] = FieldChange(field=kebab_k, old_value=bool(exist_neg), new_value=bool(raw_neg))
+                    update_payload[kebab_k] = bool(raw_neg)
+
+        if "inline_layer" in desired or "inline-layer" in desired:
+            req_inline = desired.get("inline_layer") or desired.get("inline-layer")
+            exist_inline = existing.inline_layer_name or existing.inline_layer_uid or raw_exist.get("inline-layer")
+            if isinstance(req_inline, str) and req_inline.strip() != str(exist_inline or "").strip():
+                diffs["inline-layer"] = FieldChange(
+                    field="inline-layer", old_value=exist_inline, new_value=req_inline.strip()
+                )
+                update_payload["inline-layer"] = req_inline.strip()
+
+    if isinstance(existing, HttpsRuleEntry):
+        if "site_category" in desired or "site-category" in desired:
+            raw_sc = desired.get("site_category") if "site_category" in desired else desired.get("site-category")
+            if raw_sc is not None:
+                norm_des_sc = normalize_traffic_list(raw_sc, name_resolutions=name_resolutions)
+                norm_exist_sc = normalize_traffic_list(
+                    existing.site_category or raw_exist.get("site-category"), obj_dict=obj_dict
+                )
+                if norm_des_sc != norm_exist_sc:
+                    diffs["site-category"] = FieldChange(
+                        field="site-category", old_value=list(norm_exist_sc), new_value=list(norm_des_sc)
+                    )
+                    update_payload["site-category"] = list(norm_des_sc)
+        if "certificate" in desired and desired["certificate"] is not None:
+            req_cert = str(desired["certificate"]).strip()
+            if req_cert != str(existing.certificate or "").strip():
+                diffs["certificate"] = FieldChange(
+                    field="certificate", old_value=existing.certificate, new_value=req_cert
+                )
+                update_payload["certificate"] = req_cert
+
+    if isinstance(existing, ThreatRuleEntry) and ("protected_scope" in desired or "protected-scope" in desired):
+        raw_ps = desired.get("protected_scope") if "protected_scope" in desired else desired.get("protected-scope")
+        if raw_ps is not None:
+            norm_des_ps = normalize_traffic_list(raw_ps, name_resolutions=name_resolutions)
+            norm_exist_ps = normalize_traffic_list(
+                existing.protected_scope or raw_exist.get("protected-scope"), obj_dict=obj_dict
+            )
+            if norm_des_ps != norm_exist_ps:
+                diffs["protected-scope"] = FieldChange(
+                    field="protected-scope", old_value=list(norm_exist_ps), new_value=list(norm_des_ps)
+                )
+                update_payload["protected-scope"] = list(norm_des_ps)
+
     if "install_on" in desired or "install-on" in desired:
         raw_inst = desired.get("install_on") if "install_on" in desired else desired.get("install-on")
         if raw_inst is not None:

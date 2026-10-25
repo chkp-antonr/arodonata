@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from arodonata.core.models.common import utc_now
+from arodonata.core.models.common import to_naive_utc, utc_now
 from arodonata.core.models.objects import _extract_member_uids, _extract_original_domain, _extract_tag_names
 
 
@@ -43,6 +43,7 @@ class CPService(BaseModel):
             self.id = f"{self.mgmt_name}:{self.domain_name}:{self.uid}"
         if self.original_domain is None:
             self.original_domain = self.domain_name
+        self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
     @classmethod
     def from_cp_dict(cls, mgmt_name: str, domain_name: str, data: dict[str, Any]) -> CPService:

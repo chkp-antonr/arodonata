@@ -13,7 +13,7 @@ from arodonata.core.errors import (
     redact_sid,
     sanitize_mapping,
 )
-from arodonata.core.models.common import utc_now
+from arodonata.core.models.common import to_naive_utc, utc_now
 from arodonata.core.models.rulebase import RulebaseType
 
 CURRENT_FORMAT_VERSION = 1
@@ -286,6 +286,10 @@ class SessionChangeReport(BaseModel):
     object_changes: list[ObjectChangeEntry] = Field(default_factory=list)
     resolved_names: dict[str, str] = Field(default_factory=dict)
 
+    def model_post_init(self, __context: Any) -> None:
+        self.published_at = to_naive_utc(self.published_at)
+        self.last_modify_time = to_naive_utc(self.last_modify_time)
+
 
 class RenderOptions(BaseModel):
     """Formatting options for `render_change_report` and `build_change_report`."""
@@ -314,6 +318,7 @@ class ChangeReport(BaseModel):
 
     @model_validator(mode="after")
     def _check_format_version(self) -> ChangeReport:
+        self.generated_at = to_naive_utc(self.generated_at) or utc_now()
         if self.format_version > CURRENT_FORMAT_VERSION or self.format_version < 1:
             raise ChangeReportInputError(
                 f"Unsupported ChangeReport format_version={self.format_version} "

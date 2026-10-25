@@ -58,13 +58,23 @@ class LockPort(Protocol):
         """Attempt to acquire `lock_key`, reclaiming any expired lock row."""
         ...
 
+    async def renew(
+        self,
+        lock_key: str,
+        *,
+        ttl_seconds: float = 60.0,
+        owner_id: str | None = None,
+    ) -> bool:
+        """Extend `expires_at` for an active lock held by `owner_id`."""
+        ...
+
     async def release(
         self,
         lock_key: str,
         *,
         owner_id: str | None = None,
     ) -> bool:
-        """Release `lock_key` if owned by `owner_id` (or unconditionally if `owner_id` is None)."""
+        """Release `lock_key` if owned by `owner_id`."""
         ...
 
     def lock(
@@ -102,23 +112,31 @@ class CachePort(Protocol):
         ...
 
     async def upsert_domains(self, domains: Sequence[DomainInfo]) -> None:
-        """Insert or update domain rows in `domains`."""
+        """Insert or update domain rows in `arodonata_domains`."""
         ...
 
     async def get_sid(
         self,
         mgmt_name: str,
         domain_name: str,
+        *,
+        auth_identity: str | None = None,
     ) -> SIDCacheEntry | None:
-        """Fetch a cached shared read-only session entry for `(mgmt_name, domain_name)`."""
+        """Fetch a cached shared read-only session entry for `(mgmt_name, domain_name, auth_identity)`."""
         ...
 
     async def upsert_sid(self, entry: SIDCacheEntry) -> None:
-        """Insert or update a shared read-only session entry in `sid_cache`."""
+        """Insert or update a shared read-only session entry in `arodonata_sid_cache`."""
         ...
 
-    async def evict_sid(self, mgmt_name: str, domain_name: str) -> bool:
-        """Remove the cached SID for `(mgmt_name, domain_name)` immediately."""
+    async def evict_sid(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        auth_identity: str | None = None,
+    ) -> bool:
+        """Remove the cached SID for `(mgmt_name, domain_name)` (and optional `auth_identity`) immediately."""
         ...
 
     async def list_sids(self, mgmt_name: str | None = None) -> list[SIDCacheEntry]:
@@ -145,7 +163,7 @@ class CachePort(Protocol):
         ...
 
     async def upsert_sync_state(self, state: DomainSyncState) -> None:
-        """Insert or update a `DomainSyncState` row in `domain_sync_state`."""
+        """Insert or update a `DomainSyncState` row in `arodonata_domain_sync_state`."""
         ...
 
     async def get_objects(
@@ -176,11 +194,17 @@ class CachePort(Protocol):
         objects: Sequence[CPObject],
         *,
         types: Sequence[str],
+        sync_states: Sequence[DomainSyncState] | None = None,
     ) -> int:
         """Atomically replace objects of `types` for `(mgmt_name, domain_name)` without deleting other types."""
         ...
 
-    async def upsert_objects(self, objects: Sequence[CPObject]) -> int:
+    async def upsert_objects(
+        self,
+        objects: Sequence[CPObject],
+        *,
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
         """Insert or update `CPObject` rows in `arodonata_objects` (incremental sync)."""
         ...
 
@@ -221,11 +245,17 @@ class CachePort(Protocol):
         services: Sequence[CPService],
         *,
         types: Sequence[str],
+        sync_states: Sequence[DomainSyncState] | None = None,
     ) -> int:
         """Atomically replace services of `types` for `(mgmt_name, domain_name)` without deleting other types."""
         ...
 
-    async def upsert_services(self, services: Sequence[CPService]) -> int:
+    async def upsert_services(
+        self,
+        services: Sequence[CPService],
+        *,
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
         """Insert or update `CPService` rows in `arodonata_services`."""
         ...
 
@@ -245,7 +275,7 @@ class CachePort(Protocol):
         *,
         types: Sequence[str] | None = None,
     ) -> list[Asset]:
-        """Query cached gateway/cluster/VSX/server assets from `assets`."""
+        """Query cached gateway/cluster/VSX/server assets from `arodonata_assets`."""
         ...
 
     async def replace_domain_assets(
@@ -253,12 +283,19 @@ class CachePort(Protocol):
         mgmt_name: str,
         domain_name: str,
         assets: Sequence[Asset],
+        *,
+        sync_states: Sequence[DomainSyncState] | None = None,
     ) -> int:
         """Atomically replace all cached assets for `(mgmt_name, domain_name)`."""
         ...
 
-    async def replace_domain_rulebase(self, snapshot: DomainRulebaseSnapshot) -> None:
-        """Atomically replace all `rulebase_*` snapshot tables for `(snapshot.mgmt_name, snapshot.domain_name)`."""
+    async def replace_domain_rulebase(
+        self,
+        snapshot: DomainRulebaseSnapshot,
+        *,
+        sync_state: DomainSyncState | None = None,
+    ) -> None:
+        """Atomically replace all `arodonata_rulebase_*` snapshot tables for `(snapshot.mgmt_name, snapshot.domain_name)`."""
         ...
 
     async def get_domain_rulebase(

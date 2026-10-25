@@ -17,9 +17,9 @@ from typing import Any
 
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import AuthContext, UserContext
-from arodonata.core.errors import ConfigurationError
+from arodonata.core.errors import ConfigurationError, ValidationError
 from arodonata.core.events import CPCRUDEvent
-from arodonata.core.models.common import utc_now
+from arodonata.core.models.common import ApiCallResult, utc_now
 from arodonata.core.ports import ApiPort, CachePort
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.cpcrud.executor import Executor
@@ -115,7 +115,7 @@ class CPCRUDService:
         if validate_schema:
             schema_errs = self.validate(parsed)
             if schema_errs:
-                raise ConfigurationError(f"CPCRUD template failed schema validation: {'; '.join(schema_errs)}")
+                raise ValidationError(f"CPCRUD template failed schema validation: {'; '.join(schema_errs)}")
 
         if self._ensure_initialized is not None:
             res = self._ensure_initialized()
@@ -202,6 +202,88 @@ class CPCRUDService:
     ) -> dict[str, Any]:
         """Build a schema-valid compensating rollback template from `plan` (and optional `report`)."""
         return build_inverse_template(plan, report)
+
+    @traced
+    async def publish_staged_session(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        session_uid: str,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        timeout: float | None = None,
+        auth: AuthContext | None = None,
+    ) -> ApiCallResult:
+        """Adopt `session_uid` via `take-over-session`, publish it, log out, and invalidate the domain cache."""
+        if self._ensure_initialized is not None:
+            res = self._ensure_initialized()
+            if hasattr(res, "__await__"):
+                await res
+
+        return await self._executor.publish_staged_session(
+            mgmt_name,
+            domain,
+            session_uid=session_uid,
+            sid=sid,
+            server_ip=server_ip,
+            timeout=timeout,
+            auth=auth,
+        )
+
+    async def stream_publish_staged_session(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        session_uid: str,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        timeout: float | None = None,
+        auth: AuthContext | None = None,
+    ) -> AsyncIterator[CPCRUDEvent]:
+        """Adopt `session_uid` via `take-over-session`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate the domain cache."""
+        if self._ensure_initialized is not None:
+            res = self._ensure_initialized()
+            if hasattr(res, "__await__"):
+                await res
+
+        async for ev in self._executor.stream_publish_staged_session(
+            mgmt_name,
+            domain,
+            session_uid=session_uid,
+            sid=sid,
+            server_ip=server_ip,
+            timeout=timeout,
+            auth=auth,
+        ):
+            yield ev
+
+    @traced
+    async def discard_staged_session(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        session_uid: str,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        auth: AuthContext | None = None,
+    ) -> ApiCallResult:
+        """Adopt `session_uid` via `take-over-session`, discard uncommitted changes, and log out."""
+        if self._ensure_initialized is not None:
+            res = self._ensure_initialized()
+            if hasattr(res, "__await__"):
+                await res
+
+        return await self._executor.discard_staged_session(
+            mgmt_name,
+            domain,
+            session_uid=session_uid,
+            sid=sid,
+            server_ip=server_ip,
+            auth=auth,
+        )
 
 
 __all__ = [

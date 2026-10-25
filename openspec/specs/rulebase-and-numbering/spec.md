@@ -8,17 +8,17 @@ Defines multi-domain rulebase snapshot caching (`RulebaseRefreshService`, `Domai
 
 ### Requirement: Session-Aware Atomic Rulebase Snapshot Refresh
 
-`RulebaseRefreshService` (`refresh_rulebases`, `stream_refresh_rulebases`) SHALL refresh a domain's entire rulebase snapshot (`rulebase_access`, `rulebase_nat`, `rulebase_https`, `rulebase_threat`, `rulebase_layer`, `rulebase_section`, `rulebase_package_layer`) and `domain_sync_state` (`scope="rulebase"`) in a single atomic transaction protected by a per-domain distributed lock, tracking freshness against the domain's last published session UID.
+`RulebaseRefreshService` (`refresh_rulebases`, `stream_refresh_rulebases`) SHALL refresh a domain's rulebase snapshot (`arodonata_rulebase_*` tables) and `arodonata_domain_sync_state` (`scope="rulebase"`) in a single atomic database transaction protected by a per-domain distributed lock with periodic heartbeat renewal, tracking freshness against the domain's last published session UID and preserving `last_published_at=None` for never-published domains.
 
 #### Scenario: Refusal to refresh when shared session is dirty
 
-- **WHEN** `refresh_rulebases` runs for a domain whose shared API session currently holds unpublished changes or object locks (`number-of-published-changes` / `locks` non-zero)
-- **THEN** the refresh for that domain SHALL refuse to proceed with a `dirty session` error, preserve any existing cached rulebase snapshot, and mark `domain_sync_state.status = "failed"` (`scope="rulebase"`) with `last_error`
+- **WHEN** `refresh_rulebases` runs for a domain whose shared API session currently holds unpublished changes or object locks (`number-of-published-changes` / `locks` non-zero) or where `show-session` fails
+- **THEN** the refresh for that domain SHALL refuse to proceed (failing closed on `show-session` error), preserve any existing cached rulebase snapshot, and mark `arodonata_domain_sync_state.status = "failed"` (`scope="rulebase"`) with SID-redacted `last_error`
 
 #### Scenario: Complete traversal of packages, ordered layers, inline layers, and global placeholders
 
 - **WHEN** `refresh_rulebases` reads a clean domain
-- **THEN** it SHALL fetch `show-packages`, the NAT rulebase of every package with `nat-policy`, every access/HTTPS/threat layer reachable from packages, layer listings, or inline-layer rule references, and for any global layer containing a domain `place-holder`, query the global layer with `package` context to resolve the parent rule and nested domain layer, replacing the domain's snapshot atomically under the domain lock
+- **THEN** it SHALL fetch `show-packages`, the NAT rulebase of every package with `nat-policy`, every access/HTTPS/threat layer reachable from packages, layer listings, or inline-layer rule references, and for any global layer containing a domain `place-holder`, query the global layer with `package` context to resolve the parent rule and nested domain layer, replacing the domain's snapshot rows across `arodonata_rulebase_*` AND updating `arodonata_domain_sync_state` inside a single atomic database transaction under a renewed domain lock
 
 #### Scenario: Rulebase pager merges split sections across page boundaries
 
@@ -43,3 +43,12 @@ Defines multi-domain rulebase snapshot caching (`RulebaseRefreshService`, `Domai
 
 - **WHEN** `get_package_rulebase` or `get_layer_rulebase` is called with `domain_name=None` or `""`
 - **THEN** the client SHALL resolve the unique cached domain containing that package or layer (or the single cached domain on an SMS); if multiple cached domains contain a matching name/UID, it SHALL raise `AmbiguousLayerName` listing all `(domain, uid)` candidates
+
+### Requirement: Local Rulebase Filtering and CPCRUD Rule Export
+
+`filter_rulebase()` and `rule_to_cpcrud_operation()` SHALL evaluate search/filter queries locally against cached rulebases (`PackageRulebase` or `NumberedLayerRulebase`) with transitive object/service group expansion and convert matched access, NAT, HTTPS, and threat-prevention rules into schema-valid `cpcrud` operation dictionaries (`format="cpcrud"`).
+
+#### Scenario: Convert matched access and NAT rules into valid CPCRUD operations
+
+- **WHEN** `rule_to_cpcrud_operation(rule)` or `filter_rulebase(..., format="cpcrud")` is called on a cached `AccessRuleEntry`, `NatRuleEntry`, `HttpsRuleEntry`, or `ThreatRuleEntry`
+- **THEN** it SHALL return an operation dictionary (`operation`, `type`, `layer` or `package`, `key`, `data`) that passes `CPCRUDService.validate()` and normalizes Check Point NAT `"Original"` / `"Any"` sentinel UIDs

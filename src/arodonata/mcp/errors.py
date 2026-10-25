@@ -19,11 +19,37 @@ from arodonata.core.errors import (
     DomainNotFoundError,
     InvalidCredentialsError,
     UnsupportedFormat,
+    ValidationError,
     redact_sid,
     sanitize_mapping,
 )
 
 logger = arlogi.get_logger(__name__)
+
+
+async def collect_known_sids(
+    client: ArodonataClient,
+    mgmt_name: str | None = None,
+) -> list[str]:
+    """Collect active session tokens from the SID cache and transport adapter for redaction."""
+    sids: list[str] = []
+    try:
+        cached = await client.cache.list_sids(mgmt_name=mgmt_name)
+        for entry in cached:
+            if entry.sid and entry.sid not in sids:
+                sids.append(entry.sid)
+    except Exception:
+        pass
+
+    api_obj = getattr(client, "_api", None)
+    if api_obj is not None:
+        active_set = getattr(api_obj, "_active_dedicated_sids", None)
+        if isinstance(active_set, (set, list, tuple)):
+            for item in active_set:
+                sid_val = item[1] if isinstance(item, tuple) and len(item) >= 2 else item
+                if isinstance(sid_val, str) and sid_val and sid_val not in sids:
+                    sids.append(sid_val)
+    return sids
 
 
 class ToolFailure(ArodonataError):
@@ -122,11 +148,13 @@ async def validate_domain_or_fail(
         )
     except InvalidCredentialsError as exc:
         known = sorted(cached_names)
+        known_sids = await collect_known_sids(client, mgmt_name)
         raise format_invalid_credentials_failure(
             mgmt_name=mgmt_name,
             domain=clean_domain,
             known_domains=known,
             exc=exc,
+            known_sids=known_sids,
         ) from exc
     except Exception:
         refreshed_domains = await client.cache.get_domains(mgmt_name=mgmt_name, include_global=True)
@@ -153,6 +181,7 @@ def format_invalid_credentials_failure(
     domain: str | None,
     known_domains: Iterable[str],
     exc: InvalidCredentialsError | None = None,
+    known_sids: Iterable[str] | None = None,
 ) -> ToolFailure:
     """Build an actionable model-facing `ToolFailure` for `InvalidCredentialsError`."""
     known_list = list(known_domains)
@@ -162,12 +191,13 @@ def format_invalid_credentials_failure(
         else f"No cached domains recorded yet on {mgmt_name!r} (call show_domains first)."
     )
     dom_part = f" for domain {domain!r}" if domain else ""
-    detail_part = f" ({redact_sid(str(exc))})" if exc and str(exc) else ""
+    detail_part = f" ({redact_sid(str(exc), known_sids=known_sids)})" if exc and str(exc) else ""
     return ToolFailure(
         f"Authentication rejected on management server {mgmt_name!r}{dom_part}{detail_part}. "
         f"Verify target domain name and credentials. {known_part}",
         mgmt_name=mgmt_name,
         domain=domain,
+        known_sids=known_sids,
     )
 
 
@@ -218,7 +248,11 @@ def mcp_tool_guard(
             except ToolFailure as tf:
                 eff_mgmt = tf.mgmt_name or mgmt_arg
                 eff_dom = tf.domain or domain_arg
-                sanitized_reason = redact_sid(tf.message)
+                try:
+                    known_sids = await collect_known_sids(client_getter(), eff_mgmt)
+                except Exception:
+                    known_sids = []
+                sanitized_reason = redact_sid(tf.message, known_sids=known_sids)
                 logger.warning(
                     "MCP ToolFailure",
                     tool=tool_name,
@@ -238,11 +272,13 @@ def mcp_tool_guard(
                     else (client.settings.mgmt_names[0] if client.settings.mgmt_names else "default")
                 )
                 known = await get_known_domain_names(client, eff_mgmt, refresh_if_empty=False)
+                known_sids = await collect_known_sids(client, eff_mgmt)
                 cred_failure = format_invalid_credentials_failure(
                     mgmt_name=eff_mgmt,
                     domain=domain_arg,
                     known_domains=known,
                     exc=cred_exc,
+                    known_sids=known_sids,
                 )
                 logger.warning(
                     "MCP ToolFailure",
@@ -261,12 +297,14 @@ def mcp_tool_guard(
                 ChangeReportInputError,
                 UnsupportedFormat,
                 ConfigurationError,
+                ValidationError,
             ) as dom_exc:
                 client = client_getter()
                 eff_mgmt = mgmt_arg or (client.settings.mgmt_names[0] if client.settings.mgmt_names else "default")
                 known = await get_known_domain_names(client, eff_mgmt, refresh_if_empty=False)
+                known_sids = await collect_known_sids(client, eff_mgmt)
                 extra_known = f" Known domains on {eff_mgmt!r}: {', '.join(known)}." if known else ""
-                msg = redact_sid(f"{dom_exc}{extra_known}")
+                msg = redact_sid(f"{dom_exc}{extra_known}", known_sids=known_sids)
                 logger.warning(
                     "MCP ToolFailure",
                     tool=tool_name,
@@ -280,11 +318,15 @@ def mcp_tool_guard(
                 )
             except Exception as exc:
                 exc_class = type(exc).__name__
+                try:
+                    known_sids = await collect_known_sids(client_getter(), mgmt_arg)
+                except Exception:
+                    known_sids = []
                 logger.error(
                     "MCP tool internal error",
                     tool=tool_name,
                     exception_class=exc_class,
-                    detail=redact_sid(str(exc)),
+                    detail=redact_sid(str(exc), known_sids=known_sids),
                 )
                 return CallToolResult(
                     content=[TextContent(type="text", text=f"internal error: {exc_class}")],
@@ -298,6 +340,7 @@ def mcp_tool_guard(
 
 __all__ = [
     "ToolFailure",
+    "collect_known_sids",
     "format_invalid_credentials_failure",
     "get_known_domain_names",
     "json_tool_result",

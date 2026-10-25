@@ -6,6 +6,7 @@ __pycache__/
 .env.*
 !.env.example
 .env.secrets
+tls_known_hosts.json
 *.log
 logs/
 .pytest_cache/
@@ -22,5 +23,7 @@ build/
 
 # Documentation scratchpads and raw logs
 docs/_notes/
+docs/_audit_/
 docs/_AI_/
 _tmp/
+examples/_tmp/

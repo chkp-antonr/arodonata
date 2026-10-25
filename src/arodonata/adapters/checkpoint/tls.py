@@ -6,7 +6,9 @@ request line, headers (`X-chkp-sid`), credentials, or JSON payloads are sent.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -16,10 +18,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arodonata.core.config import TlsTrustMode
+from arodonata.core.config import DEFAULT_TLS_KNOWN_HOSTS_PATH, TlsTrustMode, parse_host_port
 from arodonata.core.errors import (
     CertificateMismatchError,
     ConfigurationError,
+    ServerIdentityError,
     TrustStoreError,
     UnknownServerCertificateError,
 )
@@ -54,14 +57,25 @@ def compute_der_fingerprint(der_bytes: bytes) -> str:
     return ":".join(digest[i : i + 2] for i in range(0, 64, 2))
 
 
+def format_host_attr_for_url(host: str) -> str:
+    """Wrap raw IPv6 literal in brackets `[...]` for URL/key construction."""
+    cleaned = host.strip()
+    if cleaned.startswith("[") and cleaned.endswith("]"):
+        return cleaned
+    try:
+        addr = ipaddress.ip_address(cleaned)
+        if addr.version == 6:
+            return f"[{addr.compressed}]"
+    except ValueError:
+        if ":" in cleaned:
+            return f"[{cleaned}]"
+    return cleaned
+
+
 def format_host_port(host: str, port: int = 443) -> str:
-    """Format `(host, port)` into canonical `host:port` key."""
-    cleaned_host = host.strip()
-    if ":" in cleaned_host and not cleaned_host.startswith("["):
-        h, p = cleaned_host.rsplit(":", 1)
-        if p.isdigit():
-            return f"{h.strip()}:{int(p)}"
-    return f"{cleaned_host}:{int(port)}"
+    """Format `(host, port)` into canonical `host:port` or `[ipv6]:port` key."""
+    parsed_host, parsed_port = parse_host_port(host, default_port=port)
+    return f"{format_host_attr_for_url(parsed_host)}:{int(parsed_port)}"
 
 
 def parse_tls_fingerprints(raw: str | dict[str, str] | None, *, default_port: int = 443) -> dict[str, str]:
@@ -123,15 +137,15 @@ class KnownHostEntry(BaseModel):
 
 
 class TrustStore:
-    """Manages persistent `tls_known_hosts.json` storage with atomic `0600` file writes."""
+    """Manages persistent `tls_known_hosts.json` storage with atomic `0600` file writes and flock locking."""
 
     def __init__(
         self,
-        path: str | Path = "tls_known_hosts.json",
+        path: str | Path = DEFAULT_TLS_KNOWN_HOSTS_PATH,
         *,
         in_memory: bool = False,
     ) -> None:
-        self._path = Path(path)
+        self._path = Path(path).expanduser()
         self._in_memory = in_memory
         self._entries: dict[str, KnownHostEntry] = {}
         self._loaded = False
@@ -152,21 +166,37 @@ class TrustStore:
         self.load()
         return dict(self._entries)
 
-    def load(self) -> dict[str, KnownHostEntry]:
-        """Load entries from disk if not already loaded (or no-op in memory mode)."""
-        if self._loaded or self._in_memory:
-            self._loaded = True
-            return self._entries
+    def _validate_file_security(self) -> None:
+        """Verify ownership and absence of group/world write permissions on `self._path`."""
+        try:
+            st = os.stat(self._path, follow_symlinks=False)
+        except OSError as exc:
+            raise TrustStoreError(
+                f"Failed to stat TLS trust store at {str(self._path)!r}: {exc}. No request was sent."
+            ) from exc
+        if hasattr(os, "geteuid"):
+            euid = os.geteuid()
+            if st.st_uid not in (euid, 0):
+                raise TrustStoreError(
+                    f"Unsafe ownership on TLS trust store {str(self._path)!r}: owned by uid {st.st_uid}, "
+                    f"expected {euid}. No request was sent."
+                )
+        mode = stat.S_IMODE(st.st_mode)
+        if mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise TrustStoreError(
+                f"Unsafe permissions {oct(mode)} on TLS trust store {str(self._path)!r}: "
+                "group or world write permissions are forbidden (expected 0600). No request was sent."
+            )
 
+    def _read_entries_from_disk(self) -> dict[str, KnownHostEntry]:
+        """Read and validate entries from `self._path` if present on disk."""
         if not self._path.exists():
-            self._loaded = True
-            return self._entries
-
+            return {}
+        self._validate_file_security()
         try:
             raw_text = self._path.read_text(encoding="utf-8")
             if not raw_text.strip():
-                self._loaded = True
-                return self._entries
+                return {}
             data = json.loads(raw_text)
         except (OSError, json.JSONDecodeError) as exc:
             raise TrustStoreError(
@@ -200,8 +230,15 @@ class TrustStore:
                 raise TrustStoreError(
                     f"Corrupted fingerprint for {key!r} in {str(self._path)!r}: {exc}. No request was sent."
                 ) from exc
+        return parsed_entries
 
-        self._entries = parsed_entries
+    def load(self) -> dict[str, KnownHostEntry]:
+        """Load entries from disk if not already loaded (or no-op in memory mode)."""
+        if self._loaded or self._in_memory:
+            self._loaded = True
+            return self._entries
+
+        self._entries = self._read_entries_from_disk()
         self._loaded = True
         return self._entries
 
@@ -209,13 +246,25 @@ class TrustStore:
         """Return the `KnownHostEntry` for `(host, port)`, if present."""
         self.load()
         key = format_host_port(host, port)
-        return self._entries.get(key)
+        entry = self._entries.get(key)
+        if entry is None and not self._in_memory and self._path.exists():
+            # Re-read disk in case a sibling process learned the entry after initial load
+            disk_entries = self._read_entries_from_disk()
+            self._entries.update(disk_entries)
+            entry = self._entries.get(key)
+        return entry
 
     def has_fingerprint_anywhere(self, fingerprint: str) -> bool:
         """Return `True` if `fingerprint` is already trusted for any address in the store."""
         self.load()
         normalized = normalize_fingerprint(fingerprint)
-        return any(entry.fingerprint == normalized for entry in self._entries.values())
+        if any(entry.fingerprint == normalized for entry in self._entries.values()):
+            return True
+        if not self._in_memory and self._path.exists():
+            disk_entries = self._read_entries_from_disk()
+            self._entries.update(disk_entries)
+            return any(entry.fingerprint == normalized for entry in self._entries.values())
+        return False
 
     def record(
         self,
@@ -240,39 +289,66 @@ class TrustStore:
         )
         self._entries[key] = entry
         if persist and not self._in_memory:
-            self._save_atomic()
+            self._save_atomic(key, entry)
         return entry
 
-    def _save_atomic(self) -> None:
-        """Atomically write `self._entries` to `self._path` with file mode `0600`."""
+    def _save_atomic(self, updated_key: str | None = None, updated_entry: KnownHostEntry | None = None) -> None:
+        """Atomically merge and write `self._entries` to `self._path` with `fcntl.flock` and mode `0600`."""
         parent = self._path.parent
+        lock_path = parent / f".{self._path.name}.lock"
         try:
             parent.mkdir(parents=True, exist_ok=True)
-            payload = {
-                "version": 1,
-                "hosts": {k: v.model_dump() for k, v in sorted(self._entries.items())},
-            }
-            serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-
-            fd, tmp_path_str = tempfile.mkstemp(
-                prefix=f".{self._path.name}.",
-                suffix=".tmp",
-                dir=str(parent),
-            )
-            tmp_path = Path(tmp_path_str)
+            lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
             try:
-                os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)
-                with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    handle.write(serialized)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.chmod(tmp_path, 0o600)
-                os.replace(tmp_path, self._path)
-                os.chmod(self._path, 0o600)
-            except Exception:
-                if tmp_path.exists():
-                    tmp_path.unlink(missing_ok=True)
-                raise
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                disk_entries = self._read_entries_from_disk()
+                merged = dict(disk_entries)
+                for k, v in self._entries.items():
+                    if k not in merged:
+                        merged[k] = v
+                if updated_key is not None and updated_entry is not None:
+                    existing_on_disk = disk_entries.get(updated_key)
+                    if existing_on_disk is not None and existing_on_disk.fingerprint != updated_entry.fingerprint:
+                        raise CertificateMismatchError(
+                            f"TLS certificate fingerprint mismatch for {updated_key} during concurrent TOFU merge: "
+                            f"expected {existing_on_disk.fingerprint}, got {updated_entry.fingerprint}. "
+                            "No request was sent."
+                        )
+                    merged[updated_key] = updated_entry
+                self._entries = merged
+
+                payload = {
+                    "version": 1,
+                    "hosts": {k: v.model_dump() for k, v in sorted(self._entries.items())},
+                }
+                serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+                fd, tmp_path_str = tempfile.mkstemp(
+                    prefix=f".{self._path.name}.",
+                    suffix=".tmp",
+                    dir=str(parent),
+                )
+                tmp_path = Path(tmp_path_str)
+                try:
+                    os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)
+                    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                        handle.write(serialized)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.chmod(tmp_path, 0o600)
+                    os.replace(tmp_path, self._path)
+                    os.chmod(self._path, 0o600)
+                except Exception:
+                    if tmp_path.exists():
+                        tmp_path.unlink(missing_ok=True)
+                    raise
+            finally:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+        except ServerIdentityError:
+            raise
         except OSError as exc:
             raise TrustStoreError(
                 f"Failed to persist TLS trust store at {str(self._path)!r}: {exc}. No request was sent."
@@ -287,7 +363,7 @@ class TrustPolicy:
         mode: TlsTrustMode = "tofu",
         *,
         trust_store: TrustStore | None = None,
-        known_hosts_path: str | Path = "tls_known_hosts.json",
+        known_hosts_path: str | Path = DEFAULT_TLS_KNOWN_HOSTS_PATH,
         pinned_fingerprints: str | dict[str, str] | None = None,
         lab_env: str | None = None,
     ) -> None:
@@ -295,7 +371,7 @@ class TrustPolicy:
             raise ConfigurationError(f"Unsupported tls_trust mode: {mode!r}.")
 
         resolved_lab = lab_env if lab_env is not None else os.environ.get("ARODONATA_LAB", "").strip()
-        if mode == "lab-memory" and resolved_lab.lower() not in ("1", "true", "yes", "on"):
+        if mode == "lab-memory" and (not resolved_lab or resolved_lab.lower() in ("0", "false", "no", "off")):
             raise ConfigurationError(
                 "tls_trust='lab-memory' requires ARODONATA_LAB=1 to be explicitly set in the environment."
             )
@@ -400,6 +476,7 @@ __all__ = [
     "TrustPolicy",
     "TrustStore",
     "compute_der_fingerprint",
+    "format_host_attr_for_url",
     "format_host_port",
     "normalize_fingerprint",
     "parse_tls_fingerprints",

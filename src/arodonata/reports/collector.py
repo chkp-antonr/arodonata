@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from arodonata.core.errors import ChangeReportInputError, ServerIdentityError, redact_sid, sanitize_mapping
-from arodonata.core.models.common import utc_now
+from arodonata.core.models.common import to_naive_utc, utc_now
 from arodonata.core.models.rulebase import RulebaseType
 from arodonata.core.ports import ApiPort, CachePort
 from arodonata.core.services.sync_coordinator import parse_cp_publish_timestamp
@@ -226,7 +226,11 @@ def _collect_known_names_from_operations(ops_list: list[dict[str, Any]], known_n
                             known_names[s_uid] = s_name
 
 
-def _parse_change_containers(data: dict[str, Any]) -> list[dict[str, Any]]:
+def _parse_change_containers(
+    data: dict[str, Any],
+    *,
+    session_uid: str | None = None,
+) -> list[dict[str, Any]]:
     """Extract normalized operation containers from a `show-changes` response payload."""
     containers: list[dict[str, Any]] = []
     if isinstance(data.get("tasks"), list):
@@ -259,6 +263,12 @@ def _parse_change_containers(data: dict[str, Any]) -> list[dict[str, Any]]:
 
     ops_list: list[dict[str, Any]] = []
     for c in containers:
+        if session_uid:
+            sess_dict = c.get("session")
+            if isinstance(sess_dict, dict):
+                c_uid = str(sess_dict.get("session-uid") or sess_dict.get("uid") or "")
+                if c_uid and c_uid != session_uid:
+                    continue
         ops = c.get("operations")
         if isinstance(ops, dict):
             ops_list.append(ops)
@@ -294,7 +304,7 @@ def _parse_rule_and_object_changes(
     ]
 
     for ops in ops_list:
-        for bucket_key, op, force_rule in bucket_specs:
+        for bucket_key, bucket_op, force_rule in bucket_specs:
             items = ops.get(bucket_key)
             if not isinstance(items, list):
                 continue
@@ -306,6 +316,13 @@ def _parse_rule_and_object_changes(
                 old_core = raw.get("old-object") if isinstance(raw.get("old-object"), dict) else {}
                 assert isinstance(core, dict)
                 assert isinstance(old_core, dict)
+                # When an entry in `modified-objects` has `new-object` without `old-object`,
+                # Check Point is reporting an object/rule created in that session.
+                op: ChangeOperation = (
+                    "added"
+                    if (bucket_op == "modified" and isinstance(raw.get("new-object"), dict) and not old_core)
+                    else bucket_op
+                )
 
                 uid = str(core.get("uid") or raw.get("uid") or old_core.get("uid") or "")
                 name = str(core.get("name") or raw.get("name") or old_core.get("name") or "")
@@ -689,7 +706,6 @@ async def collect_change_report(
 
         # 2. Fetch show-changes for this session
         changes_payload: dict[str, Any] = {
-            "from-session": s_uid,
             "to-session": s_uid,
             "details-level": "full",
         }
@@ -715,7 +731,7 @@ async def collect_change_report(
                         response=sanitize_mapping(ch_res.data, known_sids=known_sids),
                     )
                 )
-                ops_list = _parse_change_containers(ch_res.data)
+                ops_list = _parse_change_containers(ch_res.data, session_uid=s_uid)
             else:
                 err_txt = redact_sid(
                     ch_res.error_message or ch_res.error_code or "show-changes failed",
@@ -904,8 +920,8 @@ def _filter_range_sessions(
 
     # Check if we need session UID range slicing
     uid_to_dt: dict[str, datetime] = {str(s.get("uid")): dt for dt, _, s in with_ts if dt is not None and s.get("uid")}
-    from_bound_dt = scope.from_date
-    to_bound_dt = scope.to_date
+    from_bound_dt = to_naive_utc(scope.from_date)
+    to_bound_dt = to_naive_utc(scope.to_date)
 
     if scope.from_session and scope.from_session in uid_to_dt:
         s_dt = uid_to_dt[scope.from_session]

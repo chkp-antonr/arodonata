@@ -20,7 +20,7 @@ from typing import Any
 
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.events import DomainSyncProgressEvent, SyncProgressEvent
-from arodonata.core.models.common import CacheMode, utc_now
+from arodonata.core.models.common import CacheMode, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainSyncState, RefreshOutcome
 from arodonata.core.models.rulebase import (
     AccessRuleEntry,
@@ -466,7 +466,7 @@ class RulebaseRefreshService:
         self._api = api
         self._cache = cache
         self._coordinator = coordinator
-        self._now = now_fn
+        self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
 
     async def _sync_domain_rulebase(
         self,
@@ -482,7 +482,6 @@ class RulebaseRefreshService:
             dom_name,
             emit=emit,
         )
-        await self._cache.replace_domain_rulebase(snapshot)
 
         total_rules = (
             len(snapshot.access_rules)
@@ -491,20 +490,19 @@ class RulebaseRefreshService:
             + len(snapshot.threat_rules)
         )
         now = self._now()
-        await self._cache.upsert_sync_state(
-            DomainSyncState(
-                mgmt_name=mgmt_name,
-                domain_name=dom_name,
-                scope="rulebase",
-                item_type="*",
-                last_published_at=probe.remote_published_at or now,
-                last_session_uid=probe.remote_session_uid,
-                synced_at=now,
-                status="ok",
-                object_count=total_rules,
-                last_error=None,
-            )
+        sync_state = DomainSyncState(
+            mgmt_name=mgmt_name,
+            domain_name=dom_name,
+            scope="rulebase",
+            item_type="*",
+            last_published_at=probe.remote_published_at,
+            last_session_uid=probe.remote_session_uid,
+            synced_at=now,
+            status="ok",
+            object_count=total_rules,
+            last_error=None,
         )
+        await self._cache.replace_domain_rulebase(snapshot, sync_state=sync_state)
         return total_rules
 
     async def stream_refresh_rulebases(

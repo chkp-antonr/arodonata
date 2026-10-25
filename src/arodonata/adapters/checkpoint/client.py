@@ -49,7 +49,9 @@ from arodonata.core.errors import (
     ApiTimeoutError,
     ServerIdentityError,
     SessionError,
+    SessionStateError,
     TransportError,
+    is_sensitive_key,
 )
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult, utc_now
 from arodonata.core.models.objects import CPObject
@@ -96,6 +98,21 @@ NON_OVERLAY_MUTATION_TARGETS: frozenset[str] = frozenset(
 )
 
 
+READONLY_EXACT_COMMANDS: frozenset[str] = frozenset(
+    {
+        "where-used",
+        "verify-policy",
+        "keepalive",
+    }
+)
+
+
+def is_readonly_command(command: str) -> bool:
+    """Return `True` if `command` is a read-only Check Point Web API command (`C8`)."""
+    clean = command.strip().lower().lstrip("/")
+    return clean.startswith("show-") or clean in READONLY_EXACT_COMMANDS
+
+
 def _update_overlay_from_command(
     overlay: SessionOverlay,
     command: str,
@@ -118,8 +135,10 @@ def _update_overlay_from_command(
     resp_data = result.data if isinstance(result.data, dict) else {}
 
     if verb in ("add", "set"):
-        merged_raw = dict(req_data)
-        merged_raw.update(resp_data)
+        merged_raw = {k: v for k, v in req_data.items() if not is_sensitive_key(k)}
+        for k, v in resp_data.items():
+            if not is_sensitive_key(k):
+                merged_raw[k] = v
         if "type" not in merged_raw or not merged_raw.get("type"):
             merged_raw["type"] = target_type
         uid = str(merged_raw.get("uid") or "")
@@ -180,8 +199,9 @@ class AMgmtClient:
             self._db = db_manager
             self._owns_engine = db_manager.owns_engine
         else:
+            eff_engine = engine if engine is not None else self._settings.database_url
             self._db = DatabaseManager(
-                engine=engine,
+                engine=eff_engine,
                 busy_timeout_ms=self._settings.sqlite_busy_timeout_ms,
             )
             self._owns_engine = self._db.owns_engine
@@ -205,14 +225,21 @@ class AMgmtClient:
             monotonic_fn=monotonic_fn,
             sleep_fn=sleep_fn,
         )
+        default_lock_ttl = max(180.0, float(max(self._settings.api_timeout, self._settings.login_timeout)) + 60.0)
         self._rate_limiter = rate_limiter or RateLimiter(
             concurrent_limit=self._settings.concurrent_limit,
             slot_timeout=self._settings.rate_limit_slot_timeout,
             lock_port=self._lock_port,
+            slot_lock_ttl=default_lock_ttl,
             monotonic_fn=monotonic_fn,
             sleep_fn=sleep_fn,
         )
-        self._login_gate = login_gate or LoginGate(lock_port=self._lock_port)
+        self._login_gate = login_gate or LoginGate(
+            lock_port=self._lock_port,
+            gate_lock_ttl=default_lock_ttl,
+            monotonic_fn=monotonic_fn,
+            sleep_fn=sleep_fn,
+        )
         self._login_coordinator = LoginCoordinator(
             settings=self._settings,
             transport=self._transport,
@@ -358,6 +385,7 @@ class AMgmtClient:
 
         active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key if domain is not None else None)
         using_cached_sid = False
+        is_readonly = is_readonly_command(clean_cmd)
 
         if sid is not None:
             active_sid = sid
@@ -375,6 +403,11 @@ class AMgmtClient:
                 explicit_server_ip=target_ip,
             )
         else:
+            if not is_readonly:
+                raise SessionStateError(
+                    f"Mutating command {clean_cmd!r} is forbidden on shared read-only sid_cache. "
+                    "Use an isolated client.write_session(...) or pass an explicit dedicated sid."
+                )
             using_cached_sid = True
             active_sid, target_ip = await self._login_coordinator.get_readonly_session(
                 mgmt_name,
@@ -405,10 +438,13 @@ class AMgmtClient:
         except ServerIdentityError:
             raise
         except (ApiTimeoutError, TransportError) as exc:
-            # If a domain's cached active_ip became unreachable on connect, attempt failover resolution once
+            # If a domain's cached active_ip became unreachable on connect for a read-only command,
+            # attempt failover resolution once (never retry post-send or mutating commands - C8)
             can_retry_failover = (
-                isinstance(exc, TransportError)
-                and (not isinstance(exc, ApiTimeoutError) or exc.phase == "connect")
+                is_readonly
+                and isinstance(exc, TransportError)
+                and not exc.request_sent
+                and exc.phase == "connect"
                 and server_ip is None
                 and dom_key != SYSTEM_DOMAIN_SENTINEL
             )
@@ -442,9 +478,10 @@ class AMgmtClient:
             )
             res = await _execute_once(active_sid, target_ip, mds_ip)
 
-        # Handle domain failover error code returned in HTTP response
+        # Handle domain failover error code returned in HTTP response (read-only commands only - C8)
         if (
-            not res.success
+            is_readonly
+            and not res.success
             and server_ip is None
             and dom_key != SYSTEM_DOMAIN_SENTINEL
             and is_failover_or_unreachable_result(res)
@@ -618,14 +655,16 @@ class AMgmtClient:
                     yield ws
                 except BaseException:
                     if not ws.discarded and not ws.published:
-                        with suppress(Exception):
-                            await self.api_call(
-                                mgmt_name,
-                                "discard",
-                                {},
-                                domain=domain,
-                                sid=ws.sid,
-                                server_ip=ws.server_ip,
+                        with suppress(BaseException):
+                            await asyncio.shield(
+                                self.api_call(
+                                    mgmt_name,
+                                    "discard",
+                                    {},
+                                    domain=domain,
+                                    sid=ws.sid,
+                                    server_ip=ws.server_ip,
+                                )
                             )
                         ws.discarded = True
                         ws.overlay.clear()
@@ -642,6 +681,18 @@ class AMgmtClient:
                         wait_for_task=True,
                     )
                     if not pub_res.success:
+                        with suppress(BaseException):
+                            await asyncio.shield(
+                                self.api_call(
+                                    mgmt_name,
+                                    "discard",
+                                    {},
+                                    domain=domain,
+                                    sid=ws.sid,
+                                    server_ip=ws.server_ip,
+                                )
+                            )
+                        ws.discarded = True
                         ws.overlay.clear()
                         raise SessionError(
                             f"Failed to publish WriteSession on {mgmt_name!r} ({dom_key!r}): "
@@ -652,7 +703,8 @@ class AMgmtClient:
                     self.invalidate_domain(mgmt_name, domain)
         finally:
             ws.overlay.clear()
-            await self.logout_sid(mgmt_name, ws.sid, server_ip=ws.server_ip)
+            with suppress(BaseException):
+                await asyncio.shield(self.logout_sid(mgmt_name, ws.sid, server_ip=ws.server_ip))
 
     def logout_sid(
         self,
@@ -668,7 +720,8 @@ class AMgmtClient:
     async def close(self, *, logout: bool | None = None) -> None:
         """Close transport connections, drain startup cleanup tasks, and dispose owned engine."""
         await self._session_cleaner.drain_startup_tasks()
-        should_logout = self._owns_engine if logout is None else bool(logout)
+        is_ephemeral_db = self._owns_engine and ":memory:" in (self._settings.database_url or "")
+        should_logout = is_ephemeral_db if logout is None else bool(logout)
         if self._db.is_initialized:
             await self._login_coordinator.logout_all(include_cached_readonly=should_logout)
         await self._transport.close()

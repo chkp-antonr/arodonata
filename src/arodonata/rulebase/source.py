@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Literal
 
 from arodonata.core.errors import AmbiguousLayerName, DomainNotFoundError
-from arodonata.core.models.common import CacheMode, SyncStatus, utc_now
+from arodonata.core.models.common import CacheMode, SyncStatus, to_naive_utc, utc_now
 from arodonata.core.models.rulebase import DomainRulebaseSnapshot, RulebaseType
 from arodonata.core.ports import CachePort
 from arodonata.core.services.object_service import ObjectService
@@ -58,7 +58,7 @@ class CachedRulebaseSource:
         self._refresh_service = refresh_service
         self._object_service = object_service
         self._service_cache = service_cache
-        self._now = now_fn
+        self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
 
     async def _list_candidate_domains(self, mgmt_name: str) -> list[str]:
         """List all known domain names on `mgmt_name` from `domains` and `domain_sync_state`."""

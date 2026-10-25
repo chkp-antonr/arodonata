@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import ssl
 import time
+import weakref
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -23,19 +25,42 @@ from aiohttp.client_reqrep import ClientRequest, ConnectionKey
 from aiohttp.connector import Connection
 from aiohttp.tracing import Trace
 
-from arodonata.adapters.checkpoint.tls import TrustPolicy
+from arodonata.adapters.checkpoint.tls import TrustPolicy, format_host_attr_for_url
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.errors import (
     ApiTimeoutError,
+    ConfigurationError,
     ServerIdentityError,
     TransportError,
     TrustStoreError,
+    ValidationError,
     redact_sid,
 )
 from arodonata.core.models.common import ApiCallResult
 from arodonata.core.telemetry import span_attrs, traced
 
 KEEPALIVE_IDLE_LIMIT_SECONDS: float = 10.0
+_COMMAND_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def validate_command_name(command: str) -> str:
+    """Validate and normalize a Check Point Web API command name against `^[a-z0-9]+(-[a-z0-9]+)*$`."""
+    if not isinstance(command, str):
+        raise ValidationError(f"Invalid Check Point API command type: {type(command).__name__}")
+    if command != command.strip():
+        raise ValidationError(
+            f"Invalid Check Point Web API command {command!r}: leading or trailing whitespace is forbidden."
+        )
+    raw = command
+    if raw.startswith("/web_api/"):
+        raw = raw.removeprefix("/web_api/")
+    elif raw.startswith("web_api/"):
+        raw = raw.removeprefix("web_api/")
+    if not raw or not _COMMAND_NAME_RE.fullmatch(raw):
+        raise ValidationError(
+            f"Invalid Check Point Web API command {command!r}: must match '^[a-z0-9]+(-[a-z0-9]+)*$'."
+        )
+    return raw
 
 
 def is_readonly_poolable_command(command: str) -> bool:
@@ -276,7 +301,21 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
         super().__init__(ssl=ssl_context, keepalive_timeout=connection_pool.max_idle_seconds, **kwargs)
         self._trust_policy = trust_policy
         self._connection_pool = connection_pool
-        self._proto_fingerprints: dict[int, str] = {}
+        self._proto_fingerprints: weakref.WeakKeyDictionary[ResponseHandler, str] = weakref.WeakKeyDictionary()
+        self._proto_commands: weakref.WeakKeyDictionary[ResponseHandler, str] = weakref.WeakKeyDictionary()
+
+    async def _create_proxy_connection(
+        self,
+        _req: ClientRequest,
+        _traces: list[Trace],
+        _timeout: aiohttp.ClientTimeout,
+    ) -> tuple[asyncio.Transport, ResponseHandler]:
+        """Reject HTTP proxy connections explicitly so TLS fingerprint pinning can never be bypassed."""
+        raise TransportError(
+            "HTTP proxy connections are forbidden with pre-request TLS fingerprint verification. No request was sent.",
+            phase="connect",
+            request_sent=False,
+        )
 
     async def _create_direct_connection(
         self,
@@ -300,7 +339,7 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
             port=port,
             trust_policy=self._trust_policy,
         )
-        self._proto_fingerprints[id(proto)] = fp
+        self._proto_fingerprints[proto] = fp
         return transp, proto
 
     async def connect(
@@ -314,9 +353,11 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
         port = req.port or 443
         key: ConnectionKey = req.connection_key
 
+        self._connection_pool.evict_expired()
         pooled = self._connection_pool.acquire_for_command(host, port, command)
         if pooled is not None and isinstance(pooled.protocol, ResponseHandler):
             proto = pooled.protocol
+            self._proto_commands[proto] = command
             self._acquired.add(proto)
             if self._limit_per_host:
                 self._acquired_per_host[key].add(proto)
@@ -330,7 +371,10 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
                 old_proto.close()
             del self._conns[key]
 
-        return await super().connect(req, traces, timeout)
+        conn = await super().connect(req, traces, timeout)
+        if conn.protocol is not None:
+            self._proto_commands[conn.protocol] = command
+        return conn
 
     def _release(
         self,
@@ -342,7 +386,8 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
         if self._closed:
             return
         self._release_acquired(key, protocol)
-        fp = self._proto_fingerprints.get(id(protocol), "")
+        fp = self._proto_fingerprints.get(protocol, "")
+        command = self._proto_commands.pop(protocol, "")
         entry = PooledSocketEntry(
             host=key.host,
             port=key.port or 443,
@@ -350,12 +395,11 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
             protocol=protocol,
             last_used_at=self._connection_pool._monotonic(),
         )
-        if should_close or self._force_close or protocol.should_close:
+        if should_close or self._force_close or protocol.should_close or not is_readonly_poolable_command(command):
             entry.close()
-            self._proto_fingerprints.pop(id(protocol), None)
+            self._proto_fingerprints.pop(protocol, None)
             return
-        # Connection eligibility is finalized by `release_after_command` in `ApiTransport`
-        self._connection_pool._pool[(key.host, int(key.port or 443))].append(entry)
+        self._connection_pool.release_after_command(entry, command, should_close=False)
 
 
 @dataclass
@@ -466,6 +510,11 @@ class ApiTransport:
         )
         self._peer_cert_getter = peer_cert_getter
         self._request_sender = request_sender
+        if self._request_sender is not None and self._peer_cert_getter is None:
+            raise ConfigurationError(
+                "ApiTransport requires 'peer_cert_getter' whenever a custom 'request_sender' is provided "
+                "so pre-request TLS certificate verification is never bypassed."
+            )
         self._connector: FingerprintTCPConnector | None = None
         self._session: aiohttp.ClientSession | None = None
 
@@ -490,7 +539,7 @@ class ApiTransport:
                 trust_policy=self._trust_policy,
                 connection_pool=self._pool,
             )
-            self._session = aiohttp.ClientSession(connector=self._connector)
+            self._session = aiohttp.ClientSession(connector=self._connector, trust_env=False)
         return self._session
 
     @traced
@@ -505,9 +554,7 @@ class ApiTransport:
         timeout: float | None = None,
     ) -> ApiCallResult:
         """Execute `POST https://<host>:<port>/web_api/<command>` with pre-request TLS verification."""
-        clean_cmd = command.strip().lstrip("/")
-        if clean_cmd.startswith("web_api/"):
-            clean_cmd = clean_cmd.removeprefix("web_api/")
+        clean_cmd = validate_command_name(command)
 
         connect_timeout = float(self._settings.connect_timeout)
         read_timeout = self._settings.resolve_read_timeout(timeout)
@@ -519,7 +566,8 @@ class ApiTransport:
             read_timeout=read_timeout,
         )
 
-        url = f"https://{host}:{port}/web_api/{clean_cmd}"
+        url_host = format_host_attr_for_url(host)
+        url = f"https://{url_host}:{port}/web_api/{clean_cmd}"
         headers: dict[str, str] = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -578,7 +626,9 @@ class ApiTransport:
         # Step 1: If no pooled connection was reused, perform pre-request TLS verification
         # BEFORE any request headers or bytes can be sent.
         verified_fp = pooled_entry.fingerprint if pooled_entry is not None else ""
-        if pooled_entry is None and self._peer_cert_getter is not None:
+        if pooled_entry is None:
+            if self._peer_cert_getter is None:
+                raise ConfigurationError("ApiTransport requires 'peer_cert_getter' whenever 'request_sender' is used.")
             try:
                 maybe_coro = self._peer_cert_getter(host, port)
                 der_cert = await asyncio.wait_for(
@@ -589,9 +639,17 @@ class ApiTransport:
                 raise ApiTimeoutError(
                     f"TCP/TLS connection to {host}:{port} timed out after {connect_timeout}s during 'connect' phase.",
                     phase="connect",
+                    request_sent=False,
                     host=host,
                     port=port,
                     command=command,
+                    known_sids=known_sids,
+                ) from exc
+            except OSError as exc:
+                raise TransportError(
+                    f"Failed to connect to {host}:{port} for {command!r}: {redact_sid(str(exc), known_sids)}",
+                    phase="connect",
+                    request_sent=False,
                     known_sids=known_sids,
                 ) from exc
             verified_fp = self._trust_policy.verify_der(host, port, der_cert)
@@ -617,12 +675,18 @@ class ApiTransport:
             if pooled_entry is not None:
                 pooled_entry.close()
             raise
+        except TransportError:
+            if pooled_entry is not None:
+                pooled_entry.close()
+            raise
         except (ConnectionResetError, BrokenPipeError) as exc:
             if pooled_entry is not None:
                 pooled_entry.close()
             raise TransportError(
                 f"Connection to {host}:{port} failed during {command!r} ({type(exc).__name__}: {exc}). "
                 "Request was NOT re-sent.",
+                phase="post-send",
+                request_sent=True,
                 known_sids=known_sids,
             ) from exc
         except TimeoutError as exc:
@@ -632,6 +696,7 @@ class ApiTransport:
                 f"Socket read timed out after {read_timeout}s waiting for {command!r} from {host}:{port}. "
                 "Warning: the command may still have run on the server; request was NOT re-sent.",
                 phase="read",
+                request_sent=True,
                 host=host,
                 port=port,
                 command=command,
@@ -642,8 +707,23 @@ class ApiTransport:
                 pooled_entry.close()
             raise TransportError(
                 f"Transport error communicating with {host}:{port} on {command!r}: {exc}",
+                phase="post-send",
+                request_sent=True,
                 known_sids=known_sids,
             ) from exc
+
+        if 300 <= raw_resp.status < 400:
+            if pooled_entry is not None:
+                pooled_entry.close()
+            if new_entry is not None:
+                new_entry.close()
+            raise TransportError(
+                f"Unexpected HTTP redirect (status {raw_resp.status}) from {host}:{port} on {command!r}. "
+                "Redirects are forbidden.",
+                phase="post-send",
+                request_sent=True,
+                known_sids=known_sids,
+            )
 
         active_entry = new_entry or pooled_entry
         if active_entry is None:
@@ -685,28 +765,30 @@ class ApiTransport:
                 data=body_bytes,
                 headers=headers,
                 timeout=client_timeout,
+                allow_redirects=False,
             ) as response:
                 raw_body = await response.read()
                 status_code = response.status
                 conn_header = response.headers.get("Connection", "")
         except ServerIdentityError:
             raise
-        except (aiohttp.ServerTimeoutError, TimeoutError) as exc:
-            # Distinguish connect timeout vs socket read timeout
-            if isinstance(exc, aiohttp.ConnectionTimeoutError) or "connect" in str(exc).lower():
-                raise ApiTimeoutError(
-                    f"TCP/TLS connection to {host}:{port} timed out after {connect_timeout}s during 'connect' phase.",
-                    phase="connect",
-                    host=host,
-                    port=port,
-                    command=command,
-                    known_sids=known_sids,
-                ) from exc
+        except aiohttp.ConnectionTimeoutError as exc:
+            raise ApiTimeoutError(
+                f"TCP/TLS connection to {host}:{port} timed out after {connect_timeout}s during 'connect' phase.",
+                phase="connect",
+                request_sent=False,
+                host=host,
+                port=port,
+                command=command,
+                known_sids=known_sids,
+            ) from exc
+        except (aiohttp.SocketTimeoutError, aiohttp.ServerTimeoutError, TimeoutError) as exc:
             self._pool.close_host(host, port)
             raise ApiTimeoutError(
                 f"Socket read timed out after {read_timeout}s waiting for {command!r} from {host}:{port}. "
                 "Warning: the command may still have run on the server; request was NOT re-sent.",
                 phase="read",
+                request_sent=True,
                 host=host,
                 port=port,
                 command=command,
@@ -720,6 +802,7 @@ class ApiTransport:
                 raise ApiTimeoutError(
                     f"TCP/TLS connection to {host}:{port} timed out after {connect_timeout}s during 'connect' phase.",
                     phase="connect",
+                    request_sent=False,
                     host=host,
                     port=port,
                     command=command,
@@ -727,6 +810,8 @@ class ApiTransport:
                 ) from exc
             raise TransportError(
                 f"Failed to connect to {host}:{port} for {command!r}: {redact_sid(str(exc), known_sids)}",
+                phase="connect",
+                request_sent=False,
                 known_sids=known_sids,
             ) from exc
         except (ConnectionResetError, BrokenPipeError, aiohttp.ClientOSError, aiohttp.ServerDisconnectedError) as exc:
@@ -734,14 +819,28 @@ class ApiTransport:
             raise TransportError(
                 f"Connection reset or closed by peer {host}:{port} during {command!r}: "
                 f"{redact_sid(str(exc), known_sids)}. Request was NOT re-sent.",
+                phase="post-send",
+                request_sent=True,
                 known_sids=known_sids,
             ) from exc
         except aiohttp.ClientError as exc:
             self._pool.close_host(host, port)
             raise TransportError(
                 f"HTTP transport error on {host}:{port} during {command!r}: {redact_sid(str(exc), known_sids)}",
+                phase="post-send",
+                request_sent=True,
                 known_sids=known_sids,
             ) from exc
+
+        if 300 <= status_code < 400:
+            self._pool.close_host(host, port)
+            raise TransportError(
+                f"Unexpected HTTP redirect (status {status_code}) from {host}:{port} on {command!r}. "
+                "Redirects are forbidden.",
+                phase="post-send",
+                request_sent=True,
+                known_sids=known_sids,
+            )
 
         if not is_readonly_poolable_command(command) or conn_header.lower() == "close":
             self._pool.close_host(host, port)
@@ -767,5 +866,6 @@ __all__ = [
     "VerifiedConnectionPool",
     "extract_peer_der_cert",
     "is_readonly_poolable_command",
+    "validate_command_name",
     "verify_transport_peer_certificate",
 ]

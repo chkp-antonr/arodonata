@@ -21,6 +21,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+otel = [
+    "arlogi[otel]>=0.1.0",
+]
 postgres = [
     "asyncpg>=0.30.0",
 ]
@@ -30,6 +33,7 @@ mcp = [
     "uvicorn>=0.34.0",
 ]
 all = [
+    "arlogi[otel]>=0.1.0",
     "asyncpg>=0.30.0",
     "mcp>=1.2.0",
     "starlette>=0.41.0",
@@ -41,13 +45,20 @@ arodonata-mcp = "arodonata.mcp.cli:main"
 
 [dependency-groups]
 dev = [
+    "arlogi[otel]>=0.1.0",
+    "asyncpg>=0.30.0",
+    "fastapi>=0.115.0",
+    "mcp>=1.2.0",
     "mypy>=1.14.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.25.0",
     "pytest-cov>=6.0.0",
+    "python-dotenv>=1.0.0",
     "ruff>=0.9.0",
+    "starlette>=0.41.0",
     "types-jsonschema>=4.23.0",
     "types-pyyaml>=6.0.12",
+    "uvicorn>=0.34.0",
 ]
 
 [build-system]
@@ -61,7 +72,18 @@ packages = ["src/arodonata"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "-ra -q"
+markers = [
+    "integration: live Check Point MDSM integration test (deselected by default)",
+    "bucket_1: Bucket 1 - auth, sessions, read/search, rate limiting",
+    "bucket_2: Bucket 2 - cache build + CPCRUD engine",
+    "bucket_3: Bucket 3 - publish, revert, throttling",
+    "bucket_4: Bucket 4 - multi-domain + cache mode matrix",
+    "bucket_5: Bucket 5 - rulebase, large layer, change report",
+    "bucket_6: Bucket 6 - soak / stability",
+    "bucket_7: Bucket 7 - MCP server and tools",
+    "cp_mutates: test mutates live Check Point state (relies on session revert)",
+]
+addopts = ["-v", "-ra", "--strict-markers", "-m", "not integration"]
 
 [tool.mypy]
 python_version = "3.13"
@@ -78,6 +100,5 @@ mypy_path = "src"
 [[tool.mypy.overrides]]
 module = [
     "arlogi.*",
-    "asyncpg.*",
 ]
 ignore_missing_imports = true

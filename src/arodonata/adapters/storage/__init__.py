@@ -8,6 +8,7 @@ from arodonata.adapters.storage.database import (
 )
 from arodonata.adapters.storage.lock_adapter import DatabaseLockManager, SqlLockAdapter
 from arodonata.adapters.storage.tables import (
+    ARODONATA_TABLE_NAMES,
     AccessRuleRecord,
     AssetRecord,
     CPObjectRecord,
@@ -26,6 +27,7 @@ from arodonata.adapters.storage.tables import (
 )
 
 __all__ = [
+    "ARODONATA_TABLE_NAMES",
     "AccessRuleRecord",
     "AssetRecord",
     "CPObjectRecord",

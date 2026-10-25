@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from arodonata.core.errors import REDACTED_PLACEHOLDER
-from arodonata.core.models.common import SyncScope, SyncStatus, utc_now
+from arodonata.core.models.common import SyncScope, SyncStatus, to_naive_utc, utc_now
 
 
 class DomainInfo(BaseModel):
@@ -32,6 +32,7 @@ class DomainInfo(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
             self.id = f"{self.mgmt_name}:{self.name}"
+        self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
 
 class SIDCacheEntry(BaseModel):
@@ -45,6 +46,7 @@ class SIDCacheEntry(BaseModel):
     sid: str = Field(repr=False)
     server_ip: str
     session_uid: str | None = None
+    auth_identity: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     last_used_at: datetime = Field(default_factory=utc_now)
     expires_at: datetime | None = None
@@ -52,6 +54,9 @@ class SIDCacheEntry(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
             self.id = f"{self.mgmt_name}:{self.domain_name}"
+        self.created_at = to_naive_utc(self.created_at) or utc_now()
+        self.last_used_at = to_naive_utc(self.last_used_at) or utc_now()
+        self.expires_at = to_naive_utc(self.expires_at)
 
     def __repr__(self) -> str:
         return (
@@ -84,6 +89,8 @@ class DomainSyncState(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
             self.id = self.make_id(self.mgmt_name, self.domain_name, self.scope, self.item_type)
+        self.last_published_at = to_naive_utc(self.last_published_at)
+        self.synced_at = to_naive_utc(self.synced_at)
 
     @staticmethod
     def make_id(mgmt_name: str, domain_name: str, scope: str, item_type: str = "*") -> str:

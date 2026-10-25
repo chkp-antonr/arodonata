@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -12,6 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from arodonata.core.errors import REDACTED_PLACEHOLDER, MissingConfigurationError
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.services import CPService
+
+_AUTH_IDENTITY_HMAC_KEY = b"arodonata-v2-auth-identity-hmac-key"
 
 
 class AuthContext(BaseModel):
@@ -32,12 +36,13 @@ class AuthContext(BaseModel):
 
     @property
     def identity_key(self) -> str:
-        """Stable non-secret identifier for the authenticated principal."""
-        if self.user_id:
-            return self.user_id
-        if self.username:
-            return self.username
-        return "api_key_principal"
+        """Stable non-secret HMAC-SHA256 identifier bound to the resolved credentials (`C4`)."""
+        mode = "api_key" if self.api_key else "credential"
+        secret_material = self.api_key or f"{self.username or ''}:{self.password or ''}"
+        msg = f"{mode}|{self.user_id or ''}|{self.username or ''}|{secret_material}".encode()
+        digest = hmac.new(_AUTH_IDENTITY_HMAC_KEY, msg, hashlib.sha256).hexdigest()[:24]
+        principal = self.user_id or self.username or "api_key"
+        return f"{principal}:{digest}"
 
     def __repr__(self) -> str:
         pw = REDACTED_PLACEHOLDER if self.password else None

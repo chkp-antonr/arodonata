@@ -9,6 +9,7 @@ from arodonata.core.models.common import (
     CacheMode,
     SyncScope,
     SyncStatus,
+    to_naive_utc,
     utc_now,
 )
 from arodonata.core.models.domains import (
@@ -61,5 +62,6 @@ __all__ = [
     "SyncScope",
     "SyncStatus",
     "ThreatRuleEntry",
+    "to_naive_utc",
     "utc_now",
 ]

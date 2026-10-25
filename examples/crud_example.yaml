@@ -1,0 +1,65 @@
+# CPCRUD v2 example template: hosts, networks, TCP service, group, access rule, and NAT rule.
+#
+# Validated offline against `checkpoint_ops_schema.json` via `client.cpcrud.validate()`.
+# Adjust `mgmt_name`, `domain`, `layer`, and `package` to match your target environment.
+
+version: 1
+mgmt_name: "mdsH5b"
+domain: "Domain4"
+on_name_conflict: "update"
+on_ip_conflict: "reuse"
+
+objects:
+  - type: "host"
+    name: "cpcrud-example-host-1"
+    ipv4-address: "198.51.100.10"
+    comments: "CPCRUD example host"
+    color: "dark green"
+
+  - type: "network"
+    name: "cpcrud-example-net-1"
+    subnet4: "198.51.100.0"
+    mask-length4: 24
+    comments: "CPCRUD example network"
+    color: "blue"
+
+services:
+  - type: "service-tcp"
+    name: "cpcrud-example-tcp-8443"
+    port: "8443"
+    comments: "CPCRUD example custom HTTPS port"
+
+groups:
+  - type: "group"
+    name: "cpcrud-example-group"
+    members:
+      - "cpcrud-example-host-1"
+      - "cpcrud-example-net-1"
+    comments: "CPCRUD example group"
+
+rules:
+  - type: "access-rule"
+    layer: "FPCR_UAT_Active Network"
+    position: "bottom"
+    name: "cpcrud-example-access-rule"
+    source:
+      - "cpcrud-example-host-1"
+    destination:
+      - "Any"
+    service:
+      - "cpcrud-example-tcp-8443"
+    rule_action: "Drop"
+    comments: "CPCRUD example access rule"
+
+  - type: "nat-rule"
+    package: "FPCR_UAT_Active"
+    position: "top"
+    name: "cpcrud-example-nat-rule"
+    method: "hide"
+    original-source: "cpcrud-example-host-1"
+    original-destination: "Any"
+    original-service: "Any"
+    translated-source: "cpcrud-example-host-1"
+    translated-destination: "Original"
+    translated-service: "Original"
+    comments: "CPCRUD example NAT rule"

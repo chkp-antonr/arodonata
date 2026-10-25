@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+import arlogi
 from mcp.server.auth.provider import TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
@@ -16,6 +17,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from arodonata import __version__
 from arodonata.client import ArodonataClient
 from arodonata.core.config import ArodonataSettings
+from arodonata.core.errors import ConfigurationError
 from arodonata.mcp.config import ArodonataMCPSettings, MCPAuthMode
 from arodonata.mcp.prompts import register_mcp_prompts
 from arodonata.mcp.security import (
@@ -24,6 +26,8 @@ from arodonata.mcp.security import (
     StaticTokenVerifier,
 )
 from arodonata.mcp.tools import register_mcp_tools
+
+logger = arlogi.get_logger(__name__)
 
 
 def _resolve_mcp_settings(
@@ -127,6 +131,14 @@ def create_mcp_server(
     if eff_mcp.auth_mode in ("host", "none"):
         eff_verifier = None
         eff_auth_settings = None
+        if eff_mcp.auth_mode == "none" and (
+            eff_mcp.host.strip() in ("0.0.0.0", "::", "*") or "*" in eff_mcp.allowed_hosts
+        ):
+            logger.warning(
+                "SECURITY WARNING: MCP server created with auth_mode='none' and exposed host/allowed_hosts",
+                host=eff_mcp.host,
+                allowed_hosts=eff_mcp.allowed_hosts,
+            )
     elif eff_mcp.auth_mode == "static":
         eff_verifier = (
             token_verifier
@@ -138,7 +150,12 @@ def create_mcp_server(
             resource_server_url=None,
             required_scopes=["mcp"],
         )
-    elif token_verifier is not None:
+    elif eff_mcp.auth_mode == "jwt":
+        if token_verifier is None:
+            raise ConfigurationError(
+                "auth_mode='jwt' requires an explicit token_verifier instance passed to "
+                "create_mcp_server / create_asgi_app."
+            )
         eff_verifier = token_verifier
         eff_auth_settings = AuthSettings(
             issuer_url=AnyHttpUrl(f"http://{eff_mcp.host}:{eff_mcp.port}"),
@@ -227,6 +244,11 @@ def create_asgi_app(
             if eff_mcp.auth_mode in ("host", "none")
             else (token_verifier or getattr(mcp_server, "_arodonata_token_verifier", None))
         )
+        if eff_mcp.auth_mode == "jwt" and eff_verifier is None:
+            raise ConfigurationError(
+                "auth_mode='jwt' requires an explicit token_verifier instance passed to "
+                "create_mcp_server / create_asgi_app."
+            )
         srv = mcp_server
     else:
         eff_mcp = _resolve_mcp_settings(
@@ -269,7 +291,7 @@ def create_asgi_app(
     )
 
     inner_app: ASGIApp = starlette_app
-    if eff_mcp.auth_mode == "static" and eff_verifier is not None:
+    if eff_mcp.auth_mode in ("static", "jwt") and eff_verifier is not None:
         inner_app = MCPBearerAuthMiddleware(inner_app, verifier=eff_verifier)
 
     guarded_app: ASGIApp = MCPOriginHostGuardMiddleware(

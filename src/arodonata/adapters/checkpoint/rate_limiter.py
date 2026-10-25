@@ -12,10 +12,10 @@ import time
 import uuid
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any, TypeVar
 
-from arodonata.core.errors import RateLimitTimeoutError
+from arodonata.core.errors import AuthenticationError, RateLimitTimeoutError
 from arodonata.core.ports import LockPort
 from arodonata.core.telemetry import span_attrs, traced
 
@@ -176,10 +176,13 @@ class RateLimiter:
                 db_lock_info = await self._acquire_db_slot(target_ip, local_slot, deadline, budget)
             yield local_slot
         finally:
-            if db_lock_info is not None and self._lock_port is not None:
-                lock_key, owner_id = db_lock_info
-                await self._lock_port.release(lock_key, owner_id=owner_id)
-            self._release_local_fifo_slot(target_ip, local_slot)
+            try:
+                if db_lock_info is not None and self._lock_port is not None:
+                    lock_key, owner_id = db_lock_info
+                    with suppress(BaseException):
+                        await asyncio.shield(self._lock_port.release(lock_key, owner_id=owner_id))
+            finally:
+                self._release_local_fifo_slot(target_ip, local_slot)
 
     @traced
     async def run_coalesced_keepalive(
@@ -190,31 +193,32 @@ class RateLimiter:
         """Coalesce overlapping background keepalive sweeps for `sweep_key`.
 
         If a keepalive sweep is already running for `sweep_key`, concurrent callers
-        await the active task instead of scheduling duplicate sweeps that could starve
-        caller slots.
+        await the active task via `asyncio.shield` (`I7`) instead of scheduling duplicate
+        sweeps or cancelling the shared task when a single waiter is cancelled.
         """
         existing = self._inflight_keepalives.get(sweep_key)
         if existing is not None and not existing.done():
             span_attrs(keepalive_coalesced=True, sweep_key=sweep_key)
-            return await existing  # type: ignore[no-any-return]
+            res: T = await asyncio.shield(existing)
+            return res
 
         span_attrs(keepalive_coalesced=False, sweep_key=sweep_key)
 
         async def _runner() -> T:
-            return await sweep_factory()
+            try:
+                return await sweep_factory()
+            finally:
+                if self._inflight_keepalives.get(sweep_key) is task:
+                    self._inflight_keepalives.pop(sweep_key, None)
 
         task: asyncio.Task[T] = asyncio.create_task(_runner())
         self._inflight_keepalives[sweep_key] = task
-        try:
-            return await task
-        finally:
-            if self._inflight_keepalives.get(sweep_key) is task:
-                self._inflight_keepalives.pop(sweep_key, None)
+        return await asyncio.shield(task)
 
 
 class LoginGate:
-    """Serializes logins per MDS member (`active_mds_ip`) so concurrent domain logins
-    against the same MDS member do not trigger Check Point's 3 logins/minute rate limit.
+    """Serializes and rate-limits logins per MDS member (`active_mds_ip`) so concurrent domain logins
+    against the same MDS member do not trigger Check Point's 3 logins/minute rate limit (`C7`, `W4`, `W5`).
     """
 
     def __init__(
@@ -222,11 +226,25 @@ class LoginGate:
         *,
         lock_port: LockPort | None = None,
         gate_lock_ttl: float = 180.0,
+        min_login_interval: float = 0.0,
+        monotonic_fn: Callable[[], float] = time.monotonic,
+        sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._lock_port = lock_port
         self._gate_lock_ttl = float(gate_lock_ttl)
+        self._min_login_interval = max(0.0, float(min_login_interval))
+        self._monotonic = monotonic_fn
+        self._sleep = sleep_fn
         self._local_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._next_allowed_at: dict[str, float] = defaultdict(float)
         self._owner_prefix = f"lg-{uuid.uuid4().hex[:8]}"
+
+    def record_cooldown(self, mds_ip: str, cooldown_seconds: float) -> None:
+        """Record a shared throttle or backoff cooldown window for `mds_ip` (`W4`)."""
+        target_ip = (mds_ip or "default").strip()
+        candidate = self._monotonic() + max(0.0, float(cooldown_seconds))
+        if candidate > self._next_allowed_at[target_ip]:
+            self._next_allowed_at[target_ip] = candidate
 
     @asynccontextmanager
     async def acquire(
@@ -237,9 +255,34 @@ class LoginGate:
     ) -> AsyncIterator[str]:
         """Serialize login execution for `mds_ip` across in-process coroutines and distributed workers."""
         target_ip = (mds_ip or "default").strip()
+        budget = max(0.01, float(wait_timeout))
+        deadline = self._monotonic() + budget
         local_lock = self._local_locks[target_ip]
-        async with local_lock:
+
+        try:
+            async with asyncio.timeout(budget):
+                await local_lock.acquire()
+        except TimeoutError as exc:
+            raise AuthenticationError(
+                f"Timed out after {budget}s waiting for local LoginGate on MDS member {target_ip!r}."
+            ) from exc
+
+        try:
+            remaining = max(0.01, deadline - self._monotonic())
             if self._lock_port is None:
+                cooldown_wait = self._next_allowed_at[target_ip] - self._monotonic()
+                if cooldown_wait > 0:
+                    if self._monotonic() + cooldown_wait > deadline:
+                        raise AuthenticationError(
+                            f"LoginGate cooldown ({cooldown_wait:.1f}s) on MDS member {target_ip!r} "
+                            f"exceeds remaining wait_timeout ({remaining:.1f}s)."
+                        )
+                    await self._sleep(cooldown_wait)
+                if self._min_login_interval > 0:
+                    self._next_allowed_at[target_ip] = max(
+                        self._next_allowed_at[target_ip],
+                        self._monotonic() + self._min_login_interval,
+                    )
                 yield target_ip
                 return
 
@@ -248,9 +291,24 @@ class LoginGate:
                 lock_key,
                 ttl_seconds=self._gate_lock_ttl,
                 owner_id=f"{self._owner_prefix}:{uuid.uuid4().hex[:8]}",
-                wait_timeout=wait_timeout,
+                wait_timeout=remaining,
             ):
+                cooldown_wait = self._next_allowed_at[target_ip] - self._monotonic()
+                if cooldown_wait > 0:
+                    if self._monotonic() + cooldown_wait > deadline:
+                        raise AuthenticationError(
+                            f"LoginGate cooldown ({cooldown_wait:.1f}s) on MDS member {target_ip!r} "
+                            f"exceeds remaining wait_timeout."
+                        )
+                    await self._sleep(cooldown_wait)
+                if self._min_login_interval > 0:
+                    self._next_allowed_at[target_ip] = max(
+                        self._next_allowed_at[target_ip],
+                        self._monotonic() + self._min_login_interval,
+                    )
                 yield target_ip
+        finally:
+            local_lock.release()
 
 
 __all__ = [

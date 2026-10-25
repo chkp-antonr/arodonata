@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
-from sqlalchemy import delete, select
-from sqlmodel import col
+from sqlalchemy import Table, delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import SQLModel, col
 
 from arodonata.adapters.storage.database import DatabaseManager
 from arodonata.adapters.storage.tables import (
@@ -61,6 +65,11 @@ def _record_to_domain(rec: DomainRecord) -> DomainInfo:
 
 
 def _record_to_sid_entry(rec: SIDCacheRecord) -> SIDCacheEntry:
+    now = utc_now()
+    created_at = _ensure_utc(rec.created_at) or now
+    last_used_at = _ensure_utc(rec.last_used_at) or now
+    expires_at = _ensure_utc(rec.expires_at)
+    # SQLite stores naive UTC datetimes in some drivers; normalize to UTC
     return SIDCacheEntry(
         id=rec.id,
         mgmt_name=rec.mgmt_name,
@@ -68,9 +77,10 @@ def _record_to_sid_entry(rec: SIDCacheRecord) -> SIDCacheEntry:
         sid=rec.sid,
         server_ip=rec.server_ip,
         session_uid=rec.session_uid,
-        created_at=_ensure_utc(rec.created_at) or utc_now(),
-        last_used_at=_ensure_utc(rec.last_used_at) or utc_now(),
-        expires_at=_ensure_utc(rec.expires_at),
+        auth_identity=rec.auth_identity,
+        created_at=created_at,
+        last_used_at=last_used_at,
+        expires_at=expires_at,
     )
 
 
@@ -142,7 +152,7 @@ def _cp_object_to_record(obj: CPObject) -> CPObjectRecord:
         tags=list(obj.tags),
         nat_settings=dict(obj.nat_settings),
         raw_data=dict(obj.raw_data),
-        updated_at=obj.updated_at,
+        updated_at=_ensure_utc(obj.updated_at) or utc_now(),
     )
 
 
@@ -190,7 +200,7 @@ def _cp_service_to_record(svc: CPService) -> CPServiceRecord:
         color=svc.color,
         tags=list(svc.tags),
         raw_data=dict(svc.raw_data),
-        updated_at=svc.updated_at,
+        updated_at=_ensure_utc(svc.updated_at) or utc_now(),
     )
 
 
@@ -244,7 +254,7 @@ def _asset_to_record(asset: Asset) -> AssetRecord:
         comments=asset.comments,
         color=asset.color,
         raw_data=dict(asset.raw_data),
-        updated_at=asset.updated_at,
+        updated_at=_ensure_utc(asset.updated_at) or utc_now(),
     )
 
 
@@ -259,8 +269,59 @@ class SqlCacheAdapter:
         """Return the underlying `DatabaseManager`."""
         return self._db
 
+    async def _dialect_upsert(
+        self,
+        session: AsyncSession,
+        model_cls: type[SQLModel],
+        values_list: Sequence[dict[str, Any]],
+    ) -> None:
+        """Execute a dialect-aware `INSERT ... ON CONFLICT DO UPDATE` upsert (`W21`)."""
+        if not values_list:
+            return
+        table: Table = model_cls.__table__  # type: ignore[attr-defined]
+        pk_cols = [c.name for c in table.primary_key.columns]
+        non_pk_cols = [c.name for c in table.columns if c.name not in pk_cols]
+        dialect_name = self._db.engine.dialect.name
+
+        for row_vals in values_list:
+            if dialect_name == "postgresql":
+                pg_stmt = pg_insert(table).values(**row_vals)
+                update_map = {col_name: getattr(pg_stmt.excluded, col_name) for col_name in non_pk_cols}
+                await session.execute(pg_stmt.on_conflict_do_update(index_elements=pk_cols, set_=update_map))
+            else:
+                sq_stmt = sqlite_insert(table).values(**row_vals)
+                update_map = {col_name: getattr(sq_stmt.excluded, col_name) for col_name in non_pk_cols}
+                await session.execute(sq_stmt.on_conflict_do_update(index_elements=pk_cols, set_=update_map))
+
+    async def _upsert_sync_states_in_session(
+        self,
+        session: AsyncSession,
+        states: Sequence[DomainSyncState],
+    ) -> None:
+        """Upsert one or more `DomainSyncState` rows inside an active `session` (`W19`, `W21`)."""
+        if not states:
+            return
+        rows = [
+            {
+                "id": state.id
+                or DomainSyncState.make_id(state.mgmt_name, state.domain_name, state.scope, state.item_type),
+                "mgmt_name": state.mgmt_name,
+                "domain_name": state.domain_name,
+                "scope": state.scope,
+                "item_type": state.item_type,
+                "last_published_at": _ensure_utc(state.last_published_at),
+                "last_session_uid": state.last_session_uid,
+                "synced_at": _ensure_utc(state.synced_at),
+                "status": state.status,
+                "object_count": state.object_count,
+                "last_error": state.last_error,
+            }
+            for state in states
+        ]
+        await self._dialect_upsert(session, DomainSyncStateRecord, rows)
+
     # ------------------------------------------------------------------
-    # Domains (`domains`)
+    # Domains (`arodonata_domains`)
     # ------------------------------------------------------------------
 
     @traced
@@ -303,31 +364,33 @@ class SqlCacheAdapter:
 
     @traced
     async def upsert_domains(self, domains: Sequence[DomainInfo]) -> None:
-        """Insert or update domain rows in `domains`."""
+        """Insert or update domain rows in `arodonata_domains`."""
         if not domains:
             return
         span_attrs(count=len(domains))
+        rows = [
+            {
+                "id": dom.id or f"{dom.mgmt_name}:{dom.name}",
+                "mgmt_name": dom.mgmt_name,
+                "uid": dom.uid,
+                "name": dom.name,
+                "domain_type": dom.domain_type,
+                "active_ip": dom.active_ip,
+                "active_mds_ip": dom.active_mds_ip,
+                "standby_ips": list(dom.standby_ips),
+                "servers": list(dom.servers),
+                "is_global": dom.is_global or dom.name == "Global",
+                "raw_data": dict(dom.raw_data),
+                "updated_at": _ensure_utc(dom.updated_at) or utc_now(),
+            }
+            for dom in domains
+        ]
         async with self._db.session() as session:
-            for dom in domains:
-                rec = DomainRecord(
-                    id=dom.id or f"{dom.mgmt_name}:{dom.name}",
-                    mgmt_name=dom.mgmt_name,
-                    uid=dom.uid,
-                    name=dom.name,
-                    domain_type=dom.domain_type,
-                    active_ip=dom.active_ip,
-                    active_mds_ip=dom.active_mds_ip,
-                    standby_ips=list(dom.standby_ips),
-                    servers=list(dom.servers),
-                    is_global=dom.is_global or dom.name == "Global",
-                    raw_data=dict(dom.raw_data),
-                    updated_at=dom.updated_at,
-                )
-                await session.merge(rec)
+            await self._dialect_upsert(session, DomainRecord, rows)
             await session.commit()
 
     # ------------------------------------------------------------------
-    # Shared Read-Only Session Cache (`sid_cache`)
+    # Shared Read-Only Session Cache (`arodonata_sid_cache`)
     # ------------------------------------------------------------------
 
     @traced
@@ -335,42 +398,81 @@ class SqlCacheAdapter:
         self,
         mgmt_name: str,
         domain_name: str,
+        *,
+        auth_identity: str | None = None,
     ) -> SIDCacheEntry | None:
         """Fetch a cached shared read-only session entry for `(mgmt_name, domain_name)`."""
         span_attrs(mgmt_name=mgmt_name, domain=domain_name)
-        key = f"{mgmt_name}:{domain_name}"
         async with self._db.session() as session:
+            if auth_identity is not None:
+                key = f"{mgmt_name}:{domain_name}:{auth_identity}"
+                rec = await session.get(SIDCacheRecord, key)
+                if rec is not None and rec.auth_identity == auth_identity:
+                    return _record_to_sid_entry(rec)
+                return None
+            key = f"{mgmt_name}:{domain_name}"
             rec = await session.get(SIDCacheRecord, key)
-            return _record_to_sid_entry(rec) if rec is not None else None
+            if rec is not None:
+                return _record_to_sid_entry(rec)
+            stmt = (
+                select(SIDCacheRecord)
+                .where(
+                    SIDCacheRecord.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+                    SIDCacheRecord.domain_name == domain_name,  # type: ignore[arg-type]
+                )
+                .order_by(col(SIDCacheRecord.last_used_at).desc())
+            )
+            row = (await session.execute(stmt)).scalars().first()
+            return _record_to_sid_entry(row) if row is not None else None
 
     @traced
     async def upsert_sid(self, entry: SIDCacheEntry) -> None:
-        """Insert or update a shared read-only session entry in `sid_cache`."""
+        """Insert or update a shared read-only session entry in `arodonata_sid_cache`."""
         span_attrs(mgmt_name=entry.mgmt_name, domain=entry.domain_name, server_ip=entry.server_ip)
+        row_id = entry.id or (
+            f"{entry.mgmt_name}:{entry.domain_name}:{entry.auth_identity}"
+            if entry.auth_identity
+            else f"{entry.mgmt_name}:{entry.domain_name}"
+        )
+        row = {
+            "id": row_id,
+            "mgmt_name": entry.mgmt_name,
+            "domain_name": entry.domain_name,
+            "sid": entry.sid,
+            "server_ip": entry.server_ip,
+            "session_uid": entry.session_uid,
+            "auth_identity": entry.auth_identity,
+            "created_at": _ensure_utc(entry.created_at) or utc_now(),
+            "last_used_at": _ensure_utc(entry.last_used_at) or utc_now(),
+            "expires_at": _ensure_utc(entry.expires_at),
+        }
         async with self._db.session() as session:
-            rec = SIDCacheRecord(
-                id=entry.id or f"{entry.mgmt_name}:{entry.domain_name}",
-                mgmt_name=entry.mgmt_name,
-                domain_name=entry.domain_name,
-                sid=entry.sid,
-                server_ip=entry.server_ip,
-                session_uid=entry.session_uid,
-                created_at=entry.created_at,
-                last_used_at=entry.last_used_at,
-                expires_at=entry.expires_at,
-            )
-            await session.merge(rec)
+            await self._dialect_upsert(session, SIDCacheRecord, [row])
             await session.commit()
 
     @traced
-    async def evict_sid(self, mgmt_name: str, domain_name: str) -> bool:
+    async def evict_sid(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        auth_identity: str | None = None,
+    ) -> bool:
         """Remove the cached SID for `(mgmt_name, domain_name)` immediately."""
         span_attrs(mgmt_name=mgmt_name, domain=domain_name)
-        key = f"{mgmt_name}:{domain_name}"
         async with self._db.session() as session:
-            result = await session.execute(
-                delete(SIDCacheRecord).where(SIDCacheRecord.id == key)  # type: ignore[arg-type]
-            )
+            if auth_identity is not None:
+                key = f"{mgmt_name}:{domain_name}:{auth_identity}"
+                result = await session.execute(
+                    delete(SIDCacheRecord).where(SIDCacheRecord.id == key)  # type: ignore[arg-type]
+                )
+            else:
+                result = await session.execute(
+                    delete(SIDCacheRecord).where(
+                        SIDCacheRecord.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+                        SIDCacheRecord.domain_name == domain_name,  # type: ignore[arg-type]
+                    )
+                )
             await session.commit()
             return bool(result.rowcount and result.rowcount > 0)  # type: ignore[attr-defined]
 
@@ -386,7 +488,7 @@ class SqlCacheAdapter:
             return [_record_to_sid_entry(r) for r in rows]
 
     # ------------------------------------------------------------------
-    # Unified Domain Sync State (`domain_sync_state`)
+    # Unified Domain Sync State (`arodonata_domain_sync_state`)
     # ------------------------------------------------------------------
 
     @traced
@@ -427,7 +529,7 @@ class SqlCacheAdapter:
 
     @traced
     async def upsert_sync_state(self, state: DomainSyncState) -> None:
-        """Insert or update a `DomainSyncState` row in `domain_sync_state`."""
+        """Insert or update a `DomainSyncState` row in `arodonata_domain_sync_state`."""
         span_attrs(
             mgmt_name=state.mgmt_name,
             domain=state.domain_name,
@@ -436,21 +538,7 @@ class SqlCacheAdapter:
             status=state.status,
         )
         async with self._db.session() as session:
-            rec = DomainSyncStateRecord(
-                id=state.id
-                or DomainSyncState.make_id(state.mgmt_name, state.domain_name, state.scope, state.item_type),
-                mgmt_name=state.mgmt_name,
-                domain_name=state.domain_name,
-                scope=state.scope,
-                item_type=state.item_type,
-                last_published_at=state.last_published_at,
-                last_session_uid=state.last_session_uid,
-                synced_at=state.synced_at,
-                status=state.status,
-                object_count=state.object_count,
-                last_error=state.last_error,
-            )
-            await session.merge(rec)
+            await self._upsert_sync_states_in_session(session, [state])
             await session.commit()
 
     # ------------------------------------------------------------------
@@ -513,6 +601,7 @@ class SqlCacheAdapter:
         objects: Sequence[CPObject],
         *,
         types: Sequence[str],
+        sync_states: Sequence[DomainSyncState] | None = None,
     ) -> int:
         """Atomically replace objects of `types` for `(mgmt_name, domain_name)` without deleting other types."""
         type_list = list(types)
@@ -532,18 +621,54 @@ class SqlCacheAdapter:
             )
             for obj in filtered_objects:
                 session.add(_cp_object_to_record(obj))
+            if sync_states:
+                await self._upsert_sync_states_in_session(session, sync_states)
             await session.commit()
         return len(filtered_objects)
 
     @traced
-    async def upsert_objects(self, objects: Sequence[CPObject]) -> int:
+    async def upsert_objects(
+        self,
+        objects: Sequence[CPObject],
+        *,
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
         """Insert or update `CPObject` rows in `arodonata_objects`."""
-        if not objects:
+        if not objects and not sync_states:
             return 0
         span_attrs(count=len(objects))
+        rows = [
+            {
+                "id": obj.id or f"{obj.mgmt_name}:{obj.domain_name}:{obj.uid}",
+                "uid": obj.uid,
+                "name": obj.name,
+                "type": obj.type,
+                "mgmt_name": obj.mgmt_name,
+                "domain_name": obj.domain_name,
+                "original_domain": obj.original_domain or obj.domain_name,
+                "ipv4_address": obj.ipv4_address,
+                "ipv6_address": obj.ipv6_address,
+                "subnet4": obj.subnet4,
+                "mask_length4": obj.mask_length4,
+                "subnet_mask": obj.subnet_mask,
+                "ipv4_address_first": obj.ipv4_address_first,
+                "ipv4_address_last": obj.ipv4_address_last,
+                "fqdn": obj.fqdn,
+                "is_sub_domain": obj.is_sub_domain,
+                "members": list(obj.members),
+                "comments": obj.comments,
+                "color": obj.color,
+                "tags": list(obj.tags),
+                "nat_settings": dict(obj.nat_settings),
+                "raw_data": dict(obj.raw_data),
+                "updated_at": _ensure_utc(obj.updated_at) or utc_now(),
+            }
+            for obj in objects
+        ]
         async with self._db.session() as session:
-            for obj in objects:
-                await session.merge(_cp_object_to_record(obj))
+            await self._dialect_upsert(session, CPObjectRecord, rows)
+            if sync_states:
+                await self._upsert_sync_states_in_session(session, sync_states)
             await session.commit()
         return len(objects)
 
@@ -630,6 +755,7 @@ class SqlCacheAdapter:
         services: Sequence[CPService],
         *,
         types: Sequence[str],
+        sync_states: Sequence[DomainSyncState] | None = None,
     ) -> int:
         """Atomically replace services of `types` for `(mgmt_name, domain_name)` without deleting other types."""
         type_list = list(types)
@@ -649,18 +775,50 @@ class SqlCacheAdapter:
             )
             for svc in filtered_services:
                 session.add(_cp_service_to_record(svc))
+            if sync_states:
+                await self._upsert_sync_states_in_session(session, sync_states)
             await session.commit()
         return len(filtered_services)
 
     @traced
-    async def upsert_services(self, services: Sequence[CPService]) -> int:
+    async def upsert_services(
+        self,
+        services: Sequence[CPService],
+        *,
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
         """Insert or update `CPService` rows in `arodonata_services`."""
-        if not services:
+        if not services and not sync_states:
             return 0
         span_attrs(count=len(services))
+        rows = [
+            {
+                "id": svc.id or f"{svc.mgmt_name}:{svc.domain_name}:{svc.uid}",
+                "uid": svc.uid,
+                "name": svc.name,
+                "type": svc.type,
+                "mgmt_name": svc.mgmt_name,
+                "domain_name": svc.domain_name,
+                "original_domain": svc.original_domain or svc.domain_name,
+                "port": svc.port,
+                "protocol": svc.protocol,
+                "icmp_type": svc.icmp_type,
+                "icmp_code": svc.icmp_code,
+                "members": list(svc.members),
+                "session_timeout": svc.session_timeout,
+                "match_for_any": svc.match_for_any,
+                "comments": svc.comments,
+                "color": svc.color,
+                "tags": list(svc.tags),
+                "raw_data": dict(svc.raw_data),
+                "updated_at": _ensure_utc(svc.updated_at) or utc_now(),
+            }
+            for svc in services
+        ]
         async with self._db.session() as session:
-            for svc in services:
-                await session.merge(_cp_service_to_record(svc))
+            await self._dialect_upsert(session, CPServiceRecord, rows)
+            if sync_states:
+                await self._upsert_sync_states_in_session(session, sync_states)
             await session.commit()
         return len(services)
 
@@ -688,7 +846,7 @@ class SqlCacheAdapter:
             return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------
-    # Assets (`assets`)
+    # Assets (`arodonata_assets`)
     # ------------------------------------------------------------------
 
     @traced
@@ -699,7 +857,7 @@ class SqlCacheAdapter:
         *,
         types: Sequence[str] | None = None,
     ) -> list[Asset]:
-        """Query cached gateway/cluster/VSX/server assets from `assets`."""
+        """Query cached gateway/cluster/VSX/server assets from `arodonata_assets`."""
         span_attrs(mgmt_name=mgmt_name, domain=domain_name, types=list(types) if types else None)
         async with self._db.session() as session:
             stmt = select(AssetRecord)
@@ -721,6 +879,8 @@ class SqlCacheAdapter:
         mgmt_name: str,
         domain_name: str,
         assets: Sequence[Asset],
+        *,
+        sync_states: Sequence[DomainSyncState] | None = None,
     ) -> int:
         """Atomically replace all cached assets for `(mgmt_name, domain_name)`."""
         span_attrs(mgmt_name=mgmt_name, domain=domain_name, count=len(assets))
@@ -733,16 +893,23 @@ class SqlCacheAdapter:
             )
             for asset in assets:
                 session.add(_asset_to_record(asset))
+            if sync_states:
+                await self._upsert_sync_states_in_session(session, sync_states)
             await session.commit()
         return len(assets)
 
     # ------------------------------------------------------------------
-    # Rulebase Snapshot (`rulebase_*`)
+    # Rulebase Snapshot (`arodonata_rulebase_*`)
     # ------------------------------------------------------------------
 
     @traced
-    async def replace_domain_rulebase(self, snapshot: DomainRulebaseSnapshot) -> None:
-        """Atomically replace all `rulebase_*` snapshot tables for `(snapshot.mgmt_name, snapshot.domain_name)`."""
+    async def replace_domain_rulebase(
+        self,
+        snapshot: DomainRulebaseSnapshot,
+        *,
+        sync_state: DomainSyncState | None = None,
+    ) -> None:
+        """Atomically replace all `arodonata_rulebase_*` snapshot tables for `(snapshot.mgmt_name, snapshot.domain_name)`."""
         mgmt = snapshot.mgmt_name
         dom = snapshot.domain_name
         span_attrs(
@@ -783,7 +950,7 @@ class SqlCacheAdapter:
                         layer_name=pkg_layer.layer_name,
                         position=pkg_layer.position,
                         raw_data=dict(pkg_layer.raw_data),
-                        updated_at=pkg_layer.updated_at,
+                        updated_at=_ensure_utc(pkg_layer.updated_at) or utc_now(),
                     )
                 )
 
@@ -802,7 +969,7 @@ class SqlCacheAdapter:
                         shared=layer.shared,
                         implicit_cleanup_action=layer.implicit_cleanup_action,
                         raw_data=dict(layer.raw_data),
-                        updated_at=layer.updated_at,
+                        updated_at=_ensure_utc(layer.updated_at) or utc_now(),
                     )
                 )
 
@@ -822,7 +989,7 @@ class SqlCacheAdapter:
                         to_rule=sec.to_rule,
                         rule_uids=list(sec.rule_uids),
                         raw_data=dict(sec.raw_data),
-                        updated_at=sec.updated_at,
+                        updated_at=_ensure_utc(sec.updated_at) or utc_now(),
                     )
                 )
 
@@ -856,7 +1023,7 @@ class SqlCacheAdapter:
                         install_on=list(rule.install_on),
                         comments=rule.comments,
                         raw_data=dict(rule.raw_data),
-                        updated_at=rule.updated_at,
+                        updated_at=_ensure_utc(rule.updated_at) or utc_now(),
                     )
                 )
 
@@ -887,7 +1054,7 @@ class SqlCacheAdapter:
                         install_on=list(nat_rule.install_on),
                         comments=nat_rule.comments,
                         raw_data=dict(nat_rule.raw_data),
-                        updated_at=nat_rule.updated_at,
+                        updated_at=_ensure_utc(nat_rule.updated_at) or utc_now(),
                     )
                 )
 
@@ -918,7 +1085,7 @@ class SqlCacheAdapter:
                         install_on=list(https_rule.install_on),
                         comments=https_rule.comments,
                         raw_data=dict(https_rule.raw_data),
-                        updated_at=https_rule.updated_at,
+                        updated_at=_ensure_utc(https_rule.updated_at) or utc_now(),
                     )
                 )
 
@@ -947,10 +1114,12 @@ class SqlCacheAdapter:
                         install_on=list(threat_rule.install_on),
                         comments=threat_rule.comments,
                         raw_data=dict(threat_rule.raw_data),
-                        updated_at=threat_rule.updated_at,
+                        updated_at=_ensure_utc(threat_rule.updated_at) or utc_now(),
                     )
                 )
 
+            if sync_state is not None:
+                await self._upsert_sync_states_in_session(session, [sync_state])
             await session.commit()
 
     @traced

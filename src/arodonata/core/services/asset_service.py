@@ -21,7 +21,7 @@ from arodonata.core.config import ArodonataSettings
 from arodonata.core.errors import ServerIdentityError
 from arodonata.core.events import DomainSyncProgressEvent, SyncProgressEvent
 from arodonata.core.models.assets import Asset
-from arodonata.core.models.common import CacheMode, utc_now
+from arodonata.core.models.common import CacheMode, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainSyncState, RefreshOutcome
 from arodonata.core.ports import ApiPort, CachePort
 from arodonata.core.services.sync_coordinator import DomainProbeResult, DomainSyncCoordinator
@@ -361,7 +361,7 @@ class AssetRefreshService:
         self._coordinator = coordinator
         self._cluster_manager = cluster_manager or ClusterRelationshipManager()
         self._vsx_manager = vsx_manager or VSXRelationshipManager(api)
-        self._now = now_fn
+        self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
 
     @property
     def cluster_manager(self) -> ClusterRelationshipManager:
@@ -459,22 +459,24 @@ class AssetRefreshService:
         cluster_enriched = self._cluster_manager.enrich(raw_assets)
         fully_enriched = await self._vsx_manager.enrich(mgmt_name, dom_name, cluster_enriched)
 
-        await self._cache.replace_domain_assets(mgmt_name, dom_name, fully_enriched)
-
         now = self._now()
-        await self._cache.upsert_sync_state(
-            DomainSyncState(
-                mgmt_name=mgmt_name,
-                domain_name=dom_name,
-                scope="assets",
-                item_type="*",
-                last_published_at=probe.remote_published_at or now,
-                last_session_uid=probe.remote_session_uid,
-                synced_at=now,
-                status="ok",
-                object_count=len(fully_enriched),
-                last_error=None,
-            )
+        sync_state = DomainSyncState(
+            mgmt_name=mgmt_name,
+            domain_name=dom_name,
+            scope="assets",
+            item_type="*",
+            last_published_at=probe.remote_published_at,
+            last_session_uid=probe.remote_session_uid,
+            synced_at=now,
+            status="ok",
+            object_count=len(fully_enriched),
+            last_error=None,
+        )
+        await self._cache.replace_domain_assets(
+            mgmt_name,
+            dom_name,
+            fully_enriched,
+            sync_states=[sync_state],
         )
         return len(fully_enriched)
 

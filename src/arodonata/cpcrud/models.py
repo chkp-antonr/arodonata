@@ -9,7 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from arodonata.core.errors import REDACTED_PLACEHOLDER, sanitize_mapping
-from arodonata.core.models.common import utc_now
+from arodonata.core.models.common import to_naive_utc, utc_now
 
 NameConflictPolicy = Literal["update", "error"]
 IpConflictPolicy = Literal["reuse", "create_new", "error"]
@@ -120,6 +120,10 @@ class DomainStamp(BaseModel):
     error: str | None = None
     captured_at: datetime = Field(default_factory=utc_now)
 
+    def model_post_init(self, __context: Any) -> None:
+        self.last_published_at = to_naive_utc(self.last_published_at)
+        self.captured_at = to_naive_utc(self.captured_at) or utc_now()
+
     @property
     def key(self) -> str:
         """Canonical `(mgmt_name, domain_name)` lookup key."""
@@ -187,6 +191,9 @@ class Plan(BaseModel):
     actions: list[PlannedAction] = Field(default_factory=list)
     name_resolutions: dict[str, str] = Field(default_factory=dict)
     template: dict[str, Any] = Field(default_factory=dict)
+
+    def model_post_init(self, __context: Any) -> None:
+        self.created_at = to_naive_utc(self.created_at) or utc_now()
 
     @property
     def has_errors(self) -> bool:
@@ -279,6 +286,10 @@ class ApplyReport(BaseModel):
     stale_domains: list[str] = Field(default_factory=list)
     retry_passes: int = 0
     retry_reports: list[ApplyReport] = Field(default_factory=list)
+
+    def model_post_init(self, __context: Any) -> None:
+        self.started_at = to_naive_utc(self.started_at) or utc_now()
+        self.completed_at = to_naive_utc(self.completed_at) or utc_now()
 
     @property
     def success(self) -> bool:

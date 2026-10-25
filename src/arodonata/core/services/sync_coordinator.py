@@ -25,7 +25,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from arodonata.core.config import ArodonataSettings
-from arodonata.core.errors import DirtySessionError, InvalidCredentialsError, ServerIdentityError
+from arodonata.core.errors import (
+    DirtySessionError,
+    InvalidCredentialsError,
+    LockAcquisitionError,
+    ServerIdentityError,
+    redact_sid,
+)
 from arodonata.core.events import (
     DomainSyncCompletedEvent,
     DomainSyncFailedEvent,
@@ -35,7 +41,7 @@ from arodonata.core.events import (
     SyncProgressEvent,
     SyncStartedEvent,
 )
-from arodonata.core.models.common import CacheMode, SyncScope, utc_now
+from arodonata.core.models.common import CacheMode, SyncScope, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainInfo, DomainSyncState, RefreshOutcome
 from arodonata.core.ports import ApiPort, CachePort, LockPort
 from arodonata.core.services.domain_service import DomainService
@@ -43,13 +49,11 @@ from arodonata.core.telemetry import span_attrs, traced
 
 
 def parse_cp_publish_timestamp(raw_time: Any) -> datetime | None:
-    """Parse Check Point `publish-time` or `last-modify-time` dict/string/int into a UTC `datetime`."""
+    """Parse Check Point `publish-time` or `last-modify-time` dict/string/int into a naive UTC `datetime`."""
     if raw_time is None:
         return None
     if isinstance(raw_time, datetime):
-        if raw_time.tzinfo is None:
-            return raw_time.replace(tzinfo=UTC)
-        return raw_time.astimezone(UTC)
+        return to_naive_utc(raw_time)
     if isinstance(raw_time, dict):
         iso_str = raw_time.get("iso-8601") or raw_time.get("iso_8601")
         if isinstance(iso_str, str) and iso_str.strip():
@@ -70,7 +74,7 @@ def _parse_posix_timestamp(value: int | float) -> datetime:
     ts = float(value)
     if ts > 1e11:  # Milliseconds epoch
         ts = ts / 1000.0
-    return datetime.fromtimestamp(ts, tz=UTC)
+    return datetime.fromtimestamp(ts, tz=UTC).replace(tzinfo=None)
 
 
 def _parse_iso_datetime(iso_str: str) -> datetime | None:
@@ -82,9 +86,7 @@ def _parse_iso_datetime(iso_str: str) -> datetime | None:
         normalized = f"{normalized[:-2]}:{normalized[-2:]}"
     try:
         dt = datetime.fromisoformat(normalized)
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=UTC)
-        return dt.astimezone(UTC)
+        return to_naive_utc(dt)
     except ValueError:
         return None
 
@@ -143,8 +145,16 @@ class DomainSyncCoordinator:
         self._cache = cache
         self._lock_port = lock_port
         self._domain_service = domain_service
-        self._now = now_fn
+        self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
         self._invalidated_domains: set[tuple[str, str]] = set()
+
+    async def _collect_known_sids(self, mgmt_name: str | None = None) -> list[str]:
+        """Collect active cached SIDs from `arodonata_sid_cache` for strict error redaction (`W22`)."""
+        try:
+            entries = await self._cache.list_sids(mgmt_name=mgmt_name)
+            return [e.sid for e in entries if e.sid]
+        except Exception:
+            return []
 
     @property
     def invalidated_domains(self) -> set[tuple[str, str]]:
@@ -244,8 +254,22 @@ class DomainSyncCoordinator:
             domain=domain_name,
         )
         if not res.success:
-            # If show-session is unsupported or returns empty on a mock/minimal server, only fail if data reports dirty
-            return
+            err_lower = (res.error_message or "").lower()
+            code_lower = (res.error_code or "").lower()
+            is_unsupported_mock = any(
+                tok in err_lower or tok in code_lower
+                for tok in ("command_not_found", "unknown command", "not implemented")
+            )
+            if is_unsupported_mock:
+                return
+            known_sids = await self._collect_known_sids(mgmt_name)
+            safe_err = redact_sid(
+                res.error_message or f"show-session failed with HTTP {res.status_code}",
+                known_sids=known_sids,
+            )
+            raise DirtySessionError(
+                f"Failed to verify session cleanliness on {mgmt_name!r} ({domain_name!r}): {safe_err}"
+            )
 
         data = res.data if isinstance(res.data, dict) else {}
         locks = int(data.get("locks") or 0)
@@ -341,21 +365,25 @@ class DomainSyncCoordinator:
 
         if not res.success:
             err_msg = res.error_message or f"show-last-published-session failed with HTTP {res.status_code}"
-            probe_exc: Exception
-            if "credential" in err_msg.lower() or "authentication" in err_msg.lower():
-                probe_exc = InvalidCredentialsError(err_msg)
-            else:
-                probe_exc = RuntimeError(err_msg)
-            return DomainProbeResult(
-                mgmt_name=mgmt_name,
-                domain=domain,
-                stale_types=type_list,
-                fresh_types=[],
-                existing_states=existing_states,
-                probe_error=probe_exc,
-            )
-
-        data = res.data if isinstance(res.data, dict) else {}
+            err_code = (res.error_code or "").lower()
+            is_never_published = "no published session" in err_msg.lower() or "generic_err_object_not_found" in err_code
+            if not is_never_published:
+                probe_exc: Exception
+                if "credential" in err_msg.lower() or "authentication" in err_msg.lower():
+                    probe_exc = InvalidCredentialsError(err_msg)
+                else:
+                    probe_exc = RuntimeError(err_msg)
+                return DomainProbeResult(
+                    mgmt_name=mgmt_name,
+                    domain=domain,
+                    stale_types=type_list,
+                    fresh_types=[],
+                    existing_states=existing_states,
+                    probe_error=probe_exc,
+                )
+            data = {}
+        else:
+            data = res.data if isinstance(res.data, dict) else {}
         remote_pub_at = parse_cp_publish_timestamp(data.get("publish-time") or data.get("last-modify-time"))
         remote_uid_raw = data.get("uid")
         remote_uid = str(remote_uid_raw) if isinstance(remote_uid_raw, str) and remote_uid_raw else None
@@ -388,9 +416,16 @@ class DomainSyncCoordinator:
                 if remote_uid is not None and st.last_session_uid != remote_uid:
                     stale_types.append(item_type)
                     continue
-            elif remote_uid is not None and st.last_session_uid != remote_uid:
-                stale_types.append(item_type)
-                continue
+            elif remote_uid is not None:
+                if st.last_session_uid != remote_uid:
+                    stale_types.append(item_type)
+                    continue
+            else:
+                # Server returned neither publish-time nor session uid (never published domain);
+                # fresh if we already have a synced_at and no published session existed previously
+                if st.last_published_at is not None or st.last_session_uid is not None:
+                    stale_types.append(item_type)
+                    continue
 
             fresh_types.append(item_type)
 
@@ -403,8 +438,8 @@ class DomainSyncCoordinator:
                     st.model_copy(
                         update={
                             "synced_at": verified_at,
-                            "last_published_at": remote_pub_at or st.last_published_at,
-                            "last_session_uid": remote_uid or st.last_session_uid,
+                            "last_published_at": remote_pub_at if remote_pub_at is not None else st.last_published_at,
+                            "last_session_uid": remote_uid if remote_uid is not None else st.last_session_uid,
                         }
                     )
                 )
@@ -522,9 +557,27 @@ class DomainSyncCoordinator:
                     )
 
                     lock_key = f"sync:{dom.mgmt_name}:{dom.name}:{scope}"
-                    async with self._lock_port.lock(lock_key, ttl_seconds=lock_ttl_seconds):
-                        await self.verify_session_clean(dom.mgmt_name, dom.name)
-                        count = await handler(probe, _emit)
+                    async with self._lock_port.lock(lock_key, ttl_seconds=lock_ttl_seconds) as owner_id:
+                        heartbeat_interval = max(0.05, float(lock_ttl_seconds) / 3.0)
+
+                        async def _heartbeat_loop() -> None:
+                            while True:
+                                await asyncio.sleep(heartbeat_interval)
+                                with _suppress(Exception):
+                                    await self._lock_port.renew(
+                                        lock_key,
+                                        ttl_seconds=lock_ttl_seconds,
+                                        owner_id=owner_id,
+                                    )
+
+                        hb_task = asyncio.create_task(_heartbeat_loop())
+                        try:
+                            await self.verify_session_clean(dom.mgmt_name, dom.name)
+                            count = await handler(probe, _emit)
+                        finally:
+                            hb_task.cancel()
+                            with _suppress(asyncio.CancelledError, Exception):
+                                await hb_task
 
                     self._clear_domain_invalidation(dom.mgmt_name, dom.name)
                     async with state_lock:
@@ -544,11 +597,26 @@ class DomainSyncCoordinator:
                     )
                 except ServerIdentityError:
                     raise
+                except LockAcquisitionError as exc:
+                    # Another worker holds the distributed sync lock for this domain (W14):
+                    # skip without marking arodonata_domain_sync_state.status="failed" or emitting DomainSyncFailedEvent!
+                    async with state_lock:
+                        skipped_domains.append(dom_label)
+                    await _emit(
+                        DomainSyncSkippedEvent(
+                            scope=scope,
+                            mgmt_name=dom.mgmt_name,
+                            domain=dom.name,
+                            item_type=",".join(probe.stale_types) if probe.stale_types else "*",
+                            message=f"Domain {dom_label} sync lock is held by another worker; skipping ({exc}).",
+                        )
+                    )
                 except Exception as exc:
-                    err_str = str(exc)
+                    known_sids = await self._collect_known_sids(dom.mgmt_name)
+                    err_str = redact_sid(str(exc), known_sids=known_sids)
                     async with state_lock:
                         failed_domains[dom_label] = err_str
-                    # Record failed status in domain_sync_state without wiping existing cached objects
+                    # Record failed status in arodonata_domain_sync_state without wiping existing cached objects
                     now = self._now()
                     for item_type in type_list:
                         prev = await self._cache.get_sync_state(dom.mgmt_name, dom.name, scope, item_type)
@@ -578,11 +646,21 @@ class DomainSyncCoordinator:
 
         async def _run_mds_group(group_domains: list[DomainInfo]) -> None:
             sem = asyncio.Semaphore(per_mds_concurrency)
-            await asyncio.gather(*(_process_domain(d, sem) for d in group_domains))
+            try:
+                async with asyncio.TaskGroup() as tg:
+                    for d in group_domains:
+                        tg.create_task(_process_domain(d, sem))
+            except* ServerIdentityError as eg:
+                raise eg.exceptions[0] from None
 
         async def _coordinator_runner() -> None:
             try:
-                await asyncio.gather(*(_run_mds_group(group) for group in mds_groups.values()))
+                try:
+                    async with asyncio.TaskGroup() as tg:
+                        for group in mds_groups.values():
+                            tg.create_task(_run_mds_group(group))
+                except* ServerIdentityError as eg:
+                    raise eg.exceptions[0] from None
             finally:
                 await queue.put(None)
 

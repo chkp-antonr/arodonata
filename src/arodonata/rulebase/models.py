@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arodonata.core.models.common import SyncStatus, utc_now
+from arodonata.core.models.common import SyncStatus, to_naive_utc, utc_now
 from arodonata.core.models.rulebase import (
     AccessRuleEntry,
     HttpsRuleEntry,
@@ -19,7 +19,7 @@ from arodonata.core.models.rulebase import (
     ThreatRuleEntry,
 )
 
-RuleFormat = Literal["markdown", "model_friendly", "raw"]
+RuleFormat = Literal["markdown", "model_friendly", "raw", "cpcrud"]
 
 
 class PolicyPackageInfo(BaseModel):
@@ -37,6 +37,9 @@ class PolicyPackageInfo(BaseModel):
     threat_layers: list[RulebasePackageLayerEntry] = Field(default_factory=list)
     raw_data: dict[str, Any] = Field(default_factory=dict)
     updated_at: datetime = Field(default_factory=utc_now)
+
+    def model_post_init(self, __context: Any) -> None:
+        self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
 
 class NumberedRule(BaseModel):
@@ -316,6 +319,9 @@ class NumberedLayerRulebase(BaseModel):
     sync_status: SyncStatus = "idle"
     layer_metadata: RulebaseLayerEntry | None = None
 
+    def model_post_init(self, __context: Any) -> None:
+        self.snapshot_published_at = to_naive_utc(self.snapshot_published_at)
+
 
 class PackageRulebase(BaseModel):
     """SmartConsole-numbered rulebase for a policy package across its ordered layers or NAT policy."""
@@ -334,6 +340,9 @@ class PackageRulebase(BaseModel):
     snapshot_session_uid: str | None = None
     snapshot_published_at: datetime | None = None
     sync_status: SyncStatus = "idle"
+
+    def model_post_init(self, __context: Any) -> None:
+        self.snapshot_published_at = to_naive_utc(self.snapshot_published_at)
 
 
 class RuleLocation(BaseModel):
@@ -390,6 +399,9 @@ class RuleLocations(BaseModel):
     snapshot_published_at: datetime | None = None
     sync_status: SyncStatus = "idle"
 
+    def model_post_init(self, __context: Any) -> None:
+        self.snapshot_published_at = to_naive_utc(self.snapshot_published_at)
+
 
 class FilteredRulebaseResult(BaseModel):
     """Result of evaluating a filter locally against a cached rulebase snapshot."""
@@ -412,6 +424,9 @@ class FilteredRulebaseResult(BaseModel):
     cache_age_seconds: float | None = None
     snapshot_session_uid: str | None = None
     snapshot_published_at: datetime | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        self.snapshot_published_at = to_naive_utc(self.snapshot_published_at)
 
 
 NumberedRule.model_rebuild()

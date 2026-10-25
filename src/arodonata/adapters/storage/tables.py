@@ -2,23 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import JSON, Column, DateTime
 from sqlmodel import Field, SQLModel
 
 from arodonata.core.errors import REDACTED_PLACEHOLDER
-from arodonata.core.models.common import utc_now
+from arodonata.core.models.common import to_naive_utc, utc_now
 
 
 def _ensure_utc(dt: datetime | None) -> datetime | None:
-    """Normalize a datetime loaded from SQLite/PostgreSQL to timezone-aware UTC."""
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC)
+    """Normalize a datetime loaded from or written to SQLite/PostgreSQL to naive UTC (tzinfo=None)."""
+    return to_naive_utc(dt)
 
 
 class SchemaVersionRecord(SQLModel, table=True):
@@ -29,30 +25,30 @@ class SchemaVersionRecord(SQLModel, table=True):
     schema_hash: str = Field(primary_key=True)
     applied_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
 
 
 class DistributedLockRecord(SQLModel, table=True):
-    """Cross-process distributed lock row with expiration timestamp."""
+    """Cross-process distributed lock row with expiration timestamp in `arodonata_distributed_locks`."""
 
-    __tablename__ = "distributed_locks"
+    __tablename__ = "arodonata_distributed_locks"
 
     lock_key: str = Field(primary_key=True)
     owner_id: str = Field(index=True)
     acquired_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
     expires_at: datetime = Field(
-        sa_column=Column(DateTime(timezone=True), nullable=False, index=True),
+        sa_column=Column(DateTime(timezone=False), nullable=False, index=True),
     )
 
 
 class DomainRecord(SQLModel, table=True):
-    """Cached Check Point domain metadata in `domains`."""
+    """Cached Check Point domain metadata in `arodonata_domains`."""
 
-    __tablename__ = "domains"
+    __tablename__ = "arodonata_domains"
 
     id: str = Field(primary_key=True)
     mgmt_name: str = Field(index=True)
@@ -76,17 +72,17 @@ class DomainRecord(SQLModel, table=True):
     )
     updated_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
 
 
 class SIDCacheRecord(SQLModel, table=True):
-    """Persistent shared read-only session cache row in `sid_cache`.
+    """Persistent shared read-only session cache row in `arodonata_sid_cache`.
 
     Strictly omits `sid` from `__repr__` and `__str__`.
     """
 
-    __tablename__ = "sid_cache"
+    __tablename__ = "arodonata_sid_cache"
 
     id: str = Field(primary_key=True)
     mgmt_name: str = Field(index=True)
@@ -94,17 +90,18 @@ class SIDCacheRecord(SQLModel, table=True):
     sid: str = Field(repr=False)
     server_ip: str
     session_uid: str | None = Field(default=None)
+    auth_identity: str | None = Field(default=None)
     created_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
     last_used_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
     expires_at: datetime | None = Field(
         default=None,
-        sa_column=Column(DateTime(timezone=True), nullable=True),
+        sa_column=Column(DateTime(timezone=False), nullable=True),
     )
 
     def __repr__(self) -> str:
@@ -119,9 +116,9 @@ class SIDCacheRecord(SQLModel, table=True):
 
 
 class DomainSyncStateRecord(SQLModel, table=True):
-    """Unified per-`(mgmt_name, domain_name, scope, item_type)` synchronization state."""
+    """Unified per-`(mgmt_name, domain_name, scope, item_type)` synchronization state in `arodonata_domain_sync_state`."""
 
-    __tablename__ = "domain_sync_state"
+    __tablename__ = "arodonata_domain_sync_state"
 
     id: str = Field(primary_key=True)
     mgmt_name: str = Field(index=True)
@@ -130,12 +127,12 @@ class DomainSyncStateRecord(SQLModel, table=True):
     item_type: str = Field(default="*", index=True)
     last_published_at: datetime | None = Field(
         default=None,
-        sa_column=Column(DateTime(timezone=True), nullable=True),
+        sa_column=Column(DateTime(timezone=False), nullable=True),
     )
     last_session_uid: str | None = Field(default=None)
     synced_at: datetime | None = Field(
         default=None,
-        sa_column=Column(DateTime(timezone=True), nullable=True),
+        sa_column=Column(DateTime(timezone=False), nullable=True),
     )
     status: str = Field(default="idle")
     object_count: int = Field(default=0)
@@ -183,7 +180,7 @@ class CPObjectRecord(SQLModel, table=True):
     )
     updated_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
 
 
@@ -221,14 +218,14 @@ class CPServiceRecord(SQLModel, table=True):
     )
     updated_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
 
 
 class AssetRecord(SQLModel, table=True):
-    """Cached gateway, cluster, cluster member, VSX, or management server asset row in `assets`."""
+    """Cached gateway, cluster, cluster member, VSX, or management server asset row in `arodonata_assets`."""
 
-    __tablename__ = "assets"
+    __tablename__ = "arodonata_assets"
 
     id: str = Field(primary_key=True)
     uid: str = Field(index=True)
@@ -268,14 +265,14 @@ class AssetRecord(SQLModel, table=True):
     )
     updated_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
 
 
 class RulebasePackageLayerRecord(SQLModel, table=True):
-    """Cached policy package to ordered layer/NAT linkage in `rulebase_package_layer`."""
+    """Cached policy package to ordered layer/NAT linkage in `arodonata_rulebase_package_layer`."""
 
-    __tablename__ = "rulebase_package_layer"
+    __tablename__ = "arodonata_rulebase_package_layer"
 
     id: str = Field(primary_key=True)
     mgmt_name: str = Field(index=True)
@@ -292,14 +289,14 @@ class RulebasePackageLayerRecord(SQLModel, table=True):
     )
     updated_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
 
 
 class RulebaseLayerRecord(SQLModel, table=True):
-    """Cached rulebase layer row in `rulebase_layer`."""
+    """Cached rulebase layer row in `arodonata_rulebase_layer`."""
 
-    __tablename__ = "rulebase_layer"
+    __tablename__ = "arodonata_rulebase_layer"
 
     id: str = Field(primary_key=True)
     mgmt_name: str = Field(index=True)
@@ -318,14 +315,14 @@ class RulebaseLayerRecord(SQLModel, table=True):
     )
     updated_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
 
 
 class RulebaseSectionRecord(SQLModel, table=True):
-    """Cached rulebase section header row in `rulebase_section`."""
+    """Cached rulebase section header row in `arodonata_rulebase_section`."""
 
-    __tablename__ = "rulebase_section"
+    __tablename__ = "arodonata_rulebase_section"
 
     id: str = Field(primary_key=True)
     mgmt_name: str = Field(index=True)
@@ -348,14 +345,14 @@ class RulebaseSectionRecord(SQLModel, table=True):
     )
     updated_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
 
 
 class AccessRuleRecord(SQLModel, table=True):
-    """Cached access-control rule row in `rulebase_access`."""
+    """Cached access-control rule row in `arodonata_rulebase_access`."""
 
-    __tablename__ = "rulebase_access"
+    __tablename__ = "arodonata_rulebase_access"
 
     id: str = Field(primary_key=True)
     mgmt_name: str = Field(index=True)
@@ -401,14 +398,14 @@ class AccessRuleRecord(SQLModel, table=True):
     )
     updated_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
 
 
 class NatRuleRecord(SQLModel, table=True):
-    """Cached NAT rule row in `rulebase_nat`."""
+    """Cached NAT rule row in `arodonata_rulebase_nat`."""
 
-    __tablename__ = "rulebase_nat"
+    __tablename__ = "arodonata_rulebase_nat"
 
     id: str = Field(primary_key=True)
     mgmt_name: str = Field(index=True)
@@ -442,14 +439,14 @@ class NatRuleRecord(SQLModel, table=True):
     )
     updated_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
 
 
 class HttpsRuleRecord(SQLModel, table=True):
-    """Cached HTTPS inspection rule row in `rulebase_https`."""
+    """Cached HTTPS inspection rule row in `arodonata_rulebase_https`."""
 
-    __tablename__ = "rulebase_https"
+    __tablename__ = "arodonata_rulebase_https"
 
     id: str = Field(primary_key=True)
     mgmt_name: str = Field(index=True)
@@ -495,14 +492,14 @@ class HttpsRuleRecord(SQLModel, table=True):
     )
     updated_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
 
 
 class ThreatRuleRecord(SQLModel, table=True):
-    """Cached Threat Prevention rule row in `rulebase_threat`."""
+    """Cached Threat Prevention rule row in `arodonata_rulebase_threat`."""
 
-    __tablename__ = "rulebase_threat"
+    __tablename__ = "arodonata_rulebase_threat"
 
     id: str = Field(primary_key=True)
     mgmt_name: str = Field(index=True)
@@ -546,5 +543,26 @@ class ThreatRuleRecord(SQLModel, table=True):
     )
     updated_at: datetime = Field(
         default_factory=utc_now,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False),
     )
+
+
+ARODONATA_TABLE_NAMES: frozenset[str] = frozenset(
+    {
+        SchemaVersionRecord.__tablename__,
+        DistributedLockRecord.__tablename__,
+        DomainRecord.__tablename__,
+        SIDCacheRecord.__tablename__,
+        DomainSyncStateRecord.__tablename__,
+        CPObjectRecord.__tablename__,
+        CPServiceRecord.__tablename__,
+        AssetRecord.__tablename__,
+        RulebasePackageLayerRecord.__tablename__,
+        RulebaseLayerRecord.__tablename__,
+        RulebaseSectionRecord.__tablename__,
+        AccessRuleRecord.__tablename__,
+        NatRuleRecord.__tablename__,
+        HttpsRuleRecord.__tablename__,
+        ThreatRuleRecord.__tablename__,
+    }
+)

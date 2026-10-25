@@ -408,6 +408,24 @@
         "nat-settings": {
           "type": "object"
         },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ignore_warnings": {
+          "type": "boolean"
+        },
+        "ignore-warnings": {
+          "type": "boolean"
+        },
+        "set_if_exists": {
+          "type": "boolean"
+        },
+        "set-if-exists": {
+          "type": "boolean"
+        },
         "on_name_conflict": {
           "$ref": "#/definitions/NameConflictPolicy"
         },
@@ -565,6 +583,24 @@
           "items": {
             "type": "string"
           }
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ignore_warnings": {
+          "type": "boolean"
+        },
+        "ignore-warnings": {
+          "type": "boolean"
+        },
+        "set_if_exists": {
+          "type": "boolean"
+        },
+        "set-if-exists": {
+          "type": "boolean"
         },
         "on_name_conflict": {
           "$ref": "#/definitions/NameConflictPolicy"
@@ -1016,7 +1052,7 @@
       ]
     },
     "GenericOperation": {
-      "oneOf": [
+      "anyOf": [
         {
           "$ref": "#/definitions/ObjectOperation"
         },

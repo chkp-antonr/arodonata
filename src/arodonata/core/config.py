@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import urllib.parse
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -18,6 +21,27 @@ from arodonata.core.telemetry import apply_trace_modules, parse_trace_modules
 
 AuthMode = Literal["api_key", "credential", "dynamic"]
 TlsTrustMode = Literal["pinned", "tofu", "lab-memory"]
+
+DEFAULT_TLS_KNOWN_HOSTS_PATH: str = str(Path.home() / ".config" / "arodonata" / "tls_known_hosts.json")
+
+
+def mask_database_url(url: str) -> str:
+    """Mask password embedded in a database connection URL (`postgresql+asyncpg://user:***@host/db`)."""
+    if not url or "://" not in url:
+        return url
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.password is None:
+            return url
+        user = urllib.parse.quote(parsed.username or "", safe="")
+        host_part = parsed.hostname or ""
+        if ":" in host_part and not host_part.startswith("["):
+            host_part = f"[{host_part}]"
+        port_suffix = f":{parsed.port}" if parsed.port is not None else ""
+        netloc = f"{user}:{REDACTED_PLACEHOLDER}@{host_part}{port_suffix}"
+        return urllib.parse.urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+    except Exception:
+        return REDACTED_PLACEHOLDER
 
 
 def _split_csv(value: str | list[str] | tuple[str, ...] | None) -> list[str]:
@@ -66,98 +90,189 @@ class ArodonataSettings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="ARODONATA_",
         env_file=None,
         extra="ignore",
-        populate_by_name=True,
+        populate_by_name=False,
     )
 
     # Multi-server positional topology
     mgmt_names: CsvStrList = Field(
         default_factory=list,
-        validation_alias=AliasChoices("mgmt_names", "ARODONATA_MGMT_NAMES", "MGMT_NAMES"),
+        validation_alias=AliasChoices("ARODONATA_MGMT_NAMES", "MGMT_NAMES"),
     )
     mgmt_servers: CsvStrList = Field(
         default_factory=list,
-        validation_alias=AliasChoices("mgmt_servers", "ARODONATA_MGMT_SERVERS", "MGMT_SERVERS"),
+        validation_alias=AliasChoices("ARODONATA_MGMT_SERVERS", "MGMT_SERVERS"),
     )
     api_keys: CsvStrList = Field(
         default_factory=list,
         repr=False,
-        validation_alias=AliasChoices("api_keys", "ARODONATA_API_KEYS", "API_KEYS"),
+        validation_alias=AliasChoices("ARODONATA_API_KEYS", "API_KEYS"),
     )
     api_key_vars: CsvStrList = Field(
         default_factory=list,
-        validation_alias=AliasChoices("api_key_vars", "ARODONATA_API_KEY_VARS", "API_KEY_VARS"),
+        validation_alias=AliasChoices("ARODONATA_API_KEY_VARS", "API_KEY_VARS"),
     )
 
     # Single-server convenience fields
     mgmt_name: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("mgmt_name", "ARODONATA_MGMT_NAME", "MGMT_NAME"),
+        validation_alias=AliasChoices("ARODONATA_MGMT_NAME", "MGMT_NAME"),
     )
     mgmt_ip: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("mgmt_ip", "ARODONATA_MGMT_IP", "MGMT_IP"),
+        validation_alias=AliasChoices("ARODONATA_MGMT_IP", "MGMT_IP"),
     )
     mgmt_port: int = Field(
         default=443,
-        validation_alias=AliasChoices("mgmt_port", "ARODONATA_MGMT_PORT", "MGMT_PORT"),
+        validation_alias=AliasChoices("ARODONATA_MGMT_PORT", "MGMT_PORT"),
     )
     api_key: str | None = Field(
         default=None,
         repr=False,
-        validation_alias=AliasChoices("api_key", "ARODONATA_API_KEY", "MGMT_API_KEY", "API_KEY"),
+        validation_alias=AliasChoices("ARODONATA_API_KEY", "MGMT_API_KEY"),
     )
     username: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("username", "ARODONATA_USERNAME", "MGMT_USER", "MGMT_USERNAME"),
+        validation_alias=AliasChoices("ARODONATA_USERNAME", "MGMT_USER", "MGMT_USERNAME"),
     )
     password: str | None = Field(
         default=None,
         repr=False,
-        validation_alias=AliasChoices("password", "ARODONATA_PASSWORD", "MGMT_PASSWORD"),
+        validation_alias=AliasChoices("ARODONATA_PASSWORD", "MGMT_PASSWORD"),
     )
 
     # Resolved authentication mode
     auth_mode: AuthMode = Field(
         default="dynamic",
-        validation_alias=AliasChoices("auth_mode", "ARODONATA_AUTH_MODE"),
+        validation_alias=AliasChoices("ARODONATA_AUTH_MODE"),
     )
 
     # Operational timeout budgets (seconds)
-    connect_timeout: float = Field(default=30.0, gt=0)
-    api_timeout: float = Field(default=120.0, gt=0)
-    login_timeout: float = Field(default=120.0, gt=0)
-    task_timeout: float = Field(default=900.0, gt=0)
-    rate_limit_slot_timeout: float = Field(default=90.0, gt=0)
+    connect_timeout: float = Field(
+        default=30.0,
+        gt=0,
+        validation_alias=AliasChoices("ARODONATA_CONNECT_TIMEOUT"),
+    )
+    api_timeout: float = Field(
+        default=120.0,
+        gt=0,
+        validation_alias=AliasChoices("ARODONATA_API_TIMEOUT"),
+    )
+    login_timeout: float = Field(
+        default=120.0,
+        gt=0,
+        validation_alias=AliasChoices("ARODONATA_LOGIN_TIMEOUT"),
+    )
+    task_timeout: float = Field(
+        default=900.0,
+        gt=0,
+        validation_alias=AliasChoices("ARODONATA_TASK_TIMEOUT"),
+    )
+    rate_limit_slot_timeout: float = Field(
+        default=90.0,
+        gt=0,
+        validation_alias=AliasChoices("ARODONATA_RATE_LIMIT_SLOT_TIMEOUT"),
+    )
 
     # Session, concurrency, and rate limiting
-    session_timeout: int = Field(default=600, gt=0)
-    session_expire_seconds: int = Field(default=540, gt=0)
-    concurrent_limit: int = Field(default=4, ge=1, le=20)
-    login_throttle_window: float = Field(default=70.0, gt=0)
-    login_max_wait: float = Field(default=900.0, gt=0)
+    session_timeout: int = Field(
+        default=600,
+        gt=0,
+        validation_alias=AliasChoices("ARODONATA_SESSION_TIMEOUT"),
+    )
+    session_expire_seconds: int = Field(
+        default=540,
+        gt=0,
+        validation_alias=AliasChoices("ARODONATA_SESSION_EXPIRE_SECONDS", "ARODONATA_SESSION_EXPIRE"),
+    )
+    concurrent_limit: int = Field(
+        default=4,
+        ge=1,
+        le=20,
+        validation_alias=AliasChoices("ARODONATA_CONCURRENT_LIMIT"),
+    )
+    login_throttle_window: float = Field(
+        default=70.0,
+        gt=0,
+        validation_alias=AliasChoices("ARODONATA_LOGIN_THROTTLE_WINDOW"),
+    )
+    login_max_wait: float = Field(
+        default=900.0,
+        gt=0,
+        validation_alias=AliasChoices("ARODONATA_LOGIN_MAX_WAIT"),
+    )
 
     # Cache and sync parameters
-    cache_ttl: int = Field(default=300, ge=0)
-    domain_list_ttl: int = Field(default=3600, ge=0)
-    max_incremental_changes: int = Field(default=500, ge=1)
+    cache_ttl: int = Field(
+        default=300,
+        ge=0,
+        validation_alias=AliasChoices("ARODONATA_CACHE_TTL"),
+    )
+    domain_list_ttl: int = Field(
+        default=3600,
+        ge=0,
+        validation_alias=AliasChoices("ARODONATA_DOMAIN_LIST_TTL"),
+    )
+    max_incremental_changes: int = Field(
+        default=500,
+        ge=1,
+        validation_alias=AliasChoices("ARODONATA_MAX_INCREMENTAL_CHANGES"),
+    )
 
     # TLS identity verification
-    tls_trust: TlsTrustMode = Field(default="tofu")
-    tls_known_hosts_path: str = Field(default="tls_known_hosts.json")
-    tls_fingerprints: str = Field(default="")
+    tls_trust: TlsTrustMode = Field(
+        default="tofu",
+        validation_alias=AliasChoices("ARODONATA_TLS_TRUST"),
+    )
+    tls_known_hosts_path: str = Field(
+        default_factory=lambda: str(Path.home() / ".config" / "arodonata" / "tls_known_hosts.json"),
+        validation_alias=AliasChoices("ARODONATA_TLS_KNOWN_HOSTS_PATH"),
+    )
+    tls_fingerprints: str = Field(
+        default="",
+        validation_alias=AliasChoices("ARODONATA_TLS_FINGERPRINTS"),
+    )
 
     # Storage defaults
-    database_url: str = Field(default="sqlite+aiosqlite:///:memory:")
-    sqlite_busy_timeout_ms: int = Field(default=30000, ge=0)
+    database_url: str = Field(
+        default="sqlite+aiosqlite:///:memory:",
+        validation_alias=AliasChoices("ARODONATA_DATABASE_URL"),
+    )
+    sqlite_busy_timeout_ms: int = Field(
+        default=30000,
+        ge=0,
+        validation_alias=AliasChoices("ARODONATA_SQLITE_BUSY_TIMEOUT_MS"),
+    )
 
     # Optional CPCRUD schema override
-    cpcrud_schema_path: str | None = Field(default=None)
+    cpcrud_schema_path: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ARODONATA_CPCRUD_SCHEMA_PATH"),
+    )
 
     # OpenTelemetry module span gating
-    trace_modules: str = Field(default="")
+    trace_modules: str = Field(
+        default="",
+        validation_alias=AliasChoices("ARODONATA_TRACE_MODULES"),
+    )
+
+    def __init__(self, **data: Any) -> None:
+        model_fields = type(self).model_fields
+        remapped: dict[str, Any] = {}
+        for key, value in data.items():
+            field = model_fields.get(key)
+            if (
+                field is not None
+                and isinstance(field.validation_alias, AliasChoices)
+                and field.validation_alias.choices
+            ):
+                first_alias = field.validation_alias.choices[0]
+                if isinstance(first_alias, str):
+                    remapped[first_alias] = value
+                    continue
+            remapped[key] = value
+        super().__init__(**remapped)
 
     @field_validator("mgmt_names", "mgmt_servers", "api_keys", "api_key_vars", mode="before")
     @classmethod
@@ -186,7 +301,9 @@ class ArodonataSettings(BaseSettings):
                 self.mgmt_names = [self.mgmt_name.strip() if self.mgmt_name else self.mgmt_ip.strip()]
 
         # 2. Resolve API keys with strict precedence: explicit api_keys > single api_key > api_key_vars
-        if not self.api_keys:
+        #    When username/password credentials are provided (and no explicit api_keys), do not absorb ambient api_key.
+        has_credentials = bool(self.username or self.password)
+        if not self.api_keys and not has_credentials:
             if self.api_key:
                 self.api_keys = [self.api_key.strip()]
             elif self.api_key_vars:
@@ -219,16 +336,8 @@ class ArodonataSettings(BaseSettings):
 
         # 4. Determine auth_mode and validate mode-specific requirements
         has_api_keys = bool(self.api_keys)
-        has_credentials = bool(self.username or self.password)
 
-        if has_api_keys:
-            if len(self.api_keys) != len(self.mgmt_servers) or len(self.api_keys) != len(self.mgmt_names):
-                raise ConfigurationError(
-                    f"Mismatched server and API key counts: mgmt_names={len(self.mgmt_names)}, "
-                    f"mgmt_servers={len(self.mgmt_servers)}, api_keys={len(self.api_keys)}."
-                )
-            self.auth_mode = "api_key"
-        elif has_credentials:
+        if has_credentials and not has_api_keys:
             if not (self.username and self.password):
                 raise MissingConfigurationError(
                     "Both username and password are required for credential authentication."
@@ -238,10 +347,21 @@ class ArodonataSettings(BaseSettings):
                     "A target management server address (mgmt_ip or mgmt_servers) is required for credential mode."
                 )
             self.auth_mode = "credential"
+        elif has_api_keys:
+            if len(self.api_keys) != len(self.mgmt_servers) or len(self.api_keys) != len(self.mgmt_names):
+                raise ConfigurationError(
+                    f"Mismatched server and API key counts: mgmt_names={len(self.mgmt_names)}, "
+                    f"mgmt_servers={len(self.mgmt_servers)}, api_keys={len(self.api_keys)}."
+                )
+            self.auth_mode = "api_key"
         else:
             self.auth_mode = "dynamic"
 
-        # 5. Validate trace_modules syntax eagerly (without overwriting global host rules if empty)
+        # 5. Normalize tls_known_hosts_path (~ expansion)
+        if self.tls_known_hosts_path:
+            self.tls_known_hosts_path = str(Path(self.tls_known_hosts_path).expanduser())
+
+        # 6. Validate trace_modules syntax eagerly (without overwriting global host rules if empty)
         if self.trace_modules:
             _ = parse_trace_modules(self.trace_modules)
 
@@ -277,23 +397,98 @@ class ArodonataSettings(BaseSettings):
             return float(budget) + 5.0
         return float(max(self.api_timeout, self.login_timeout)) + 5.0
 
+    def _mask_serialized_dict(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Mask secret fields and database URL passwords in serialized dictionaries."""
+        if "password" in data and data["password"]:
+            data["password"] = REDACTED_PLACEHOLDER
+        if "api_key" in data and data["api_key"]:
+            data["api_key"] = REDACTED_PLACEHOLDER
+        if "api_keys" in data and data["api_keys"]:
+            data["api_keys"] = [REDACTED_PLACEHOLDER for _ in data["api_keys"]]
+        if "database_url" in data and isinstance(data["database_url"], str):
+            data["database_url"] = mask_database_url(data["database_url"])
+        return data
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        """Serialize settings with secrets and database URL passwords masked."""
+        dumped = super().model_dump(**kwargs)
+        return self._mask_serialized_dict(dumped)
+
+    def model_dump_json(self, **kwargs: Any) -> str:
+        """Serialize settings to JSON with secrets and database URL passwords masked."""
+        dumped = self.model_dump(**{k: v for k, v in kwargs.items() if k != "indent"})
+        indent = kwargs.get("indent")
+        return json.dumps(dumped, indent=indent, default=str)
+
     def __repr__(self) -> str:
         fields_repr: list[str] = []
         for name in type(self).model_fields:
             val = getattr(self, name)
             if name in ("api_keys", "api_key", "password"):
-                masked = REDACTED_PLACEHOLDER if val else val
+                masked: Any = (
+                    [REDACTED_PLACEHOLDER for _ in val]
+                    if isinstance(val, list) and val
+                    else (REDACTED_PLACEHOLDER if val else val)
+                )
                 fields_repr.append(f"{name}={masked!r}")
+            elif name == "database_url" and isinstance(val, str):
+                fields_repr.append(f"{name}={mask_database_url(val)!r}")
             else:
                 fields_repr.append(f"{name}={val!r}")
         return f"ArodonataSettings({', '.join(fields_repr)})"
 
+    def __str__(self) -> str:
+        return self.__repr__()
 
-def _parse_host_port(raw_server: str, *, default_port: int = 443) -> tuple[str, int]:
-    """Split `host` or `host:port` into `(host, port)`."""
+
+def parse_host_port(raw_server: str, *, default_port: int = 443) -> tuple[str, int]:
+    """Split `host`, `host:port`, `[ipv6]:port`, or bare IPv6 `2001:db8::1` into `(host, port)`."""
     cleaned = raw_server.strip()
-    if ":" in cleaned and not cleaned.startswith("["):
+    if not cleaned:
+        return "", default_port
+
+    if cleaned.startswith("["):
+        end_bracket = cleaned.find("]")
+        if end_bracket == -1:
+            raise ConfigurationError(f"Malformed bracketed IPv6 address {raw_server!r}: missing closing ']'.")
+        host_inner = cleaned[1:end_bracket].strip()
+        remainder = cleaned[end_bracket + 1 :].strip()
+        try:
+            addr = ipaddress.ip_address(host_inner)
+            normalized_host = addr.compressed
+        except ValueError:
+            normalized_host = host_inner
+        if not remainder:
+            return normalized_host, default_port
+        if remainder.startswith(":") and remainder[1:].isdigit():
+            port_val = int(remainder[1:])
+            if not (1 <= port_val <= 65535):
+                raise ConfigurationError(f"Port out of range in {raw_server!r}: {port_val}")
+            return normalized_host, port_val
+        raise ConfigurationError(f"Malformed port suffix in bracketed address {raw_server!r}.")
+
+    # Check if cleaned is a bare IPv6 literal (contains >= 2 colons or valid ip_address v6)
+    try:
+        addr = ipaddress.ip_address(cleaned)
+        if addr.version == 6:
+            return addr.compressed, default_port
+    except ValueError:
+        pass
+
+    if cleaned.count(":") == 1:
         host_part, port_part = cleaned.rsplit(":", 1)
         if port_part.isdigit():
-            return host_part.strip(), int(port_part)
+            port_val = int(port_part)
+            if not (1 <= port_val <= 65535):
+                raise ConfigurationError(f"Port out of range in {raw_server!r}: {port_val}")
+            return host_part.strip(), port_val
+    elif cleaned.count(":") > 1:
+        # Unbracketed multi-colon string that wasn't a bare IPv6 address: check if it's ipv6:port or invalid
+        raise ConfigurationError(
+            f"Ambiguous IPv6 address/port {raw_server!r}: wrap IPv6 addresses with ports in brackets '[ipv6]:port'."
+        )
+
     return cleaned, default_port
+
+
+_parse_host_port = parse_host_port

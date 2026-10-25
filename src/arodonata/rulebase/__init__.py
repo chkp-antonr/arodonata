@@ -5,6 +5,7 @@ from arodonata.rulebase.filter import (
     format_rules_markdown,
     format_rules_model_friendly,
     rule_matches_filter,
+    rule_to_cpcrud_operation,
 )
 from arodonata.rulebase.models import (
     FilteredRulebaseResult,
@@ -70,4 +71,5 @@ __all__ = [
     "parse_nat_rule_entry",
     "parse_threat_rule_entry",
     "rule_matches_filter",
+    "rule_to_cpcrud_operation",
 ]

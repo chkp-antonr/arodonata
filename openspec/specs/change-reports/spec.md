@@ -10,6 +10,11 @@ Defines read-only collection (`collect_change_report`), rulebase placement numbe
 
 `collect_change_report(client, scopes, ...)` SHALL validate `SessionScope` and `RangeScope` inputs strictly (raising `pydantic.ValidationError` or `ChangeReportInputError` on invalid bounds or naive datetimes), query `show-changes` read-only across target management servers and domains, deduplicate sessions named by multiple scopes, and record partial runtime failures as structured `ReportWarning` entries rather than aborting the whole report.
 
+#### Scenario: Single-session change collection via to-session query and container filtering
+
+- **WHEN** a `SessionScope` requests changes for explicit `session_uids`
+- **THEN** the collector SHALL call `show-changes` with `{"to-session": s_uid, "details-level": "full"}` (omitting `from-session: s_uid` because `from-session` is exclusive in Check Point `show-changes`), filter the returned `changes[]` containers to the matching `session-uid`, and classify `modified-objects` entries that contain `new-object` without `old-object` as `"added"`
+
 #### Scenario: Timezone-aware date range conversion and exact publish-time filtering
 
 - **WHEN** a `RangeScope` includes timezone-aware `from_date` and/or `to_date`

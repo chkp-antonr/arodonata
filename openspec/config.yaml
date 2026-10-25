@@ -4,7 +4,7 @@ context: |
   Arodonata is an async-first Python 3.13+ library and SDK for Check Point Security Management and Multi-Domain Security Management (MDSM) operations.
   Key architectural constraints:
   - Hexagonal (Ports & Adapters) architecture: business logic in `core` depends on `ApiPort` and `CachePort` protocols, never directly on transport or DB drivers.
-  - Database-backed cache (SQLAlchemy 2.0+ async + SQLModel on PostgreSQL or SQLite) with schema hash auto-migration (`arodonata_schema_version`) and distributed locks (`distributed_locks`).
+  - Database-backed cache (SQLAlchemy 2.0+ async + SQLModel on PostgreSQL or SQLite) with schema hash auto-migration (`arodonata_schema_version`), distributed locks (`distributed_locks`), and uniform naive UTC timestamps (`DateTime(timezone=False)`, `tzinfo=None`).
   - Strict security hygiene: session identifiers (SIDs) and API keys/passwords must NEVER appear in logs, repr(), spans, error messages, or reports.
   - Provider-agnostic OpenTelemetry instrumentation (`opentelemetry-api` + `arlogi.otel.traced`); never owns or configures a global `TracerProvider`.
   - Downstream consumers follow "Delegate, Never Duplicate": Arodonata is the single authoritative engine for Check Point transport, session pooling, caching, declarative CPCRUD, rulebase introspection, change reporting, and MCP tooling.
