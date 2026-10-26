@@ -4,6 +4,6 @@ Demonstrates paired streaming (`stream_refresh_*`) and batch (`refresh_*`) cache
 
 ## Source Code (`examples/04_smart_refresh.py`)
 
-```python
---8 < --"examples/04_smart_refresh.py"
+```python title="examples/04_smart_refresh.py"
+--8<-- "examples/04_smart_refresh.py"
 ```

@@ -4,6 +4,6 @@ Demonstrates runtime `auth_context`, `user_context`, and isolated `write_session
 
 ## Source Code (`examples/07_context_and_overlay.py`)
 
-```python
---8 < --"examples/07_context_and_overlay.py"
+```python title="examples/07_context_and_overlay.py"
+--8<-- "examples/07_context_and_overlay.py"
 ```

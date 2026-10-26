@@ -550,66 +550,37 @@ Never loads `.env` files implicitly.
 ##### Fields / Class Variables
 
 ```python
-mgmt_names: CsvStrList = Field(
-    default_factory=list, validation_alias=AliasChoices("ARODONATA_MGMT_NAMES", "MGMT_NAMES")
-)
-mgmt_servers: CsvStrList = Field(
-    default_factory=list, validation_alias=AliasChoices("ARODONATA_MGMT_SERVERS", "MGMT_SERVERS")
-)
-api_keys: CsvStrList = Field(
-    default_factory=list, repr=False, validation_alias=AliasChoices("ARODONATA_API_KEYS", "API_KEYS")
-)
-api_key_vars: CsvStrList = Field(
-    default_factory=list, validation_alias=AliasChoices("ARODONATA_API_KEY_VARS", "API_KEY_VARS")
-)
-mgmt_name: str | None = Field(default=None, validation_alias=AliasChoices("ARODONATA_MGMT_NAME", "MGMT_NAME"))
-mgmt_ip: str | None = Field(default=None, validation_alias=AliasChoices("ARODONATA_MGMT_IP", "MGMT_IP"))
-mgmt_port: int = Field(default=443, validation_alias=AliasChoices("ARODONATA_MGMT_PORT", "MGMT_PORT"))
-api_key: str | None = Field(
-    default=None, repr=False, validation_alias=AliasChoices("ARODONATA_API_KEY", "MGMT_API_KEY")
-)
-username: str | None = Field(
-    default=None, validation_alias=AliasChoices("ARODONATA_USERNAME", "MGMT_USER", "MGMT_USERNAME")
-)
-password: str | None = Field(
-    default=None, repr=False, validation_alias=AliasChoices("ARODONATA_PASSWORD", "MGMT_PASSWORD")
-)
-auth_mode: AuthMode = Field(default="dynamic", validation_alias=AliasChoices("ARODONATA_AUTH_MODE"))
-connect_timeout: float = Field(default=30.0, gt=0, validation_alias=AliasChoices("ARODONATA_CONNECT_TIMEOUT"))
-api_timeout: float = Field(default=120.0, gt=0, validation_alias=AliasChoices("ARODONATA_API_TIMEOUT"))
-login_timeout: float = Field(default=120.0, gt=0, validation_alias=AliasChoices("ARODONATA_LOGIN_TIMEOUT"))
-task_timeout: float = Field(default=900.0, gt=0, validation_alias=AliasChoices("ARODONATA_TASK_TIMEOUT"))
-rate_limit_slot_timeout: float = Field(
-    default=90.0, gt=0, validation_alias=AliasChoices("ARODONATA_RATE_LIMIT_SLOT_TIMEOUT")
-)
-session_timeout: int = Field(default=600, gt=0, validation_alias=AliasChoices("ARODONATA_SESSION_TIMEOUT"))
-session_expire_seconds: int = Field(
-    default=540, gt=0, validation_alias=AliasChoices("ARODONATA_SESSION_EXPIRE_SECONDS", "ARODONATA_SESSION_EXPIRE")
-)
-concurrent_limit: int = Field(default=4, ge=1, le=20, validation_alias=AliasChoices("ARODONATA_CONCURRENT_LIMIT"))
-login_throttle_window: float = Field(
-    default=70.0, gt=0, validation_alias=AliasChoices("ARODONATA_LOGIN_THROTTLE_WINDOW")
-)
-login_max_wait: float = Field(default=900.0, gt=0, validation_alias=AliasChoices("ARODONATA_LOGIN_MAX_WAIT"))
-cache_ttl: int = Field(default=300, ge=0, validation_alias=AliasChoices("ARODONATA_CACHE_TTL"))
-domain_list_ttl: int = Field(default=3600, ge=0, validation_alias=AliasChoices("ARODONATA_DOMAIN_LIST_TTL"))
-max_incremental_changes: int = Field(
-    default=500, ge=1, validation_alias=AliasChoices("ARODONATA_MAX_INCREMENTAL_CHANGES")
-)
-tls_trust: TlsTrustMode = Field(default="tofu", validation_alias=AliasChoices("ARODONATA_TLS_TRUST"))
-tls_known_hosts_path: str = Field(
-    default_factory=lambda: str(Path.home() / ".config" / "arodonata" / "tls_known_hosts.json"),
-    validation_alias=AliasChoices("ARODONATA_TLS_KNOWN_HOSTS_PATH"),
-)
-tls_fingerprints: str = Field(default="", validation_alias=AliasChoices("ARODONATA_TLS_FINGERPRINTS"))
-database_url: str = Field(
-    default="sqlite+aiosqlite:///:memory:", validation_alias=AliasChoices("ARODONATA_DATABASE_URL")
-)
-sqlite_busy_timeout_ms: int = Field(
-    default=30000, ge=0, validation_alias=AliasChoices("ARODONATA_SQLITE_BUSY_TIMEOUT_MS")
-)
-cpcrud_schema_path: str | None = Field(default=None, validation_alias=AliasChoices("ARODONATA_CPCRUD_SCHEMA_PATH"))
-trace_modules: str = Field(default="", validation_alias=AliasChoices("ARODONATA_TRACE_MODULES"))
+mgmt_names: CsvStrList = Field(default_factory=list, validation_alias=AliasChoices('ARODONATA_MGMT_NAMES', 'MGMT_NAMES'))
+mgmt_servers: CsvStrList = Field(default_factory=list, validation_alias=AliasChoices('ARODONATA_MGMT_SERVERS', 'MGMT_SERVERS'))
+api_keys: CsvStrList = Field(default_factory=list, repr=False, validation_alias=AliasChoices('ARODONATA_API_KEYS', 'API_KEYS'))
+api_key_vars: CsvStrList = Field(default_factory=list, validation_alias=AliasChoices('ARODONATA_API_KEY_VARS', 'API_KEY_VARS'))
+mgmt_name: str | None = Field(default=None, validation_alias=AliasChoices('ARODONATA_MGMT_NAME', 'MGMT_NAME'))
+mgmt_ip: str | None = Field(default=None, validation_alias=AliasChoices('ARODONATA_MGMT_IP', 'MGMT_IP'))
+mgmt_port: int = Field(default=443, validation_alias=AliasChoices('ARODONATA_MGMT_PORT', 'MGMT_PORT'))
+api_key: str | None = Field(default=None, repr=False, validation_alias=AliasChoices('ARODONATA_API_KEY', 'MGMT_API_KEY'))
+username: str | None = Field(default=None, validation_alias=AliasChoices('ARODONATA_USERNAME', 'MGMT_USER', 'MGMT_USERNAME'))
+password: str | None = Field(default=None, repr=False, validation_alias=AliasChoices('ARODONATA_PASSWORD', 'MGMT_PASSWORD'))
+auth_mode: AuthMode = Field(default='dynamic', validation_alias=AliasChoices('ARODONATA_AUTH_MODE'))
+connect_timeout: float = Field(default=30.0, gt=0, validation_alias=AliasChoices('ARODONATA_CONNECT_TIMEOUT'))
+api_timeout: float = Field(default=120.0, gt=0, validation_alias=AliasChoices('ARODONATA_API_TIMEOUT'))
+login_timeout: float = Field(default=120.0, gt=0, validation_alias=AliasChoices('ARODONATA_LOGIN_TIMEOUT'))
+task_timeout: float = Field(default=900.0, gt=0, validation_alias=AliasChoices('ARODONATA_TASK_TIMEOUT'))
+rate_limit_slot_timeout: float = Field(default=90.0, gt=0, validation_alias=AliasChoices('ARODONATA_RATE_LIMIT_SLOT_TIMEOUT'))
+session_timeout: int = Field(default=600, gt=0, validation_alias=AliasChoices('ARODONATA_SESSION_TIMEOUT'))
+session_expire_seconds: int = Field(default=540, gt=0, validation_alias=AliasChoices('ARODONATA_SESSION_EXPIRE_SECONDS', 'ARODONATA_SESSION_EXPIRE'))
+concurrent_limit: int = Field(default=4, ge=1, le=20, validation_alias=AliasChoices('ARODONATA_CONCURRENT_LIMIT'))
+login_throttle_window: float = Field(default=70.0, gt=0, validation_alias=AliasChoices('ARODONATA_LOGIN_THROTTLE_WINDOW'))
+login_max_wait: float = Field(default=900.0, gt=0, validation_alias=AliasChoices('ARODONATA_LOGIN_MAX_WAIT'))
+cache_ttl: int = Field(default=300, ge=0, validation_alias=AliasChoices('ARODONATA_CACHE_TTL'))
+domain_list_ttl: int = Field(default=3600, ge=0, validation_alias=AliasChoices('ARODONATA_DOMAIN_LIST_TTL'))
+max_incremental_changes: int = Field(default=500, ge=1, validation_alias=AliasChoices('ARODONATA_MAX_INCREMENTAL_CHANGES'))
+tls_trust: TlsTrustMode = Field(default='tofu', validation_alias=AliasChoices('ARODONATA_TLS_TRUST'))
+tls_known_hosts_path: str = Field(default_factory=lambda: str(Path.home() / '.config' / 'arodonata' / 'tls_known_hosts.json'), validation_alias=AliasChoices('ARODONATA_TLS_KNOWN_HOSTS_PATH'))
+tls_fingerprints: str = Field(default='', validation_alias=AliasChoices('ARODONATA_TLS_FINGERPRINTS'))
+database_url: str = Field(default='sqlite+aiosqlite:///:memory:', validation_alias=AliasChoices('ARODONATA_DATABASE_URL'))
+sqlite_busy_timeout_ms: int = Field(default=30000, ge=0, validation_alias=AliasChoices('ARODONATA_SQLITE_BUSY_TIMEOUT_MS'))
+cpcrud_schema_path: str | None = Field(default=None, validation_alias=AliasChoices('ARODONATA_CPCRUD_SCHEMA_PATH'))
+trace_modules: str = Field(default='', validation_alias=AliasChoices('ARODONATA_TRACE_MODULES'))
 ```
 ##### Methods
 
@@ -999,11 +970,11 @@ Base model for all domain progress events.
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "domain_event"
+event_type: str = 'domain_event'
 timestamp: datetime = Field(default_factory=utc_now)
 mgmt_name: str | None = None
 domain: str | None = None
-message: str = ""
+message: str = ''
 details: dict[str, Any] = Field(default_factory=dict)
 ```
 ##### Methods
@@ -1019,10 +990,10 @@ Typed progress event emitted during `stream_refresh_*` synchronization operation
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "sync_progress"
-scope: SyncScope = "objects"
-phase: SyncPhase = "syncing"
-item_type: str = "*"
+event_type: str = 'sync_progress'
+scope: SyncScope = 'objects'
+phase: SyncPhase = 'syncing'
+item_type: str = '*'
 processed: int = 0
 total: int | None = None
 error: str | None = None
@@ -1034,8 +1005,8 @@ Emitted when a multi-domain synchronization run begins.
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "sync_started"
-phase: SyncPhase = "started"
+event_type: str = 'sync_started'
+phase: SyncPhase = 'started'
 ```
 #### class `DomainSyncStartedEvent(SyncProgressEvent)`
 
@@ -1044,8 +1015,8 @@ Emitted when synchronization begins for a specific `(mgmt_name, domain)`.
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "domain_sync_started"
-phase: SyncPhase = "syncing"
+event_type: str = 'domain_sync_started'
+phase: SyncPhase = 'syncing'
 ```
 #### class `DomainSyncProgressEvent(SyncProgressEvent)`
 
@@ -1054,8 +1025,8 @@ Emitted as object/service/asset/rulebase pages are fetched for a domain.
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "domain_sync_progress"
-phase: SyncPhase = "syncing"
+event_type: str = 'domain_sync_progress'
+phase: SyncPhase = 'syncing'
 ```
 #### class `DomainSyncSkippedEvent(SyncProgressEvent)`
 
@@ -1064,8 +1035,8 @@ Emitted when a domain or item_type slice is already fresh and skipped.
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "domain_sync_skipped"
-phase: SyncPhase = "skipped"
+event_type: str = 'domain_sync_skipped'
+phase: SyncPhase = 'skipped'
 ```
 #### class `DomainSyncCompletedEvent(SyncProgressEvent)`
 
@@ -1074,8 +1045,8 @@ Emitted when a domain or item_type slice completes synchronization.
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "domain_sync_completed"
-phase: SyncPhase = "completed"
+event_type: str = 'domain_sync_completed'
+phase: SyncPhase = 'completed'
 ```
 #### class `DomainSyncFailedEvent(SyncProgressEvent)`
 
@@ -1084,8 +1055,8 @@ Emitted when synchronization of a domain fails (e.g. InvalidCredentialsError or 
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "domain_sync_failed"
-phase: SyncPhase = "failed"
+event_type: str = 'domain_sync_failed'
+phase: SyncPhase = 'failed'
 ```
 #### class `SyncCompletedEvent(SyncProgressEvent)`
 
@@ -1094,8 +1065,8 @@ Emitted when an entire synchronization run completes across all target domains.
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "sync_completed"
-phase: SyncPhase = "completed"
+event_type: str = 'sync_completed'
+phase: SyncPhase = 'completed'
 ```
 #### class `CPCRUDEvent(DomainEvent)`
 
@@ -1104,8 +1075,8 @@ Typed progress event emitted during `cpcrud.stream_apply()`.
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "cpcrud_progress"
-phase: CPCRUDPhase = "action_completed"
+event_type: str = 'cpcrud_progress'
+phase: CPCRUDPhase = 'action_completed'
 action_id: str | None = None
 operation: str | None = None
 object_type: str | None = None
@@ -1120,8 +1091,8 @@ Emitted when a CPCRUD plan execution begins.
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "cpcrud_started"
-phase: CPCRUDPhase = "started"
+event_type: str = 'cpcrud_started'
+phase: CPCRUDPhase = 'started'
 ```
 #### class `CPCRUDActionEvent(CPCRUDEvent)`
 
@@ -1130,7 +1101,7 @@ Emitted before or after an individual planned action executes.
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "cpcrud_action"
+event_type: str = 'cpcrud_action'
 ```
 #### class `StagedSessionEvent(CPCRUDEvent)`
 
@@ -1139,9 +1110,9 @@ Emitted when `apply(..., no_publish=True, keep_session=True)` leaves a write ses
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "cpcrud_staged_session"
-phase: CPCRUDPhase = "staged_session"
-server_ip: str = ""
+event_type: str = 'cpcrud_staged_session'
+phase: CPCRUDPhase = 'staged_session'
+server_ip: str = ''
 session_uid: str | None = None
 session_name: str | None = None
 sid: str | None = Field(default=None, repr=False, exclude=True)
@@ -1153,8 +1124,8 @@ Emitted when a domain's dedicated write session is published during CPCRUD apply
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "cpcrud_domain_published"
-phase: CPCRUDPhase = "published"
+event_type: str = 'cpcrud_domain_published'
+phase: CPCRUDPhase = 'published'
 session_uid: str | None = None
 ```
 #### class `CPCRUDCompletedEvent(CPCRUDEvent)`
@@ -1164,8 +1135,8 @@ Emitted when `cpcrud.stream_apply()` finishes.
 ##### Fields / Class Variables
 
 ```python
-event_type: str = "cpcrud_completed"
-phase: CPCRUDPhase = "completed"
+event_type: str = 'cpcrud_completed'
+phase: CPCRUDPhase = 'completed'
 succeeded_count: int = 0
 failed_count: int = 0
 skipped_count: int = 0
@@ -1187,19 +1158,19 @@ Canonical Check Point gateway, cluster, cluster member, VSX, or server asset mod
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
-asset_id: str = ""
+id: str = ''
+asset_id: str = ''
 uid: str
 name: str
 type: str
 mgmt_name: str
 domain_name: str
-ipv4_address: str | None = Field(default=None, validation_alias=AliasChoices("ipv4_address", "ipv4-address"))
-ipv6_address: str | None = Field(default=None, validation_alias=AliasChoices("ipv6_address", "ipv6-address"))
+ipv4_address: str | None = Field(default=None, validation_alias=AliasChoices('ipv4_address', 'ipv4-address'))
+ipv6_address: str | None = Field(default=None, validation_alias=AliasChoices('ipv6_address', 'ipv6-address'))
 version: str | None = None
-os_name: str | None = Field(default=None, validation_alias=AliasChoices("os_name", "os-name"))
+os_name: str | None = Field(default=None, validation_alias=AliasChoices('os_name', 'os-name'))
 hardware: str | None = None
-sic_status: str | None = Field(default=None, validation_alias=AliasChoices("sic_status", "sic-status"))
+sic_status: str | None = Field(default=None, validation_alias=AliasChoices('sic_status', 'sic-status'))
 parent_uid: str | None = None
 parent_name: str | None = None
 parent_id: str | None = None
@@ -1209,10 +1180,8 @@ member_asset_ids: list[str] = Field(default_factory=list)
 virtual_system_uids: list[str] = Field(default_factory=list)
 virtual_system_asset_ids: list[str] = Field(default_factory=list)
 interfaces: list[dict[str, Any]] = Field(default_factory=list)
-network_security_blades: dict[str, Any] = Field(
-    default_factory=dict, validation_alias=AliasChoices("network_security_blades", "network-security-blades")
-)
-comments: str = ""
+network_security_blades: dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('network_security_blades', 'network-security-blades'))
+comments: str = ''
 color: str | None = None
 raw_data: dict[str, Any] = Field(default_factory=dict)
 updated_at: datetime = Field(default_factory=utc_now)
@@ -1315,11 +1284,11 @@ Check Point Management / MDSM domain metadata.
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
+id: str = ''
 mgmt_name: str
 uid: str
 name: str
-domain_type: str = "domain"
+domain_type: str = 'domain'
 active_ip: str | None = None
 active_mds_ip: str | None = None
 standby_ips: list[str] = Field(default_factory=list)
@@ -1341,7 +1310,7 @@ Shared read-only Check Point session identifier entry with SID-safe repr().
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
+id: str = ''
 mgmt_name: str
 domain_name: str
 sid: str = Field(repr=False)
@@ -1365,15 +1334,15 @@ Per-(mgmt_name, domain_name, scope, item_type) synchronization state.
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
+id: str = ''
 mgmt_name: str
 domain_name: str
 scope: SyncScope
-item_type: str = "*"
+item_type: str = '*'
 last_published_at: datetime | None = None
 last_session_uid: str | None = None
 synced_at: datetime | None = None
-status: SyncStatus = "idle"
+status: SyncStatus = 'idle'
 object_count: int = 0
 last_error: str | None = None
 ```
@@ -1414,34 +1383,28 @@ Canonical network object model stored in `arodonata_objects`.
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
-object_id: str = ""
+id: str = ''
+object_id: str = ''
 uid: str
 name: str
 type: str
 mgmt_name: str
 domain_name: str
 original_domain: str | None = None
-ipv4_address: str | None = Field(default=None, validation_alias=AliasChoices("ipv4_address", "ipv4-address"))
-ipv6_address: str | None = Field(default=None, validation_alias=AliasChoices("ipv6_address", "ipv6-address"))
+ipv4_address: str | None = Field(default=None, validation_alias=AliasChoices('ipv4_address', 'ipv4-address'))
+ipv6_address: str | None = Field(default=None, validation_alias=AliasChoices('ipv6_address', 'ipv6-address'))
 subnet4: str | None = None
-mask_length4: int | None = Field(default=None, validation_alias=AliasChoices("mask_length4", "mask-length4"))
-subnet_mask: str | None = Field(default=None, validation_alias=AliasChoices("subnet_mask", "subnet-mask"))
-ipv4_address_first: str | None = Field(
-    default=None, validation_alias=AliasChoices("ipv4_address_first", "ipv4-address-first")
-)
-ipv4_address_last: str | None = Field(
-    default=None, validation_alias=AliasChoices("ipv4_address_last", "ipv4-address-last")
-)
+mask_length4: int | None = Field(default=None, validation_alias=AliasChoices('mask_length4', 'mask-length4'))
+subnet_mask: str | None = Field(default=None, validation_alias=AliasChoices('subnet_mask', 'subnet-mask'))
+ipv4_address_first: str | None = Field(default=None, validation_alias=AliasChoices('ipv4_address_first', 'ipv4-address-first'))
+ipv4_address_last: str | None = Field(default=None, validation_alias=AliasChoices('ipv4_address_last', 'ipv4-address-last'))
 fqdn: str | None = None
-is_sub_domain: bool | None = Field(default=None, validation_alias=AliasChoices("is_sub_domain", "is-sub-domain"))
+is_sub_domain: bool | None = Field(default=None, validation_alias=AliasChoices('is_sub_domain', 'is-sub-domain'))
 members: list[str] = Field(default_factory=list)
-comments: str = ""
+comments: str = ''
 color: str | None = None
 tags: list[str] = Field(default_factory=list)
-nat_settings: dict[str, Any] = Field(
-    default_factory=dict, validation_alias=AliasChoices("nat_settings", "nat-settings")
-)
+nat_settings: dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('nat_settings', 'nat-settings'))
 raw_data: dict[str, Any] = Field(default_factory=dict)
 updated_at: datetime = Field(default_factory=utc_now)
 ```
@@ -1465,8 +1428,8 @@ Represents a group that directly or transitively contains a matched object.
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
-object_id: str = ""
+id: str = ''
+object_id: str = ''
 uid: str
 name: str
 mgmt_name: str
@@ -1503,7 +1466,7 @@ Links a policy package to an ordered layer or NAT policy in `rulebase_package_la
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
+id: str = ''
 mgmt_name: str
 domain_name: str
 package_uid: str
@@ -1528,7 +1491,7 @@ Cached rulebase layer metadata in `rulebase_layer`.
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
+id: str = ''
 mgmt_name: str
 domain_name: str
 uid: str
@@ -1555,7 +1518,7 @@ Cached rulebase section header in `rulebase_section`.
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
+id: str = ''
 mgmt_name: str
 domain_name: str
 layer_uid: str
@@ -1583,7 +1546,7 @@ Cached access-control rule or placeholder in `rulebase_access`.
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
+id: str = ''
 mgmt_name: str
 domain_name: str
 layer_uid: str
@@ -1591,8 +1554,8 @@ layer_name: str
 section_uid: str | None = None
 section_name: str | None = None
 uid: str
-name: str = ""
-rule_type: str = "access-rule"
+name: str = ''
+rule_type: str = 'access-rule'
 position: int = 0
 rule_number: str | None = None
 enabled: bool = True
@@ -1608,7 +1571,7 @@ destination_negate: bool = False
 service_negate: bool = False
 track: str | None = None
 install_on: list[str] = Field(default_factory=list)
-comments: str = ""
+comments: str = ''
 raw_data: dict[str, Any] = Field(default_factory=dict)
 updated_at: datetime = Field(default_factory=utc_now)
 ```
@@ -1625,7 +1588,7 @@ Cached NAT rule in `rulebase_nat`.
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
+id: str = ''
 mgmt_name: str
 domain_name: str
 package_uid: str
@@ -1633,8 +1596,8 @@ package_name: str
 section_uid: str | None = None
 section_name: str | None = None
 uid: str
-name: str = ""
-rule_type: str = "nat-rule"
+name: str = ''
+rule_type: str = 'nat-rule'
 position: int = 0
 rule_number: str | None = None
 enabled: bool = True
@@ -1647,7 +1610,7 @@ translated_source: str | None = None
 translated_destination: str | None = None
 translated_service: str | None = None
 install_on: list[str] = Field(default_factory=list)
-comments: str = ""
+comments: str = ''
 raw_data: dict[str, Any] = Field(default_factory=dict)
 updated_at: datetime = Field(default_factory=utc_now)
 ```
@@ -1664,7 +1627,7 @@ Cached HTTPS inspection rule in `rulebase_https`.
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
+id: str = ''
 mgmt_name: str
 domain_name: str
 layer_uid: str
@@ -1672,8 +1635,8 @@ layer_name: str
 section_uid: str | None = None
 section_name: str | None = None
 uid: str
-name: str = ""
-rule_type: str = "https-rule"
+name: str = ''
+rule_type: str = 'https-rule'
 position: int = 0
 rule_number: str | None = None
 enabled: bool = True
@@ -1686,7 +1649,7 @@ site_category: list[str] = Field(default_factory=list)
 certificate: str | None = None
 track: str | None = None
 install_on: list[str] = Field(default_factory=list)
-comments: str = ""
+comments: str = ''
 raw_data: dict[str, Any] = Field(default_factory=dict)
 updated_at: datetime = Field(default_factory=utc_now)
 ```
@@ -1703,7 +1666,7 @@ Cached Threat Prevention rule in `rulebase_threat`.
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
+id: str = ''
 mgmt_name: str
 domain_name: str
 layer_uid: str
@@ -1711,8 +1674,8 @@ layer_name: str
 section_uid: str | None = None
 section_name: str | None = None
 uid: str
-name: str = ""
-rule_type: str = "threat-rule"
+name: str = ''
+rule_type: str = 'threat-rule'
 position: int = 0
 rule_number: str | None = None
 enabled: bool = True
@@ -1723,7 +1686,7 @@ destination: list[str] = Field(default_factory=list)
 service: list[str] = Field(default_factory=list)
 track: str | None = None
 install_on: list[str] = Field(default_factory=list)
-comments: str = ""
+comments: str = ''
 raw_data: dict[str, Any] = Field(default_factory=dict)
 updated_at: datetime = Field(default_factory=utc_now)
 ```
@@ -1761,8 +1724,8 @@ Canonical service object model stored in `arodonata_services`.
 ##### Fields / Class Variables
 
 ```python
-id: str = ""
-service_id: str = ""
+id: str = ''
+service_id: str = ''
 uid: str
 name: str
 type: str
@@ -1771,12 +1734,12 @@ domain_name: str
 original_domain: str | None = None
 port: str | None = None
 protocol: str | None = None
-icmp_type: int | None = Field(default=None, validation_alias=AliasChoices("icmp_type", "icmp-type"))
-icmp_code: int | None = Field(default=None, validation_alias=AliasChoices("icmp_code", "icmp-code"))
+icmp_type: int | None = Field(default=None, validation_alias=AliasChoices('icmp_type', 'icmp-type'))
+icmp_code: int | None = Field(default=None, validation_alias=AliasChoices('icmp_code', 'icmp-code'))
 members: list[str] = Field(default_factory=list)
-session_timeout: int | None = Field(default=None, validation_alias=AliasChoices("session_timeout", "session-timeout"))
-match_for_any: bool | None = Field(default=None, validation_alias=AliasChoices("match_for_any", "match-for-any"))
-comments: str = ""
+session_timeout: int | None = Field(default=None, validation_alias=AliasChoices('session_timeout', 'session-timeout'))
+match_for_any: bool | None = Field(default=None, validation_alias=AliasChoices('match_for_any', 'match-for-any'))
+comments: str = ''
 color: str | None = None
 tags: list[str] = Field(default_factory=list)
 raw_data: dict[str, Any] = Field(default_factory=dict)
@@ -3119,7 +3082,7 @@ Persisted record for a trusted `host:port` certificate fingerprint.
 
 ```python
 fingerprint: str
-source: str = "tofu"
+source: str = 'tofu'
 first_seen_at: str = Field(default_factory=lambda: utc_now().isoformat())
 last_seen_at: str = Field(default_factory=lambda: utc_now().isoformat())
 ```
@@ -3445,7 +3408,7 @@ Server-Sent Event wire model.
 ##### Fields / Class Variables
 
 ```python
-event: str = "message"
+event: str = 'message'
 data: dict[str, Any] = Field(default_factory=dict)
 id: str | None = None
 retry: int | None = None
@@ -3817,7 +3780,7 @@ id: str = Field(primary_key=True)
 mgmt_name: str = Field(index=True)
 uid: str = Field(index=True)
 name: str = Field(index=True)
-domain_type: str = Field(default="domain")
+domain_type: str = Field(default='domain')
 active_ip: str | None = Field(default=None)
 active_mds_ip: str | None = Field(default=None, index=True)
 standby_ips: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
@@ -3857,11 +3820,11 @@ id: str = Field(primary_key=True)
 mgmt_name: str = Field(index=True)
 domain_name: str = Field(index=True)
 scope: str = Field(index=True)
-item_type: str = Field(default="*", index=True)
+item_type: str = Field(default='*', index=True)
 last_published_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=False), nullable=True))
 last_session_uid: str | None = Field(default=None)
 synced_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=False), nullable=True))
-status: str = Field(default="idle")
+status: str = Field(default='idle')
 object_count: int = Field(default=0)
 last_error: str | None = Field(default=None)
 ```
@@ -3873,7 +3836,7 @@ Cached network object row in `arodonata_objects`.
 
 ```python
 id: str = Field(primary_key=True)
-object_id: str = Field(default="", index=True)
+object_id: str = Field(default='', index=True)
 uid: str = Field(index=True)
 name: str = Field(index=True)
 type: str = Field(index=True)
@@ -3890,7 +3853,7 @@ ipv4_address_last: str | None = Field(default=None)
 fqdn: str | None = Field(default=None, index=True)
 is_sub_domain: bool | None = Field(default=None)
 members: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
-comments: str = Field(default="")
+comments: str = Field(default='')
 color: str | None = Field(default=None)
 tags: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
 nat_settings: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
@@ -3905,7 +3868,7 @@ Cached service object row in `arodonata_services`.
 
 ```python
 id: str = Field(primary_key=True)
-service_id: str = Field(default="", index=True)
+service_id: str = Field(default='', index=True)
 uid: str = Field(index=True)
 name: str = Field(index=True)
 type: str = Field(index=True)
@@ -3919,7 +3882,7 @@ icmp_code: int | None = Field(default=None)
 members: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
 session_timeout: int | None = Field(default=None)
 match_for_any: bool | None = Field(default=None)
-comments: str = Field(default="")
+comments: str = Field(default='')
 color: str | None = Field(default=None)
 tags: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
 raw_data: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
@@ -3933,7 +3896,7 @@ Cached gateway, cluster, cluster member, VSX, or management server asset row in 
 
 ```python
 id: str = Field(primary_key=True)
-asset_id: str = Field(default="", index=True)
+asset_id: str = Field(default='', index=True)
 uid: str = Field(index=True)
 name: str = Field(index=True)
 type: str = Field(index=True)
@@ -3955,7 +3918,7 @@ virtual_system_uids: list[str] = Field(default_factory=list, sa_column=Column(JS
 virtual_system_asset_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
 interfaces: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
 network_security_blades: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
-comments: str = Field(default="")
+comments: str = Field(default='')
 color: str | None = Field(default=None)
 raw_data: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
 updated_at: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime(timezone=False), nullable=False))
@@ -4037,8 +4000,8 @@ layer_name: str = Field(index=True)
 section_uid: str | None = Field(default=None, index=True)
 section_name: str | None = Field(default=None)
 uid: str = Field(index=True)
-name: str = Field(default="", index=True)
-rule_type: str = Field(default="access-rule")
+name: str = Field(default='', index=True)
+rule_type: str = Field(default='access-rule')
 position: int = Field(default=0)
 rule_number: str | None = Field(default=None)
 enabled: bool = Field(default=True)
@@ -4054,7 +4017,7 @@ destination_negate: bool = Field(default=False)
 service_negate: bool = Field(default=False)
 track: str | None = Field(default=None)
 install_on: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
-comments: str = Field(default="")
+comments: str = Field(default='')
 raw_data: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
 updated_at: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime(timezone=False), nullable=False))
 ```
@@ -4073,8 +4036,8 @@ package_name: str = Field(index=True)
 section_uid: str | None = Field(default=None, index=True)
 section_name: str | None = Field(default=None)
 uid: str = Field(index=True)
-name: str = Field(default="", index=True)
-rule_type: str = Field(default="nat-rule")
+name: str = Field(default='', index=True)
+rule_type: str = Field(default='nat-rule')
 position: int = Field(default=0)
 rule_number: str | None = Field(default=None)
 enabled: bool = Field(default=True)
@@ -4087,7 +4050,7 @@ translated_source: str | None = Field(default=None)
 translated_destination: str | None = Field(default=None)
 translated_service: str | None = Field(default=None)
 install_on: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
-comments: str = Field(default="")
+comments: str = Field(default='')
 raw_data: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
 updated_at: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime(timezone=False), nullable=False))
 ```
@@ -4106,8 +4069,8 @@ layer_name: str = Field(index=True)
 section_uid: str | None = Field(default=None, index=True)
 section_name: str | None = Field(default=None)
 uid: str = Field(index=True)
-name: str = Field(default="", index=True)
-rule_type: str = Field(default="https-rule")
+name: str = Field(default='', index=True)
+rule_type: str = Field(default='https-rule')
 position: int = Field(default=0)
 rule_number: str | None = Field(default=None)
 enabled: bool = Field(default=True)
@@ -4120,7 +4083,7 @@ site_category: list[str] = Field(default_factory=list, sa_column=Column(JSON, nu
 certificate: str | None = Field(default=None)
 track: str | None = Field(default=None)
 install_on: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
-comments: str = Field(default="")
+comments: str = Field(default='')
 raw_data: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
 updated_at: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime(timezone=False), nullable=False))
 ```
@@ -4139,8 +4102,8 @@ layer_name: str = Field(index=True)
 section_uid: str | None = Field(default=None, index=True)
 section_name: str | None = Field(default=None)
 uid: str = Field(index=True)
-name: str = Field(default="", index=True)
-rule_type: str = Field(default="threat-rule")
+name: str = Field(default='', index=True)
+rule_type: str = Field(default='threat-rule')
 position: int = Field(default=0)
 rule_number: str | None = Field(default=None)
 enabled: bool = Field(default=True)
@@ -4151,7 +4114,7 @@ destination: list[str] = Field(default_factory=list, sa_column=Column(JSON, null
 service: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
 track: str | None = Field(default=None)
 install_on: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
-comments: str = Field(default="")
+comments: str = Field(default='')
 raw_data: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
 updated_at: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime(timezone=False), nullable=False))
 ```
@@ -4237,14 +4200,14 @@ A rule or placeholder carrying its dynamically computed SmartConsole hierarchica
 
 ```python
 uid: str
-name: str = ""
+name: str = ''
 rule_number: str
 position: int = 0
-rule_type: str = "access-rule"
-rulebase_type: RulebaseType = "access"
+rule_type: str = 'access-rule'
+rulebase_type: RulebaseType = 'access'
 enabled: bool = True
-layer_uid: str = ""
-layer_name: str = ""
+layer_uid: str = ''
+layer_name: str = ''
 package_uid: str | None = None
 package_name: str | None = None
 section_uid: str | None = None
@@ -4272,7 +4235,7 @@ certificate: str | None = None
 protected_scope: list[str] = Field(default_factory=list)
 track: str | None = None
 install_on: list[str] = Field(default_factory=list)
-comments: str = ""
+comments: str = ''
 children: list[NumberedRule] = Field(default_factory=list)
 nested_sections: list[NumberedSection] = Field(default_factory=list)
 raw_data: dict[str, Any] = Field(default_factory=dict)
@@ -4317,10 +4280,10 @@ A rulebase section header with SmartConsole range display (`1-3`, `2.1-2.2`, or 
 uid: str
 name: str
 position: int = 0
-layer_uid: str = ""
-layer_name: str = ""
-rulebase_type: RulebaseType = "access"
-range_label: str = "No Rules"
+layer_uid: str = ''
+layer_name: str = ''
+rulebase_type: RulebaseType = 'access'
+range_label: str = 'No Rules'
 from_rule: str | None = None
 to_rule: str | None = None
 rules: list[NumberedRule] = Field(default_factory=list)
@@ -4349,7 +4312,7 @@ layer_name: str
 rulebase_type: RulebaseType
 package_uid: str | None = None
 package_name: str | None = None
-prefix: str = ""
+prefix: str = ''
 is_global: bool = False
 implicit_cleanup_action: str | None = None
 sections: list[NumberedSection] = Field(default_factory=list)
@@ -4357,7 +4320,7 @@ rules: list[NumberedRule] = Field(default_factory=list)
 flat_rules: list[NumberedRule] = Field(default_factory=list)
 snapshot_session_uid: str | None = None
 snapshot_published_at: datetime | None = None
-sync_status: SyncStatus = "idle"
+sync_status: SyncStatus = 'idle'
 layer_metadata: RulebaseLayerEntry | None = None
 ```
 ##### Methods
@@ -4377,14 +4340,14 @@ mgmt_name: str
 domain_name: str
 package_uid: str
 package_name: str
-rulebase_type: RulebaseType = "access"
+rulebase_type: RulebaseType = 'access'
 layers: list[NumberedLayerRulebase] = Field(default_factory=list)
 sections: list[NumberedSection] = Field(default_factory=list)
 rules: list[NumberedRule] = Field(default_factory=list)
 flat_rules: list[NumberedRule] = Field(default_factory=list)
 snapshot_session_uid: str | None = None
 snapshot_published_at: datetime | None = None
-sync_status: SyncStatus = "idle"
+sync_status: SyncStatus = 'idle'
 ```
 ##### Methods
 
@@ -4402,10 +4365,10 @@ A single SmartConsole position of a rule within a package and/or layer.
 mgmt_name: str
 domain_name: str
 rule_uid: str
-rule_name: str = ""
+rule_name: str = ''
 rule_number: str
 position: int = 0
-rulebase_type: RulebaseType = "access"
+rulebase_type: RulebaseType = 'access'
 package_uid: str | None = None
 package_name: str | None = None
 layer_uid: str
@@ -4414,7 +4377,7 @@ section_uid: str | None = None
 section_name: str | None = None
 section_range: str | None = None
 parent_rule_uid: str | None = None
-context: Literal["package", "layer"] = "package"
+context: Literal['package', 'layer'] = 'package'
 ```
 #### class `LayerPrefixLocation(BaseModel)`
 
@@ -4427,13 +4390,13 @@ mgmt_name: str
 domain_name: str
 layer_uid: str
 layer_name: str
-rulebase_type: RulebaseType = "access"
-prefix: str = ""
+rulebase_type: RulebaseType = 'access'
+prefix: str = ''
 package_uid: str | None = None
 package_name: str | None = None
 parent_layer_uid: str | None = None
 parent_rule_uid: str | None = None
-context: Literal["package", "layer"] = "package"
+context: Literal['package', 'layer'] = 'package'
 ```
 #### class `RuleLocations(BaseModel)`
 
@@ -4448,7 +4411,7 @@ rule_locations: dict[str, list[RuleLocation]] = Field(default_factory=dict)
 layer_prefixes: dict[str, list[LayerPrefixLocation]] = Field(default_factory=dict)
 snapshot_session_uid: str | None = None
 snapshot_published_at: datetime | None = None
-sync_status: SyncStatus = "idle"
+sync_status: SyncStatus = 'idle'
 ```
 ##### Methods
 
@@ -4468,14 +4431,14 @@ domain_name: str
 target_name: str
 target_uid: str
 rulebase_type: RulebaseType
-query: str = ""
-format: RuleFormat = "model_friendly"
+query: str = ''
+format: RuleFormat = 'model_friendly'
 total_rules: int = 0
 matched_count: int = 0
 rules: list[NumberedRule] = Field(default_factory=list)
-rendered_text: str = ""
+rendered_text: str = ''
 raw_items: list[dict[str, Any]] = Field(default_factory=list)
-source: Literal["cache", "live"] = "cache"
+source: Literal['cache', 'live'] = 'cache'
 cache_age_seconds: float | None = None
 snapshot_session_uid: str | None = None
 snapshot_published_at: datetime | None = None
@@ -4813,12 +4776,12 @@ Convention prefixes used when `on_ip_conflict='create_new'` auto-names an object
 ##### Fields / Class Variables
 
 ```python
-host: str = "Host_"
-network: str = "Net_"
-address_range: str = Field(default="IPR_", validation_alias="address_range")
-tcp: str = "TCP_"
-udp: str = "UDP_"
-icmp: str = "ICMP_"
+host: str = 'Host_'
+network: str = 'Net_'
+address_range: str = Field(default='IPR_', validation_alias='address_range')
+tcp: str = 'TCP_'
+udp: str = 'UDP_'
+icmp: str = 'ICMP_'
 ```
 ##### Methods
 
@@ -4864,8 +4827,8 @@ Two-axis conflict resolution configuration (`on_name_conflict` x `on_ip_conflict
 ##### Fields / Class Variables
 
 ```python
-on_name_conflict: NameConflictPolicy = "update"
-on_ip_conflict: IpConflictPolicy = "reuse"
+on_name_conflict: NameConflictPolicy = 'update'
+on_ip_conflict: IpConflictPolicy = 'reuse'
 ```
 #### class `DomainStamp(BaseModel)`
 
@@ -4875,7 +4838,7 @@ Snapshot of a domain's `show-last-published-session` head captured BEFORE planni
 
 ```python
 mgmt_name: str
-domain_name: str = ""
+domain_name: str = ''
 last_session_uid: str | None = None
 last_published_at: datetime | None = None
 readable: bool = True
@@ -4915,24 +4878,24 @@ A single deterministic action produced by `Planner`.
 ```python
 action_id: str
 mgmt_name: str
-domain_name: str = ""
+domain_name: str = ''
 operation: str
 object_type: str
-name: str = ""
-requested_name: str = ""
-resolved_name: str = ""
+name: str = ''
+requested_name: str = ''
+resolved_name: str = ''
 target_uid: str | None = None
 layer: str | None = None
 package: str | None = None
 outcome: Outcome
-status: str = ""
+status: str = ''
 command: str | None = None
 payload: dict[str, Any] = Field(default_factory=dict)
 diffs: dict[str, FieldChange] = Field(default_factory=dict)
 prior_state: dict[str, Any] | None = None
 desired_spec: dict[str, Any] = Field(default_factory=dict)
 depends_on: list[str] = Field(default_factory=list)
-message: str = ""
+message: str = ''
 error: str | None = None
 ```
 ##### Methods
@@ -4990,20 +4953,20 @@ Execution result of a single `PlannedAction` during `apply()`.
 ```python
 action_id: str
 mgmt_name: str
-domain_name: str = ""
+domain_name: str = ''
 operation: str
 object_type: str
-name: str = ""
-resolved_name: str = ""
+name: str = ''
+resolved_name: str = ''
 target_uid: str | None = None
 planned_outcome: Outcome
 outcome: Outcome
-status: str = ""
+status: str = ''
 success: bool = True
 command: str | None = None
 response_data: dict[str, Any] = Field(default_factory=dict)
 prior_state: dict[str, Any] | None = None
-message: str = ""
+message: str = ''
 error: str | None = None
 ```
 ##### Methods
@@ -5022,11 +4985,11 @@ Redacts `sid` in `repr()`, `str()`, and serialized JSON while keeping `.sid` acc
 
 ```python
 mgmt_name: str
-domain_name: str = ""
+domain_name: str = ''
 server_ip: str
 session_uid: str | None = None
 session_name: str | None = None
-_sid: str = PrivateAttr(default="")
+_sid: str = PrivateAttr(default='')
 ```
 ##### Methods
 
@@ -5511,7 +5474,7 @@ Strictly redacts `sid` from `repr()`, `str()`, and JSON serialization (`exclude=
 
 ```python
 sid: str = Field(repr=False, exclude=True)
-server_ip: str = ""
+server_ip: str = ''
 session_uid: str | None = None
 mgmt_name: str | None = None
 domain: str | None = None
@@ -5526,9 +5489,7 @@ Explicit Check Point session UID collection scope.
 mgmt_name: str
 domain: str | None = None
 session_uids: list[str] = Field(default_factory=list)
-owned_sessions: dict[str, OwnedSession] | list[OwnedSession] | OwnedSession | None = Field(
-    default=None, repr=False, exclude=True
-)
+owned_sessions: dict[str, OwnedSession] | list[OwnedSession] | OwnedSession | None = Field(default=None, repr=False, exclude=True)
 ```
 ##### Methods
 
@@ -5571,13 +5532,13 @@ A single added, modified, moved, or deleted rule within a session.
 
 ```python
 uid: str
-name: str = ""
-operation: ChangeOperation = "modified"
-rulebase_type: RulebaseType = "access"
+name: str = ''
+operation: ChangeOperation = 'modified'
+rulebase_type: RulebaseType = 'access'
 package_uid: str | None = None
 package_name: str | None = None
-layer_uid: str = ""
-layer_name: str = ""
+layer_uid: str = ''
+layer_name: str = ''
 section_uid: str | None = None
 section_name: str | None = None
 section_range: str | None = None
@@ -5601,7 +5562,7 @@ translated_destination: str | None = None
 translated_service: str | None = None
 track: str | None = None
 install_on: list[str] = Field(default_factory=list)
-comments: str = ""
+comments: str = ''
 field_diffs: list[FieldDiff] = Field(default_factory=list)
 raw_data: dict[str, Any] = Field(default_factory=dict)
 ```
@@ -5613,10 +5574,10 @@ A single added, modified, or deleted network/service/policy object in a session.
 
 ```python
 uid: str
-name: str = ""
-object_type: str = "object"
-operation: ChangeOperation = "modified"
-summary: str = ""
+name: str = ''
+object_type: str = 'object'
+operation: ChangeOperation = 'modified'
+summary: str = ''
 field_diffs: list[FieldDiff] = Field(default_factory=list)
 raw_data: dict[str, Any] = Field(default_factory=dict)
 ```
@@ -5658,16 +5619,16 @@ Auditable change evidence for a single Check Point management session.
 mgmt_name: str
 domain_name: str
 session_uid: str
-session_name: str = ""
-description: str = ""
-user_name: str = ""
-state: str = "published"
+session_name: str = ''
+description: str = ''
+user_name: str = ''
+state: str = 'published'
 published_at: datetime | None = None
 last_modify_time: datetime | None = None
 locks: int = 0
 changes_count: int = 0
-numbering_basis: str = "Numbering from cached rulebase snapshot"
-numbering_source: Literal["owned_session", "cache", "unnumbered"] = "cache"
+numbering_basis: str = 'Numbering from cached rulebase snapshot'
+numbering_source: Literal['owned_session', 'cache', 'unnumbered'] = 'cache'
 rule_changes: list[RuleChangeEntry] = Field(default_factory=list)
 object_changes: list[ObjectChangeEntry] = Field(default_factory=list)
 resolved_names: dict[str, str] = Field(default_factory=dict)
@@ -5685,7 +5646,7 @@ Formatting options for `render_change_report` and `build_change_report`.
 ##### Fields / Class Variables
 
 ```python
-title: str = "Check Point Policy Change Report"
+title: str = 'Check Point Policy Change Report'
 header_fields: dict[str, str] = Field(default_factory=dict)
 include_object_changes: bool = True
 include_field_diffs: bool = True
@@ -5700,7 +5661,7 @@ Top-level auditable session change report model supporting round-trip JSON seria
 ```python
 format_version: int = CURRENT_FORMAT_VERSION
 generated_at: datetime = Field(default_factory=utc_now)
-title: str = "Check Point Policy Change Report"
+title: str = 'Check Point Policy Change Report'
 header_fields: dict[str, str] = Field(default_factory=dict)
 sessions: list[SessionChangeReport] = Field(default_factory=list)
 warnings: list[ReportWarning] = Field(default_factory=list)
@@ -5828,42 +5789,21 @@ Never loads `.env` files implicitly.
 ##### Fields / Class Variables
 
 ```python
-host: str = Field(default="127.0.0.1", validation_alias=AliasChoices("host", "ARODONATA_MCP_HOST"))
-port: int = Field(default=8000, ge=1, le=65535, validation_alias=AliasChoices("port", "ARODONATA_MCP_PORT"))
-path: str = Field(default="/mcp", validation_alias=AliasChoices("path", "ARODONATA_MCP_PATH"))
-auth_mode: MCPAuthMode = Field(default="static", validation_alias=AliasChoices("auth_mode", "ARODONATA_MCP_AUTH_MODE"))
-token_vars: CsvStrList = Field(
-    default_factory=list, validation_alias=AliasChoices("token_vars", "ARODONATA_MCP_TOKEN_VARS")
-)
-tokens: CsvStrList = Field(
-    default_factory=list, repr=False, validation_alias=AliasChoices("tokens", "ARODONATA_MCP_TOKENS")
-)
-enable_dns_rebinding_protection: bool = Field(
-    default=True,
-    validation_alias=AliasChoices("enable_dns_rebinding_protection", "ARODONATA_MCP_ENABLE_DNS_REBINDING_PROTECTION"),
-)
-allowed_hosts: CsvStrList = Field(
-    default_factory=lambda: list(DEFAULT_ALLOWED_HOSTS),
-    validation_alias=AliasChoices("allowed_hosts", "ARODONATA_MCP_ALLOWED_HOSTS"),
-)
-allowed_origins: CsvStrList = Field(
-    default_factory=lambda: list(DEFAULT_ALLOWED_ORIGINS),
-    validation_alias=AliasChoices("allowed_origins", "ARODONATA_MCP_ALLOWED_ORIGINS"),
-)
-allow_write_api: bool = Field(
-    default=False, validation_alias=AliasChoices("allow_write_api", "ARODONATA_MCP_ALLOW_WRITE_API")
-)
-live_compat: bool = Field(default=False, validation_alias=AliasChoices("live_compat", "ARODONATA_MCP_LIVE_COMPAT"))
-cpcrud: bool = Field(default=False, validation_alias=AliasChoices("cpcrud", "ARODONATA_MCP_CPCRUD"))
-json_response: bool = Field(
-    default=False, validation_alias=AliasChoices("json_response", "ARODONATA_MCP_JSON_RESPONSE")
-)
-stateless_http: bool = Field(
-    default=False, validation_alias=AliasChoices("stateless_http", "ARODONATA_MCP_STATELESS_HTTP")
-)
-server_name: str = Field(
-    default="arodonata-mcp", validation_alias=AliasChoices("server_name", "ARODONATA_MCP_SERVER_NAME")
-)
+host: str = Field(default='127.0.0.1', validation_alias=AliasChoices('host', 'ARODONATA_MCP_HOST'))
+port: int = Field(default=8000, ge=1, le=65535, validation_alias=AliasChoices('port', 'ARODONATA_MCP_PORT'))
+path: str = Field(default='/mcp', validation_alias=AliasChoices('path', 'ARODONATA_MCP_PATH'))
+auth_mode: MCPAuthMode = Field(default='static', validation_alias=AliasChoices('auth_mode', 'ARODONATA_MCP_AUTH_MODE'))
+token_vars: CsvStrList = Field(default_factory=list, validation_alias=AliasChoices('token_vars', 'ARODONATA_MCP_TOKEN_VARS'))
+tokens: CsvStrList = Field(default_factory=list, repr=False, validation_alias=AliasChoices('tokens', 'ARODONATA_MCP_TOKENS'))
+enable_dns_rebinding_protection: bool = Field(default=True, validation_alias=AliasChoices('enable_dns_rebinding_protection', 'ARODONATA_MCP_ENABLE_DNS_REBINDING_PROTECTION'))
+allowed_hosts: CsvStrList = Field(default_factory=lambda: list(DEFAULT_ALLOWED_HOSTS), validation_alias=AliasChoices('allowed_hosts', 'ARODONATA_MCP_ALLOWED_HOSTS'))
+allowed_origins: CsvStrList = Field(default_factory=lambda: list(DEFAULT_ALLOWED_ORIGINS), validation_alias=AliasChoices('allowed_origins', 'ARODONATA_MCP_ALLOWED_ORIGINS'))
+allow_write_api: bool = Field(default=False, validation_alias=AliasChoices('allow_write_api', 'ARODONATA_MCP_ALLOW_WRITE_API'))
+live_compat: bool = Field(default=False, validation_alias=AliasChoices('live_compat', 'ARODONATA_MCP_LIVE_COMPAT'))
+cpcrud: bool = Field(default=False, validation_alias=AliasChoices('cpcrud', 'ARODONATA_MCP_CPCRUD'))
+json_response: bool = Field(default=False, validation_alias=AliasChoices('json_response', 'ARODONATA_MCP_JSON_RESPONSE'))
+stateless_http: bool = Field(default=False, validation_alias=AliasChoices('stateless_http', 'ARODONATA_MCP_STATELESS_HTTP'))
+server_name: str = Field(default='arodonata-mcp', validation_alias=AliasChoices('server_name', 'ARODONATA_MCP_SERVER_NAME'))
 ```
 ##### Methods
 

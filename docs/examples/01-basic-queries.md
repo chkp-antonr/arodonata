@@ -4,6 +4,6 @@ Demonstrates discovering domains (`client.get_domains()`) and querying cached ho
 
 ## Source Code (`examples/01_basic_queries.py`)
 
-```python
---8 < --"examples/01_basic_queries.py"
+```python title="examples/01_basic_queries.py"
+--8<-- "examples/01_basic_queries.py"
 ```
