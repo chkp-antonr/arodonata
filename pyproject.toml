@@ -1,6 +1,6 @@
 [project]
 name = "arodonata"
-version = "2.0.0a0"
+version = "2.0.0"
 description = "Async-first Python 3.13+ library and SDK for Check Point Security Management and MDSM operations"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -106,6 +106,7 @@ version_provider = "pep621"
 version_files = [
     "pyproject.toml:^version",
     "src/arodonata/__init__.py:__version__",
+    "tests/unit/test_smoke.py:__version__",
 ]
 tag_format = "v$version"
 update_changelog_on_bump = true
