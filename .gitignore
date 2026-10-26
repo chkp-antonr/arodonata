@@ -25,5 +25,7 @@ build/
 docs/_notes/
 docs/_audit_/
 docs/_AI_/
+docs/_build_bundle/
+site/
 _tmp/
 examples/_tmp/

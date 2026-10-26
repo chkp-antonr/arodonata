@@ -1624,11 +1624,17 @@ class ArodonataClient:
         )
         is_asset_type = clean_type is not None and clean_type in {t.lower() for t in CANONICAL_ASSET_TYPES}
 
+        composite_prefix = f"{mgmt_name}:{domain}:"
+        lookup_key = (
+            name_or_uid.removeprefix(composite_prefix) if name_or_uid.startswith(composite_prefix) else name_or_uid
+        )
+        lookup_names = list(dict.fromkeys([name_or_uid, lookup_key]))
+
         if not is_service_type and not is_asset_type:
             by_uid = await self._object_service.get_object_by_uid(
                 mgmt_name,
                 domain,
-                name_or_uid,
+                lookup_key,
                 cache_mode=cache_mode,
                 cache_ttl=cache_ttl,
             )
@@ -1639,7 +1645,7 @@ class ArodonataClient:
                 mgmt_name=mgmt_name,
                 domain=domain,
                 types=[clean_type] if clean_type else None,
-                names=[name_or_uid],
+                names=lookup_names,
                 include_global=(domain == "Global"),
                 cache_mode="cache" if cache_mode != "force" else cache_mode,
                 cache_ttl=cache_ttl,
@@ -1651,7 +1657,7 @@ class ArodonataClient:
             svc_by_uid = await self._service_cache.get_service_by_uid(
                 mgmt_name,
                 domain,
-                name_or_uid,
+                lookup_key,
                 cache_mode=cache_mode,
                 cache_ttl=cache_ttl,
             )
@@ -1662,7 +1668,7 @@ class ArodonataClient:
                 mgmt_name=mgmt_name,
                 domain=domain,
                 types=[clean_type] if clean_type else None,
-                names=[name_or_uid],
+                names=lookup_names,
                 include_global=(domain == "Global"),
                 cache_mode="cache" if cache_mode != "force" else cache_mode,
                 cache_ttl=cache_ttl,
@@ -1680,11 +1686,21 @@ class ArodonataClient:
                 cache_ttl=cache_ttl,
             )
             needle_lower = name_or_uid.strip().lower()
+            lookup_lower = lookup_key.strip().lower()
             for asset in assets:
-                if asset.uid == name_or_uid or asset.name == name_or_uid:
+                if (
+                    asset.uid in (name_or_uid, lookup_key)
+                    or asset.name in (name_or_uid, lookup_key)
+                    or asset.asset_id == name_or_uid
+                    or asset.id == name_or_uid
+                ):
                     return asset
             for asset in assets:
-                if asset.name.lower() == needle_lower:
+                if (
+                    asset.name.lower() in (needle_lower, lookup_lower)
+                    or asset.asset_id.lower() == needle_lower
+                    or asset.id.lower() == needle_lower
+                ):
                     return asset
 
         return None

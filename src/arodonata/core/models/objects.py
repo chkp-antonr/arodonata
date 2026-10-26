@@ -56,6 +56,7 @@ class CPObject(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     id: str = ""
+    object_id: str = ""
     uid: str
     name: str
     type: str
@@ -88,6 +89,8 @@ class CPObject(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
             self.id = f"{self.mgmt_name}:{self.domain_name}:{self.uid}"
+        if not self.object_id:
+            self.object_id = f"{self.mgmt_name}:{self.domain_name}:{self.name}"
         if self.original_domain is None:
             self.original_domain = self.domain_name
         self.updated_at = to_naive_utc(self.updated_at) or utc_now()
@@ -104,6 +107,7 @@ class CPObject(BaseModel):
 
         return cls(
             id=f"{mgmt_name}:{domain_name}:{uid}",
+            object_id=f"{mgmt_name}:{domain_name}:{name}",
             uid=uid,
             name=name,
             type=obj_type,
@@ -133,12 +137,21 @@ class GroupMembershipNode(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    id: str = ""
+    object_id: str = ""
     uid: str
     name: str
     mgmt_name: str
     domain_name: str
     depth: int = 1
     parent_uids: list[str] = Field(default_factory=list)
+    parent_object_ids: list[str] = Field(default_factory=list)
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.id:
+            self.id = f"{self.mgmt_name}:{self.domain_name}:{self.uid}"
+        if not self.object_id:
+            self.object_id = f"{self.mgmt_name}:{self.domain_name}:{self.name}"
 
 
 class SearchResult(BaseModel):

@@ -16,6 +16,7 @@ class Asset(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     id: str = ""
+    asset_id: str = ""
     uid: str
     name: str
     type: str
@@ -29,8 +30,12 @@ class Asset(BaseModel):
     sic_status: str | None = Field(default=None, validation_alias=AliasChoices("sic_status", "sic-status"))
     parent_uid: str | None = None
     parent_name: str | None = None
+    parent_id: str | None = None
+    parent_asset_id: str | None = None
     member_uids: list[str] = Field(default_factory=list)
+    member_asset_ids: list[str] = Field(default_factory=list)
     virtual_system_uids: list[str] = Field(default_factory=list)
+    virtual_system_asset_ids: list[str] = Field(default_factory=list)
     interfaces: list[dict[str, Any]] = Field(default_factory=list)
     network_security_blades: dict[str, Any] = Field(
         default_factory=dict,
@@ -44,6 +49,12 @@ class Asset(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
             self.id = f"{self.mgmt_name}:{self.domain_name}:{self.uid}"
+        if not self.asset_id:
+            self.asset_id = f"{self.mgmt_name}:{self.domain_name}:{self.name}"
+        if self.parent_uid and not self.parent_id:
+            self.parent_id = f"{self.mgmt_name}:{self.domain_name}:{self.parent_uid}"
+        if self.parent_name and not self.parent_asset_id:
+            self.parent_asset_id = f"{self.mgmt_name}:{self.domain_name}:{self.parent_name}"
         self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
     @classmethod
@@ -63,6 +74,7 @@ class Asset(BaseModel):
 
         return cls(
             id=f"{mgmt_name}:{domain_name}:{uid}",
+            asset_id=f"{mgmt_name}:{domain_name}:{name}",
             uid=uid,
             name=name,
             type=asset_type,
@@ -76,8 +88,12 @@ class Asset(BaseModel):
             sic_status=data.get("sic-status") or data.get("sic_status"),
             parent_uid=data.get("parent_uid"),
             parent_name=data.get("parent_name"),
+            parent_id=data.get("parent_id"),
+            parent_asset_id=data.get("parent_asset_id"),
             member_uids=list(data.get("member_uids") or []),
+            member_asset_ids=list(data.get("member_asset_ids") or []),
             virtual_system_uids=list(data.get("virtual_system_uids") or []),
+            virtual_system_asset_ids=list(data.get("virtual_system_asset_ids") or []),
             interfaces=interfaces,
             network_security_blades=data.get("network-security-blades") or data.get("network_security_blades") or {},
             comments=str(data.get("comments") or ""),

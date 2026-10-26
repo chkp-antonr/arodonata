@@ -163,6 +163,7 @@ def test_domain_models_and_sid_cache_entry_hygiene() -> None:
         },
     )
     assert dns_obj.id == "mds1:CMA1:uid-dns1"
+    assert dns_obj.object_id == "mds1:CMA1:.example.com"
     assert dns_obj.fqdn == "example.com"
     assert dns_obj.is_sub_domain is True
     assert dns_obj.original_domain == "Global"
@@ -181,5 +182,6 @@ def test_domain_models_and_sid_cache_entry_hygiene() -> None:
         },
     )
     assert asset.id == "mds1:CMA1:gw-1"
+    assert asset.asset_id == "mds1:CMA1:gw-cluster-1"
     assert asset.ipv4_address == "192.0.2.1"
     assert len(asset.interfaces) == 1

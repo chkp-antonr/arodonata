@@ -298,8 +298,24 @@ async def test_client_typed_getters_and_no_implicit_warmup_on_get_domains() -> N
         found_gw_alias = await client.find_object("mds1", "Corp", "gw-1", obj_type="gateway")
         assert found_gw_alias is not None and found_gw_alias.name == "corp-fw-01"
 
+        # Find by composite identifiers (object_id, service_id, asset_id, and UID-based id)
+        found_obj_comp = await client.find_object("mds1", "Corp", "mds1:Corp:host-base-1")
+        assert found_obj_comp is not None and found_obj_comp.uid == "h-base-1"
+
+        found_obj_id = await client.find_object("mds1", "Corp", "mds1:Corp:h-base-1")
+        assert found_obj_id is not None and found_obj_id.name == "host-base-1"
+
+        found_svc_comp = await client.find_object("mds1", "Corp", "mds1:Corp:http", obj_type="service-tcp")
+        assert found_svc_comp is not None and found_svc_comp.uid == "s-tcp-1"
+
+        found_gw_comp = await client.find_object("mds1", "Corp", "mds1:Corp:corp-fw-01", obj_type="gateway")
+        assert found_gw_comp is not None and found_gw_comp.uid == "gw-1"
+
         grp_members = await client.get_group_members("mds1", "Corp", "grp-base-1")
         assert [m.uid for m in grp_members] == ["h-base-1"]
+
+        grp_members_comp = await client.get_group_members("mds1", "Corp", "mds1:Corp:grp-base-1")
+        assert [m.uid for m in grp_members_comp] == ["h-base-1"]
 
     # Auto-created in-memory engine -> logout=True on close
     assert fake_api.close_logout_args == [True]

@@ -220,6 +220,8 @@ def _serialize_object(obj: CPObject, details_level: str = "standard") -> dict[st
     level = (details_level or "standard").strip().lower()
     if level == "uid":
         return {
+            "id": obj.id,
+            "object_id": obj.object_id,
             "uid": obj.uid,
             "name": obj.name,
             "type": obj.type,
@@ -237,6 +239,8 @@ def _serialize_service(svc: CPService, details_level: str = "standard") -> dict[
     level = (details_level or "standard").strip().lower()
     if level == "uid":
         return {
+            "id": svc.id,
+            "service_id": svc.service_id,
             "uid": svc.uid,
             "name": svc.name,
             "type": svc.type,
@@ -254,6 +258,8 @@ def _serialize_asset(asset: Asset, details_level: str = "standard") -> dict[str,
     level = (details_level or "standard").strip().lower()
     if level == "uid":
         return {
+            "id": asset.id,
+            "asset_id": asset.asset_id,
             "uid": asset.uid,
             "name": asset.name,
             "type": asset.type,
@@ -730,18 +736,35 @@ def register_mcp_tools(
             parent_clean = parent.strip()
             parent_lower = parent_clean.lower()
             parent_child_uids: set[str] = set()
+            parent_child_asset_ids: set[str] = set()
             matched_parent_uids: set[str] = set()
+            matched_parent_ids: set[str] = set()
+            matched_parent_asset_ids: set[str] = set()
             for a in all_assets:
-                if a.uid == parent_clean or a.name.lower() == parent_lower:
+                if (
+                    a.uid == parent_clean
+                    or a.id == parent_clean
+                    or a.asset_id.lower() == parent_lower
+                    or a.name.lower() == parent_lower
+                ):
                     matched_parent_uids.add(a.uid)
+                    matched_parent_ids.add(a.id)
+                    matched_parent_asset_ids.add(a.asset_id.lower())
                     parent_child_uids.update(a.member_uids)
                     parent_child_uids.update(a.virtual_system_uids)
+                    parent_child_asset_ids.update(aid.lower() for aid in a.member_asset_ids)
+                    parent_child_asset_ids.update(aid.lower() for aid in a.virtual_system_asset_ids)
             assets = [
                 a
                 for a in assets
                 if a.uid in parent_child_uids
+                or a.asset_id.lower() in parent_child_asset_ids
                 or a.parent_uid == parent_clean
+                or a.parent_id == parent_clean
+                or (a.parent_asset_id is not None and a.parent_asset_id.lower() == parent_lower)
                 or (a.parent_uid is not None and a.parent_uid in matched_parent_uids)
+                or (a.parent_id is not None and a.parent_id in matched_parent_ids)
+                or (a.parent_asset_id is not None and a.parent_asset_id.lower() in matched_parent_asset_ids)
                 or (a.parent_name is not None and a.parent_name.lower() == parent_lower)
             ]
             if normalized_types:

@@ -90,6 +90,14 @@ dev = [
     "types-jsonschema>=4.23.0",
     "types-pyyaml>=6.0.12",
     "uvicorn>=0.34.0",
+    "mkdocs-git-revision-date-localized-plugin>=1.5.0",
+    "mkdocs-minify-plugin>=0.8.0",
+    "mkdocs-material>=9.7.1",
+    "mkdocs-gen-files>=0.5.0,<0.6.1",
+    "mkdocs-literate-nav>=0.6.0,<0.6.3",
+    "mkdocstrings>=1.0.0",
+    "mkdocstrings-python>=1.16.2",
+    "pymdown-extensions>=10.19.1",
 ]
 
 [build-system]

@@ -145,6 +145,7 @@ class CPObjectRecord(SQLModel, table=True):
     __tablename__ = "arodonata_objects"
 
     id: str = Field(primary_key=True)
+    object_id: str = Field(default="", index=True)
     uid: str = Field(index=True)
     name: str = Field(index=True)
     type: str = Field(index=True)
@@ -190,6 +191,7 @@ class CPServiceRecord(SQLModel, table=True):
     __tablename__ = "arodonata_services"
 
     id: str = Field(primary_key=True)
+    service_id: str = Field(default="", index=True)
     uid: str = Field(index=True)
     name: str = Field(index=True)
     type: str = Field(index=True)
@@ -228,6 +230,7 @@ class AssetRecord(SQLModel, table=True):
     __tablename__ = "arodonata_assets"
 
     id: str = Field(primary_key=True)
+    asset_id: str = Field(default="", index=True)
     uid: str = Field(index=True)
     name: str = Field(index=True)
     type: str = Field(index=True)
@@ -241,11 +244,21 @@ class AssetRecord(SQLModel, table=True):
     sic_status: str | None = Field(default=None)
     parent_uid: str | None = Field(default=None, index=True)
     parent_name: str | None = Field(default=None)
+    parent_id: str | None = Field(default=None, index=True)
+    parent_asset_id: str | None = Field(default=None, index=True)
     member_uids: list[str] = Field(
         default_factory=list,
         sa_column=Column(JSON, nullable=False),
     )
+    member_asset_ids: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(JSON, nullable=False),
+    )
     virtual_system_uids: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(JSON, nullable=False),
+    )
+    virtual_system_asset_ids: list[str] = Field(
         default_factory=list,
         sa_column=Column(JSON, nullable=False),
     )

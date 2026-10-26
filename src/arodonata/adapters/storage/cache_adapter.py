@@ -103,6 +103,7 @@ def _record_to_sync_state(rec: DomainSyncStateRecord) -> DomainSyncState:
 def _record_to_cp_object(rec: CPObjectRecord) -> CPObject:
     return CPObject(
         id=rec.id,
+        object_id=rec.object_id or f"{rec.mgmt_name}:{rec.domain_name}:{rec.name}",
         uid=rec.uid,
         name=rec.name,
         type=rec.type,
@@ -131,6 +132,7 @@ def _record_to_cp_object(rec: CPObjectRecord) -> CPObject:
 def _cp_object_to_record(obj: CPObject) -> CPObjectRecord:
     return CPObjectRecord(
         id=obj.id or f"{obj.mgmt_name}:{obj.domain_name}:{obj.uid}",
+        object_id=obj.object_id or f"{obj.mgmt_name}:{obj.domain_name}:{obj.name}",
         uid=obj.uid,
         name=obj.name,
         type=obj.type,
@@ -159,6 +161,7 @@ def _cp_object_to_record(obj: CPObject) -> CPObjectRecord:
 def _record_to_cp_service(rec: CPServiceRecord) -> CPService:
     return CPService(
         id=rec.id,
+        service_id=rec.service_id or f"{rec.mgmt_name}:{rec.domain_name}:{rec.name}",
         uid=rec.uid,
         name=rec.name,
         type=rec.type,
@@ -183,6 +186,7 @@ def _record_to_cp_service(rec: CPServiceRecord) -> CPService:
 def _cp_service_to_record(svc: CPService) -> CPServiceRecord:
     return CPServiceRecord(
         id=svc.id or f"{svc.mgmt_name}:{svc.domain_name}:{svc.uid}",
+        service_id=svc.service_id or f"{svc.mgmt_name}:{svc.domain_name}:{svc.name}",
         uid=svc.uid,
         name=svc.name,
         type=svc.type,
@@ -207,6 +211,7 @@ def _cp_service_to_record(svc: CPService) -> CPServiceRecord:
 def _record_to_asset(rec: AssetRecord) -> Asset:
     return Asset(
         id=rec.id,
+        asset_id=rec.asset_id or f"{rec.mgmt_name}:{rec.domain_name}:{rec.name}",
         uid=rec.uid,
         name=rec.name,
         type=rec.type,
@@ -220,8 +225,12 @@ def _record_to_asset(rec: AssetRecord) -> Asset:
         sic_status=rec.sic_status,
         parent_uid=rec.parent_uid,
         parent_name=rec.parent_name,
+        parent_id=rec.parent_id,
+        parent_asset_id=rec.parent_asset_id,
         member_uids=list(rec.member_uids or []),
+        member_asset_ids=list(rec.member_asset_ids or []),
         virtual_system_uids=list(rec.virtual_system_uids or []),
+        virtual_system_asset_ids=list(rec.virtual_system_asset_ids or []),
         interfaces=list(rec.interfaces or []),
         network_security_blades=dict(rec.network_security_blades or {}),
         comments=rec.comments,
@@ -234,6 +243,7 @@ def _record_to_asset(rec: AssetRecord) -> Asset:
 def _asset_to_record(asset: Asset) -> AssetRecord:
     return AssetRecord(
         id=asset.id or f"{asset.mgmt_name}:{asset.domain_name}:{asset.uid}",
+        asset_id=asset.asset_id or f"{asset.mgmt_name}:{asset.domain_name}:{asset.name}",
         uid=asset.uid,
         name=asset.name,
         type=asset.type,
@@ -247,8 +257,12 @@ def _asset_to_record(asset: Asset) -> AssetRecord:
         sic_status=asset.sic_status,
         parent_uid=asset.parent_uid,
         parent_name=asset.parent_name,
+        parent_id=asset.parent_id,
+        parent_asset_id=asset.parent_asset_id,
         member_uids=list(asset.member_uids),
+        member_asset_ids=list(asset.member_asset_ids),
         virtual_system_uids=list(asset.virtual_system_uids),
+        virtual_system_asset_ids=list(asset.virtual_system_asset_ids),
         interfaces=list(asset.interfaces),
         network_security_blades=dict(asset.network_security_blades),
         comments=asset.comments,
@@ -640,6 +654,7 @@ class SqlCacheAdapter:
         rows = [
             {
                 "id": obj.id or f"{obj.mgmt_name}:{obj.domain_name}:{obj.uid}",
+                "object_id": obj.object_id or f"{obj.mgmt_name}:{obj.domain_name}:{obj.name}",
                 "uid": obj.uid,
                 "name": obj.name,
                 "type": obj.type,
@@ -794,6 +809,7 @@ class SqlCacheAdapter:
         rows = [
             {
                 "id": svc.id or f"{svc.mgmt_name}:{svc.domain_name}:{svc.uid}",
+                "service_id": svc.service_id or f"{svc.mgmt_name}:{svc.domain_name}:{svc.name}",
                 "uid": svc.uid,
                 "name": svc.name,
                 "type": svc.type,
@@ -895,6 +911,52 @@ class SqlCacheAdapter:
                 session.add(_asset_to_record(asset))
             if sync_states:
                 await self._upsert_sync_states_in_session(session, sync_states)
+            await session.commit()
+        return len(assets)
+
+    @traced
+    async def upsert_assets(
+        self,
+        assets: Sequence[Asset],
+    ) -> int:
+        """Insert or update `Asset` rows in `arodonata_assets`."""
+        if not assets:
+            return 0
+        span_attrs(count=len(assets))
+        rows = [
+            {
+                "id": asset.id or f"{asset.mgmt_name}:{asset.domain_name}:{asset.uid}",
+                "asset_id": asset.asset_id or f"{asset.mgmt_name}:{asset.domain_name}:{asset.name}",
+                "uid": asset.uid,
+                "name": asset.name,
+                "type": asset.type,
+                "mgmt_name": asset.mgmt_name,
+                "domain_name": asset.domain_name,
+                "ipv4_address": asset.ipv4_address,
+                "ipv6_address": asset.ipv6_address,
+                "version": asset.version,
+                "os_name": asset.os_name,
+                "hardware": asset.hardware,
+                "sic_status": asset.sic_status,
+                "parent_uid": asset.parent_uid,
+                "parent_name": asset.parent_name,
+                "parent_id": asset.parent_id,
+                "parent_asset_id": asset.parent_asset_id,
+                "member_uids": list(asset.member_uids),
+                "member_asset_ids": list(asset.member_asset_ids),
+                "virtual_system_uids": list(asset.virtual_system_uids),
+                "virtual_system_asset_ids": list(asset.virtual_system_asset_ids),
+                "interfaces": list(asset.interfaces),
+                "network_security_blades": dict(asset.network_security_blades),
+                "comments": asset.comments,
+                "color": asset.color,
+                "raw_data": dict(asset.raw_data),
+                "updated_at": _ensure_utc(asset.updated_at) or utc_now(),
+            }
+            for asset in assets
+        ]
+        async with self._db.session() as session:
+            await self._dialect_upsert(session, AssetRecord, rows)
             await session.commit()
         return len(assets)
 
