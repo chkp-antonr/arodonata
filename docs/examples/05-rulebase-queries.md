@@ -4,6 +4,6 @@ Demonstrates policy package discovery (`client.get_policy_packages()`), hierarch
 
 ## Source Code (`examples/05_rulebase_queries.py`)
 
-```python
---8 < --"examples/05_rulebase_queries.py"
+```python title="examples/05_rulebase_queries.py"
+--8<-- "examples/05_rulebase_queries.py"
 ```

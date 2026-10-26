@@ -4,6 +4,6 @@ Demonstrates querying cached gateways, clusters, cluster members, and VSX virtua
 
 ## Source Code (`examples/03_gateway_relationships.py`)
 
-```python
---8 < --"examples/03_gateway_relationships.py"
+```python title="examples/03_gateway_relationships.py"
+--8<-- "examples/03_gateway_relationships.py"
 ```

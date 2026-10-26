@@ -4,6 +4,6 @@ Demonstrates provider-agnostic OpenTelemetry span instrumentation (`arlogi.otel.
 
 ## Source Code (`examples/11_otel_tracing.py`)
 
-```python
---8 < --"examples/11_otel_tracing.py"
+```python title="examples/11_otel_tracing.py"
+--8<-- "examples/11_otel_tracing.py"
 ```

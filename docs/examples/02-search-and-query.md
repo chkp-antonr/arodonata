@@ -4,6 +4,6 @@ Demonstrates multi-term object search with recursive parent group memberships (`
 
 ## Source Code (`examples/02_search_and_query.py`)
 
-```python
---8 < --"examples/02_search_and_query.py"
+```python title="examples/02_search_and_query.py"
+--8<-- "examples/02_search_and_query.py"
 ```

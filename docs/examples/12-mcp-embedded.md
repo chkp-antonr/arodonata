@@ -4,6 +4,6 @@ Demonstrates embedding Arodonata's Streamable-HTTP MCP server (`create_mcp_serve
 
 ## Source Code (`examples/12_mcp_embedded.py`)
 
-```python
---8 < --"examples/12_mcp_embedded.py"
+```python title="examples/12_mcp_embedded.py"
+--8<-- "examples/12_mcp_embedded.py"
 ```

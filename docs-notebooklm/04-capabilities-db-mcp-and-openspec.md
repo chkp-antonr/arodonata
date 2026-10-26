@@ -1352,19 +1352,29 @@ Defines the database-backed cache layer (`DatabaseManager`, `SqlCacheAdapter`, `
 - **WHEN** a VSX gateway (`vsx_gateway` or `vsx_cluster`) is cached in one domain (e.g., `"VSX"`) and its Virtual System (`virtual_system`) is cached in another domain (e.g., `"Domain4"`) on the same management server (`mgmt_name`)
 - **THEN** asset relationship reconciliation SHALL populate the Virtual System's `parent_uid`, `parent_name`, `parent_id` (`"mds:VSX:<vsx-uid>"`), and `parent_asset_id` (`"mds:VSX:<vsx-name>"`), and populate the parent VSX asset's `virtual_system_uids` and `virtual_system_asset_ids` (`["mds:Domain4:<vs-name>"]`)
 
-### Requirement: Human-Readable Composite Identifiers Alongside UID Primary Keys
+### Requirement: Human-Readable Composite Identifiers and Dual Topology Links
 
-`CPObject` (`arodonata_objects`), `CPService` (`arodonata_services`), and `Asset` (`arodonata_assets`) SHALL retain their UID-based composite primary key `id = "{mgmt_name}:{domain_name}:{uid}"` while exposing and indexing a non-unique human-readable composite identifier (`object_id`, `service_id`, and `asset_id` respectively) formatted as `"{mgmt_name}:{domain_name}:{name}"`.
+`CPObject` (`arodonata_objects`), `CPService` (`arodonata_services`), and `Asset` (`arodonata_assets`) SHALL keep `id = "{mgmt_name}:{domain_name}:{uid}"` as primary key while persisting non-unique indexed human-readable keys (`object_id`, `service_id`, `asset_id` formatted as `"{mgmt_name}:{domain_name}:{name}"`) and dual UID/human-readable parent-child links on `Asset` and `GroupMembershipNode`.
 
-#### Scenario: Duplicate-named objects in the same domain coexist without primary key collision
+#### Scenario: Duplicate-named objects with distinct UIDs coexist with identical human-readable IDs
 
-- **WHEN** two Check Point objects in the same `(mgmt_name, domain_name)` share the same `name` (e.g., `"email"`) but have distinct `uid` values
-- **THEN** both rows SHALL be stored in `arodonata_objects` with distinct primary keys `id` (`"{mgmt_name}:{domain_name}:{uid}"`) and identical indexed `object_id` (`"{mgmt_name}:{domain_name}:email"`) without overwriting each other
+- **WHEN** a domain contains two Check Point objects or services with the same `name` (such as `email`) and different `uid` values
+- **THEN** both rows SHALL be stored without collision under their distinct `id` primary keys (`"{mgmt_name}:{domain_name}:{uid}"`) while both expose the same indexed `object_id` or `service_id` (`"{mgmt_name}:{domain_name}:{name}"`)
 
 #### Scenario: Object rename during incremental sync updates object_id in place
 
 - **WHEN** an existing Check Point object is renamed and synchronized via `"smart-fast"` (`show-changes`) or full refresh
 - **THEN** the existing database row identified by `id = "{mgmt_name}:{domain_name}:{uid}"` SHALL be updated in place with the new `name` and recomputed `object_id = "{mgmt_name}:{domain_name}:{new_name}"` without leaving an orphaned row under the old name
+
+#### Scenario: Cluster and cross-domain VSX assets populate both UID and human-readable parent/child links
+
+- **WHEN** `ClusterRelationshipManager` and `VSXRelationshipManager` enrich gateway, cluster, cluster-member, VSX, and virtual-system assets (including a virtual system in a tenant domain hosted on a VSX gateway/cluster in another domain on the same `mgmt_name`)
+- **THEN** child assets SHALL populate `parent_uid`, `parent_name`, `parent_id` (`"{mgmt_name}:{parent_domain}:{parent_uid}"`), and `parent_asset_id` (`"{mgmt_name}:{parent_domain}:{parent_name}"`), and parent cluster/VSX assets SHALL populate `member_uids`, `member_asset_ids`, `virtual_system_uids`, and `virtual_system_asset_ids`
+
+#### Scenario: Group membership traversal includes human-readable group composite IDs
+
+- **WHEN** `search_objects()` resolves containing parent groups for matched objects
+- **THEN** each `GroupMembershipNode` in `SearchResult.memberships` SHALL include `id` (`"{mgmt_name}:{domain_name}:{uid}"`), `object_id` (`"{mgmt_name}:{domain_name}:{name}"`), `parent_uids`, and `parent_object_ids`
 
 ### Requirement: Cache-First Object Search with Recursive Group Membership Resolution
 
@@ -1499,6 +1509,20 @@ Defines the primary composition root and unified developer facade (`ArodonataCli
 
 - **WHEN** `await client.find_object(mgmt_name, domain, name_or_uid)` or `await client.get_group_members(mgmt_name, domain, group_name_or_uid)` is called with a raw UID, object name, or composite identifier (`object_id`, `service_id`, `asset_id`, or `id`, such as `"mds:General:hWebHost"` or `"mds:VSX:VSX-Cluster-01"`)
 - **THEN** `find_object` SHALL look up the target across `arodonata_objects`, `arodonata_services`, and `arodonata_assets` (returning `CPObject | CPService | Asset | None` with `object_id` / `service_id` / `asset_id` populated), and `get_group_members` SHALL expand direct and recursive members of a network group (`CPObject`), a `service-group` (`CPService`), or a cluster/VSX parent asset (`Asset` via `member_uids`, `member_asset_ids`, `virtual_system_uids`, and `virtual_system_asset_ids`, including cross-domain Virtual Systems) from cache
+
+### Requirement: Composite Identifier Resolution in Facade and Search Helpers
+
+`ArodonataClient.find_object()`, `ArodonataClient.get_group_members()`, `SearchService.search_objects()`, and `SearchService.query_objects()` SHALL accept and filter by composite human-readable identifiers (`object_id`, `service_id`, `asset_id` formatted as `"{mgmt_name}:{domain_name}:{name}"`) or composite UID keys (`id` formatted as `"{mgmt_name}:{domain_name}:{uid}"`) in addition to raw `name` or `uid`.
+
+#### Scenario: find_object and get_group_members resolve composite human-readable IDs
+
+- **WHEN** `await client.find_object(mgmt_name, domain, "mds:General:hWebHost")` or `await client.get_group_members(mgmt_name, domain, "mds:General:Cluster01")` is called with a composite `object_id`, `service_id`, `asset_id`, or `id`
+- **THEN** the helper SHALL match the corresponding `CPObject`, `CPService`, or `Asset` (or expand its members/child assets) identically to passing the raw `name` or `uid`
+
+#### Scenario: Structured query_objects and describe_objects expose composite ID fields
+
+- **WHEN** `await client.describe_objects()` or `await client.query_objects(...)` is called
+- **THEN** `describe_objects()` SHALL list `id`, `object_id`, `service_id`, `asset_id`, `parent_id`, and `parent_asset_id` among filterable fields, and `query_objects()` SHALL include the composite fields on returned items
 
 ### Requirement: Provider-Agnostic OpenTelemetry Instrumentation and Secret Redaction
 

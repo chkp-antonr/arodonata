@@ -4,6 +4,6 @@ Demonstrates low-level Check Point session lifecycle operations (`create_dedicat
 
 ## Source Code (`examples/06_session_basics.py`)
 
-```python
---8 < --"examples/06_session_basics.py"
+```python title="examples/06_session_basics.py"
+--8<-- "examples/06_session_basics.py"
 ```

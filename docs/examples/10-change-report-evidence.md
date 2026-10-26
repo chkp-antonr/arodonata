@@ -4,6 +4,6 @@ Demonstrates collecting and rendering auditable `ChangeReport` evidence (`HTML`,
 
 ## Source Code (`examples/10_change_report_evidence.py`)
 
-```python
---8 < --"examples/10_change_report_evidence.py"
+```python title="examples/10_change_report_evidence.py"
+--8<-- "examples/10_change_report_evidence.py"
 ```
