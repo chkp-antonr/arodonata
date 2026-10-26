@@ -177,6 +177,8 @@ def matches_classified_term(
         candidates = [
             obj.name,
             obj.uid,
+            obj.object_id,
+            obj.id,
             obj.fqdn or "",
             obj.ipv4_address or "",
             obj.subnet4 or "",
@@ -190,6 +192,8 @@ def matches_classified_term(
         exact_candidates = [
             obj.name,
             obj.uid,
+            obj.object_id,
+            obj.id,
             obj.fqdn or "",
             obj.ipv4_address or "",
             obj.subnet4 or "",
@@ -199,6 +203,8 @@ def matches_classified_term(
     candidates = [
         obj.name,
         obj.uid,
+        obj.object_id,
+        obj.id,
         obj.fqdn or "",
         obj.ipv4_address or "",
         obj.subnet4 or "",
@@ -352,14 +358,18 @@ class SearchService:
 
                 higher_groups = reverse_groups.get((grp.mgmt_name, grp.domain_name, grp.uid), [])
                 parent_uids = [hg.uid for hg in higher_groups]
+                parent_object_ids = [hg.object_id for hg in higher_groups]
 
                 nodes_by_uid[grp.uid] = GroupMembershipNode(
+                    id=grp.id,
+                    object_id=grp.object_id,
                     uid=grp.uid,
                     name=grp.name,
                     mgmt_name=grp.mgmt_name,
                     domain_name=grp.domain_name,
                     depth=depth,
                     parent_uids=parent_uids,
+                    parent_object_ids=parent_object_ids,
                 )
 
                 if depth < max_depth:
@@ -396,12 +406,14 @@ class SearchService:
         target_group: CPObject | None = by_uid.get(group_name_or_uid)
         if target_group is None:
             for obj in all_objs:
-                if obj.name == group_name_or_uid and (obj.type in ("group", "group-with-exclusion") or obj.members):
+                if (group_name_or_uid in (obj.name, obj.object_id, obj.id)) and (
+                    obj.type in ("group", "group-with-exclusion") or obj.members
+                ):
                     target_group = obj
                     break
             if target_group is None:
                 for obj in all_objs:
-                    if obj.name == group_name_or_uid:
+                    if group_name_or_uid in (obj.name, obj.object_id, obj.id):
                         target_group = obj
                         break
 
@@ -443,12 +455,14 @@ class SearchService:
         target_svc_group: CPService | None = svc_by_uid.get(group_name_or_uid)
         if target_svc_group is None:
             for svc in all_svcs:
-                if svc.name == group_name_or_uid and (svc.type == "service-group" or svc.members):
+                if (group_name_or_uid in (svc.name, svc.service_id, svc.id)) and (
+                    svc.type == "service-group" or svc.members
+                ):
                     target_svc_group = svc
                     break
             if target_svc_group is None:
                 for svc in all_svcs:
-                    if svc.name == group_name_or_uid:
+                    if group_name_or_uid in (svc.name, svc.service_id, svc.id):
                         target_svc_group = svc
                         break
 
@@ -490,21 +504,41 @@ class SearchService:
         needle_lower = group_name_or_uid.strip().lower()
         if target_asset is None:
             for asset in all_assets:
-                if asset.name == group_name_or_uid or asset.name.lower() == needle_lower:
+                if (
+                    asset.name == group_name_or_uid
+                    or asset.asset_id == group_name_or_uid
+                    or asset.id == group_name_or_uid
+                    or asset.name.lower() == needle_lower
+                    or asset.asset_id.lower() == needle_lower
+                    or asset.id.lower() == needle_lower
+                ):
                     target_asset = asset
                     break
 
         if target_asset is not None:
+            # Also load cross-domain assets on the same mgmt_name if VSX children reside in tenant domains
+            mgmt_assets = await self._cache.get_assets(mgmt_name=mgmt_name)
+            for ma in mgmt_assets:
+                if ma.uid not in asset_by_uid:
+                    asset_by_uid[ma.uid] = ma
+            asset_by_asset_id: dict[str, Asset] = {a.asset_id: a for a in asset_by_uid.values()}
+
             child_uids: list[str] = []
             for cuid in [*target_asset.member_uids, *target_asset.virtual_system_uids]:
                 if cuid and cuid not in child_uids:
                     child_uids.append(cuid)
-            for asset in all_assets:
+            for caid in [*target_asset.member_asset_ids, *target_asset.virtual_system_asset_ids]:
+                ca_obj = asset_by_asset_id.get(caid)
+                if ca_obj is not None and ca_obj.uid not in child_uids:
+                    child_uids.append(ca_obj.uid)
+            for asset in asset_by_uid.values():
                 if (
                     asset.uid != target_asset.uid
                     and asset.uid not in child_uids
                     and (
                         asset.parent_uid == target_asset.uid
+                        or asset.parent_id == target_asset.id
+                        or asset.parent_asset_id == target_asset.asset_id
                         or (asset.parent_name and asset.parent_name.lower() == target_asset.name.lower())
                     )
                 ):
@@ -570,6 +604,12 @@ class SearchService:
             "service_types": dict(sorted(svc_type_counts.items())),
             "asset_types": dict(sorted(asset_type_counts.items())),
             "filterable_fields": [
+                "id",
+                "object_id",
+                "service_id",
+                "asset_id",
+                "parent_id",
+                "parent_asset_id",
                 "mgmt_name",
                 "domain_name",
                 "original_domain",
@@ -728,11 +768,22 @@ class SearchService:
         if name_pattern:
             pat = name_pattern.strip().lower()
             has_wild = "*" in pat or "?" in pat
-            combined_items = [
-                item
-                for item in combined_items
-                if (fnmatchcase(item.name.lower(), pat) if has_wild else pat in item.name.lower())
-            ]
+
+            def _matches_pattern(item: CPObject | CPService | Asset) -> bool:
+                comp_id = (
+                    getattr(item, "object_id", None)
+                    or getattr(item, "service_id", None)
+                    or getattr(item, "asset_id", None)
+                    or ""
+                )
+                candidates = [item.name.lower(), item.id.lower()]
+                if comp_id:
+                    candidates.append(str(comp_id).lower())
+                if has_wild:
+                    return any(fnmatchcase(c, pat) for c in candidates)
+                return any(pat in c for c in candidates)
+
+            combined_items = [item for item in combined_items if _matches_pattern(item)]
 
         if ip_subnet:
             ip_term = classify_search_term(ip_subnet)

@@ -5,10 +5,11 @@ Provides:
 - Concurrent per-MDS-member domain asset collection via `DomainSyncCoordinator` (`scope="assets"`, `item_type="*"`).
 - `ClusterRelationshipManager`: links cluster members (`cluster-member` / `CpmiClusterMember`) to their
   parent cluster (`simple-cluster` / `CpmiGatewayCluster` / `CpmiVsxClusterNetobj`), populating
-  `parent_uid`, `parent_name`, and `member_uids`.
+  `parent_uid`, `parent_name`, `parent_id`, `parent_asset_id`, `member_uids`, and `member_asset_ids`.
 - `VSXRelationshipManager`: resolves VSX gateways/clusters and virtual systems (`virtual-system` /
   `CpmiVsNetobj` / `CpmiVsClusterNetobj`) via encapsulated `generic-object` topology queries
-  (`show-generic-objects`), populating `parent_uid`, `parent_name`, and `virtual_system_uids`.
+  (`show-generic-objects`) and cross-domain MDS reconciliation, populating `parent_uid`, `parent_name`,
+  `parent_id`, `parent_asset_id`, `virtual_system_uids`, and `virtual_system_asset_ids`.
 """
 
 from __future__ import annotations
@@ -90,6 +91,7 @@ class ClusterRelationshipManager:
                 or raw.get("cluster_members")
             )
             discovered_member_uids: list[str] = list(asset.member_uids)
+            discovered_member_asset_ids: list[str] = list(asset.member_asset_ids)
 
             if isinstance(raw_members, dict) and isinstance(raw_members.get("objects"), list):
                 raw_members = raw_members["objects"]
@@ -124,14 +126,31 @@ class ClusterRelationshipManager:
                     if member_asset is not None:
                         if member_asset.uid not in discovered_member_uids:
                             discovered_member_uids.append(member_asset.uid)
+                        if member_asset.asset_id not in discovered_member_asset_ids:
+                            discovered_member_asset_ids.append(member_asset.asset_id)
                         updated_member = member_asset.model_copy(
-                            update={"parent_uid": asset.uid, "parent_name": asset.name}
+                            update={
+                                "parent_uid": asset.uid,
+                                "parent_name": asset.name,
+                                "parent_id": asset.id,
+                                "parent_asset_id": asset.asset_id,
+                            }
                         )
                         by_uid[updated_member.uid] = updated_member
                         by_name[updated_member.name] = updated_member
 
-            if discovered_member_uids != asset.member_uids:
-                updated_cluster = by_uid[asset.uid].model_copy(update={"member_uids": discovered_member_uids})
+            for m_uid in discovered_member_uids:
+                m_obj = by_uid.get(m_uid)
+                if m_obj is not None and m_obj.asset_id not in discovered_member_asset_ids:
+                    discovered_member_asset_ids.append(m_obj.asset_id)
+
+            if discovered_member_uids != asset.member_uids or discovered_member_asset_ids != asset.member_asset_ids:
+                updated_cluster = by_uid[asset.uid].model_copy(
+                    update={
+                        "member_uids": discovered_member_uids,
+                        "member_asset_ids": discovered_member_asset_ids,
+                    }
+                )
                 by_uid[updated_cluster.uid] = updated_cluster
                 by_name[updated_cluster.name] = updated_cluster
 
@@ -139,11 +158,32 @@ class ClusterRelationshipManager:
         for asset in list(by_uid.values()):
             if asset.parent_uid:
                 parent = by_uid.get(asset.parent_uid)
-                if parent is not None and asset.uid not in parent.member_uids:
-                    new_members = [*parent.member_uids, asset.uid]
-                    updated_parent = parent.model_copy(update={"member_uids": new_members})
-                    by_uid[updated_parent.uid] = updated_parent
-                    by_name[updated_parent.name] = updated_parent
+                if parent is not None:
+                    if asset.parent_id != parent.id or asset.parent_asset_id != parent.asset_id:
+                        updated_member = asset.model_copy(
+                            update={
+                                "parent_name": parent.name,
+                                "parent_id": parent.id,
+                                "parent_asset_id": parent.asset_id,
+                            }
+                        )
+                        by_uid[updated_member.uid] = updated_member
+                        by_name[updated_member.name] = updated_member
+                    new_member_uids = list(parent.member_uids)
+                    new_member_asset_ids = list(parent.member_asset_ids)
+                    if asset.uid not in new_member_uids:
+                        new_member_uids.append(asset.uid)
+                    if asset.asset_id not in new_member_asset_ids:
+                        new_member_asset_ids.append(asset.asset_id)
+                    if new_member_uids != parent.member_uids or new_member_asset_ids != parent.member_asset_ids:
+                        updated_parent = parent.model_copy(
+                            update={
+                                "member_uids": new_member_uids,
+                                "member_asset_ids": new_member_asset_ids,
+                            }
+                        )
+                        by_uid[updated_parent.uid] = updated_parent
+                        by_name[updated_parent.name] = updated_parent
                 continue
 
             raw = asset.raw_data
@@ -158,14 +198,28 @@ class ClusterRelationshipManager:
 
             if parent_asset is not None:
                 updated_member = asset.model_copy(
-                    update={"parent_uid": parent_asset.uid, "parent_name": parent_asset.name}
+                    update={
+                        "parent_uid": parent_asset.uid,
+                        "parent_name": parent_asset.name,
+                        "parent_id": parent_asset.id,
+                        "parent_asset_id": parent_asset.asset_id,
+                    }
                 )
                 by_uid[updated_member.uid] = updated_member
                 by_name[updated_member.name] = updated_member
                 curr_parent = by_uid[parent_asset.uid]
-                if updated_member.uid not in curr_parent.member_uids:
+                new_member_uids = list(curr_parent.member_uids)
+                new_member_asset_ids = list(curr_parent.member_asset_ids)
+                if updated_member.uid not in new_member_uids:
+                    new_member_uids.append(updated_member.uid)
+                if updated_member.asset_id not in new_member_asset_ids:
+                    new_member_asset_ids.append(updated_member.asset_id)
+                if new_member_uids != curr_parent.member_uids or new_member_asset_ids != curr_parent.member_asset_ids:
                     updated_parent = curr_parent.model_copy(
-                        update={"member_uids": [*curr_parent.member_uids, updated_member.uid]}
+                        update={
+                            "member_uids": new_member_uids,
+                            "member_asset_ids": new_member_asset_ids,
+                        }
                     )
                     by_uid[updated_parent.uid] = updated_parent
                     by_name[updated_parent.name] = updated_parent
@@ -239,6 +293,7 @@ class VSXRelationshipManager:
             raw = asset.raw_data
             raw_vs_list = raw.get("virtual-systems") or raw.get("virtual_systems") or raw.get("virtualSystems")
             vs_uids: list[str] = list(asset.virtual_system_uids)
+            vs_asset_ids: list[str] = list(asset.virtual_system_asset_ids)
 
             if isinstance(raw_vs_list, dict) and isinstance(raw_vs_list.get("objects"), list):
                 raw_vs_list = raw_vs_list["objects"]
@@ -252,7 +307,14 @@ class VSXRelationshipManager:
                         v_uid = str(item.get("uid") or "")
                         v_name = str(item.get("name") or "")
                         vs_asset = (by_uid.get(v_uid) if v_uid else None) or (by_name.get(v_name) if v_name else None)
-                        if vs_asset is None and v_uid and v_name:
+                        item_domain = item.get("domain")
+                        item_domain_name = (
+                            str(item_domain.get("name") or "")
+                            if isinstance(item_domain, dict)
+                            else str(item_domain or "")
+                        )
+                        is_same_domain = not item_domain_name or item_domain_name == domain_name
+                        if vs_asset is None and v_uid and v_name and is_same_domain:
                             synthesized = Asset.from_cp_dict(
                                 mgmt_name,
                                 domain_name,
@@ -270,12 +332,31 @@ class VSXRelationshipManager:
                     if vs_asset is not None:
                         if vs_asset.uid not in vs_uids:
                             vs_uids.append(vs_asset.uid)
-                        updated_vs = vs_asset.model_copy(update={"parent_uid": asset.uid, "parent_name": asset.name})
+                        if vs_asset.asset_id not in vs_asset_ids:
+                            vs_asset_ids.append(vs_asset.asset_id)
+                        updated_vs = vs_asset.model_copy(
+                            update={
+                                "parent_uid": asset.uid,
+                                "parent_name": asset.name,
+                                "parent_id": asset.id,
+                                "parent_asset_id": asset.asset_id,
+                            }
+                        )
                         by_uid[updated_vs.uid] = updated_vs
                         by_name[updated_vs.name] = updated_vs
 
-            if vs_uids != asset.virtual_system_uids:
-                updated_parent = by_uid[asset.uid].model_copy(update={"virtual_system_uids": vs_uids})
+            for v_uid in vs_uids:
+                v_obj = by_uid.get(v_uid)
+                if v_obj is not None and v_obj.asset_id not in vs_asset_ids:
+                    vs_asset_ids.append(v_obj.asset_id)
+
+            if vs_uids != asset.virtual_system_uids or vs_asset_ids != asset.virtual_system_asset_ids:
+                updated_parent = by_uid[asset.uid].model_copy(
+                    update={
+                        "virtual_system_uids": vs_uids,
+                        "virtual_system_asset_ids": vs_asset_ids,
+                    }
+                )
                 by_uid[updated_parent.uid] = updated_parent
                 by_name[updated_parent.name] = updated_parent
 
@@ -301,18 +382,162 @@ class VSXRelationshipManager:
                 parent_asset = (by_uid.get(p_uid) if p_uid else None) or (by_name.get(p_name) if p_name else None)
 
             if parent_asset is not None:
-                updated_vs = asset.model_copy(update={"parent_uid": parent_asset.uid, "parent_name": parent_asset.name})
+                updated_vs = asset.model_copy(
+                    update={
+                        "parent_uid": parent_asset.uid,
+                        "parent_name": parent_asset.name,
+                        "parent_id": parent_asset.id,
+                        "parent_asset_id": parent_asset.asset_id,
+                    }
+                )
                 by_uid[updated_vs.uid] = updated_vs
                 by_name[updated_vs.name] = updated_vs
                 curr_parent = by_uid[parent_asset.uid]
-                if updated_vs.uid not in curr_parent.virtual_system_uids:
+                new_vs_uids = list(curr_parent.virtual_system_uids)
+                new_vs_asset_ids = list(curr_parent.virtual_system_asset_ids)
+                if updated_vs.uid not in new_vs_uids:
+                    new_vs_uids.append(updated_vs.uid)
+                if updated_vs.asset_id not in new_vs_asset_ids:
+                    new_vs_asset_ids.append(updated_vs.asset_id)
+                if (
+                    new_vs_uids != curr_parent.virtual_system_uids
+                    or new_vs_asset_ids != curr_parent.virtual_system_asset_ids
+                ):
                     updated_parent = curr_parent.model_copy(
-                        update={"virtual_system_uids": [*curr_parent.virtual_system_uids, updated_vs.uid]}
+                        update={
+                            "virtual_system_uids": new_vs_uids,
+                            "virtual_system_asset_ids": new_vs_asset_ids,
+                        }
                     )
                     by_uid[updated_parent.uid] = updated_parent
                     by_name[updated_parent.name] = updated_parent
 
         return list(by_uid.values())
+
+    def reconcile_cross_domain(self, assets: Sequence[Asset]) -> list[Asset]:
+        """Reconcile VSX parent-child relationships across domains within the same `mgmt_name`.
+
+        Returns only the `Asset` instances whose `parent_uid`, `parent_name`, `parent_id`,
+        `parent_asset_id`, `virtual_system_uids`, or `virtual_system_asset_ids` changed.
+        """
+        by_id: dict[str, Asset] = {a.id: a for a in assets}
+        by_uid: dict[str, Asset] = {a.uid: a for a in assets}
+        by_asset_id: dict[str, Asset] = {a.asset_id: a for a in assets}
+        by_name: dict[str, list[Asset]] = {}
+        for a in assets:
+            by_name.setdefault(a.name, []).append(a)
+
+        modified_ids: set[str] = set()
+
+        def _find_by_ref(ref: Any, mgmt_name: str, prefer_vsx_parent: bool = False) -> Asset | None:
+            if isinstance(ref, str) and ref:
+                if ref in by_id:
+                    return by_id[ref]
+                if ref in by_asset_id:
+                    return by_asset_id[ref]
+                if ref in by_uid:
+                    return by_uid[ref]
+                candidates = [c for c in by_name.get(ref, []) if c.mgmt_name == mgmt_name]
+                if prefer_vsx_parent:
+                    vsx_candidates = [c for c in candidates if c.type in VSX_PARENT_TYPES or "vsx" in c.type.lower()]
+                    if vsx_candidates:
+                        return vsx_candidates[0]
+                return candidates[0] if candidates else None
+            if isinstance(ref, dict):
+                r_uid = str(ref.get("uid") or "")
+                r_name = str(ref.get("name") or "")
+                r_dom = ref.get("domain")
+                r_dom_name = str(r_dom.get("name") or "") if isinstance(r_dom, dict) else str(r_dom or "")
+                if r_uid and r_uid in by_uid:
+                    return by_uid[r_uid]
+                if r_dom_name and r_name:
+                    comp_asset_id = f"{mgmt_name}:{r_dom_name}:{r_name}"
+                    if comp_asset_id in by_asset_id:
+                        return by_asset_id[comp_asset_id]
+                if r_name:
+                    return _find_by_ref(r_name, mgmt_name, prefer_vsx_parent=prefer_vsx_parent)
+            return None
+
+        def _link(parent_id_key: str, child_id_key: str) -> None:
+            parent = by_id[parent_id_key]
+            child = by_id[child_id_key]
+            if (
+                child.parent_uid != parent.uid
+                or child.parent_name != parent.name
+                or child.parent_id != parent.id
+                or child.parent_asset_id != parent.asset_id
+            ):
+                updated_child = child.model_copy(
+                    update={
+                        "parent_uid": parent.uid,
+                        "parent_name": parent.name,
+                        "parent_id": parent.id,
+                        "parent_asset_id": parent.asset_id,
+                    }
+                )
+                by_id[updated_child.id] = updated_child
+                by_uid[updated_child.uid] = updated_child
+                by_asset_id[updated_child.asset_id] = updated_child
+                modified_ids.add(updated_child.id)
+                child = updated_child
+
+            new_vs_uids = list(parent.virtual_system_uids)
+            new_vs_asset_ids = list(parent.virtual_system_asset_ids)
+            if child.uid not in new_vs_uids:
+                new_vs_uids.append(child.uid)
+            if child.asset_id not in new_vs_asset_ids:
+                new_vs_asset_ids.append(child.asset_id)
+            if new_vs_uids != parent.virtual_system_uids or new_vs_asset_ids != parent.virtual_system_asset_ids:
+                updated_parent = parent.model_copy(
+                    update={
+                        "virtual_system_uids": new_vs_uids,
+                        "virtual_system_asset_ids": new_vs_asset_ids,
+                    }
+                )
+                by_id[updated_parent.id] = updated_parent
+                by_uid[updated_parent.uid] = updated_parent
+                by_asset_id[updated_parent.asset_id] = updated_parent
+                modified_ids.add(updated_parent.id)
+
+        # Pass 1: VSX parent -> virtual systems across domains
+        for asset in list(by_id.values()):
+            raw = asset.raw_data
+            raw_vs_list = raw.get("virtual-systems") or raw.get("virtual_systems") or raw.get("virtualSystems")
+            if isinstance(raw_vs_list, dict) and isinstance(raw_vs_list.get("objects"), list):
+                raw_vs_list = raw_vs_list["objects"]
+            if isinstance(raw_vs_list, list):
+                for item in raw_vs_list:
+                    vs_asset = _find_by_ref(item, asset.mgmt_name, prefer_vsx_parent=False)
+                    if vs_asset is not None and vs_asset.mgmt_name == asset.mgmt_name:
+                        _link(asset.id, vs_asset.id)
+            for v_uid in list(asset.virtual_system_uids):
+                vs_asset = by_uid.get(v_uid)
+                if vs_asset is not None and vs_asset.mgmt_name == asset.mgmt_name:
+                    _link(asset.id, vs_asset.id)
+
+        # Pass 2: Virtual system -> VSX parent across domains
+        for asset in list(by_id.values()):
+            is_vs = asset.type in VSX_CHILD_TYPES or "virtual-system" in asset.type.lower()
+            raw = asset.raw_data
+            vsx_ref = (
+                raw.get("vsx-gateway")
+                or raw.get("vsx_gateway")
+                or raw.get("vsx-cluster")
+                or raw.get("contained-in")
+                or (raw.get("parent") if is_vs else None)
+            )
+            parent_asset: Asset | None = None
+            if asset.parent_uid and is_vs:
+                parent_asset = by_uid.get(asset.parent_uid)
+            if parent_asset is None and vsx_ref is not None:
+                parent_asset = _find_by_ref(vsx_ref, asset.mgmt_name, prefer_vsx_parent=True)
+            if parent_asset is None and asset.parent_name and is_vs:
+                parent_asset = _find_by_ref(asset.parent_name, asset.mgmt_name, prefer_vsx_parent=True)
+
+            if parent_asset is not None and parent_asset.mgmt_name == asset.mgmt_name:
+                _link(parent_asset.id, asset.id)
+
+        return [by_id[mid] for mid in modified_ids]
 
     async def _fetch_vsx_generic_objects(
         self,
@@ -373,6 +598,15 @@ class AssetRefreshService:
         """Return the `VSXRelationshipManager`."""
         return self._vsx_manager
 
+    async def _reconcile_cross_domain_vsx(self, mgmt_name: str | None) -> None:
+        """Reconcile cross-domain VSX parent/child relationships across cached domains."""
+        all_assets = await self._cache.get_assets(mgmt_name=mgmt_name)
+        if not all_assets:
+            return
+        modified = self._vsx_manager.reconcile_cross_domain(all_assets)
+        if modified:
+            await self._cache.upsert_assets(modified)
+
     async def stream_refresh_assets(
         self,
         *,
@@ -393,6 +627,8 @@ class AssetRefreshService:
             mode=mode,
             cache_ttl=cache_ttl,
         ):
+            if event.event_type == "sync_completed":
+                await self._reconcile_cross_domain_vsx(mgmt_name)
             yield event
 
     @traced
@@ -407,7 +643,7 @@ class AssetRefreshService:
     ) -> RefreshOutcome:
         """Refresh gateway/cluster/VSX assets across domains and return `RefreshOutcome`."""
         span_attrs(mgmt_name=mgmt_name, mode=mode, include_global=include_global)
-        return await self._coordinator.ensure(
+        outcome = await self._coordinator.ensure(
             scope="assets",
             item_types=["*"],
             handler=self._sync_domain_assets,
@@ -417,6 +653,8 @@ class AssetRefreshService:
             mode=mode,
             cache_ttl=cache_ttl,
         )
+        await self._reconcile_cross_domain_vsx(mgmt_name)
+        return outcome
 
     async def _sync_domain_assets(
         self,
@@ -478,6 +716,7 @@ class AssetRefreshService:
             fully_enriched,
             sync_states=[sync_state],
         )
+        await self._reconcile_cross_domain_vsx(mgmt_name)
         return len(fully_enriched)
 
     @traced

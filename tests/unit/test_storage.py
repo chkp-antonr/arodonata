@@ -634,3 +634,105 @@ async def test_database_manager_tolerates_duplicate_column_and_index_errors_in_s
         OperationalError("CREATE INDEX", {}, Exception("relation 'idx_x' already exists"))
     )
     assert not _is_benign_concurrent_ddl_error(OperationalError("ALTER TABLE", {}, Exception("syntax error near FROM")))
+
+
+async def test_duplicate_named_objects_and_services_with_distinct_uids_and_human_readable_ids() -> None:
+    """Verify duplicate-named objects/services (`email`) with distinct UIDs coexist in DB and expose human-readable composite IDs."""
+    db = DatabaseManager(engine=None)
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+
+        # Two objects sharing the exact name "email" in the same domain with distinct UIDs
+        obj_email_1 = CPObject.from_cp_dict(
+            "mds1",
+            "General",
+            {"uid": "uid-email-1", "name": "email", "type": "application-site"},
+        )
+        obj_email_2 = CPObject.from_cp_dict(
+            "mds1",
+            "General",
+            {"uid": "uid-email-2", "name": "email", "type": "application-site"},
+        )
+        await cache.replace_domain_objects(
+            "mds1",
+            "General",
+            [obj_email_1, obj_email_2],
+            types=["application-site"],
+        )
+        objs = await cache.get_objects("mds1", "General", names=["email"])
+        assert len(objs) == 2
+        assert {o.uid for o in objs} == {"uid-email-1", "uid-email-2"}
+        assert {o.id for o in objs} == {"mds1:General:uid-email-1", "mds1:General:uid-email-2"}
+        assert [o.object_id for o in objs] == ["mds1:General:email", "mds1:General:email"]
+
+        # Two services sharing the exact name "email" in the same domain with distinct UIDs
+        svc_email_1 = CPService.from_cp_dict(
+            "mds1",
+            "General",
+            {"uid": "uid-svc-email-1", "name": "email", "type": "service-other"},
+        )
+        svc_email_2 = CPService.from_cp_dict(
+            "mds1",
+            "General",
+            {"uid": "uid-svc-email-2", "name": "email", "type": "service-other"},
+        )
+        await cache.replace_domain_services(
+            "mds1",
+            "General",
+            [svc_email_1, svc_email_2],
+            types=["service-other"],
+        )
+        svcs = await cache.get_services("mds1", "General", names=["email"])
+        assert len(svcs) == 2
+        assert {s.uid for s in svcs} == {"uid-svc-email-1", "uid-svc-email-2"}
+        assert {s.id for s in svcs} == {"mds1:General:uid-svc-email-1", "mds1:General:uid-svc-email-2"}
+        assert [s.service_id for s in svcs] == ["mds1:General:email", "mds1:General:email"]
+
+        # Assets with asset_id, parent_id, parent_asset_id, member_asset_ids, virtual_system_asset_ids, and upsert_assets
+        cluster = Asset(
+            uid="c-1",
+            name="gw-cluster",
+            type="CpmiGatewayCluster",
+            mgmt_name="mds1",
+            domain_name="General",
+            member_uids=["m-1"],
+            member_asset_ids=["mds1:General:gw-m1"],
+        )
+        member = Asset(
+            uid="m-1",
+            name="gw-m1",
+            type="CpmiClusterMember",
+            mgmt_name="mds1",
+            domain_name="General",
+            parent_uid="c-1",
+            parent_name="gw-cluster",
+        )
+        await cache.replace_domain_assets("mds1", "General", [cluster, member])
+        loaded_assets = {a.uid: a for a in await cache.get_assets("mds1", "General")}
+        assert loaded_assets["c-1"].asset_id == "mds1:General:gw-cluster"
+        assert loaded_assets["c-1"].member_asset_ids == ["mds1:General:gw-m1"]
+        assert loaded_assets["m-1"].asset_id == "mds1:General:gw-m1"
+        assert loaded_assets["m-1"].parent_id == "mds1:General:c-1"
+        assert loaded_assets["m-1"].parent_asset_id == "mds1:General:gw-cluster"
+
+        # Test upsert_assets updating cross-domain parent_asset_id
+        vs = Asset(
+            uid="vs-1",
+            name="vs-tenant-1",
+            type="virtual-system",
+            mgmt_name="mds1",
+            domain_name="Tenant",
+            parent_uid="vsx-1",
+            parent_name="vsx-core",
+            parent_id="mds1:Infra:vsx-1",
+            parent_asset_id="mds1:Infra:vsx-core",
+        )
+        await cache.upsert_assets([vs])
+        tenant_assets = await cache.get_assets("mds1", "Tenant")
+        assert len(tenant_assets) == 1
+        assert tenant_assets[0].asset_id == "mds1:Tenant:vs-tenant-1"
+        assert tenant_assets[0].parent_id == "mds1:Infra:vsx-1"
+        assert tenant_assets[0].parent_asset_id == "mds1:Infra:vsx-core"
+    finally:
+        await db.close()

@@ -1,0 +1,144 @@
+site_name: Arodonata v2 Docs
+site_url: https://chkp-antonr.github.io/arodonata/
+repo_url: https://github.com/chkp-antonr/arodonata
+repo_name: chkp-antonr/arodonata
+edit_uri: blob/master_v2/docs/
+
+exclude_docs: |
+  _*/*
+  _*_/*
+  internal/*
+  superpowers/*
+
+theme:
+  name: "material"
+  favicon: img/arodonata_logo_tr_sq.png
+  logo: img/logo_arodonata_nt.png
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_bases: true
+            show_source: true
+            ignore_init_summary: true
+            merge_init_into_class: true
+            show_root_heading: true
+            separate_signature: true
+            line_length: 88
+            show_signature_annotations: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+  - gen-files:
+      scripts:
+        - docs/scripts/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - git-revision-date-localized:
+      enable_creation_date: false
+      fallback_to_build_date: true
+      enable_git_follow: false
+      exclude:
+        - _*/*
+        - _*_/*
+  - minify:
+      minify_html: true
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+      css_class: highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+        - name: ascii
+          class: ascii-diagram
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.snippets:
+      base_path:
+        - "."
+  - attr_list
+  - md_in_html
+  - admonition
+  - toc:
+      permalink: true
+
+extra:
+  mermaid:
+    version: "10.9.1"
+    cdn: "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs"
+
+extra_css:
+  - extra.css
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Overview: getting-started/index.md
+      - Your First Script: getting-started/first-script.md
+      - CPCRUD Quickstart: getting-started/cpcrud.md
+  - Guide:
+      - Capabilities & Integration: CAPABILITIES.md
+      - CPCRUD Operations: user-guide/cpcrud.md
+      - Change Reports: user-guide/change-report.md
+      - Configuration Overview: configuration/index.md
+      - Multi-Server Topology: configuration/multi-server.md
+      - TLS Verification: configuration/tls-verification.md
+      - MCP Server & Tools: mcp/index.md
+  - Architecture:
+      - Overview: architecture/index.md
+      - Hexagonal Ports & Adapters: architecture/ports-and-adapters.md
+      - Database Schema (15 Tables): architecture/database-schema.md
+      - Caching, Sync & Search: architecture/caching-and-sync.md
+      - Sessions, MDSM & Overlays: architecture/sessions-and-mdm.md
+      - CPCRUD Engine: architecture/cpcrud.md
+  - API Reference: api/
+  - Examples:
+      - Catalog: examples/index.md
+      - 01 — Basic Queries: examples/01-basic-queries.md
+      - 02 — Search & Structured Query: examples/02-search-and-query.md
+      - 03 — Gateway & VSX Topology: examples/03-gateway-relationships.md
+      - 04 — Smart & Streaming Refresh: examples/04-smart-refresh.md
+      - 05 — Rulebase Queries: examples/05-rulebase-queries.md
+      - 06 — Session Lifecycle Basics: examples/06-session-basics.md
+      - 07 — Contexts & Session Overlay: examples/07-context-and-overlay.md
+      - 08 — CPCRUD Operations: examples/08-cpcrud-operations.md
+      - 09 — CPCRUD Inverse Rollback: examples/09-cpcrud-inverse.md
+      - 10 — Change Report Evidence: examples/10-change-report-evidence.md
+      - 11 — OpenTelemetry Tracing: examples/11-otel-tracing.md
+      - 12 — Embedded FastAPI MCP: examples/12-mcp-embedded.md
+  - Project:
+      - Testing & Quality Gates: development/testing.md
+      - Changelog: CHANGELOG.md
+      - License: LICENSE

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Human-readable composite identifiers (`object_id`, `service_id`, `asset_id`) and dual UID/human-readable topology links (`arodonata.core.models`, `arodonata.adapters.storage`, `arodonata.core.services`, `arodonata.client`, `arodonata.mcp`): non-unique indexed `object_id = "{mgmt_name}:{domain_name}:{name}"` on `CPObject` / `CPObjectRecord` (`arodonata_objects`), `service_id = "{mgmt_name}:{domain_name}:{name}"` on `CPService` / `CPServiceRecord` (`arodonata_services`), and `asset_id = "{mgmt_name}:{domain_name}:{name}"` on `Asset` / `AssetRecord` (`arodonata_assets`) alongside UID primary keys `id = "{mgmt_name}:{domain_name}:{uid}"`; `id`, `object_id`, and `parent_object_ids` on `GroupMembershipNode` in `SearchResult.memberships`; `parent_id`, `parent_asset_id`, `member_asset_ids`, and `virtual_system_asset_ids` on `Asset` / `AssetRecord` with cross-domain VSX gateway/cluster to Virtual System reconciliation across domains on the same management server; and composite identifier support across `find_object()`, `get_group_members()`, `search_objects()`, `query_objects()`, and MCP tools (`show_object`, `list_assets`, `get_group_members`, `query_objects`).
+- Bilingual (English and Russian) documentation architecture (`docs/`, `mkdocs.yml`, `.github/workflows/docs.yml`) and NotebookLM monolithic knowledge bundles (`docs-notebooklm/arodonata_v2_bundle_Part1..Part3.md`).
+
 ## v2.0.0 (2026-10-26)
 
 ### Feat

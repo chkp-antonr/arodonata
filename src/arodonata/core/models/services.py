@@ -17,6 +17,7 @@ class CPService(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     id: str = ""
+    service_id: str = ""
     uid: str
     name: str
     type: str
@@ -41,6 +42,8 @@ class CPService(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
             self.id = f"{self.mgmt_name}:{self.domain_name}:{self.uid}"
+        if not self.service_id:
+            self.service_id = f"{self.mgmt_name}:{self.domain_name}:{self.name}"
         if self.original_domain is None:
             self.original_domain = self.domain_name
         self.updated_at = to_naive_utc(self.updated_at) or utc_now()
@@ -56,6 +59,7 @@ class CPService(BaseModel):
 
         return cls(
             id=f"{mgmt_name}:{domain_name}:{uid}",
+            service_id=f"{mgmt_name}:{domain_name}:{name}",
             uid=uid,
             name=name,
             type=svc_type,

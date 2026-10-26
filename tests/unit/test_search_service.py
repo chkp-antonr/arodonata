@@ -188,6 +188,25 @@ async def test_search_objects_ip_containment_and_recursive_group_membership_and_
     # Check group hierarchy for host_uid up to depth 2 (G_App_Servers at depth=1, G_All_Prod at depth=2; G_Enterprise at depth=3 excluded)
     host_groups = res.memberships.get(host_uid, [])
     assert [(g.name, g.depth) for g in host_groups] == [("G_App_Servers", 1), ("G_All_Prod", 2)]
+    assert host_groups[0].id == "mds1:Corp:grp-tier1"
+    assert host_groups[0].object_id == "mds1:Corp:G_App_Servers"
+    assert host_groups[0].parent_uids == ["grp-tier2"]
+    assert host_groups[0].parent_object_ids == ["mds1:Corp:G_All_Prod"]
+    assert host_groups[1].id == "mds1:Corp:grp-tier2"
+    assert host_groups[1].object_id == "mds1:Corp:G_All_Prod"
+    assert host_groups[1].parent_uids == ["grp-tier3"]
+    assert host_groups[1].parent_object_ids == ["mds1:Corp:G_Enterprise"]
+
+    # Search by composite object_id and wildcard composite object_id
+    res_obj_id = await search_service.search_objects(
+        "mds1:Corp:srv-app-50", mgmt_name="mds1", exact_match=True, cache_mode="cache"
+    )
+    assert [m.uid for m in res_obj_id.matches] == [host_uid]
+
+    res_obj_wild = await search_service.search_objects(
+        "mds1:Corp:srv-app-*", mgmt_name="mds1", exact_match=True, cache_mode="cache"
+    )
+    assert [m.uid for m in res_obj_wild.matches] == [host_uid]
 
     # 2. Search with WriteSession overlay adding a new host and a group containing it
     overlay = SessionOverlay("mds1", "Corp")
@@ -295,6 +314,22 @@ async def test_search_objects_ip_containment_and_recursive_group_membership_and_
         "mds1", "Corp", "corp-cluster", recursive=True, cache_mode="cache"
     )
     assert [m.name for m in cluster_members] == ["corp-cluster-m1", "corp-cluster-m2"]
+
+    # Also test get_group_members by composite object_id, service_id, and asset_id
+    members_by_obj_id = await search_service.get_group_members(
+        "mds1", "Corp", "mds1:Corp:G_Enterprise", recursive=True, cache_mode="cache"
+    )
+    assert {m.name for m in members_by_obj_id} == {"G_All_Prod", "G_App_Servers", "srv-app-50"}
+
+    svc_members_by_id = await search_service.get_group_members(
+        "mds1", "Corp", "mds1:Corp:SG_Web", recursive=True, cache_mode="cache"
+    )
+    assert {m.name for m in svc_members_by_id} == {"http", "https"}
+
+    cluster_members_by_asset_id = await search_service.get_group_members(
+        "mds1", "Corp", "mds1:Corp:corp-cluster", recursive=True, cache_mode="cache"
+    )
+    assert [m.name for m in cluster_members_by_asset_id] == ["corp-cluster-m1", "corp-cluster-m2"]
 
     await db.close()
 
@@ -420,10 +455,29 @@ async def test_describe_objects_query_objects_and_cache_status() -> None:
     assert desc["object_types"] == {"host": 2, "network": 1}
     assert desc["service_types"] == {"service-tcp": 1}
     assert desc["asset_types"] == {"simple-gateway": 1}
+    for expected_field in ("id", "object_id", "service_id", "asset_id", "parent_id", "parent_asset_id"):
+        assert expected_field in desc["filterable_fields"]
 
     # query_objects(..., aggregate="describe") delegates to describe_objects
     desc_via_query = await search_service.query_objects(mgmt_name="mds1", include_global=True, aggregate="describe")
     assert desc_via_query == desc
+
+    # query_objects with composite object_id / service_id / asset_id in name_pattern
+    by_comp_obj = await search_service.query_objects(mgmt_name="mds1", name_pattern="mds1:Corp:h-local-1")
+    assert by_comp_obj["total"] == 1
+    assert by_comp_obj["objects"][0]["object_id"] == "mds1:Corp:h-local-1"
+
+    by_comp_svc = await search_service.query_objects(
+        mgmt_name="mds1", types=["service-tcp"], name_pattern="mds1:Corp:https"
+    )
+    assert by_comp_svc["total"] == 1
+    assert by_comp_svc["objects"][0]["service_id"] == "mds1:Corp:https"
+
+    by_comp_asset = await search_service.query_objects(
+        mgmt_name="mds1", types=["simple-gateway"], name_pattern="mds1:Corp:corp-fw-*"
+    )
+    assert by_comp_asset["total"] == 1
+    assert by_comp_asset["objects"][0]["asset_id"] == "mds1:Corp:corp-fw-01"
 
     # query_objects with short service alias ("tcp") and asset alias ("gateway")
     svc_alias_res = await search_service.query_objects(mgmt_name="mds1", types=["tcp"])

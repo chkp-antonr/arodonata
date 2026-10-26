@@ -289,6 +289,13 @@ class CachePort(Protocol):
         """Atomically replace all cached assets for `(mgmt_name, domain_name)`."""
         ...
 
+    async def upsert_assets(
+        self,
+        assets: Sequence[Asset],
+    ) -> int:
+        """Insert or update `Asset` rows in `arodonata_assets`."""
+        ...
+
     async def replace_domain_rulebase(
         self,
         snapshot: DomainRulebaseSnapshot,
