@@ -2,6 +2,28 @@
 
 Async-first Python 3.13+ library, declarative Policy-as-Code (`CPCRUD`) engine, auditable change report generator, and Model Context Protocol (MCP) server for Check Point Security Management and Multi-Domain Security Management (MDSM).
 
+> **Looking for Arodonata v1 (`1.16.0`)?**
+> Legacy v1 remains available in this repository on branch [`master_v1`](https://github.com/chkp-antonr/arodonata/tree/master_v1) and tag [`v1.16.0`](https://github.com/chkp-antonr/arodonata/releases/tag/v1.16.0).
+
+## Installation
+
+### Arodonata v2 (PyPI / Default `master_v2`)
+
+```bash
+# Core SDK (SQLite cache included)
+uv add arodonata
+# or with optional extras (PostgreSQL, MCP server, OpenTelemetry):
+uv add "arodonata[all]"
+```
+
+### Arodonata v1 (`1.16.0` from Git)
+
+```bash
+uv add "arodonata @ git+https://github.com/chkp-antonr/arodonata.git@v1.16.0"
+# or track the v1 maintenance branch:
+uv add "arodonata @ git+https://github.com/chkp-antonr/arodonata.git@master_v1"
+```
+
 ## Quick Links
 
 - **Runnable Examples (`examples/`)**: Progressive scripts (`01_basic_queries.py` through `12_mcp_embedded.py`) covering cache queries, search, gateway topology, smart/streaming sync, rulebases, sessions, `SessionOverlay`, CPCRUD, change reports, OpenTelemetry tracing, and embedded FastAPI MCP — see [examples/README.md](examples/README.md) and [examples/README_CRUD.md](examples/README_CRUD.md).

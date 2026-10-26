@@ -68,10 +68,16 @@ all = [
 [project.scripts]
 arodonata-mcp = "arodonata.mcp.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/chkp-antonr/arodonata"
+Repository = "https://github.com/chkp-antonr/arodonata"
+Documentation = "https://github.com/chkp-antonr/arodonata/tree/master_v2/docs"
+
 [dependency-groups]
 dev = [
     "arlogi[otel]>=0.1.0",
     "asyncpg>=0.30.0",
+    "commitizen>=4.1.0",
     "fastapi>=0.115.0",
     "mcp>=1.2.0",
     "mypy>=1.14.0",
@@ -92,6 +98,18 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arodonata"]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_scheme = "pep440"
+version_provider = "pep621"
+version_files = [
+    "pyproject.toml:^version",
+    "src/arodonata/__init__.py:__version__",
+]
+tag_format = "v$version"
+update_changelog_on_bump = true
+changelog_file = "CHANGELOG.md"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
