@@ -46,10 +46,12 @@ from arodonata.core.errors import SessionError
 from arodonata.core.events import CPCRUDEvent, SyncProgressEvent
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
+    CANONICAL_ASSET_TYPES,
     ApiCallResult,
     ApiQueryResult,
     CacheMode,
     SyncScope,
+    normalize_any_type,
     utc_now,
 )
 from arodonata.core.models.domains import DomainInfo, RefreshOutcome
@@ -215,6 +217,7 @@ class ArodonataClient:
             cache=self._cache,
             object_service=self._object_service,
             service_cache=self._service_cache,
+            asset_service=self._asset_service,
             now_fn=now_fn,
         )
         self._rulebase_refresh = RulebaseRefreshService(
@@ -1445,7 +1448,7 @@ class ArodonataClient:
         tags: Sequence[str] | None = None,
         include_global: bool = False,
         group_by: Sequence[str] | None = None,
-        aggregate: Literal["count", "list"] = "list",
+        aggregate: Literal["count", "list", "describe"] = "list",
         limit: int = 100,
         offset: int = 0,
         cache_mode: CacheMode = "cache",
@@ -1610,17 +1613,18 @@ class ArodonataClient:
         obj_type: str | None = None,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
-    ) -> CPObject | CPService | None:
-        """Find a single `CPObject` or `CPService` by exact `uid` or `name` in `(mgmt_name, domain)`, including active `WriteSession` overlay."""
+    ) -> CPObject | CPService | Asset | None:
+        """Find a single `CPObject`, `CPService`, or `Asset` by exact `uid` or `name` in `(mgmt_name, domain)`, including active `WriteSession` overlay."""
         if not self._db.is_initialized:
             await self._db.initialize()
 
-        clean_type = obj_type.strip().lower() if obj_type else None
+        clean_type = normalize_any_type(obj_type) if obj_type else None
         is_service_type = clean_type is not None and (
             clean_type in SERVICE_COMMAND_TYPES or clean_type.startswith("service-")
         )
+        is_asset_type = clean_type is not None and clean_type in {t.lower() for t in CANONICAL_ASSET_TYPES}
 
-        if not is_service_type:
+        if not is_service_type and not is_asset_type:
             by_uid = await self._object_service.get_object_by_uid(
                 mgmt_name,
                 domain,
@@ -1628,7 +1632,7 @@ class ArodonataClient:
                 cache_mode=cache_mode,
                 cache_ttl=cache_ttl,
             )
-            if by_uid is not None and (clean_type is None or by_uid.type == clean_type):
+            if by_uid is not None and (clean_type is None or by_uid.type.lower() == clean_type):
                 return by_uid
 
             objs = await self._object_service.get_objects(
@@ -1651,7 +1655,7 @@ class ArodonataClient:
                 cache_mode=cache_mode,
                 cache_ttl=cache_ttl,
             )
-            if svc_by_uid is not None and (clean_type is None or svc_by_uid.type == clean_type):
+            if svc_by_uid is not None and (clean_type is None or svc_by_uid.type.lower() == clean_type):
                 return svc_by_uid
 
             svcs = await self._service_cache.get_services(
@@ -1666,6 +1670,23 @@ class ArodonataClient:
             if svcs:
                 return svcs[0]
 
+        if is_asset_type or clean_type is None:
+            assets = await self._asset_service.get_assets(
+                mgmt_name=mgmt_name,
+                domain=domain,
+                types=[clean_type] if clean_type else None,
+                include_global=(domain == "Global"),
+                cache_mode=cache_mode,
+                cache_ttl=cache_ttl,
+            )
+            needle_lower = name_or_uid.strip().lower()
+            for asset in assets:
+                if asset.uid == name_or_uid or asset.name == name_or_uid:
+                    return asset
+            for asset in assets:
+                if asset.name.lower() == needle_lower:
+                    return asset
+
         return None
 
     @traced
@@ -1679,8 +1700,8 @@ class ArodonataClient:
         max_depth: int = 5,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
-    ) -> list[CPObject]:
-        """Resolve direct (and optionally recursive) member `CPObject` items for a group in `(mgmt_name, domain)`."""
+    ) -> list[CPObject | CPService | Asset]:
+        """Resolve direct (and optionally recursive) member `CPObject`, `CPService`, or child `Asset` items for a group, service-group, cluster, or VSX container in `(mgmt_name, domain)`."""
         if not self._db.is_initialized:
             await self._db.initialize()
         return await self._search_service.get_group_members(

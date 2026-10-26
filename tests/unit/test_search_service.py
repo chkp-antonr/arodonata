@@ -11,6 +11,7 @@ import pytest
 from arodonata.adapters.storage import DatabaseManager, SqlCacheAdapter, SqlLockAdapter
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import AuthContext, SessionOverlay, WriteSession, write_session_context
+from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
 from arodonata.core.models.domains import DomainInfo, DomainSyncState
 from arodonata.core.models.objects import CPObject
@@ -218,9 +219,82 @@ async def test_search_objects_ip_containment_and_recursive_group_membership_and_
         assert [m.uid for m in res_overlay.matches] == ["h-overlay"]
         assert [g.name for g in res_overlay.memberships["h-overlay"]] == ["G_App_Servers", "G_All_Prod"]
 
-    # 3. Verify get_group_members recursive expansion
+    # 3. Verify get_group_members recursive expansion on network groups, service-groups, and cluster/VSX assets
     members = await search_service.get_group_members("mds1", "Corp", "G_Enterprise", recursive=True, cache_mode="cache")
     assert {m.name for m in members} == {"G_All_Prod", "G_App_Servers", "srv-app-50"}
+
+    await cache.replace_domain_services(
+        "mds1",
+        "Corp",
+        [
+            CPService(
+                uid="svc-http",
+                name="http",
+                type="service-tcp",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                port="80",
+                protocol="tcp",
+            ),
+            CPService(
+                uid="svc-https",
+                name="https",
+                type="service-tcp",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                port="443",
+                protocol="tcp",
+            ),
+            CPService(
+                uid="svc-grp-web",
+                name="SG_Web",
+                type="service-group",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                members=["svc-http", "svc-https"],
+            ),
+        ],
+        types=["service-tcp", "service-group"],
+    )
+    svc_members = await search_service.get_group_members("mds1", "Corp", "SG_Web", recursive=True, cache_mode="cache")
+    assert {m.name for m in svc_members} == {"http", "https"}
+
+    await cache.replace_domain_assets(
+        "mds1",
+        "Corp",
+        [
+            Asset(
+                uid="cl-1",
+                name="corp-cluster",
+                type="simple-cluster",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                member_uids=["cm-1", "cm-2"],
+            ),
+            Asset(
+                uid="cm-1",
+                name="corp-cluster-m1",
+                type="cluster-member",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                parent_uid="cl-1",
+                parent_name="corp-cluster",
+            ),
+            Asset(
+                uid="cm-2",
+                name="corp-cluster-m2",
+                type="cluster-member",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                parent_uid="cl-1",
+                parent_name="corp-cluster",
+            ),
+        ],
+    )
+    cluster_members = await search_service.get_group_members(
+        "mds1", "Corp", "corp-cluster", recursive=True, cache_mode="cache"
+    )
+    assert [m.name for m in cluster_members] == ["corp-cluster-m1", "corp-cluster-m2"]
 
     await db.close()
 
@@ -311,6 +385,20 @@ async def test_describe_objects_query_objects_and_cache_status() -> None:
         ],
         types=["service-tcp"],
     )
+    await cache.replace_domain_assets(
+        "mds1",
+        "Corp",
+        [
+            Asset(
+                uid="gw1",
+                name="corp-fw-01",
+                type="simple-gateway",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                ipv4_address="10.1.0.254",
+            )
+        ],
+    )
     await cache.upsert_sync_state(
         DomainSyncState(
             mgmt_name="mds1",
@@ -328,8 +416,23 @@ async def test_describe_objects_query_objects_and_cache_status() -> None:
     desc = await search_service.describe_objects(mgmt_name="mds1")
     assert desc["total_objects"] == 3
     assert desc["total_services"] == 1
+    assert desc["total_assets"] == 1
     assert desc["object_types"] == {"host": 2, "network": 1}
     assert desc["service_types"] == {"service-tcp": 1}
+    assert desc["asset_types"] == {"simple-gateway": 1}
+
+    # query_objects(..., aggregate="describe") delegates to describe_objects
+    desc_via_query = await search_service.query_objects(mgmt_name="mds1", include_global=True, aggregate="describe")
+    assert desc_via_query == desc
+
+    # query_objects with short service alias ("tcp") and asset alias ("gateway")
+    svc_alias_res = await search_service.query_objects(mgmt_name="mds1", types=["tcp"])
+    assert svc_alias_res["total"] == 1
+    assert svc_alias_res["objects"][0]["name"] == "https"
+
+    gw_alias_res = await search_service.query_objects(mgmt_name="mds1", types=["gateway"])
+    assert gw_alias_res["total"] == 1
+    assert gw_alias_res["objects"][0]["name"] == "corp-fw-01"
 
     # Grouped aggregation by (domain_name, type)
     grouped = await search_service.query_objects(

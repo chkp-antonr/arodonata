@@ -289,6 +289,15 @@ async def test_client_typed_getters_and_no_implicit_warmup_on_get_domains() -> N
         found_svc = await client.find_object("mds1", "Corp", "http", obj_type="service-tcp")
         assert found_svc is not None and found_svc.uid == "s-tcp-1"
 
+        found_svc_alias = await client.find_object("mds1", "Corp", "http", obj_type="tcp")
+        assert found_svc_alias is not None and found_svc_alias.uid == "s-tcp-1"
+
+        found_gw = await client.find_object("mds1", "Corp", "corp-fw-01")
+        assert found_gw is not None and found_gw.uid == "gw-1" and found_gw.type == "simple-gateway"
+
+        found_gw_alias = await client.find_object("mds1", "Corp", "gw-1", obj_type="gateway")
+        assert found_gw_alias is not None and found_gw_alias.name == "corp-fw-01"
+
         grp_members = await client.get_group_members("mds1", "Corp", "grp-base-1")
         assert [m.uid for m in grp_members] == ["h-base-1"]
 

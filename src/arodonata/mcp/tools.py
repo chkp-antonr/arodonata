@@ -1,19 +1,19 @@
 """MCP tool surface registration (`arodonata.mcp.tools`).
 
-Exposes:
-- Cached listing and lookup tools (`show_domains`, `show_hosts`, `show_networks`,
-  `show_address_ranges`, `show_dns_domains`, `show_services`, `show_groups`,
-  `show_gateways_and_servers`, `show_object`, `find_object`, `search_objects`,
-  `get_group_members`) with `from`, `to`, `total`, `source`, and `cache_age_seconds`.
-- Progressive-disclosure aggregation and cache status tools (`describe_objects`,
-  `query_objects`, `cache_status`, `refresh_cache`).
-- Hybrid rulebase tools (`show_access_rulebase`, `show_nat_rulebase`,
-  `show_https_rulebase`, `show_threat_rulebase`, `show_policy_packages`,
-  `locate_rules`).
-- Change report tool (`change_report`) and write-protected `api_call`.
-- Optional live-compatibility tools (`ARODONATA_MCP_LIVE_COMPAT=true`).
-- Opt-in CPCRUD tools (`ARODONATA_MCP_CPCRUD=true`: `cpcrud_validate`,
-  `cpcrud_plan`, `cpcrud_apply`, `cpcrud_inverse`).
+Exposes a consolidated, cache-aligned tool surface:
+- Collection listing tools (`list_domains`, `list_objects`, `list_services`, `list_assets`)
+  with `from`, `to`, `total`, `source`, and `cache_age_seconds`.
+- Multi-table single-entity lookup (`show_object`) across `arodonata_objects`, `arodonata_services`,
+  `arodonata_assets`, and `arodonata_rulebase_layer` / `arodonata_rulebase_package_layer` with
+  three-tier matching (exact match, strict explicit wildcard `fnmatchcase`, and paginated
+  substring candidate fallback).
+- Hybrid rulebase inspection and package/layer discovery (`show_rulebase`, `locate_rules`).
+- Search, group/cluster membership, and structured aggregation (`search_objects`,
+  `get_group_members`, `query_objects` with `aggregate="list" | "count" | "describe"`).
+- Unified cache status and synchronization (`cache_control` with `action="status" | "refresh"`).
+- Change report (`change_report`) and write-protected `api_call`.
+- Opt-in CPCRUD tools (`ARODONATA_MCP_CPCRUD=true`: `cpcrud_validate`, `cpcrud_plan`,
+  `cpcrud_apply`, `cpcrud_inverse`, `cpcrud_staged_session`).
 """
 
 from __future__ import annotations
@@ -26,22 +26,36 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from datetime import datetime
+from fnmatch import fnmatchcase
 from typing import Any, Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult
 
-from arodonata.adapters.checkpoint.client import is_readonly_command
+from arodonata.adapters.checkpoint.client import SERVICE_COMMAND_TYPES, is_readonly_command
 from arodonata.adapters.checkpoint.transport import validate_command_name
 from arodonata.client import ArodonataClient
 from arodonata.core.errors import InvalidCredentialsError, ValidationError, redact_sid, sanitize_mapping
 from arodonata.core.models.assets import Asset
-from arodonata.core.models.common import CacheMode, SyncScope, utc_now
+from arodonata.core.models.common import (
+    CANONICAL_ASSET_TYPES,
+    DEFAULT_OBJECT_TYPES,
+    DEFAULT_SERVICE_TYPES,
+    CacheMode,
+    SyncScope,
+    normalize_any_type,
+    normalize_asset_type,
+    normalize_object_type,
+    normalize_service_type,
+    utc_now,
+)
 from arodonata.core.models.domains import DomainInfo
 from arodonata.core.models.objects import CPObject
-from arodonata.core.models.rulebase import RulebaseType
+from arodonata.core.models.rulebase import RulebaseLayerEntry, RulebaseType
 from arodonata.core.models.services import CPService
+from arodonata.core.services.object_service import resolve_object_query_command
 from arodonata.core.services.search_service import classify_search_term, matches_classified_term
+from arodonata.core.services.service_cache import resolve_service_query_command
 from arodonata.cpcrud import ApplyReport, IpConflictPolicy, NameConflictPolicy, Plan
 from arodonata.cpcrud.state_reader import OBJECT_ITEM_TYPES, SERVICE_ITEM_TYPES
 from arodonata.mcp.config import ArodonataMCPSettings
@@ -54,26 +68,35 @@ from arodonata.mcp.errors import (
     validate_domain_or_fail,
 )
 from arodonata.reports import RangeScope, RenderOptions, ReportScope, SessionScope
-from arodonata.rulebase import RuleFormat
+from arodonata.rulebase import PolicyPackageInfo, RuleFormat
+from arodonata.rulebase.numbering import extract_policy_packages
 
 MCPCacheModeInput = Literal["cache", "smart", "smart-fast", "force", "live"]
 MAX_MCP_API_TIMEOUT_SECONDS: float = 300.0
 MAX_STORED_PLANS: int = 256
+CANONICAL_LAYER_AND_PACKAGE_TYPES: frozenset[str] = frozenset(
+    {
+        "layer",
+        "access-layer",
+        "https-layer",
+        "threat-layer",
+        "package",
+        "policy-package",
+    }
+)
 CANONICAL_SHOW_OBJECT_TYPES: frozenset[str] = (
     OBJECT_ITEM_TYPES
     | SERVICE_ITEM_TYPES
-    | frozenset(
-        {
-            "simple-gateway",
-            "simple-cluster",
-            "checkpoint-host",
-            "vsx-gateway",
-            "vsx-cluster",
-            "interoperable-device",
-            "generic-object",
-        }
-    )
+    | frozenset({t.lower() for t in CANONICAL_ASSET_TYPES})
+    | CANONICAL_LAYER_AND_PACKAGE_TYPES
+    | frozenset({"interoperable-device", "generic-object"})
 )
+RULEBASE_TYPE_TO_LIVE_COMMAND: dict[RulebaseType, str] = {
+    "access": "show-access-rulebase",
+    "nat": "show-nat-rulebase",
+    "https": "show-https-rulebase",
+    "threat": "show-threat-rulebase",
+}
 
 
 def _canonical_plan_payload(plan_dict: dict[str, Any]) -> bytes:
@@ -243,6 +266,79 @@ def _serialize_asset(asset: Asset, details_level: str = "standard") -> dict[str,
     return dumped
 
 
+def _serialize_layer(layer: RulebaseLayerEntry, details_level: str = "standard") -> dict[str, Any]:
+    """Serialize `RulebaseLayerEntry` according to `details_level`."""
+    level = (details_level or "standard").strip().lower()
+    base: dict[str, Any] = {
+        "uid": layer.uid,
+        "name": layer.name,
+        "type": f"{layer.rulebase_type}-layer",
+        "rulebase_type": layer.rulebase_type,
+        "mgmt_name": layer.mgmt_name,
+        "domain_name": layer.domain_name,
+        "parent_layer_uid": layer.parent_layer_uid,
+        "parent_rule_uid": layer.parent_rule_uid,
+        "implicit_cleanup_action": layer.implicit_cleanup_action,
+    }
+    if level == "uid":
+        return {
+            "uid": layer.uid,
+            "name": layer.name,
+            "type": f"{layer.rulebase_type}-layer",
+            "mgmt_name": layer.mgmt_name,
+            "domain_name": layer.domain_name,
+        }
+    if level == "full" and layer.raw_data:
+        base["raw_data"] = sanitize_mapping(layer.raw_data)
+    return base
+
+
+def _serialize_package(pkg: PolicyPackageInfo, details_level: str = "standard") -> dict[str, Any]:
+    """Serialize `PolicyPackageInfo` according to `details_level`."""
+    level = (details_level or "standard").strip().lower()
+    if level == "uid":
+        return {
+            "uid": pkg.uid,
+            "name": pkg.name,
+            "type": "package",
+            "mgmt_name": pkg.mgmt_name,
+            "domain_name": pkg.domain_name,
+        }
+    dumped = pkg.model_dump(mode="json", exclude={"raw_data"} if level != "full" else set())
+    dumped["type"] = "package"
+    if level == "full" and pkg.raw_data:
+        dumped["raw_data"] = sanitize_mapping(pkg.raw_data)
+    return dumped
+
+
+def _serialize_any_entity(
+    entity: CPObject | CPService | Asset | RulebaseLayerEntry | PolicyPackageInfo,
+    details_level: str = "standard",
+) -> dict[str, Any]:
+    """Serialize any cached entity (`CPObject`, `CPService`, `Asset`, `RulebaseLayerEntry`, `PolicyPackageInfo`)."""
+    if isinstance(entity, CPObject):
+        return _serialize_object(entity, details_level=details_level)
+    if isinstance(entity, CPService):
+        return _serialize_service(entity, details_level=details_level)
+    if isinstance(entity, Asset):
+        return _serialize_asset(entity, details_level=details_level)
+    if isinstance(entity, RulebaseLayerEntry):
+        return _serialize_layer(entity, details_level=details_level)
+    return _serialize_package(entity, details_level=details_level)
+
+
+def _entity_scope_and_type(
+    entity: CPObject | CPService | Asset | RulebaseLayerEntry | PolicyPackageInfo,
+) -> tuple[SyncScope, str]:
+    if isinstance(entity, CPService):
+        return "services", entity.type
+    if isinstance(entity, Asset):
+        return "assets", "*"
+    if isinstance(entity, (RulebaseLayerEntry, PolicyPackageInfo)):
+        return "rulebase", "*"
+    return "objects", entity.type
+
+
 def _build_page_envelope(
     items: Sequence[dict[str, Any]],
     *,
@@ -254,7 +350,7 @@ def _build_page_envelope(
 ) -> dict[str, Any]:
     """Build standard Check Point / Arodonata MCP paginated envelope."""
     eff_offset = max(0, offset)
-    eff_limit = max(1, limit)
+    eff_limit = max(1, min(limit, 500))
     total = len(items)
     sliced = list(items[eff_offset : eff_offset + eff_limit])
     envelope: dict[str, Any] = {
@@ -317,15 +413,15 @@ def register_mcp_tools(
     """Register all configured MCP tools on `server`."""
 
     # ------------------------------------------------------------------
-    # 1. Cached Listing & Object Discovery Tools
+    # 1. Collection Listing Tools (`list_domains`, `list_objects`, `list_services`, `list_assets`)
     # ------------------------------------------------------------------
 
     @server.tool(
-        name="show_domains",
-        description="List Check Point domains on a management server with server-level metadata and cache freshness.",
+        name="list_domains",
+        description="List Check Point domains on a management server from arodonata_domains with server-level metadata and cache freshness.",
     )
-    @mcp_tool_guard("show_domains", client_getter)
-    async def show_domains(
+    @mcp_tool_guard("list_domains", client_getter)
+    async def list_domains(
         mgmt_name: str | None = None,
         include_global: bool = False,
         details_level: str = "standard",
@@ -353,245 +449,16 @@ def register_mcp_tools(
         )
         return json_tool_result(envelope)
 
-    async def _list_network_objects_tool(
-        *,
-        obj_type: str,
-        live_command: str,
-        mgmt_name: str | None,
-        domain: str | None,
-        filter_text: str | None,
-        names: list[str] | None,
-        uids: list[str] | None,
-        include_global: bool,
-        details_level: str,
-        limit: int,
-        offset: int,
-        cache_mode: str,
-    ) -> CallToolResult:
-        client = client_getter()
-        eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
-        mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
-
-        if is_live:
-            payload: dict[str, Any] = {
-                "limit": max(1, min(limit, 500)),
-                "offset": max(0, offset),
-                "details-level": details_level,
-            }
-            if filter_text:
-                payload["filter"] = filter_text
-            res = await client.api_call(eff_mgmt, live_command, payload, domain=eff_domain)
-            if not res.success:
-                raise ToolFailure(
-                    f"{live_command} failed on {eff_mgmt!r} ({eff_domain or 'default'}): "
-                    f"{res.error_message or 'API error'}",
-                    mgmt_name=eff_mgmt,
-                    domain=eff_domain,
-                )
-            objs_raw = res.data.get("objects", []) if isinstance(res.data.get("objects"), list) else []
-            envelope = {
-                "from": res.data.get("from", (offset + 1) if objs_raw else 0),
-                "to": res.data.get("to", offset + len(objs_raw)),
-                "total": res.data.get("total", len(objs_raw)),
-                "source": "live",
-                "cache_age_seconds": None,
-                "mgmt_name": eff_mgmt,
-                "domain": eff_domain,
-                "objects": objs_raw,
-            }
-            return json_tool_result(envelope)
-
-        objs = await client.get_objects(
-            mgmt_name=eff_mgmt,
-            domain=eff_domain,
-            types=[obj_type],
-            names=names,
-            uids=uids,
-            include_global=include_global,
-            cache_mode=mode,
-        )
-        if mode != "cache":
-            await _raise_if_sync_failed(client, eff_mgmt, eff_domain, "objects", obj_type, has_cached_data=bool(objs))
-        filtered = _filter_cp_objects(objs, filter_text)
-        age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", obj_type)
-        serialized = [_serialize_object(o, details_level=details_level) for o in filtered]
-        envelope = _build_page_envelope(
-            serialized,
-            limit=limit,
-            offset=offset,
-            source="cache",
-            cache_age_seconds=age,
-            extra={"mgmt_name": eff_mgmt, "domain": eff_domain},
-        )
-        return json_tool_result(envelope)
-
     @server.tool(
-        name="show_hosts",
-        description="List Check Point host objects from cache or live API with source and cache_age_seconds.",
+        name="list_objects",
+        description=(
+            "List Check Point network objects from arodonata_objects (hosts, networks, address-ranges, "
+            "dns-domains, groups, dynamic-objects, etc.) with optional types filter (e.g. types=['host', 'network'] "
+            "or aliases 'range', 'dns', 'dynamic')."
+        ),
     )
-    @mcp_tool_guard("show_hosts", client_getter)
-    async def show_hosts(
-        mgmt_name: str | None = None,
-        domain: str | None = None,
-        filter: str | None = None,
-        names: list[str] | None = None,
-        uids: list[str] | None = None,
-        include_global: bool = False,
-        details_level: str = "standard",
-        limit: int = 50,
-        offset: int = 0,
-        cache_mode: str = "smart",
-    ) -> CallToolResult:
-        return await _list_network_objects_tool(
-            obj_type="host",
-            live_command="show-hosts",
-            mgmt_name=mgmt_name,
-            domain=domain,
-            filter_text=filter,
-            names=names,
-            uids=uids,
-            include_global=include_global,
-            details_level=details_level,
-            limit=limit,
-            offset=offset,
-            cache_mode=cache_mode,
-        )
-
-    @server.tool(
-        name="show_networks",
-        description="List Check Point network subnet objects from cache or live API with source and cache_age_seconds.",
-    )
-    @mcp_tool_guard("show_networks", client_getter)
-    async def show_networks(
-        mgmt_name: str | None = None,
-        domain: str | None = None,
-        filter: str | None = None,
-        names: list[str] | None = None,
-        uids: list[str] | None = None,
-        include_global: bool = False,
-        details_level: str = "standard",
-        limit: int = 50,
-        offset: int = 0,
-        cache_mode: str = "smart",
-    ) -> CallToolResult:
-        return await _list_network_objects_tool(
-            obj_type="network",
-            live_command="show-networks",
-            mgmt_name=mgmt_name,
-            domain=domain,
-            filter_text=filter,
-            names=names,
-            uids=uids,
-            include_global=include_global,
-            details_level=details_level,
-            limit=limit,
-            offset=offset,
-            cache_mode=cache_mode,
-        )
-
-    @server.tool(
-        name="show_address_ranges",
-        description="List Check Point address-range objects from cache or live API.",
-    )
-    @mcp_tool_guard("show_address_ranges", client_getter)
-    async def show_address_ranges(
-        mgmt_name: str | None = None,
-        domain: str | None = None,
-        filter: str | None = None,
-        names: list[str] | None = None,
-        uids: list[str] | None = None,
-        include_global: bool = False,
-        details_level: str = "standard",
-        limit: int = 50,
-        offset: int = 0,
-        cache_mode: str = "smart",
-    ) -> CallToolResult:
-        return await _list_network_objects_tool(
-            obj_type="address-range",
-            live_command="show-address-ranges",
-            mgmt_name=mgmt_name,
-            domain=domain,
-            filter_text=filter,
-            names=names,
-            uids=uids,
-            include_global=include_global,
-            details_level=details_level,
-            limit=limit,
-            offset=offset,
-            cache_mode=cache_mode,
-        )
-
-    @server.tool(
-        name="show_dns_domains",
-        description="List Check Point dns-domain objects from cache or live API.",
-    )
-    @mcp_tool_guard("show_dns_domains", client_getter)
-    async def show_dns_domains(
-        mgmt_name: str | None = None,
-        domain: str | None = None,
-        filter: str | None = None,
-        names: list[str] | None = None,
-        uids: list[str] | None = None,
-        include_global: bool = False,
-        details_level: str = "standard",
-        limit: int = 50,
-        offset: int = 0,
-        cache_mode: str = "smart",
-    ) -> CallToolResult:
-        return await _list_network_objects_tool(
-            obj_type="dns-domain",
-            live_command="show-dns-domains",
-            mgmt_name=mgmt_name,
-            domain=domain,
-            filter_text=filter,
-            names=names,
-            uids=uids,
-            include_global=include_global,
-            details_level=details_level,
-            limit=limit,
-            offset=offset,
-            cache_mode=cache_mode,
-        )
-
-    @server.tool(
-        name="show_groups",
-        description="List Check Point network group objects from cache or live API.",
-    )
-    @mcp_tool_guard("show_groups", client_getter)
-    async def show_groups(
-        mgmt_name: str | None = None,
-        domain: str | None = None,
-        filter: str | None = None,
-        names: list[str] | None = None,
-        uids: list[str] | None = None,
-        include_global: bool = False,
-        details_level: str = "standard",
-        limit: int = 50,
-        offset: int = 0,
-        cache_mode: str = "smart",
-    ) -> CallToolResult:
-        return await _list_network_objects_tool(
-            obj_type="group",
-            live_command="show-groups",
-            mgmt_name=mgmt_name,
-            domain=domain,
-            filter_text=filter,
-            names=names,
-            uids=uids,
-            include_global=include_global,
-            details_level=details_level,
-            limit=limit,
-            offset=offset,
-            cache_mode=cache_mode,
-        )
-
-    @server.tool(
-        name="show_services",
-        description="List Check Point service objects (TCP, UDP, ICMP, service-group) from cache or live API.",
-    )
-    @mcp_tool_guard("show_services", client_getter)
-    async def show_services(
+    @mcp_tool_guard("list_objects", client_getter)
+    async def list_objects(
         mgmt_name: str | None = None,
         domain: str | None = None,
         types: list[str] | None = None,
@@ -608,57 +475,167 @@ def register_mcp_tools(
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
         eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
         mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
+        normalized_types = [normalize_object_type(t) for t in types if t and t.strip()] if types else None
 
         if is_live:
-            cmd = "show-services-tcp"
-            if types and len(types) == 1:
-                t0 = types[0].strip().lower()
-                type_cmd_map = {
-                    "service-tcp": "show-services-tcp",
-                    "service-udp": "show-services-udp",
-                    "service-icmp": "show-services-icmp",
-                    "service-group": "show-service-groups",
-                    "service-other": "show-services-other",
+            live_types = normalized_types or list(DEFAULT_OBJECT_TYPES)
+            combined_raw: list[dict[str, Any]] = []
+            for t_name in live_types:
+                live_cmd, extra_payload = resolve_object_query_command(t_name)
+                payload: dict[str, Any] = {
+                    **extra_payload,
+                    "limit": max(1, min(limit, 500)),
+                    "offset": max(0, offset) if len(live_types) == 1 else 0,
+                    "details-level": details_level,
                 }
-                cmd = type_cmd_map.get(t0, "show-services-tcp")
-            payload: dict[str, Any] = {
-                "limit": max(1, min(limit, 500)),
-                "offset": max(0, offset),
-                "details-level": details_level,
-            }
-            if filter:
-                payload["filter"] = filter
-            res = await client.api_call(eff_mgmt, cmd, payload, domain=eff_domain)
-            if not res.success:
-                raise ToolFailure(
-                    f"{cmd} failed on {eff_mgmt!r} ({eff_domain or 'default'}): {res.error_message or 'API error'}",
-                    mgmt_name=eff_mgmt,
-                    domain=eff_domain,
-                )
-            objs_raw = res.data.get("objects", []) if isinstance(res.data.get("objects"), list) else []
+                if filter:
+                    payload["filter"] = filter
+                res = await client.api_call(eff_mgmt, live_cmd, payload, domain=eff_domain)
+                if not res.success:
+                    raise ToolFailure(
+                        f"{live_cmd} failed on {eff_mgmt!r} ({eff_domain or 'default'}): "
+                        f"{res.error_message or 'API error'}",
+                        mgmt_name=eff_mgmt,
+                        domain=eff_domain,
+                    )
+                objs_raw = res.data.get("objects", []) if isinstance(res.data.get("objects"), list) else []
+                if len(live_types) == 1:
+                    return json_tool_result(
+                        {
+                            "from": res.data.get("from", (offset + 1) if objs_raw else 0),
+                            "to": res.data.get("to", offset + len(objs_raw)),
+                            "total": res.data.get("total", len(objs_raw)),
+                            "source": "live",
+                            "cache_age_seconds": None,
+                            "mgmt_name": eff_mgmt,
+                            "domain": eff_domain,
+                            "objects": objs_raw,
+                        }
+                    )
+                combined_raw.extend(objs_raw)
+
             return json_tool_result(
-                {
-                    "from": res.data.get("from", (offset + 1) if objs_raw else 0),
-                    "to": res.data.get("to", offset + len(objs_raw)),
-                    "total": res.data.get("total", len(objs_raw)),
-                    "source": "live",
-                    "cache_age_seconds": None,
-                    "mgmt_name": eff_mgmt,
-                    "domain": eff_domain,
-                    "objects": objs_raw,
-                }
+                _build_page_envelope(
+                    combined_raw,
+                    limit=limit,
+                    offset=offset,
+                    source="live",
+                    cache_age_seconds=None,
+                    extra={"mgmt_name": eff_mgmt, "domain": eff_domain},
+                )
             )
 
-        svcs = await client.get_services(
+        objs = await client.get_objects(
             mgmt_name=eff_mgmt,
             domain=eff_domain,
-            types=types,
+            types=normalized_types,
             names=names,
             uids=uids,
             include_global=include_global,
             cache_mode=mode,
         )
-        svc_item_type = types[0] if types and len(types) == 1 else "*"
+        obj_item_type = normalized_types[0] if normalized_types and len(normalized_types) == 1 else "*"
+        if mode != "cache":
+            await _raise_if_sync_failed(
+                client, eff_mgmt, eff_domain, "objects", obj_item_type, has_cached_data=bool(objs)
+            )
+        filtered = _filter_cp_objects(objs, filter)
+        age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", obj_item_type)
+        serialized = [_serialize_object(o, details_level=details_level) for o in filtered]
+        envelope = _build_page_envelope(
+            serialized,
+            limit=limit,
+            offset=offset,
+            source="cache",
+            cache_age_seconds=age,
+            extra={"mgmt_name": eff_mgmt, "domain": eff_domain},
+        )
+        return json_tool_result(envelope)
+
+    @server.tool(
+        name="list_services",
+        description=(
+            "List Check Point service objects from arodonata_services (service-tcp, service-udp, service-icmp, "
+            "service-group, service-other, etc.) supporting short type aliases ('tcp', 'udp', 'icmp', 'group', 'other')."
+        ),
+    )
+    @mcp_tool_guard("list_services", client_getter)
+    async def list_services(
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        types: list[str] | None = None,
+        filter: str | None = None,
+        names: list[str] | None = None,
+        uids: list[str] | None = None,
+        include_global: bool = False,
+        details_level: str = "standard",
+        limit: int = 50,
+        offset: int = 0,
+        cache_mode: str = "smart",
+    ) -> CallToolResult:
+        client = client_getter()
+        eff_mgmt = resolve_mgmt_name(client, mgmt_name)
+        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
+        mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
+        normalized_types = [normalize_service_type(t) for t in types if t and t.strip()] if types else None
+
+        if is_live:
+            live_types = normalized_types or list(DEFAULT_SERVICE_TYPES)
+            combined_raw: list[dict[str, Any]] = []
+            for t_name in live_types:
+                cmd, extra_payload = resolve_service_query_command(t_name)
+                payload: dict[str, Any] = {
+                    **extra_payload,
+                    "limit": max(1, min(limit, 500)),
+                    "offset": max(0, offset) if len(live_types) == 1 else 0,
+                    "details-level": details_level,
+                }
+                if filter:
+                    payload["filter"] = filter
+                res = await client.api_call(eff_mgmt, cmd, payload, domain=eff_domain)
+                if not res.success:
+                    raise ToolFailure(
+                        f"{cmd} failed on {eff_mgmt!r} ({eff_domain or 'default'}): {res.error_message or 'API error'}",
+                        mgmt_name=eff_mgmt,
+                        domain=eff_domain,
+                    )
+                objs_raw = res.data.get("objects", []) if isinstance(res.data.get("objects"), list) else []
+                if len(live_types) == 1:
+                    return json_tool_result(
+                        {
+                            "from": res.data.get("from", (offset + 1) if objs_raw else 0),
+                            "to": res.data.get("to", offset + len(objs_raw)),
+                            "total": res.data.get("total", len(objs_raw)),
+                            "source": "live",
+                            "cache_age_seconds": None,
+                            "mgmt_name": eff_mgmt,
+                            "domain": eff_domain,
+                            "objects": objs_raw,
+                        }
+                    )
+                combined_raw.extend(objs_raw)
+
+            return json_tool_result(
+                _build_page_envelope(
+                    combined_raw,
+                    limit=limit,
+                    offset=offset,
+                    source="live",
+                    cache_age_seconds=None,
+                    extra={"mgmt_name": eff_mgmt, "domain": eff_domain},
+                )
+            )
+
+        svcs = await client.get_services(
+            mgmt_name=eff_mgmt,
+            domain=eff_domain,
+            types=normalized_types,
+            names=names,
+            uids=uids,
+            include_global=include_global,
+            cache_mode=mode,
+        )
+        svc_item_type = normalized_types[0] if normalized_types and len(normalized_types) == 1 else "*"
         if mode != "cache":
             await _raise_if_sync_failed(
                 client, eff_mgmt, eff_domain, "services", svc_item_type, has_cached_data=bool(svcs)
@@ -683,14 +660,19 @@ def register_mcp_tools(
         return json_tool_result(envelope)
 
     @server.tool(
-        name="show_gateways_and_servers",
-        description="List Check Point gateways, clusters, VSX systems, and servers from cache or live API.",
+        name="list_assets",
+        description=(
+            "List Check Point gateways, clusters, cluster members, VSX systems, virtual systems, and management "
+            "servers (checkpoint-host) from arodonata_assets with optional types filter ('gateway', 'cluster', "
+            "'member', 'vsx', 'vs', 'server') and parent cluster/VSX filter."
+        ),
     )
-    @mcp_tool_guard("show_gateways_and_servers", client_getter)
-    async def show_gateways_and_servers(
+    @mcp_tool_guard("list_assets", client_getter)
+    async def list_assets(
         mgmt_name: str | None = None,
         domain: str | None = None,
         types: list[str] | None = None,
+        parent: str | None = None,
         filter: str | None = None,
         include_global: bool = False,
         details_level: str = "standard",
@@ -702,6 +684,7 @@ def register_mcp_tools(
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
         eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
         mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
+        normalized_types = [normalize_asset_type(t) for t in types if t and t.strip()] if types else None
 
         if is_live:
             payload: dict[str, Any] = {
@@ -731,15 +714,40 @@ def register_mcp_tools(
                 }
             )
 
-        assets = await client.get_gateways(
+        # When filtering by `parent`, load all domain assets first so parent -> member_uids can be resolved
+        all_assets = await client.get_gateways(
             mgmt_name=eff_mgmt,
             domain=eff_domain,
-            types=types,
+            types=normalized_types if not parent else None,
             include_global=include_global,
             cache_mode=mode,
         )
         if mode != "cache":
-            await _raise_if_sync_failed(client, eff_mgmt, eff_domain, "assets", "*", has_cached_data=bool(assets))
+            await _raise_if_sync_failed(client, eff_mgmt, eff_domain, "assets", "*", has_cached_data=bool(all_assets))
+
+        assets = list(all_assets)
+        if parent and parent.strip():
+            parent_clean = parent.strip()
+            parent_lower = parent_clean.lower()
+            parent_child_uids: set[str] = set()
+            matched_parent_uids: set[str] = set()
+            for a in all_assets:
+                if a.uid == parent_clean or a.name.lower() == parent_lower:
+                    matched_parent_uids.add(a.uid)
+                    parent_child_uids.update(a.member_uids)
+                    parent_child_uids.update(a.virtual_system_uids)
+            assets = [
+                a
+                for a in assets
+                if a.uid in parent_child_uids
+                or a.parent_uid == parent_clean
+                or (a.parent_uid is not None and a.parent_uid in matched_parent_uids)
+                or (a.parent_name is not None and a.parent_name.lower() == parent_lower)
+            ]
+            if normalized_types:
+                t_set = {t.lower() for t in normalized_types}
+                assets = [a for a in assets if a.type.lower() in t_set]
+
         filtered = _filter_assets(assets, filter)
         age = await _compute_cache_age(client, eff_mgmt, eff_domain, "assets", "*")
         serialized = [_serialize_asset(a, details_level=details_level) for a in filtered]
@@ -753,9 +761,18 @@ def register_mcp_tools(
         )
         return json_tool_result(envelope)
 
+    # ------------------------------------------------------------------
+    # 2. Multi-Table Single-Entity Lookup (`show_object`) with 3-Tier Matching
+    # ------------------------------------------------------------------
+
     @server.tool(
         name="show_object",
-        description="Retrieve a single Check Point object or service by UID or name from cache or live API.",
+        description=(
+            "Retrieve a Check Point object, service, gateway/cluster/VSX asset (including cached interfaces, "
+            "blades, and cluster/VSX members), policy package, or rulebase layer by UID, exact name, explicit "
+            "wildcard pattern (e.g. 'gw-*01', evaluated strictly as written without implicit prefix/suffix '*'), "
+            "or substring fallback (returning up to limit=20 compact candidates when no exact match exists)."
+        ),
     )
     @mcp_tool_guard("show_object", client_getter)
     async def show_object(
@@ -764,6 +781,8 @@ def register_mcp_tools(
         domain: str | None = None,
         obj_type: str | None = None,
         details_level: str = "full",
+        limit: int = 20,
+        offset: int = 0,
         cache_mode: str = "smart",
     ) -> CallToolResult:
         client = client_getter()
@@ -783,58 +802,208 @@ def register_mcp_tools(
                     mgmt_name=eff_mgmt,
                     domain=eff_domain,
                 ) from exc
-            clean_obj_type = validated_cmd.removeprefix("show-")
-            if clean_obj_type not in CANONICAL_SHOW_OBJECT_TYPES:
+            normalized_candidate = normalize_any_type(validated_cmd.removeprefix("show-"))
+            if normalized_candidate not in CANONICAL_SHOW_OBJECT_TYPES:
                 raise ToolFailure(
-                    f"Unsupported obj_type {obj_type!r}. Expected a canonical Check Point object or service type.",
+                    f"Unsupported obj_type {obj_type!r}. Expected a canonical Check Point object, service, asset, or layer type.",
                     mgmt_name=eff_mgmt,
                     domain=eff_domain,
                 )
+            clean_obj_type = normalized_candidate
+
+        query_str = uid_or_name.strip()
+        query_lower = query_str.lower()
+        has_explicit_wildcard = "*" in query_str or "?" in query_str
 
         if not is_live:
-            found = await client.find_object(
-                eff_mgmt,
-                target_domain,
-                uid_or_name,
-                obj_type=clean_obj_type,
-                cache_mode=mode,
+            is_service_type = clean_obj_type is not None and (
+                clean_obj_type in SERVICE_COMMAND_TYPES or clean_obj_type.startswith("service-")
             )
-            if found is not None:
-                is_svc = isinstance(found, CPService)
-                age = await _compute_cache_age(
-                    client,
+            is_asset_type = clean_obj_type is not None and clean_obj_type in {t.lower() for t in CANONICAL_ASSET_TYPES}
+            is_layer_or_pkg_type = clean_obj_type is not None and clean_obj_type in CANONICAL_LAYER_AND_PACKAGE_TYPES
+
+            # Tier 1: Fast path for exact UID or exact name match when no wildcard is present
+            if not has_explicit_wildcard and not is_layer_or_pkg_type:
+                found_exact = await client.find_object(
                     eff_mgmt,
                     target_domain,
-                    "services" if is_svc else "objects",
-                    found.type,
+                    query_str,
+                    obj_type=clean_obj_type,
+                    cache_mode=mode,
                 )
-                if isinstance(found, CPService):
-                    obj_dict = _serialize_service(found, details_level=details_level)
-                else:
-                    obj_dict = _serialize_object(found, details_level=details_level)
+                if found_exact is not None:
+                    scope_name, item_type_val = _entity_scope_and_type(found_exact)
+                    age = await _compute_cache_age(client, eff_mgmt, target_domain, scope_name, item_type_val)
+                    obj_dict = _serialize_any_entity(found_exact, details_level=details_level)
+                    return json_tool_result(
+                        {
+                            "from": 1,
+                            "to": 1,
+                            "total": 1,
+                            "match_type": "exact",
+                            "source": "cache",
+                            "cache_age_seconds": age,
+                            "mgmt_name": eff_mgmt,
+                            "domain": target_domain,
+                            "object": obj_dict,
+                            "objects": [obj_dict],
+                        }
+                    )
+
+            # Load candidate entities across the relevant cached tables for Tier 1 (layers/packages), Tier 2, or Tier 3
+            candidates: list[CPObject | CPService | Asset | RulebaseLayerEntry | PolicyPackageInfo] = []
+            want_objs = clean_obj_type is None or (
+                not is_service_type and not is_asset_type and not is_layer_or_pkg_type
+            )
+            want_svcs = clean_obj_type is None or is_service_type
+            want_assets = clean_obj_type is None or is_asset_type
+            want_layers = clean_obj_type is None or is_layer_or_pkg_type
+
+            if want_objs:
+                objs = await client.get_objects(
+                    mgmt_name=eff_mgmt,
+                    domain=target_domain,
+                    types=[clean_obj_type] if clean_obj_type else None,
+                    include_global=(target_domain == "Global"),
+                    cache_mode="cache" if not has_explicit_wildcard else mode,
+                )
+                candidates.extend(objs)
+
+            if want_svcs:
+                svcs = await client.get_services(
+                    mgmt_name=eff_mgmt,
+                    domain=target_domain,
+                    types=[clean_obj_type] if clean_obj_type else None,
+                    include_global=(target_domain == "Global"),
+                    cache_mode="cache" if not has_explicit_wildcard else mode,
+                )
+                candidates.extend(svcs)
+
+            if want_assets:
+                assets = await client.get_gateways(
+                    mgmt_name=eff_mgmt,
+                    domain=target_domain,
+                    types=[clean_obj_type] if clean_obj_type else None,
+                    include_global=(target_domain == "Global"),
+                    cache_mode="cache" if not has_explicit_wildcard else mode,
+                )
+                candidates.extend(assets)
+
+            if want_layers:
+                snap = await client.cache.get_domain_rulebase(eff_mgmt, target_domain)
+                if clean_obj_type in (None, "package", "policy-package"):
+                    candidates.extend(extract_policy_packages(snap))
+                if clean_obj_type in (None, "layer", "access-layer", "https-layer", "threat-layer"):
+                    for l_entry in snap.layers:
+                        if (
+                            clean_obj_type in ("access-layer", "https-layer", "threat-layer")
+                            and f"{l_entry.rulebase_type}-layer" != clean_obj_type
+                        ):
+                            continue
+                        candidates.append(l_entry)
+
+            # Check Tier 1 exact match on layers/packages (or case-insensitive exact name across all candidates)
+            if not has_explicit_wildcard:
+                for cand in candidates:
+                    if cand.uid.lower() == query_lower or cand.name.lower() == query_lower:
+                        scope_name, item_type_val = _entity_scope_and_type(cand)
+                        age = await _compute_cache_age(client, eff_mgmt, target_domain, scope_name, item_type_val)
+                        obj_dict = _serialize_any_entity(cand, details_level=details_level)
+                        return json_tool_result(
+                            {
+                                "from": 1,
+                                "to": 1,
+                                "total": 1,
+                                "match_type": "exact",
+                                "source": "cache",
+                                "cache_age_seconds": age,
+                                "mgmt_name": eff_mgmt,
+                                "domain": target_domain,
+                                "object": obj_dict,
+                                "objects": [obj_dict],
+                            }
+                        )
+
+            # Tier 2: Explicit wildcard (`*` or `?` in `uid_or_name`) — anchored fnmatchcase without extra `*`
+            if has_explicit_wildcard:
+                wildcard_matches = [c for c in candidates if fnmatchcase(c.name.lower(), query_lower)]
+                age = await _compute_cache_age(client, eff_mgmt, target_domain, "objects", "*")
+                if len(wildcard_matches) == 1:
+                    single_dict = _serialize_any_entity(wildcard_matches[0], details_level=details_level)
+                    return json_tool_result(
+                        {
+                            "from": 1,
+                            "to": 1,
+                            "total": 1,
+                            "match_type": "wildcard",
+                            "source": "cache",
+                            "cache_age_seconds": age,
+                            "mgmt_name": eff_mgmt,
+                            "domain": target_domain,
+                            "object": single_dict,
+                            "objects": [single_dict],
+                        }
+                    )
+                eff_offset = max(0, offset)
+                eff_limit = max(1, min(limit, 500))
+                sliced_wild = wildcard_matches[eff_offset : eff_offset + eff_limit]
+                serialized_wild = [_serialize_any_entity(c, details_level="standard") for c in sliced_wild]
                 return json_tool_result(
                     {
-                        "from": 1,
-                        "to": 1,
-                        "total": 1,
+                        "from": (eff_offset + 1) if serialized_wild else 0,
+                        "to": eff_offset + len(serialized_wild),
+                        "total": len(wildcard_matches),
+                        "match_type": "wildcard",
                         "source": "cache",
                         "cache_age_seconds": age,
                         "mgmt_name": eff_mgmt,
                         "domain": target_domain,
-                        "object": obj_dict,
-                        "objects": [obj_dict],
+                        "object": None,
+                        "objects": serialized_wild,
+                    }
+                )
+
+            # Tier 3: Substring candidate fallback when no exact match was found
+            substring_matches = [c for c in candidates if query_lower and query_lower in c.name.lower()]
+            if substring_matches:
+                age = await _compute_cache_age(client, eff_mgmt, target_domain, "objects", "*")
+                eff_offset = max(0, offset)
+                eff_limit = max(1, min(limit, 500))
+                sliced_sub = substring_matches[eff_offset : eff_offset + eff_limit]
+                serialized_sub = [_serialize_any_entity(c, details_level="standard") for c in sliced_sub]
+                return json_tool_result(
+                    {
+                        "from": (eff_offset + 1) if serialized_sub else 0,
+                        "to": eff_offset + len(serialized_sub),
+                        "total": len(substring_matches),
+                        "match_type": "substring_candidates",
+                        "source": "cache",
+                        "cache_age_seconds": age,
+                        "mgmt_name": eff_mgmt,
+                        "domain": target_domain,
+                        "object": serialized_sub[0] if len(substring_matches) == 1 and serialized_sub else None,
+                        "objects": serialized_sub,
+                        "hint": (
+                            f"No exact match for {uid_or_name!r}; returning {len(serialized_sub)} of "
+                            f"{len(substring_matches)} cached substring candidate(s). Pass an exact name/UID "
+                            "or an explicit wildcard pattern (e.g. 'prefix*suffix')."
+                        ),
                     }
                 )
 
         # Fallback to live show-object or type-specific command
-        cmd = f"show-{clean_obj_type}" if clean_obj_type else "show-object"
+        cmd = (
+            f"show-{clean_obj_type}"
+            if (clean_obj_type and clean_obj_type not in CANONICAL_LAYER_AND_PACKAGE_TYPES)
+            else "show-object"
+        )
         payload: dict[str, Any] = {"details-level": details_level}
-        if "-" in uid_or_name and len(uid_or_name) == 36 and not clean_obj_type:
-            payload["uid"] = uid_or_name
-        elif clean_obj_type:
-            payload["name"] = uid_or_name
+        if "-" in query_str and len(query_str) == 36 and not clean_obj_type:
+            payload["uid"] = query_str
+        elif clean_obj_type and clean_obj_type not in CANONICAL_LAYER_AND_PACKAGE_TYPES:
+            payload["name"] = query_str
         else:
-            payload["uid"] = uid_or_name
+            payload["uid"] = query_str
 
         res = await client.api_call(eff_mgmt, cmd, payload, domain=eff_domain)
         if not res.success:
@@ -853,6 +1022,7 @@ def register_mcp_tools(
                 "from": 1,
                 "to": 1,
                 "total": 1,
+                "match_type": "exact",
                 "source": "live",
                 "cache_age_seconds": None,
                 "mgmt_name": eff_mgmt,
@@ -863,26 +1033,9 @@ def register_mcp_tools(
             known_sids=known_sids,
         )
 
-    @server.tool(
-        name="find_object",
-        description="Find an object or service by exact UID or name in cache.",
-    )
-    @mcp_tool_guard("find_object", client_getter)
-    async def find_object(
-        name_or_uid: str,
-        mgmt_name: str | None = None,
-        domain: str | None = None,
-        obj_type: str | None = None,
-        cache_mode: str = "smart",
-    ) -> CallToolResult:
-        return await show_object(
-            uid_or_name=name_or_uid,
-            mgmt_name=mgmt_name,
-            domain=domain,
-            obj_type=obj_type,
-            details_level="standard",
-            cache_mode=cache_mode,
-        )
+    # ------------------------------------------------------------------
+    # 3. Search, Group/Cluster Membership & Structured Aggregation
+    # ------------------------------------------------------------------
 
     @server.tool(
         name="search_objects",
@@ -910,12 +1063,13 @@ def register_mcp_tools(
             for d in target_domains:
                 await validate_domain_or_fail(client, eff_mgmt, d)
 
+        normalized_types = [normalize_object_type(t) for t in types if t and t.strip()] if types else None
         mode, _ = _normalize_cache_mode(cache_mode, default="smart")
         result = await client.search_objects(
             query,
             mgmt_name=eff_mgmt,
             domains=target_domains,
-            types=types,
+            types=normalized_types,
             include_global=include_global,
             max_depth=max_depth,
             exact_match=exact_match,
@@ -942,7 +1096,10 @@ def register_mcp_tools(
 
     @server.tool(
         name="get_group_members",
-        description="Expand direct and recursive members of a Check Point group object from cache.",
+        description=(
+            "Expand direct and recursive members of a Check Point network group (arodonata_objects), "
+            "service-group (arodonata_services), or cluster/VSX container (arodonata_assets) from cache."
+        ),
     )
     @mcp_tool_guard("get_group_members", client_getter)
     async def get_group_members(
@@ -970,7 +1127,7 @@ def register_mcp_tools(
             cache_mode=mode,
         )
         age = await _compute_cache_age(client, eff_mgmt, target_domain, "objects", "group")
-        serialized = [_serialize_object(m, details_level="standard") for m in members]
+        serialized = [_serialize_any_entity(m, details_level="standard") for m in members]
         envelope = _build_page_envelope(
             serialized,
             limit=limit,
@@ -985,38 +1142,12 @@ def register_mcp_tools(
         )
         return json_tool_result(envelope)
 
-    # ------------------------------------------------------------------
-    # 2. Progressive-Disclosure Aggregation & Cache Status Tools
-    # ------------------------------------------------------------------
-
-    @server.tool(
-        name="describe_objects",
-        description=(
-            "Return progressive-disclosure schema, available domains, object/service type counts, "
-            "and filterable/groupable fields for query_objects."
-        ),
-    )
-    @mcp_tool_guard("describe_objects", client_getter)
-    async def describe_objects(
-        mgmt_name: str | None = None,
-        domain: str | None = None,
-        include_global: bool = True,
-    ) -> CallToolResult:
-        client = client_getter()
-        eff_mgmt = resolve_mgmt_name(client, mgmt_name) if mgmt_name else None
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain) if (eff_mgmt and domain) else domain
-        summary = await client.describe_objects(
-            mgmt_name=eff_mgmt,
-            domain_name=eff_domain,
-            include_global=include_global,
-        )
-        return json_tool_result(summary)
-
     @server.tool(
         name="query_objects",
         description=(
-            "Execute structured cross-domain filtering, grouping (group_by), and counting (aggregate='count'|'list') "
-            "over cached arodonata_objects and arodonata_services, distinguishing local vs Global objects via original_domain."
+            "Execute structured cross-domain filtering, grouping (group_by), counting (aggregate='count'|'list'), "
+            "or progressive-disclosure schema introspection (aggregate='describe') over cached arodonata_objects, "
+            "arodonata_services, and arodonata_assets, distinguishing local vs Global objects via original_domain."
         ),
     )
     @mcp_tool_guard("query_objects", client_getter)
@@ -1033,7 +1164,7 @@ def register_mcp_tools(
         tags: list[str] | None = None,
         include_global: bool = False,
         group_by: list[str] | None = None,
-        aggregate: Literal["count", "list"] = "list",
+        aggregate: Literal["count", "list", "describe"] = "list",
         limit: int = 100,
         offset: int = 0,
         cache_mode: str = "cache",
@@ -1080,65 +1211,76 @@ def register_mcp_tools(
         return json_tool_result(result)
 
     @server.tool(
-        name="cache_status",
+        name="cache_control",
         description=(
-            "Inspect domain_sync_state across scopes ('domains', 'objects', 'services', 'assets', 'rulebase'), "
-            "returning per-domain and per-item_type status, last_published_at, last_session_uid, synced_at, and cache_age_seconds."
+            "Inspect cache freshness across scopes (action='status') or trigger scoped synchronization "
+            "(action='refresh', scope='domains'|'objects'|'services'|'assets'|'rulebase')."
         ),
     )
-    @mcp_tool_guard("cache_status", client_getter)
-    async def cache_status(
-        mgmt_name: str | None = None,
-        domain: str | None = None,
-        scope: SyncScope | None = None,
-    ) -> CallToolResult:
-        client = client_getter()
-        eff_mgmt = resolve_mgmt_name(client, mgmt_name) if mgmt_name else None
-        status_data = await client.get_cache_status(
-            mgmt_name=eff_mgmt,
-            domain_name=domain.strip() if domain else None,
-            scope=scope,
-        )
-        return json_tool_result(status_data)
-
-    @server.tool(
-        name="refresh_cache",
-        description="Synchronize cached objects, services, assets, or rulebases for target domains.",
-    )
-    @mcp_tool_guard("refresh_cache", client_getter)
-    async def refresh_cache(
-        scope: Literal["objects", "services", "assets", "rulebase"] = "objects",
+    @mcp_tool_guard("cache_control", client_getter)
+    async def cache_control(
+        action: Literal["status", "refresh"] = "status",
         mgmt_name: str | None = None,
         domain: str | None = None,
         domains: list[str] | None = None,
+        scope: SyncScope | None = None,
         types: list[str] | None = None,
         include_global: bool = False,
         mode: Literal["cache", "smart", "smart-fast", "force"] = "smart",
     ) -> CallToolResult:
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name) if mgmt_name else None
+
+        if action == "status":
+            status_data = await client.get_cache_status(
+                mgmt_name=eff_mgmt,
+                domain_name=domain.strip() if domain else None,
+                scope=scope,
+            )
+            return json_tool_result(status_data)
+
+        if action != "refresh":
+            raise ToolFailure(f"Invalid cache_control action {action!r}. Expected 'status' or 'refresh'.")
+
+        target_scope: SyncScope = scope or "objects"
         target_domains = domains if domains is not None else ([domain] if domain else None)
         if eff_mgmt and target_domains:
             for d in target_domains:
                 await validate_domain_or_fail(client, eff_mgmt, d)
 
-        if scope == "objects":
+        if target_scope == "domains":
+            refreshed_domains = await client.get_domains(
+                mgmt_name=eff_mgmt,
+                include_global=include_global,
+                cache_mode="force" if mode == "force" else "smart",
+            )
+            return json_tool_result(
+                {
+                    "scope": "domains",
+                    "mgmt_name": eff_mgmt,
+                    "refreshed_count": len(refreshed_domains),
+                    "domains": [d.name for d in refreshed_domains],
+                }
+            )
+        if target_scope == "objects":
+            normalized_obj_types = [normalize_object_type(t) for t in types if t and t.strip()] if types else None
             outcome = await client.refresh_objects(
                 mgmt_name=eff_mgmt,
                 domains=target_domains,
-                types=types,
+                types=normalized_obj_types,
                 include_global=include_global,
                 mode=mode,
             )
-        elif scope == "services":
+        elif target_scope == "services":
+            normalized_svc_types = [normalize_service_type(t) for t in types if t and t.strip()] if types else None
             outcome = await client.refresh_services(
                 mgmt_name=eff_mgmt,
                 domains=target_domains,
-                types=types,
+                types=normalized_svc_types,
                 include_global=include_global,
                 mode=mode,
             )
-        elif scope == "assets":
+        elif target_scope == "assets":
             outcome = await client.refresh_assets(
                 mgmt_name=eff_mgmt,
                 domains=target_domains,
@@ -1155,53 +1297,94 @@ def register_mcp_tools(
         return json_tool_result(outcome.model_dump(mode="json"))
 
     # ------------------------------------------------------------------
-    # 3. Hybrid Rulebase Tools
+    # 4. Hybrid Rulebase & Policy Package/Layer Catalog Tool (`show_rulebase`, `locate_rules`)
     # ------------------------------------------------------------------
 
-    async def _run_hybrid_rulebase_tool(
-        *,
-        rulebase_type: RulebaseType,
-        live_command: str,
-        mgmt_name: str | None,
-        domain: str | None,
-        package: str | None,
-        layer: str | None,
-        name: str | None,
-        uid: str | None,
-        filter_text: str,
-        output_format: RuleFormat,
-        limit: int,
-        offset: int,
-        cache_mode: str,
-        show_hits: bool,
-        order: list[dict[str, Any]] | None,
-        show_as_ranges: bool,
-        show_expiration_settings: bool,
-        filter_settings: dict[str, Any] | None,
-        hits_settings: dict[str, Any] | None,
-        dereference_group_members: bool,
-        show_membership: bool,
+    @server.tool(
+        name="show_rulebase",
+        description=(
+            "Show SmartConsole-numbered rulebase (rulebase_type='access'|'nat'|'https'|'threat') from cache "
+            "(evaluating filter locally against cached objects/services in markdown, model_friendly, raw, or cpcrud format) "
+            "or live API (when live-only parameters like show_hits or cache_mode='live' are used). "
+            "When package and layer are omitted (or when a requested package/layer is not found), returns the "
+            "domain's cached policy packages and layers (including inline layers and implicit_cleanup_action)."
+        ),
+    )
+    @mcp_tool_guard("show_rulebase", client_getter)
+    async def show_rulebase(
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        rulebase_type: RulebaseType = "access",
+        package: str | None = None,
+        layer: str | None = None,
+        name: str | None = None,
+        uid: str | None = None,
+        filter: str = "",
+        format: RuleFormat = "markdown",
+        limit: int = 100,
+        offset: int = 0,
+        cache_mode: str = "smart",
+        show_hits: bool = False,
+        order: list[dict[str, Any]] | None = None,
+        show_as_ranges: bool = False,
+        show_expiration_settings: bool = False,
+        filter_settings: dict[str, Any] | None = None,
+        hits_settings: dict[str, Any] | None = None,
+        dereference_group_members: bool = False,
+        show_membership: bool = False,
     ) -> CallToolResult:
+        if rulebase_type not in RULEBASE_TYPE_TO_LIVE_COMMAND:
+            raise ToolFailure(
+                f"Invalid rulebase_type {rulebase_type!r}. Expected 'access', 'nat', 'https', or 'threat'."
+            )
+        live_command = RULEBASE_TYPE_TO_LIVE_COMMAND[rulebase_type]
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
         eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
+        target_domain = eff_domain or "default"
         mode, is_live_mode = _normalize_cache_mode(cache_mode, default="smart")
 
-        # Resolve target package or layer from `package`, `layer`, `name`, or `uid`
-        eff_package = package
-        eff_layer = layer
+        eff_package = package.strip() if package and package.strip() else None
+        eff_layer = layer.strip() if layer and layer.strip() else None
         if rulebase_type == "nat":
-            eff_package = eff_package or name or uid or layer
+            eff_package = eff_package or (name.strip() if name else None) or (uid.strip() if uid else None) or eff_layer
         else:
             if not eff_layer and not eff_package:
-                eff_layer = name or uid
+                eff_layer = (name.strip() if name else None) or (uid.strip() if uid else None)
 
-        if not eff_package and not eff_layer:
-            raise ToolFailure(
-                f"Specify 'package' or 'layer' (or 'name'/'uid') for show_{rulebase_type}_rulebase.",
-                mgmt_name=eff_mgmt,
-                domain=eff_domain,
+        async def _build_catalog_response(hint_message: str | None = None) -> CallToolResult:
+            snap, _, _, _, snap_age = await client._rulebase_source._ensure_and_load_snapshot(
+                eff_mgmt,
+                target_domain,
+                cache_mode=mode,
             )
+            packages = [_serialize_package(p, details_level="standard") for p in extract_policy_packages(snap)]
+            layers = [
+                _serialize_layer(l_entry, details_level="standard")
+                for l_entry in snap.layers
+                if rulebase_type == "nat" or l_entry.rulebase_type == rulebase_type
+            ]
+            catalog_payload: dict[str, Any] = {
+                "mode": "catalog",
+                "from": 1 if (packages or layers) else 0,
+                "to": len(packages) if packages else len(layers),
+                "total": len(packages) if packages else len(layers),
+                "source": "cache",
+                "cache_age_seconds": round(snap_age, 3) if snap_age is not None else 0.0,
+                "mgmt_name": eff_mgmt,
+                "domain": target_domain,
+                "rulebase_type": rulebase_type,
+                "packages": packages,
+                "layers": layers,
+                "objects": packages if packages else layers,
+            }
+            if hint_message:
+                catalog_payload["hint"] = hint_message
+            return json_tool_result(catalog_payload)
+
+        # Discovery mode: when neither package nor layer is specified, return cached packages and layers
+        if not eff_package and not eff_layer:
+            return await _build_catalog_response()
 
         has_live_only_params = any(
             [
@@ -1233,8 +1416,8 @@ def register_mcp_tools(
                 if eff_package:
                     payload["package"] = eff_package
 
-            if filter_text:
-                payload["filter"] = filter_text
+            if filter:
+                payload["filter"] = filter
             if show_hits:
                 payload["show-hits"] = True
             if order is not None:
@@ -1270,22 +1453,63 @@ def register_mcp_tools(
                 "mgmt_name": eff_mgmt,
                 "domain": eff_domain,
                 "rulebase_type": rulebase_type,
-                "format": output_format,
+                "format": format,
                 "rulebase": rb_items,
             }
             return json_tool_result(live_envelope)
 
-        # Serve from cached rulebase snapshot and evaluate filter locally
+        # Serve from cached rulebase snapshot and evaluate filter locally; if target package/layer is not found,
+        # return the domain's package/layer catalog with a helpful hint rather than an error.
+        snap_check, _, _, _, _ = await client._rulebase_source._ensure_and_load_snapshot(
+            eff_mgmt,
+            target_domain,
+            cache_mode=mode,
+        )
+        known_pkgs = {p.uid.lower() for p in extract_policy_packages(snap_check)} | {
+            p.name.lower() for p in extract_policy_packages(snap_check)
+        }
+        known_layers = (
+            {l_e.uid.lower() for l_e in snap_check.layers}
+            | {l_e.name.lower() for l_e in snap_check.layers}
+            | {pl.layer_uid.lower() for pl in snap_check.package_layers}
+            | {pl.layer_name.lower() for pl in snap_check.package_layers}
+        )
+        if rulebase_type == "nat":
+            target_check = (eff_package or eff_layer or "").lower()
+            if target_check and target_check not in known_pkgs and (known_pkgs or known_layers):
+                return await _build_catalog_response(
+                    hint_message=(
+                        f"Policy package {eff_package or eff_layer!r} was not found in cached NAT rulebases on "
+                        f"{eff_mgmt!r} ({target_domain}). Returning available packages and layers."
+                    )
+                )
+        else:
+            if eff_package and eff_package.lower() not in known_pkgs and (known_pkgs or known_layers):
+                return await _build_catalog_response(
+                    hint_message=(
+                        f"Policy package {eff_package!r} was not found in cached {rulebase_type!r} rulebases on "
+                        f"{eff_mgmt!r} ({target_domain}). Returning available packages and layers."
+                    )
+                )
+            if eff_layer and eff_layer.lower() not in known_layers and (known_pkgs or known_layers):
+                return await _build_catalog_response(
+                    hint_message=(
+                        f"Layer {eff_layer!r} was not found in cached {rulebase_type!r} rulebases on "
+                        f"{eff_mgmt!r} ({target_domain}). Returning available packages and layers."
+                    )
+                )
+
         filtered_res = await client.filter_rulebase(
             eff_mgmt,
             eff_domain,
             package=eff_package,
             layer=eff_layer if rulebase_type != "nat" else None,
             rulebase_type=rulebase_type,
-            filter_query=filter_text,
-            output_format=output_format,
-            cache_mode=mode,
+            filter_query=filter,
+            output_format=format,
+            cache_mode="cache",
         )
+
         sliced_raw = filtered_res.raw_items[offset : offset + max(1, limit)]
         envelope: dict[str, Any] = {
             "from": (offset + 1) if sliced_raw else 0,
@@ -1307,244 +1531,6 @@ def register_mcp_tools(
             "rules": sliced_raw,
         }
         return json_tool_result(envelope)
-
-    @server.tool(
-        name="show_access_rulebase",
-        description=(
-            "Show SmartConsole-numbered access-control rulebase from cache (including local filter evaluation "
-            "against cached objects/services) in markdown, model_friendly, or raw format; switches to live API "
-            "query only when live-only parameters (show_hits, order, etc.) or cache_mode='live' are used."
-        ),
-    )
-    @mcp_tool_guard("show_access_rulebase", client_getter)
-    async def show_access_rulebase(
-        mgmt_name: str | None = None,
-        domain: str | None = None,
-        package: str | None = None,
-        layer: str | None = None,
-        name: str | None = None,
-        uid: str | None = None,
-        filter: str = "",
-        format: RuleFormat = "markdown",
-        limit: int = 100,
-        offset: int = 0,
-        cache_mode: str = "smart",
-        show_hits: bool = False,
-        order: list[dict[str, Any]] | None = None,
-        show_as_ranges: bool = False,
-        show_expiration_settings: bool = False,
-        filter_settings: dict[str, Any] | None = None,
-        hits_settings: dict[str, Any] | None = None,
-        dereference_group_members: bool = False,
-        show_membership: bool = False,
-    ) -> CallToolResult:
-        return await _run_hybrid_rulebase_tool(
-            rulebase_type="access",
-            live_command="show-access-rulebase",
-            mgmt_name=mgmt_name,
-            domain=domain,
-            package=package,
-            layer=layer,
-            name=name,
-            uid=uid,
-            filter_text=filter,
-            output_format=format,
-            limit=limit,
-            offset=offset,
-            cache_mode=cache_mode,
-            show_hits=show_hits,
-            order=order,
-            show_as_ranges=show_as_ranges,
-            show_expiration_settings=show_expiration_settings,
-            filter_settings=filter_settings,
-            hits_settings=hits_settings,
-            dereference_group_members=dereference_group_members,
-            show_membership=show_membership,
-        )
-
-    @server.tool(
-        name="show_nat_rulebase",
-        description=(
-            "Show SmartConsole-numbered NAT rulebase for a policy package from cache (evaluating filter locally) "
-            "or live API when live-only parameters or cache_mode='live' are passed."
-        ),
-    )
-    @mcp_tool_guard("show_nat_rulebase", client_getter)
-    async def show_nat_rulebase(
-        mgmt_name: str | None = None,
-        domain: str | None = None,
-        package: str | None = None,
-        layer: str | None = None,
-        name: str | None = None,
-        uid: str | None = None,
-        filter: str = "",
-        format: RuleFormat = "markdown",
-        limit: int = 100,
-        offset: int = 0,
-        cache_mode: str = "smart",
-        show_hits: bool = False,
-        order: list[dict[str, Any]] | None = None,
-        show_as_ranges: bool = False,
-        show_expiration_settings: bool = False,
-        filter_settings: dict[str, Any] | None = None,
-        hits_settings: dict[str, Any] | None = None,
-        dereference_group_members: bool = False,
-        show_membership: bool = False,
-    ) -> CallToolResult:
-        return await _run_hybrid_rulebase_tool(
-            rulebase_type="nat",
-            live_command="show-nat-rulebase",
-            mgmt_name=mgmt_name,
-            domain=domain,
-            package=package,
-            layer=layer,
-            name=name,
-            uid=uid,
-            filter_text=filter,
-            output_format=format,
-            limit=limit,
-            offset=offset,
-            cache_mode=cache_mode,
-            show_hits=show_hits,
-            order=order,
-            show_as_ranges=show_as_ranges,
-            show_expiration_settings=show_expiration_settings,
-            filter_settings=filter_settings,
-            hits_settings=hits_settings,
-            dereference_group_members=dereference_group_members,
-            show_membership=show_membership,
-        )
-
-    @server.tool(
-        name="show_https_rulebase",
-        description="Show SmartConsole-numbered HTTPS inspection rulebase from cache or live API.",
-    )
-    @mcp_tool_guard("show_https_rulebase", client_getter)
-    async def show_https_rulebase(
-        mgmt_name: str | None = None,
-        domain: str | None = None,
-        package: str | None = None,
-        layer: str | None = None,
-        name: str | None = None,
-        uid: str | None = None,
-        filter: str = "",
-        format: RuleFormat = "markdown",
-        limit: int = 100,
-        offset: int = 0,
-        cache_mode: str = "smart",
-        show_hits: bool = False,
-        order: list[dict[str, Any]] | None = None,
-        show_as_ranges: bool = False,
-        show_expiration_settings: bool = False,
-        filter_settings: dict[str, Any] | None = None,
-        hits_settings: dict[str, Any] | None = None,
-        dereference_group_members: bool = False,
-        show_membership: bool = False,
-    ) -> CallToolResult:
-        return await _run_hybrid_rulebase_tool(
-            rulebase_type="https",
-            live_command="show-https-rulebase",
-            mgmt_name=mgmt_name,
-            domain=domain,
-            package=package,
-            layer=layer,
-            name=name,
-            uid=uid,
-            filter_text=filter,
-            output_format=format,
-            limit=limit,
-            offset=offset,
-            cache_mode=cache_mode,
-            show_hits=show_hits,
-            order=order,
-            show_as_ranges=show_as_ranges,
-            show_expiration_settings=show_expiration_settings,
-            filter_settings=filter_settings,
-            hits_settings=hits_settings,
-            dereference_group_members=dereference_group_members,
-            show_membership=show_membership,
-        )
-
-    @server.tool(
-        name="show_threat_rulebase",
-        description="Show SmartConsole-numbered Threat Prevention rulebase from cache or live API.",
-    )
-    @mcp_tool_guard("show_threat_rulebase", client_getter)
-    async def show_threat_rulebase(
-        mgmt_name: str | None = None,
-        domain: str | None = None,
-        package: str | None = None,
-        layer: str | None = None,
-        name: str | None = None,
-        uid: str | None = None,
-        filter: str = "",
-        format: RuleFormat = "markdown",
-        limit: int = 100,
-        offset: int = 0,
-        cache_mode: str = "smart",
-        show_hits: bool = False,
-        order: list[dict[str, Any]] | None = None,
-        show_as_ranges: bool = False,
-        show_expiration_settings: bool = False,
-        filter_settings: dict[str, Any] | None = None,
-        hits_settings: dict[str, Any] | None = None,
-        dereference_group_members: bool = False,
-        show_membership: bool = False,
-    ) -> CallToolResult:
-        return await _run_hybrid_rulebase_tool(
-            rulebase_type="threat",
-            live_command="show-threat-rulebase",
-            mgmt_name=mgmt_name,
-            domain=domain,
-            package=package,
-            layer=layer,
-            name=name,
-            uid=uid,
-            filter_text=filter,
-            output_format=format,
-            limit=limit,
-            offset=offset,
-            cache_mode=cache_mode,
-            show_hits=show_hits,
-            order=order,
-            show_as_ranges=show_as_ranges,
-            show_expiration_settings=show_expiration_settings,
-            filter_settings=filter_settings,
-            hits_settings=hits_settings,
-            dereference_group_members=dereference_group_members,
-            show_membership=show_membership,
-        )
-
-    @server.tool(
-        name="show_policy_packages",
-        description="List cached Check Point policy packages and their attached layers for a domain.",
-    )
-    @mcp_tool_guard("show_policy_packages", client_getter)
-    async def show_policy_packages(
-        mgmt_name: str | None = None,
-        domain: str | None = None,
-        cache_mode: str = "smart",
-    ) -> CallToolResult:
-        client = client_getter()
-        eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
-        mode, _ = _normalize_cache_mode(cache_mode, default="smart")
-        packages = await client.get_policy_packages(eff_mgmt, eff_domain, cache_mode=mode)
-        age = await _compute_cache_age(client, eff_mgmt, eff_domain, "rulebase", "*")
-        serialized = [p.model_dump(mode="json") for p in packages]
-        return json_tool_result(
-            {
-                "from": 1 if serialized else 0,
-                "to": len(serialized),
-                "total": len(serialized),
-                "source": "cache",
-                "cache_age_seconds": age,
-                "mgmt_name": eff_mgmt,
-                "domain": eff_domain,
-                "packages": serialized,
-                "objects": serialized,
-            }
-        )
 
     @server.tool(
         name="locate_rules",
@@ -1572,7 +1558,7 @@ def register_mcp_tools(
         return json_tool_result(locations.model_dump(mode="json"))
 
     # ------------------------------------------------------------------
-    # 4. Change Report & Gated `api_call`
+    # 5. Change Report & Gated `api_call`
     # ------------------------------------------------------------------
 
     @server.tool(
@@ -1671,9 +1657,9 @@ def register_mcp_tools(
     @server.tool(
         name="api_call",
         description=(
-            "Execute a direct Check Point Management Web API command. "
-            "By default only read-only commands ('show-*', 'where-used', 'verify-policy') are permitted "
-            "unless ARODONATA_MCP_ALLOW_WRITE_API=true."
+            "Execute a direct Check Point Management Web API command (e.g. 'where-used', 'show-sessions', "
+            "'show-unused-objects', 'show-task', 'verify-policy'). By default only read-only commands "
+            "('show-*', 'where-used', 'verify-policy') are permitted unless ARODONATA_MCP_ALLOW_WRITE_API=true."
         ),
     )
     @mcp_tool_guard("api_call", client_getter)
@@ -1766,162 +1752,6 @@ def register_mcp_tools(
             },
             known_sids=known_sids,
         )
-
-    # ------------------------------------------------------------------
-    # 5. Optional Live-Compatibility Tools (`ARODONATA_MCP_LIVE_COMPAT=true`)
-    # ------------------------------------------------------------------
-
-    if mcp_settings.live_compat:
-
-        @server.tool(
-            name="where_used",
-            description="Check where a Check Point object or service is referenced across rules and groups via live API.",
-        )
-        @mcp_tool_guard("where_used", client_getter)
-        async def where_used(
-            uid_or_name: str,
-            mgmt_name: str | None = None,
-            domain: str | None = None,
-            indirect: bool = False,
-            indirect_max_depth: int = 5,
-        ) -> CallToolResult:
-            client = client_getter()
-            eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-            eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
-            key = "uid" if ("-" in uid_or_name and len(uid_or_name) == 36) else "name"
-            payload: dict[str, Any] = {key: uid_or_name, "indirect": indirect, "indirect-max-depth": indirect_max_depth}
-            res = await client.api_call(eff_mgmt, "where-used", payload, domain=eff_domain)
-            if not res.success:
-                raise ToolFailure(
-                    f"where-used failed on {eff_mgmt!r}: {redact_sid(res.error_message or 'error')}",
-                    mgmt_name=eff_mgmt,
-                    domain=eff_domain,
-                )
-            return json_tool_result(
-                {
-                    "source": "live",
-                    "cache_age_seconds": None,
-                    "mgmt_name": eff_mgmt,
-                    "domain": eff_domain,
-                    "data": sanitize_mapping(res.data),
-                }
-            )
-
-        @server.tool(
-            name="show_sessions",
-            description="List Check Point management sessions via live API.",
-        )
-        @mcp_tool_guard("show_sessions", client_getter)
-        async def show_sessions(
-            mgmt_name: str | None = None,
-            domain: str | None = None,
-            view_published_sessions: bool = True,
-            limit: int = 50,
-            offset: int = 0,
-        ) -> CallToolResult:
-            client = client_getter()
-            eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-            eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
-            payload: dict[str, Any] = {
-                "view-published-sessions": view_published_sessions,
-                "limit": max(1, min(limit, 500)),
-                "offset": max(0, offset),
-            }
-            res = await client.api_call(eff_mgmt, "show-sessions", payload, domain=eff_domain)
-            if not res.success:
-                raise ToolFailure(
-                    f"show-sessions failed on {eff_mgmt!r}: {redact_sid(res.error_message or 'error')}",
-                    mgmt_name=eff_mgmt,
-                    domain=eff_domain,
-                )
-            objs = res.data.get("objects", []) if isinstance(res.data.get("objects"), list) else []
-            return json_tool_result(
-                {
-                    "from": res.data.get("from", (offset + 1) if objs else 0),
-                    "to": res.data.get("to", offset + len(objs)),
-                    "total": res.data.get("total", len(objs)),
-                    "source": "live",
-                    "cache_age_seconds": None,
-                    "mgmt_name": eff_mgmt,
-                    "domain": eff_domain,
-                    "objects": sanitize_mapping({"objects": objs})["objects"],
-                }
-            )
-
-        @server.tool(
-            name="show_unused_objects",
-            description="List unused objects in a Check Point domain via live API.",
-        )
-        @mcp_tool_guard("show_unused_objects", client_getter)
-        async def show_unused_objects(
-            mgmt_name: str | None = None,
-            domain: str | None = None,
-            limit: int = 50,
-            offset: int = 0,
-        ) -> CallToolResult:
-            client = client_getter()
-            eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-            eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
-            payload: dict[str, Any] = {
-                "limit": max(1, min(limit, 500)),
-                "offset": max(0, offset),
-            }
-            res = await client.api_call(eff_mgmt, "show-unused-objects", payload, domain=eff_domain)
-            if not res.success:
-                raise ToolFailure(
-                    f"show-unused-objects failed on {eff_mgmt!r}: {redact_sid(res.error_message or 'error')}",
-                    mgmt_name=eff_mgmt,
-                    domain=eff_domain,
-                )
-            objs = res.data.get("objects", []) if isinstance(res.data.get("objects"), list) else []
-            return json_tool_result(
-                {
-                    "from": res.data.get("from", (offset + 1) if objs else 0),
-                    "to": res.data.get("to", offset + len(objs)),
-                    "total": res.data.get("total", len(objs)),
-                    "source": "live",
-                    "cache_age_seconds": None,
-                    "mgmt_name": eff_mgmt,
-                    "domain": eff_domain,
-                    "objects": objs,
-                }
-            )
-
-        @server.tool(
-            name="show_task",
-            description="Inspect a Check Point management task by task-id via live API.",
-        )
-        @mcp_tool_guard("show_task", client_getter)
-        async def show_task(
-            task_id: str,
-            mgmt_name: str | None = None,
-            domain: str | None = None,
-            details_level: str = "full",
-        ) -> CallToolResult:
-            client = client_getter()
-            eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-            eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
-            res = await client.api_call(
-                eff_mgmt,
-                "show-task",
-                {"task-id": task_id, "details-level": details_level},
-                domain=eff_domain,
-            )
-            if not res.success:
-                raise ToolFailure(
-                    f"show-task failed on {eff_mgmt!r}: {redact_sid(res.error_message or 'error')}",
-                    mgmt_name=eff_mgmt,
-                    domain=eff_domain,
-                )
-            return json_tool_result(
-                {
-                    "source": "live",
-                    "cache_age_seconds": None,
-                    "mgmt_name": eff_mgmt,
-                    "domain": eff_domain,
-                    "data": sanitize_mapping(res.data),
-                }
-            )
 
     # ------------------------------------------------------------------
     # 6. Opt-In CPCRUD Tools (`ARODONATA_MCP_CPCRUD=true`)
@@ -2087,15 +1917,17 @@ def register_mcp_tools(
             return json_tool_result(inverse_tpl, known_sids=known_sids)
 
         @server.tool(
-            name="cpcrud_publish_staged",
+            name="cpcrud_staged_session",
             description=(
-                "Adopt a staged Check Point session (created with keep_session=True) via take-over-session, "
-                "publish it, log out cleanly, and invalidate the domain cache."
+                "Adopt a staged Check Point session (created with keep_session=True) via take-over-session "
+                "and either publish (action='publish', invalidating the domain cache) or discard "
+                "(action='discard') uncommitted changes before logging out cleanly."
             ),
         )
-        @mcp_tool_guard("cpcrud_publish_staged", client_getter)
-        async def cpcrud_publish_staged(
+        @mcp_tool_guard("cpcrud_staged_session", client_getter)
+        async def cpcrud_staged_session(
             session_uid: str,
+            action: Literal["publish", "discard"] = "publish",
             mgmt_name: str | None = None,
             domain: str | None = None,
             server_ip: str | None = None,
@@ -2103,56 +1935,44 @@ def register_mcp_tools(
         ) -> CallToolResult:
             if not session_uid or not session_uid.strip():
                 raise ToolFailure("session_uid must not be empty.")
+            if action not in ("publish", "discard"):
+                raise ToolFailure(f"Invalid action {action!r}. Expected 'publish' or 'discard'.")
+
             client = client_getter()
             eff_mgmt = resolve_mgmt_name(client, mgmt_name)
             eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
-            eff_timeout = min(float(timeout), MAX_MCP_API_TIMEOUT_SECONDS) if timeout and timeout > 0 else None
-            res = await client.cpcrud.publish_staged_session(
-                eff_mgmt,
-                eff_domain,
-                session_uid=session_uid.strip(),
-                server_ip=server_ip,
-                timeout=eff_timeout,
-            )
-            known_sids = await collect_known_sids(client, eff_mgmt)
-            if not res.success:
-                raise ToolFailure(
-                    f"cpcrud_publish_staged failed for session {session_uid!r}: "
-                    f"{redact_sid(res.error_message or 'publish failed', known_sids=known_sids)}",
-                    mgmt_name=eff_mgmt,
-                    domain=eff_domain,
+
+            if action == "publish":
+                eff_timeout = min(float(timeout), MAX_MCP_API_TIMEOUT_SECONDS) if timeout and timeout > 0 else None
+                res = await client.cpcrud.publish_staged_session(
+                    eff_mgmt,
+                    eff_domain,
+                    session_uid=session_uid.strip(),
+                    server_ip=server_ip,
+                    timeout=eff_timeout,
+                )
+                known_sids = await collect_known_sids(client, eff_mgmt)
+                if not res.success:
+                    raise ToolFailure(
+                        f"cpcrud_staged_session(action='publish') failed for session {session_uid!r}: "
+                        f"{redact_sid(res.error_message or 'publish failed', known_sids=known_sids)}",
+                        mgmt_name=eff_mgmt,
+                        domain=eff_domain,
+                        known_sids=known_sids,
+                    )
+                return json_tool_result(
+                    {
+                        "mgmt_name": eff_mgmt,
+                        "domain": eff_domain,
+                        "session_uid": session_uid.strip(),
+                        "action": "publish",
+                        "published": True,
+                        "discarded": False,
+                        "data": sanitize_mapping(res.data, known_sids=known_sids),
+                    },
                     known_sids=known_sids,
                 )
-            return json_tool_result(
-                {
-                    "mgmt_name": eff_mgmt,
-                    "domain": eff_domain,
-                    "session_uid": session_uid.strip(),
-                    "published": True,
-                    "data": sanitize_mapping(res.data, known_sids=known_sids),
-                },
-                known_sids=known_sids,
-            )
 
-        @server.tool(
-            name="cpcrud_discard_staged",
-            description=(
-                "Adopt a staged Check Point session (created with keep_session=True) via take-over-session, "
-                "discard uncommitted changes, and log out cleanly."
-            ),
-        )
-        @mcp_tool_guard("cpcrud_discard_staged", client_getter)
-        async def cpcrud_discard_staged(
-            session_uid: str,
-            mgmt_name: str | None = None,
-            domain: str | None = None,
-            server_ip: str | None = None,
-        ) -> CallToolResult:
-            if not session_uid or not session_uid.strip():
-                raise ToolFailure("session_uid must not be empty.")
-            client = client_getter()
-            eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-            eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
             res = await client.cpcrud.discard_staged_session(
                 eff_mgmt,
                 eff_domain,
@@ -2162,7 +1982,7 @@ def register_mcp_tools(
             known_sids = await collect_known_sids(client, eff_mgmt)
             if not res.success:
                 raise ToolFailure(
-                    f"cpcrud_discard_staged failed for session {session_uid!r}: "
+                    f"cpcrud_staged_session(action='discard') failed for session {session_uid!r}: "
                     f"{redact_sid(res.error_message or 'discard failed', known_sids=known_sids)}",
                     mgmt_name=eff_mgmt,
                     domain=eff_domain,
@@ -2173,6 +1993,8 @@ def register_mcp_tools(
                     "mgmt_name": eff_mgmt,
                     "domain": eff_domain,
                     "session_uid": session_uid.strip(),
+                    "action": "discard",
+                    "published": False,
                     "discarded": True,
                     "data": sanitize_mapping(res.data, known_sids=known_sids),
                 },

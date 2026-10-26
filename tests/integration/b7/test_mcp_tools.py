@@ -1,4 +1,4 @@
-"""Bucket 7 — Live MCP tool surface tests (`show_*`, `search_objects`, `query_objects`, `describe_objects`, `cache_status`, `show_access_rulebase`, `show_nat_rulebase`, `change_report`, and `api_call` write gate)."""
+"""Bucket 7 — Live MCP tool surface tests (`list_domains`, `list_objects`, `list_services`, `list_assets`, `show_object`, `search_objects`, `query_objects`, `cache_control`, `show_rulebase`, `change_report`, and `api_call` write gate)."""
 
 from __future__ import annotations
 
@@ -27,18 +27,18 @@ def _text(result: CallToolResult) -> str:
     return first.text
 
 
-async def test_mcp_listing_search_query_and_cache_status_tools(
+async def test_mcp_listing_search_query_and_cache_control_tools(
     apikey_client: ArodonataClient,
     mgmt_name: str,
     test_domain_a: str,
 ) -> None:
-    """Verify ``show_hosts``, ``show_gateways_and_servers``, ``search_objects``, ``describe_objects``, ``query_objects``, and ``cache_status``."""
-    server = create_mcp_server(apikey_client, auth_mode="host", live_compat=True, cpcrud=True)
+    """Verify ``list_objects``, ``list_services``, ``list_assets``, ``show_object``, ``search_objects``, ``query_objects``, and ``cache_control``."""
+    server = create_mcp_server(apikey_client, auth_mode="host", cpcrud=True)
 
-    # 1. show_hosts
+    # 1. list_objects(types=["host"])
     hosts_res = await server.call_tool(
-        "show_hosts",
-        {"mgmt_name": mgmt_name, "domain": test_domain_a, "limit": 10},
+        "list_objects",
+        {"mgmt_name": mgmt_name, "domain": test_domain_a, "types": ["host"], "limit": 10},
     )
     assert isinstance(hosts_res, CallToolResult)
     assert hosts_res.is_error is False
@@ -46,7 +46,7 @@ async def test_mcp_listing_search_query_and_cache_status_tools(
     assert hosts_data["objects"], f"Expected hosts in {test_domain_a}"
     sample_host = hosts_data["objects"][0]
 
-    # 2. show_object
+    # 2. show_object (exact match)
     obj_res = await server.call_tool(
         "show_object",
         {
@@ -59,10 +59,21 @@ async def test_mcp_listing_search_query_and_cache_status_tools(
     assert obj_res.is_error is False
     obj_data = _parse_json(obj_res)
     assert obj_data["object"]["uid"] == sample_host["uid"]
+    assert obj_data["match_type"] == "exact"
 
-    # 3. show_gateways_and_servers
+    # 3. list_services(types=["tcp"])
+    svcs_res = await server.call_tool(
+        "list_services",
+        {"mgmt_name": mgmt_name, "domain": test_domain_a, "types": ["tcp"], "limit": 10},
+    )
+    assert isinstance(svcs_res, CallToolResult)
+    assert svcs_res.is_error is False
+    svcs_data = _parse_json(svcs_res)
+    assert svcs_data["source"] == "cache"
+
+    # 4. list_assets
     gws_res = await server.call_tool(
-        "show_gateways_and_servers",
+        "list_assets",
         {"mgmt_name": mgmt_name, "domain": test_domain_a, "limit": 10},
     )
     assert isinstance(gws_res, CallToolResult)
@@ -70,7 +81,7 @@ async def test_mcp_listing_search_query_and_cache_status_tools(
     gws_data = _parse_json(gws_res)
     assert gws_data["source"] == "cache"
 
-    # 4. search_objects
+    # 5. search_objects
     search_res = await server.call_tool(
         "search_objects",
         {
@@ -85,10 +96,10 @@ async def test_mcp_listing_search_query_and_cache_status_tools(
     search_data = _parse_json(search_res)
     assert any(m["uid"] == sample_host["uid"] for m in search_data["objects"])
 
-    # 5. describe_objects & query_objects
+    # 6. query_objects(aggregate="describe" and aggregate="count")
     desc_res = await server.call_tool(
-        "describe_objects",
-        {"mgmt_name": mgmt_name, "domain": test_domain_a},
+        "query_objects",
+        {"mgmt_name": mgmt_name, "domain": test_domain_a, "aggregate": "describe"},
     )
     assert isinstance(desc_res, CallToolResult)
     assert desc_res.is_error is False
@@ -111,10 +122,10 @@ async def test_mcp_listing_search_query_and_cache_status_tools(
     q_data = _parse_json(q_res)
     assert q_data["total"] >= 1
 
-    # 6. cache_status
+    # 7. cache_control(action="status")
     cs_res = await server.call_tool(
-        "cache_status",
-        {"mgmt_name": mgmt_name, "domain": test_domain_a},
+        "cache_control",
+        {"action": "status", "mgmt_name": mgmt_name, "domain": test_domain_a},
     )
     assert isinstance(cs_res, CallToolResult)
     assert cs_res.is_error is False
@@ -128,24 +139,25 @@ async def test_mcp_rulebase_and_change_report_tools(
     mgmt_name: str,
     test_domain_a: str,
 ) -> None:
-    """Verify ``show_policy_packages``, ``show_access_rulebase`` (cached + live), ``show_nat_rulebase``, and ``change_report``."""
+    """Verify ``show_rulebase`` (catalog discovery + cached access/NAT + live ``show_hits=True``) and ``change_report``."""
     await apikey_client.refresh_rulebases(
         mgmt_name=mgmt_name,
         domains=[test_domain_a],
         mode="force",
     )
-    server = create_mcp_server(apikey_client, auth_mode="host", live_compat=True)
+    server = create_mcp_server(apikey_client, auth_mode="host")
 
-    # 1. show_policy_packages
+    # 1. show_rulebase catalog discovery when package and layer are omitted
     pkgs_res = await server.call_tool(
-        "show_policy_packages",
+        "show_rulebase",
         {"mgmt_name": mgmt_name, "domain": test_domain_a, "cache_mode": "cache"},
     )
     assert isinstance(pkgs_res, CallToolResult)
     assert pkgs_res.is_error is False
     pkgs_data = _parse_json(pkgs_res)
-    assert pkgs_data["objects"], f"Expected policy package in {test_domain_a}"
-    pkg = pkgs_data["objects"][0]
+    assert pkgs_data["mode"] == "catalog"
+    assert pkgs_data["packages"], f"Expected policy package in {test_domain_a}"
+    pkg = pkgs_data["packages"][0]
     layer_name = next(
         (
             lyr["layer_name"]
@@ -155,12 +167,13 @@ async def test_mcp_rulebase_and_change_report_tools(
         pkg["access_layers"][-1]["layer_name"],
     )
 
-    # 2. show_access_rulebase from cache
+    # 2. show_rulebase(rulebase_type="access") from cache
     rb_cached = await server.call_tool(
-        "show_access_rulebase",
+        "show_rulebase",
         {
             "mgmt_name": mgmt_name,
             "domain": test_domain_a,
+            "rulebase_type": "access",
             "layer": layer_name,
             "format": "markdown",
             "cache_mode": "cache",
@@ -173,12 +186,13 @@ async def test_mcp_rulebase_and_change_report_tools(
     assert rb_cached_data["total"] >= 1
     assert rb_cached_data["rendered_text"]
 
-    # 3. show_access_rulebase live path (show_hits=True)
+    # 3. show_rulebase live path (show_hits=True)
     rb_live = await server.call_tool(
-        "show_access_rulebase",
+        "show_rulebase",
         {
             "mgmt_name": mgmt_name,
             "domain": test_domain_a,
+            "rulebase_type": "access",
             "layer": layer_name,
             "show_hits": True,
             "limit": 5,
@@ -189,12 +203,13 @@ async def test_mcp_rulebase_and_change_report_tools(
     rb_live_data = _parse_json(rb_live)
     assert rb_live_data["source"] == "live"
 
-    # 4. show_nat_rulebase from cache
+    # 4. show_rulebase(rulebase_type="nat") from cache
     nat_res = await server.call_tool(
-        "show_nat_rulebase",
+        "show_rulebase",
         {
             "mgmt_name": mgmt_name,
             "domain": test_domain_a,
+            "rulebase_type": "nat",
             "package": pkg["name"],
             "format": "markdown",
             "cache_mode": "cache",
@@ -262,10 +277,11 @@ async def test_mcp_api_call_write_gate_and_domain_validation(
 
     # 3. Unknown domain returns actionable error listing known domains
     unknown_dom = await server.call_tool(
-        "show_hosts",
+        "list_objects",
         {
             "mgmt_name": mgmt_name,
             "domain": "NonExistentDomainXYZ",
+            "types": ["host"],
         },
     )
     assert isinstance(unknown_dom, CallToolResult)

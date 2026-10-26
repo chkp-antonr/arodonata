@@ -24,10 +24,13 @@ from datetime import datetime
 from fnmatch import fnmatchcase
 from typing import Any, Literal
 
+from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
+    CANONICAL_ASSET_TYPES,
     DEFAULT_OBJECT_TYPES,
     CacheMode,
     SyncScope,
+    normalize_any_type,
     to_naive_utc,
     utc_now,
 )
@@ -38,6 +41,7 @@ from arodonata.core.models.objects import (
 )
 from arodonata.core.models.services import CPService
 from arodonata.core.ports import CachePort
+from arodonata.core.services.asset_service import AssetRefreshService
 from arodonata.core.services.object_service import ObjectService
 from arodonata.core.services.service_cache import ServiceCacheService
 from arodonata.core.telemetry import span_attrs, traced
@@ -212,11 +216,13 @@ class SearchService:
         cache: CachePort,
         object_service: ObjectService,
         service_cache: ServiceCacheService | None = None,
+        asset_service: AssetRefreshService | None = None,
         now_fn: Callable[[], datetime] = utc_now,
     ) -> None:
         self._cache = cache
         self._object_service = object_service
         self._service_cache = service_cache
+        self._asset_service = asset_service
         self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
 
     @traced
@@ -377,8 +383,8 @@ class SearchService:
         max_depth: int = 5,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
-    ) -> list[CPObject]:
-        """Return direct (and optionally recursive) member `CPObject` items for a group in `(mgmt_name, domain)`."""
+    ) -> list[CPObject | CPService | Asset]:
+        """Return direct (and optionally recursive) member `CPObject`, `CPService`, or child `Asset` items for a group, service-group, cluster, or VSX container in `(mgmt_name, domain)`."""
         all_objs = await self._object_service.get_objects(
             mgmt_name=mgmt_name,
             domain=domain,
@@ -399,28 +405,119 @@ class SearchService:
                         target_group = obj
                         break
 
-        if target_group is None:
-            return []
+        if target_group is not None:
+            members: list[CPObject | CPService | Asset] = []
+            seen_uids: set[str] = {target_group.uid}
+            queue: deque[tuple[str, int]] = deque((m_uid, 1) for m_uid in target_group.members)
 
-        members: list[CPObject] = []
-        seen_uids: set[str] = {target_group.uid}
-        queue: deque[tuple[str, int]] = deque((m_uid, 1) for m_uid in target_group.members)
+            while queue:
+                m_uid, depth = queue.popleft()
+                if m_uid in seen_uids:
+                    continue
+                seen_uids.add(m_uid)
+                member_obj = by_uid.get(m_uid)
+                if member_obj is None:
+                    continue
+                members.append(member_obj)
+                if recursive and depth < max_depth and member_obj.members:
+                    for child_uid in member_obj.members:
+                        if child_uid not in seen_uids:
+                            queue.append((child_uid, depth + 1))
 
-        while queue:
-            m_uid, depth = queue.popleft()
-            if m_uid in seen_uids:
-                continue
-            seen_uids.add(m_uid)
-            member_obj = by_uid.get(m_uid)
-            if member_obj is None:
-                continue
-            members.append(member_obj)
-            if recursive and depth < max_depth and member_obj.members:
-                for child_uid in member_obj.members:
-                    if child_uid not in seen_uids:
-                        queue.append((child_uid, depth + 1))
+            return members
 
-        return members
+        # 2. Check arodonata_services for a matching service-group
+        if self._service_cache is not None:
+            all_svcs = await self._service_cache.get_services(
+                mgmt_name=mgmt_name,
+                domain=domain,
+                include_global=(domain == "Global"),
+                cache_mode=cache_mode,
+                cache_ttl=cache_ttl,
+            )
+        else:
+            all_svcs = await self._cache.get_services(mgmt_name=mgmt_name, domain_name=domain)
+            all_svcs = ServiceCacheService.apply_context_overlay(all_svcs, mgmt_name=mgmt_name, domain_name=domain)
+
+        svc_by_uid: dict[str, CPService] = {s.uid: s for s in all_svcs}
+        target_svc_group: CPService | None = svc_by_uid.get(group_name_or_uid)
+        if target_svc_group is None:
+            for svc in all_svcs:
+                if svc.name == group_name_or_uid and (svc.type == "service-group" or svc.members):
+                    target_svc_group = svc
+                    break
+            if target_svc_group is None:
+                for svc in all_svcs:
+                    if svc.name == group_name_or_uid:
+                        target_svc_group = svc
+                        break
+
+        if target_svc_group is not None:
+            svc_members: list[CPObject | CPService | Asset] = []
+            seen_svc_uids: set[str] = {target_svc_group.uid}
+            svc_queue: deque[tuple[str, int]] = deque((m_uid, 1) for m_uid in target_svc_group.members)
+
+            while svc_queue:
+                m_uid, depth = svc_queue.popleft()
+                if m_uid in seen_svc_uids:
+                    continue
+                seen_svc_uids.add(m_uid)
+                member_svc = svc_by_uid.get(m_uid)
+                if member_svc is None:
+                    continue
+                svc_members.append(member_svc)
+                if recursive and depth < max_depth and member_svc.members:
+                    for child_uid in member_svc.members:
+                        if child_uid not in seen_svc_uids:
+                            svc_queue.append((child_uid, depth + 1))
+
+            return svc_members
+
+        # 3. Check arodonata_assets for a matching cluster or VSX container
+        if self._asset_service is not None:
+            all_assets = await self._asset_service.get_assets(
+                mgmt_name=mgmt_name,
+                domain=domain,
+                include_global=(domain == "Global"),
+                cache_mode=cache_mode,
+                cache_ttl=cache_ttl,
+            )
+        else:
+            all_assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=domain)
+
+        asset_by_uid: dict[str, Asset] = {a.uid: a for a in all_assets}
+        target_asset: Asset | None = asset_by_uid.get(group_name_or_uid)
+        needle_lower = group_name_or_uid.strip().lower()
+        if target_asset is None:
+            for asset in all_assets:
+                if asset.name == group_name_or_uid or asset.name.lower() == needle_lower:
+                    target_asset = asset
+                    break
+
+        if target_asset is not None:
+            child_uids: list[str] = []
+            for cuid in [*target_asset.member_uids, *target_asset.virtual_system_uids]:
+                if cuid and cuid not in child_uids:
+                    child_uids.append(cuid)
+            for asset in all_assets:
+                if (
+                    asset.uid != target_asset.uid
+                    and asset.uid not in child_uids
+                    and (
+                        asset.parent_uid == target_asset.uid
+                        or (asset.parent_name and asset.parent_name.lower() == target_asset.name.lower())
+                    )
+                ):
+                    child_uids.append(asset.uid)
+
+            asset_members: list[CPObject | CPService | Asset] = []
+            for cuid in child_uids:
+                child_asset = asset_by_uid.get(cuid)
+                if child_asset is not None:
+                    asset_members.append(child_asset)
+            return asset_members
+
+        return []
 
     @traced
     async def describe_objects(
@@ -430,18 +527,21 @@ class SearchService:
         domain_name: str | None = None,
         include_global: bool = True,
     ) -> dict[str, Any]:
-        """Return progressive-disclosure schema and summary counts for cached objects and services."""
+        """Return progressive-disclosure schema and summary counts for cached objects, services, and assets."""
         objects = await self._cache.get_objects(mgmt_name=mgmt_name, domain_name=domain_name)
         services = await self._cache.get_services(mgmt_name=mgmt_name, domain_name=domain_name)
+        assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=domain_name)
         if not include_global and domain_name is None:
             objects = [o for o in objects if o.domain_name != "Global"]
             services = [s for s in services if s.domain_name != "Global"]
+            assets = [a for a in assets if a.domain_name != "Global"]
 
         objects = ObjectService.apply_context_overlay(objects, mgmt_name=mgmt_name, domain_name=domain_name)
         services = ServiceCacheService.apply_context_overlay(services, mgmt_name=mgmt_name, domain_name=domain_name)
 
         obj_type_counts: dict[str, int] = defaultdict(int)
         svc_type_counts: dict[str, int] = defaultdict(int)
+        asset_type_counts: dict[str, int] = defaultdict(int)
         domains_seen: set[str] = set()
         mgmts_seen: set[str] = set()
 
@@ -455,13 +555,20 @@ class SearchService:
             domains_seen.add(s.domain_name)
             mgmts_seen.add(s.mgmt_name)
 
+        for a in assets:
+            asset_type_counts[a.type] += 1
+            domains_seen.add(a.domain_name)
+            mgmts_seen.add(a.mgmt_name)
+
         return {
             "total_objects": len(objects),
             "total_services": len(services),
+            "total_assets": len(assets),
             "mgmt_names": sorted(mgmts_seen),
             "domains": sorted(domains_seen),
             "object_types": dict(sorted(obj_type_counts.items())),
             "service_types": dict(sorted(svc_type_counts.items())),
+            "asset_types": dict(sorted(asset_type_counts.items())),
             "filterable_fields": [
                 "mgmt_name",
                 "domain_name",
@@ -502,30 +609,45 @@ class SearchService:
         tags: Sequence[str] | None = None,
         include_global: bool = False,
         group_by: Sequence[str] | None = None,
-        aggregate: Literal["count", "list"] = "list",
+        aggregate: Literal["count", "list", "describe"] = "list",
         limit: int = 100,
         offset: int = 0,
         cache_mode: CacheMode = "cache",
         cache_ttl: float | None = None,
     ) -> dict[str, Any]:
-        """Execute structured cross-domain filtering, grouping, and counting over cached objects and services."""
+        """Execute structured cross-domain filtering, grouping, counting, or schema description over cached objects, services, and assets."""
         span_attrs(mgmt_name=mgmt_name, domain=domain_name, aggregate=aggregate, cache_mode=cache_mode)
-
-        requested_types = [t.strip().lower() for t in types] if types is not None else None
-        want_objects = requested_types is None or any(not t.startswith("service-") for t in requested_types)
-        want_services = requested_types is not None and any(t.startswith("service-") for t in requested_types)
-        if requested_types is None and (port is not None or protocol is not None):
-            want_services = True
 
         target_domains = list(domains) if domains is not None else ([domain_name] if domain_name else None)
         want_global_dom = (
             include_global or domain_name == "Global" or (target_domains is not None and "Global" in target_domains)
         )
 
+        if aggregate == "describe":
+            return await self.describe_objects(
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                include_global=True if domain_name is not None else include_global,
+            )
+
+        canonical_asset_types_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
+        requested_types = [normalize_any_type(t) for t in types] if types is not None else None
+        want_objects = requested_types is None or any(
+            not t.startswith("service-") and t not in canonical_asset_types_lower for t in requested_types
+        )
+        want_services = requested_types is not None and any(t.startswith("service-") for t in requested_types)
+        want_assets = requested_types is not None and any(t in canonical_asset_types_lower for t in requested_types)
+        if requested_types is None and (port is not None or protocol is not None):
+            want_services = True
+
         if cache_mode != "cache":
             if want_objects:
                 obj_types = (
-                    [t for t in requested_types if not t.startswith("service-")]
+                    [
+                        t
+                        for t in requested_types
+                        if not t.startswith("service-") and t not in canonical_asset_types_lower
+                    ]
                     if requested_types is not None
                     else None
                 )
@@ -549,8 +671,16 @@ class SearchService:
                     mode=cache_mode,
                     cache_ttl=cache_ttl,
                 )
+            if want_assets and self._asset_service is not None:
+                await self._asset_service.refresh_assets(
+                    mgmt_name=mgmt_name,
+                    domains=target_domains,
+                    include_global=want_global_dom,
+                    mode=cache_mode,
+                    cache_ttl=cache_ttl,
+                )
 
-        combined_items: list[CPObject | CPService] = []
+        combined_items: list[CPObject | CPService | Asset] = []
 
         if want_objects:
             objs = await self._cache.get_objects(mgmt_name=mgmt_name, domain_name=domain_name)
@@ -561,6 +691,10 @@ class SearchService:
             svcs = await self._cache.get_services(mgmt_name=mgmt_name, domain_name=domain_name)
             svcs = ServiceCacheService.apply_context_overlay(svcs, mgmt_name=mgmt_name, domain_name=domain_name)
             combined_items.extend(svcs)
+
+        if want_assets:
+            assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=domain_name)
+            combined_items.extend(assets)
 
         # Apply filters
         if target_domains is not None:
@@ -577,14 +711,18 @@ class SearchService:
             combined_items = [
                 item
                 for item in combined_items
-                if (item.original_domain or item.domain_name) == item.domain_name and item.original_domain != "Global"
+                if (getattr(item, "original_domain", None) or item.domain_name) == item.domain_name
+                and getattr(item, "original_domain", None) != "Global"
             ]
         elif scope_origin == "global":
             combined_items = [
                 item
                 for item in combined_items
-                if item.original_domain == "Global"
-                or (item.original_domain is not None and item.original_domain != item.domain_name)
+                if getattr(item, "original_domain", None) == "Global"
+                or (
+                    getattr(item, "original_domain", None) is not None
+                    and getattr(item, "original_domain", None) != item.domain_name
+                )
             ]
 
         if name_pattern:
@@ -599,7 +737,10 @@ class SearchService:
         if ip_subnet:
             ip_term = classify_search_term(ip_subnet)
             combined_items = [
-                item for item in combined_items if isinstance(item, CPObject) and matches_classified_term(item, ip_term)
+                item
+                for item in combined_items
+                if (isinstance(item, CPObject) and matches_classified_term(item, ip_term))
+                or (isinstance(item, Asset) and item.ipv4_address == ip_subnet.strip())
             ]
 
         if port is not None:
@@ -616,7 +757,9 @@ class SearchService:
 
         if tags:
             tag_set = {t.lower() for t in tags}
-            combined_items = [item for item in combined_items if any(t.lower() in tag_set for t in item.tags)]
+            combined_items = [
+                item for item in combined_items if any(t.lower() in tag_set for t in getattr(item, "tags", ()))
+            ]
 
         # Grouping
         if group_by:

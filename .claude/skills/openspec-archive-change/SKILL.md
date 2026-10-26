@@ -41,16 +41,14 @@ In both branches, never create the root as a side effect: do not run `openspec i
    When prompting, show only active changes (not already archived).
    Include the schema used for each change if available.
 
-   Always announce: "Using change: <name>" and how to override (e.g., `/opsx:archive <other>`).
+   Always announce: "Using change: <name>" and how to override (e.g., `/openspec-archive-change <other>`).
 
    **Load current archive inputs before the existing archive checks:**
 
    After resolving the selected change and planning root, run:
-
    ```bash
    openspec instructions archive --change "<name>" --json
    ```
-
    Keep the same selected-root flags on this command. This lookup is advisory and
    optional: it only supplies extra prompt inputs, so it must never block archiving.
    If it exits non-zero or returns invalid JSON — for example on an older CLI that
@@ -171,7 +169,6 @@ In both branches, never create the root as a side effect: do not run `openspec i
 5. **Perform the archive**
 
    Create an `archive` directory under `planningHome.changesDir` if it doesn't exist:
-
    ```bash
    mkdir -p "<planningHome.changesDir>/archive"
    ```
@@ -209,7 +206,6 @@ In both branches, never create the root as a side effect: do not run `openspec i
 ```
 
 **Guardrails**
-
 - Announce the selected change; prompt for selection when it is ambiguous
 - Use artifact graph (openspec status --json) for completion checking
 - Don't block archive on warnings - just inform and confirm

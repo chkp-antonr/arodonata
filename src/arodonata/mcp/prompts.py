@@ -20,8 +20,8 @@ def register_mcp_prompts(server: MCPServer) -> None:
         dom_part = f" in domain '{domain}'" if domain else ""
         return (
             f"Audit the Check Point access rulebase for package '{package}' on server '{mgmt_name}'{dom_part}:\n"
-            "1. Call `cache_status` to check the freshness of the 'rulebase', 'objects', and 'services' scopes.\n"
-            "2. Call `show_access_rulebase` with `format='model_friendly'` to inspect numbered rules.\n"
+            "1. Call `cache_control(action='status')` to check the freshness of the 'rulebase', 'objects', and 'services' scopes.\n"
+            "2. Call `show_rulebase` with `rulebase_type='access'` and `format='model_friendly'` to inspect numbered rules.\n"
             "3. Highlight overly permissive rules (`Any -> Any [Any] => Accept`), disabled rules, and rules missing comments."
         )
 
@@ -38,8 +38,8 @@ def register_mcp_prompts(server: MCPServer) -> None:
         return (
             f"Investigate Check Point policy exposure for '{ip_or_subnet}' on server '{mgmt_name}'{dom_part}:\n"
             f"1. Call `search_objects(query='{ip_or_subnet}', include_global=True)` to find matching hosts, subnets, ranges, and parent groups.\n"
-            f"2. Call `show_access_rulebase(filter='{ip_or_subnet}', format='model_friendly')` to locate matching access rules.\n"
-            f"3. Call `show_nat_rulebase(filter='{ip_or_subnet}', format='model_friendly')` to locate matching NAT translations."
+            f"2. Call `show_rulebase(rulebase_type='access', filter='{ip_or_subnet}', format='model_friendly')` to locate matching access rules.\n"
+            f"3. Call `show_rulebase(rulebase_type='nat', filter='{ip_or_subnet}', format='model_friendly')` to locate matching NAT translations."
         )
 
     @server.prompt(

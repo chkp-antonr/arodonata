@@ -33,27 +33,29 @@ async def test_mcp_server_smoke_and_asgi_factory(
     tools = await server.list_tools()
     tool_names = {t.name for t in tools}
     expected_tools = {
-        "show_domains",
-        "show_hosts",
-        "show_networks",
-        "show_gateways_and_servers",
-        "show_policy_packages",
-        "show_access_rulebase",
-        "show_nat_rulebase",
+        "list_domains",
+        "list_objects",
+        "list_services",
+        "list_assets",
+        "show_object",
+        "show_rulebase",
+        "locate_rules",
         "search_objects",
+        "get_group_members",
         "query_objects",
-        "describe_objects",
-        "cache_status",
+        "cache_control",
         "change_report",
         "api_call",
-        "where_used",
         "cpcrud_validate",
         "cpcrud_plan",
+        "cpcrud_apply",
+        "cpcrud_inverse",
+        "cpcrud_staged_session",
     }
     assert expected_tools <= tool_names
 
-    # 1. show_domains
-    dom_res = await server.call_tool("show_domains", {"mgmt_name": mgmt_name})
+    # 1. list_domains
+    dom_res = await server.call_tool("list_domains", {"mgmt_name": mgmt_name})
     assert isinstance(dom_res, CallToolResult)
     assert dom_res.is_error is False
     dom_data = _parse_json(dom_res)
@@ -61,10 +63,10 @@ async def test_mcp_server_smoke_and_asgi_factory(
     domain_names = {d["name"] for d in dom_data["objects"]}
     assert test_domain_a in domain_names
 
-    # 2. show_hosts in TEST_DOMAIN_A
+    # 2. list_objects(types=["host"]) in TEST_DOMAIN_A
     hosts_res = await server.call_tool(
-        "show_hosts",
-        {"mgmt_name": mgmt_name, "domain": test_domain_a, "limit": 5},
+        "list_objects",
+        {"mgmt_name": mgmt_name, "domain": test_domain_a, "types": ["host"], "limit": 5},
     )
     assert isinstance(hosts_res, CallToolResult)
     assert hosts_res.is_error is False

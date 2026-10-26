@@ -2,13 +2,21 @@
 
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
+    ASSET_TYPE_ALIASES,
+    CANONICAL_ASSET_TYPES,
     DEFAULT_OBJECT_TYPES,
     DEFAULT_SERVICE_TYPES,
+    OBJECT_TYPE_ALIASES,
+    SERVICE_TYPE_ALIASES,
     ApiCallResult,
     ApiQueryResult,
     CacheMode,
     SyncScope,
     SyncStatus,
+    normalize_any_type,
+    normalize_asset_type,
+    normalize_object_type,
+    normalize_service_type,
     to_naive_utc,
     utc_now,
 )
@@ -37,10 +45,12 @@ from arodonata.core.models.rulebase import (
 from arodonata.core.models.services import CPService
 
 __all__ = [
+    "ASSET_TYPE_ALIASES",
     "AccessRuleEntry",
     "ApiCallResult",
     "ApiQueryResult",
     "Asset",
+    "CANONICAL_ASSET_TYPES",
     "CPObject",
     "CPService",
     "CacheMode",
@@ -52,16 +62,22 @@ __all__ = [
     "GroupMembershipNode",
     "HttpsRuleEntry",
     "NatRuleEntry",
+    "OBJECT_TYPE_ALIASES",
     "RefreshOutcome",
     "RulebaseLayerEntry",
     "RulebasePackageLayerEntry",
     "RulebaseSectionEntry",
     "RulebaseType",
+    "SERVICE_TYPE_ALIASES",
     "SIDCacheEntry",
     "SearchResult",
     "SyncScope",
     "SyncStatus",
     "ThreatRuleEntry",
+    "normalize_any_type",
+    "normalize_asset_type",
+    "normalize_object_type",
+    "normalize_service_type",
     "to_naive_utc",
     "utc_now",
 ]

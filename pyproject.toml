@@ -4,8 +4,33 @@ version = "2.0.0a0"
 description = "Async-first Python 3.13+ library and SDK for Check Point Security Management and MDSM operations"
 readme = "README.md"
 requires-python = ">=3.13"
+license = { text = "MIT" }
 authors = [
-    { name = "Anton R." }
+    { name = "Anton Razumov", email = "arazumov@checkpoint.com" }
+]
+keywords = [
+    "checkpoint",
+    "api",
+    "async",
+    "mdsm",
+    "management",
+    "security",
+    "mcp",
+    "policy-as-code",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Networking :: Firewalls",
+    "Topic :: System :: Systems Administration",
+    "Typing :: Typed",
 ]
 dependencies = [
     "aiohttp>=3.11.0",

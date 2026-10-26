@@ -1,5 +1,6 @@
-"""Comprehensive unit tests for the Arodonata MCP tool surface, envelopes, rulebase switching,
-domain pre-validation, `InvalidCredentialsError` mapping, and write/SID guards.
+"""Comprehensive unit tests for the consolidated Arodonata MCP tool surface, cache-aligned envelopes,
+three-tier `show_object` matching, `show_rulebase` catalog discovery and local filtering,
+domain pre-validation, `InvalidCredentialsError` mapping, and write/SID/CPCRUD guards.
 """
 
 from __future__ import annotations
@@ -292,6 +293,13 @@ class MCPFakeApi:
                         "domain": {"name": domain or "Corp"},
                     },
                     {
+                        "uid": "h-2",
+                        "name": "web-srv-2",
+                        "type": "host",
+                        "ipv4-address": "10.10.1.11",
+                        "domain": {"name": domain or "Corp"},
+                    },
+                    {
                         "uid": "h-glob-1",
                         "name": "global-dns-1",
                         "type": "host",
@@ -299,7 +307,7 @@ class MCPFakeApi:
                         "domain": {"name": "Global"},
                     },
                 ],
-                total=2,
+                total=3,
             )
         if command == "show-networks":
             return ApiQueryResult(
@@ -354,9 +362,27 @@ class MCPFakeApi:
                         "name": "corp-gw-01",
                         "type": "simple-gateway",
                         "ipv4-address": "10.10.0.1",
-                    }
+                        "interfaces": [{"name": "eth0", "ipv4-address": "10.10.0.1"}],
+                        "network-security-blades": {"firewall": True},
+                    },
+                    {
+                        "uid": "cl-corp-1",
+                        "name": "corp-cluster-01",
+                        "type": "simple-cluster",
+                        "ipv4-address": "10.10.0.10",
+                        "cluster-members": [
+                            {"uid": "cm-1", "name": "corp-cluster-01-m1", "type": "cluster-member"},
+                            {"uid": "cm-2", "name": "corp-cluster-01-m2", "type": "cluster-member"},
+                        ],
+                    },
+                    {
+                        "uid": "srv-mgmt-1",
+                        "name": "corp-cma-srv",
+                        "type": "checkpoint-host",
+                        "ipv4-address": "10.1.0.1",
+                    },
                 ],
-                total=1,
+                total=3,
             )
         return ApiQueryResult(success=True, objects=[], total=0)
 
@@ -407,18 +433,51 @@ def _get_tool_text(result: CallToolResult) -> str:
 
 
 @pytest.mark.asyncio
-async def test_cached_list_tools_envelopes_and_show_domains_standard_fields() -> None:
-    """Scenario: List tool response envelope includes `from`, `to`, `total`, `source`, and `cache_age_seconds`,
-    and `show_domains` preserves server-level fields at `details_level="standard"`.
+async def test_consolidated_tool_count_and_cached_list_tools_envelopes() -> None:
+    """Verify the consolidated tool surface (13 base tools, 18 with `cpcrud=True`),
+    `list_*` envelopes (`from`, `to`, `total`, `source`, `cache_age_seconds`),
+    short type alias normalization, and `list_assets(parent=...)` filtering.
     """
     fake_api = MCPFakeApi()
     settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
 
     async with ArodonataClient(settings, api=fake_api) as client:
-        server = create_mcp_server(client, auth_mode="host")
+        base_server = create_mcp_server(client, auth_mode="host", cpcrud=False)
+        base_tools = await base_server.list_tools()
+        base_tool_names = {t.name for t in base_tools}
+        assert len(base_tool_names) == 13
+        assert base_tool_names == {
+            "list_domains",
+            "list_objects",
+            "list_services",
+            "list_assets",
+            "show_object",
+            "show_rulebase",
+            "locate_rules",
+            "search_objects",
+            "get_group_members",
+            "query_objects",
+            "cache_control",
+            "change_report",
+            "api_call",
+        }
 
-        # 1. show_domains preserves server-level fields (`servers`, `color`, `comments`)
-        dom_res = await server.call_tool("show_domains", {"mgmt_name": "mds1", "details_level": "standard"})
+        cpcrud_server = create_mcp_server(client, auth_mode="host", cpcrud=True)
+        cpcrud_tools = await cpcrud_server.list_tools()
+        cpcrud_tool_names = {t.name for t in cpcrud_tools}
+        assert len(cpcrud_tool_names) == 18
+        assert cpcrud_tool_names - base_tool_names == {
+            "cpcrud_validate",
+            "cpcrud_plan",
+            "cpcrud_apply",
+            "cpcrud_inverse",
+            "cpcrud_staged_session",
+        }
+
+        server = base_server
+
+        # 1. list_domains preserves server-level fields (`servers`, `color`, `comments`)
+        dom_res = await server.call_tool("list_domains", {"mgmt_name": "mds1", "details_level": "standard"})
         assert isinstance(dom_res, CallToolResult)
         assert dom_res.is_error is False
         dom_data = _parse_tool_json(dom_res)
@@ -433,57 +492,149 @@ async def test_cached_list_tools_envelopes_and_show_domains_standard_fields() ->
         assert corp_dom["servers"][0]["name"] == "corp-cma-1"
         assert corp_dom["active_ip"] == "10.1.0.1"
 
-        # 2. show_hosts, show_networks, show_services, show_groups, show_gateways_and_servers, show_object
-        hosts_res = await server.call_tool("show_hosts", {"mgmt_name": "mds1", "domain": "Corp"})
+        # 2. list_objects with types=["host"], types=["network"], types=["group"]
+        hosts_res = await server.call_tool(
+            "list_objects",
+            {"mgmt_name": "mds1", "domain": "Corp", "types": ["host"]},
+        )
         assert isinstance(hosts_res, CallToolResult)
         hosts_data = _parse_tool_json(hosts_res)
         assert hosts_data["from"] == 1
-        assert hosts_data["to"] == 2
-        assert hosts_data["total"] == 2
+        assert hosts_data["to"] == 3
+        assert hosts_data["total"] == 3
         assert hosts_data["source"] == "cache"
         assert isinstance(hosts_data["cache_age_seconds"], float)
 
-        nets_res = await server.call_tool("show_networks", {"mgmt_name": "mds1", "domain": "Corp"})
-        assert isinstance(nets_res, CallToolResult)
+        nets_res = await server.call_tool(
+            "list_objects",
+            {"mgmt_name": "mds1", "domain": "Corp", "types": ["network"]},
+        )
         nets_data = _parse_tool_json(nets_res)
         assert nets_data["total"] == 1
         assert nets_data["source"] == "cache"
-        assert isinstance(nets_data["cache_age_seconds"], float)
 
-        svcs_res = await server.call_tool("show_services", {"mgmt_name": "mds1", "domain": "Corp"})
-        assert isinstance(svcs_res, CallToolResult)
+        grps_res = await server.call_tool(
+            "list_objects",
+            {"mgmt_name": "mds1", "domain": "Corp", "types": ["group"]},
+        )
+        grps_data = _parse_tool_json(grps_res)
+        assert grps_data["total"] == 1
+        assert grps_data["objects"][0]["name"] == "grp-web-servers"
+
+        # 3. list_services with short alias types=["tcp"]
+        svcs_res = await server.call_tool(
+            "list_services",
+            {"mgmt_name": "mds1", "domain": "Corp", "types": ["tcp"]},
+        )
         svcs_data = _parse_tool_json(svcs_res)
         assert svcs_data["total"] == 1
         assert svcs_data["objects"][0]["name"] == "https"
         assert svcs_data["source"] == "cache"
 
-        grps_res = await server.call_tool("show_groups", {"mgmt_name": "mds1", "domain": "Corp"})
-        assert isinstance(grps_res, CallToolResult)
-        grps_data = _parse_tool_json(grps_res)
-        assert grps_data["total"] == 1
-        assert grps_data["objects"][0]["name"] == "grp-web-servers"
-
-        gws_res = await server.call_tool("show_gateways_and_servers", {"mgmt_name": "mds1", "domain": "Corp"})
-        assert isinstance(gws_res, CallToolResult)
-        gws_data = _parse_tool_json(gws_res)
-        assert gws_data["total"] == 1
-        assert gws_data["objects"][0]["name"] == "corp-gw-01"
-
-        obj_res = await server.call_tool(
-            "show_object",
-            {"uid_or_name": "web-srv-1", "mgmt_name": "mds1", "domain": "Corp"},
+        # 4. list_assets with alias types=["gateway", "server"] and parent="corp-cluster-01"
+        assets_res = await server.call_tool(
+            "list_assets",
+            {"mgmt_name": "mds1", "domain": "Corp", "types": ["gateway", "server"]},
         )
-        assert isinstance(obj_res, CallToolResult)
-        obj_data = _parse_tool_json(obj_res)
-        assert obj_data["source"] == "cache"
-        assert obj_data["object"]["uid"] == "h-1"
-        assert isinstance(obj_data["cache_age_seconds"], float)
+        assets_data = _parse_tool_json(assets_res)
+        assert {a["name"] for a in assets_data["objects"]} == {"corp-gw-01", "corp-cma-srv"}
+
+        members_res = await server.call_tool(
+            "list_assets",
+            {"mgmt_name": "mds1", "domain": "Corp", "parent": "corp-cluster-01"},
+        )
+        members_data = _parse_tool_json(members_res)
+        assert [a["name"] for a in members_data["objects"]] == ["corp-cluster-01-m1", "corp-cluster-01-m2"]
+
+        # 5. get_group_members works on cluster assets as well as network groups
+        cl_members_res = await server.call_tool(
+            "get_group_members",
+            {"group_name_or_uid": "corp-cluster-01", "mgmt_name": "mds1", "domain": "Corp"},
+        )
+        cl_members_data = _parse_tool_json(cl_members_res)
+        assert [m["name"] for m in cl_members_data["objects"]] == ["corp-cluster-01-m1", "corp-cluster-01-m2"]
 
 
 @pytest.mark.asyncio
-async def test_describe_objects_query_objects_and_cache_status_tools() -> None:
-    """Scenario: Aggregate object counts across domains in a single tool call (`query_objects` distinguishing
-    domain-owned vs Global via `original_domain`) and inspect `cache_status` across scopes.
+async def test_show_object_three_tier_matching_and_pagination() -> None:
+    """Verify `show_object` resolves across objects, services, assets, and layers with:
+    - Tier 1: exact match (`match_type="exact"`, full details including asset `interfaces` and `network_security_blades`);
+    - Tier 2: strict anchored wildcard (`*` or `?`) via `fnmatchcase` without implicit prefix/suffix `*`;
+    - Tier 3: bounded substring candidate fallback (`match_type="substring_candidates"`, paginated by `limit` and `offset`).
+    """
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        server = create_mcp_server(client, auth_mode="host")
+        await client.refresh_rulebases(mgmt_name="mds1", domains=["Corp"])
+
+        # Tier 1: Exact match on gateway asset returns cached interfaces and blades without extra live call
+        gw_res = await server.call_tool(
+            "show_object",
+            {"uid_or_name": "corp-gw-01", "mgmt_name": "mds1", "domain": "Corp"},
+        )
+        assert gw_res.is_error is False
+        gw_data = _parse_tool_json(gw_res)
+        assert gw_data["match_type"] == "exact"
+        assert gw_data["total"] == 1
+        assert gw_data["object"]["uid"] == "gw-corp-1"
+        assert gw_data["object"]["interfaces"][0]["name"] == "eth0"
+        assert gw_data["object"]["network_security_blades"]["firewall"] is True
+
+        # Tier 1: Exact match on rulebase layer
+        lyr_res = await server.call_tool(
+            "show_object",
+            {"uid_or_name": "Network", "mgmt_name": "mds1", "domain": "Corp", "obj_type": "layer"},
+        )
+        assert lyr_res.is_error is False
+        lyr_data = _parse_tool_json(lyr_res)
+        assert lyr_data["match_type"] == "exact"
+        assert lyr_data["object"]["uid"] == "lay-net"
+
+        # Tier 2: Explicit wildcard (`web*1`) is anchored strictly as written (matches `web-srv-1`, NOT `web-srv-2`)
+        wild_single = await server.call_tool(
+            "show_object",
+            {"uid_or_name": "web*1", "mgmt_name": "mds1", "domain": "Corp"},
+        )
+        assert wild_single.is_error is False
+        wild_single_data = _parse_tool_json(wild_single)
+        assert wild_single_data["match_type"] == "wildcard"
+        assert wild_single_data["total"] == 1
+        assert wild_single_data["object"]["name"] == "web-srv-1"
+
+        # Tier 2: Explicit wildcard matching multiple objects (`web-srv-*`) with pagination (`limit=1, offset=1`)
+        wild_multi = await server.call_tool(
+            "show_object",
+            {"uid_or_name": "web-srv-*", "mgmt_name": "mds1", "domain": "Corp", "limit": 1, "offset": 1},
+        )
+        assert wild_multi.is_error is False
+        wild_multi_data = _parse_tool_json(wild_multi)
+        assert wild_multi_data["match_type"] == "wildcard"
+        assert wild_multi_data["total"] == 2
+        assert wild_multi_data["from"] == 2
+        assert wild_multi_data["to"] == 2
+        assert [o["name"] for o in wild_multi_data["objects"]] == ["web-srv-2"]
+
+        # Tier 3: Substring candidate fallback when no exact match exists ("web" matches web-srv-1, web-srv-2, net-web, grp-web-servers)
+        sub_res = await server.call_tool(
+            "show_object",
+            {"uid_or_name": "web", "mgmt_name": "mds1", "domain": "Corp", "limit": 2, "offset": 0},
+        )
+        assert sub_res.is_error is False
+        sub_data = _parse_tool_json(sub_res)
+        assert sub_data["match_type"] == "substring_candidates"
+        assert sub_data["total"] == 4
+        assert sub_data["from"] == 1
+        assert sub_data["to"] == 2
+        assert len(sub_data["objects"]) == 2
+        assert "hint" in sub_data
+
+
+@pytest.mark.asyncio
+async def test_query_objects_describe_and_cache_control_tools() -> None:
+    """Scenario: Aggregate object counts across domains in a single tool call (`query_objects` supporting
+    `aggregate='describe'`, `'count'`, `'list'`) and inspect/refresh via `cache_control(action='status'|'refresh')`.
     """
     fake_api = MCPFakeApi()
     settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
@@ -491,21 +642,35 @@ async def test_describe_objects_query_objects_and_cache_status_tools() -> None:
     async with ArodonataClient(settings, api=fake_api) as client:
         server = create_mcp_server(client, auth_mode="host")
 
-        # Warm objects, services, assets, rulebase in Corp and Branch
-        await client.get_hosts("mds1", "Corp")
-        await client.get_networks("mds1", "Corp")
-        await client.get_hosts("mds1", "Branch")
-        await client.get_services("mds1", "Corp")
-        await client.get_gateways("mds1", "Corp")
-        await client.refresh_rulebases(mgmt_name="mds1", domains=["Corp"])
+        # Warm objects, services, assets, rulebase in Corp and Branch via cache_control(action="refresh")
+        await server.call_tool(
+            "cache_control",
+            {"action": "refresh", "mgmt_name": "mds1", "domains": ["Corp", "Branch"], "scope": "objects"},
+        )
+        await server.call_tool(
+            "cache_control",
+            {"action": "refresh", "mgmt_name": "mds1", "domain": "Corp", "scope": "services"},
+        )
+        await server.call_tool(
+            "cache_control",
+            {"action": "refresh", "mgmt_name": "mds1", "domain": "Corp", "scope": "assets"},
+        )
+        await server.call_tool(
+            "cache_control",
+            {"action": "refresh", "mgmt_name": "mds1", "domain": "Corp", "scope": "rulebase"},
+        )
 
-        # 1. describe_objects
-        desc_res = await server.call_tool("describe_objects", {"mgmt_name": "mds1"})
+        # 1. query_objects with aggregate="describe"
+        desc_res = await server.call_tool(
+            "query_objects",
+            {"mgmt_name": "mds1", "include_global": True, "aggregate": "describe"},
+        )
         assert isinstance(desc_res, CallToolResult)
         desc_data = _parse_tool_json(desc_res)
         assert "Corp" in desc_data["domains"]
         assert "Branch" in desc_data["domains"]
-        assert desc_data["object_types"]["host"] == 4  # 2 in Corp + 2 in Branch (each has 1 local + 1 Global)
+        assert desc_data["object_types"]["host"] == 6  # 3 in Corp + 3 in Branch
+        assert desc_data["asset_types"]["simple-gateway"] == 1
         assert "original_domain" in desc_data["groupable_fields"]
 
         # 2. query_objects with group_by=["domain_name", "type"], aggregate="count"
@@ -520,12 +685,12 @@ async def test_describe_objects_query_objects_and_cache_status_tools() -> None:
         )
         assert isinstance(agg_res, CallToolResult)
         agg_data = _parse_tool_json(agg_res)
-        assert agg_data["total"] == 5
+        assert agg_data["total"] == 8
         assert agg_data["group_by"] == ["domain_name", "type"]
         groups_map = {(g["domain_name"], g["type"]): g["count"] for g in agg_data["groups"]}
-        assert groups_map[("Corp", "host")] == 2
+        assert groups_map[("Corp", "host")] == 3
         assert groups_map[("Corp", "network")] == 1
-        assert groups_map[("Branch", "host")] == 2
+        assert groups_map[("Branch", "host")] == 3
 
         # 3. query_objects distinguishing domain-owned ("local") vs Global ("global") via original_domain
         local_only_res = await server.call_tool(
@@ -538,11 +703,9 @@ async def test_describe_objects_query_objects_and_cache_status_tools() -> None:
                 "aggregate": "list",
             },
         )
-        assert isinstance(local_only_res, CallToolResult)
         local_data = _parse_tool_json(local_only_res)
-        assert local_data["total"] == 1
-        assert local_data["objects"][0]["name"] == "web-srv-1"
-        assert local_data["objects"][0]["original_domain"] == "Corp"
+        assert local_data["total"] == 2
+        assert {o["name"] for o in local_data["objects"]} == {"web-srv-1", "web-srv-2"}
 
         global_only_res = await server.call_tool(
             "query_objects",
@@ -554,14 +717,13 @@ async def test_describe_objects_query_objects_and_cache_status_tools() -> None:
                 "aggregate": "list",
             },
         )
-        assert isinstance(global_only_res, CallToolResult)
         global_data = _parse_tool_json(global_only_res)
         assert global_data["total"] == 1
         assert global_data["objects"][0]["name"] == "global-dns-1"
         assert global_data["objects"][0]["original_domain"] == "Global"
 
-        # 4. cache_status across all 5 scopes ("domains", "objects", "services", "assets", "rulebase")
-        cs_res = await server.call_tool("cache_status", {"mgmt_name": "mds1"})
+        # 4. cache_control(action="status") across all 5 scopes ("domains", "objects", "services", "assets", "rulebase")
+        cs_res = await server.call_tool("cache_control", {"mgmt_name": "mds1", "action": "status"})
         assert isinstance(cs_res, CallToolResult)
         cs_data = _parse_tool_json(cs_res)
         assert cs_data["total_entries"] > 0
@@ -576,10 +738,11 @@ async def test_describe_objects_query_objects_and_cache_status_tools() -> None:
 
 
 @pytest.mark.asyncio
-async def test_hybrid_rulebase_tools_local_filter_vs_live_parameters() -> None:
-    """Scenario: `show_access_rulebase` and `show_nat_rulebase` evaluate `filter` locally against the cached
-    rulebase and cached objects/services in `markdown`, `model_friendly`, or `raw` format, and execute a live
-    Management API query only when live-only parameters (`show_hits`, `order`, etc.) or `cache_mode='live'` are passed.
+async def test_show_rulebase_catalog_discovery_local_filter_and_live_parameters() -> None:
+    """Scenario: `show_rulebase`:
+    - returns the domain's cached `packages` and `layers` when `package` and `layer` are omitted or unmatched;
+    - evaluates `filter` locally against the cached rulebase and cached objects/services in `markdown`, `model_friendly`, or `raw` format;
+    - executes a live Management API query when live-only parameters (`show_hits`, `order`, etc.) or `cache_mode='live'` are passed.
     """
     fake_api = MCPFakeApi()
     settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
@@ -594,12 +757,35 @@ async def test_hybrid_rulebase_tools_local_filter_vs_live_parameters() -> None:
 
         call_count_before = len(fake_api.calls)
 
+        # 0. Catalog mode when package and layer are omitted
+        cat_res = await server.call_tool(
+            "show_rulebase",
+            {"mgmt_name": "mds1", "domain": "Corp", "cache_mode": "cache"},
+        )
+        assert cat_res.is_error is False
+        cat_data = _parse_tool_json(cat_res)
+        assert cat_data["mode"] == "catalog"
+        assert [p["name"] for p in cat_data["packages"]] == ["Standard"]
+        assert [l_item["name"] for l_item in cat_data["layers"]] == ["Network"]
+
+        # 0b. Catalog fallback when an unknown layer name is requested
+        unmatched_res = await server.call_tool(
+            "show_rulebase",
+            {"mgmt_name": "mds1", "domain": "Corp", "layer": "NonExistentLayer", "cache_mode": "cache"},
+        )
+        assert unmatched_res.is_error is False
+        unmatched_data = _parse_tool_json(unmatched_res)
+        assert unmatched_data["mode"] == "catalog"
+        assert "hint" in unmatched_data
+        assert [l_item["name"] for l_item in unmatched_data["layers"]] == ["Network"]
+
         # 1. Local cache filter by IP ("10.10.1.10" resolves to host "web-srv-1" on rule #1!)
         rb_cached = await server.call_tool(
-            "show_access_rulebase",
+            "show_rulebase",
             {
                 "mgmt_name": "mds1",
                 "domain": "Corp",
+                "rulebase_type": "access",
                 "layer": "Network",
                 "filter": "10.10.1.10",
                 "format": "model_friendly",
@@ -614,15 +800,16 @@ async def test_hybrid_rulebase_tools_local_filter_vs_live_parameters() -> None:
         assert rb_data["total"] == 1
         assert rb_data["rules"][0]["uid"] == "rule-web-1"
         assert "#1 'Allow Web Server'" in rb_data["rendered_text"]
-        # Zero live API calls were made during cached filter evaluation!
+        # Zero live API calls were made during cached catalog & filter evaluation!
         assert len(fake_api.calls) == call_count_before
 
         # 2. NAT rulebase local filter in markdown format
         nat_cached = await server.call_tool(
-            "show_nat_rulebase",
+            "show_rulebase",
             {
                 "mgmt_name": "mds1",
                 "domain": "Corp",
+                "rulebase_type": "nat",
                 "package": "Standard",
                 "filter": "web-srv-1",
                 "format": "markdown",
@@ -638,10 +825,11 @@ async def test_hybrid_rulebase_tools_local_filter_vs_live_parameters() -> None:
 
         # 3. Passing live-only parameter `show_hits=True` triggers live Management API query
         rb_live = await server.call_tool(
-            "show_access_rulebase",
+            "show_rulebase",
             {
                 "mgmt_name": "mds1",
                 "domain": "Corp",
+                "rulebase_type": "access",
                 "layer": "Network",
                 "show_hits": True,
             },
@@ -674,12 +862,17 @@ async def test_unknown_domain_prevalidation_and_invalid_credentials_tool_failure
     async with ArodonataClient(settings, api=fake_api) as client:
         server = create_mcp_server(client, auth_mode="host")
 
-        # 1. Calling show_hosts with unknown domain "NonExistentDom":
+        # 1. Calling list_objects with unknown domain "NonExistentDom":
         #    Performs a single domain-list refresh (`show-domains`), sees ["Corp", "Branch", "Global"],
         #    and fails BEFORE attempting any login or `show-hosts` query on "NonExistentDom"!
         res_unknown = await server.call_tool(
-            "show_hosts",
-            {"mgmt_name": "mds1", "domain": "NonExistentDom", "filter": "sensitive-arg-should-not-be-logged"},
+            "list_objects",
+            {
+                "mgmt_name": "mds1",
+                "domain": "NonExistentDom",
+                "types": ["host"],
+                "filter": "sensitive-arg-should-not-be-logged",
+            },
         )
         assert isinstance(res_unknown, CallToolResult)
         assert res_unknown.is_error is True
@@ -687,12 +880,11 @@ async def test_unknown_domain_prevalidation_and_invalid_credentials_tool_failure
         assert "Unknown domain 'NonExistentDom'" in err_text
         assert "Corp" in err_text
         assert "Branch" in err_text
-        # Verify no show-hosts query was sent for NonExistentDom
         assert ("mds1", "show-hosts", "NonExistentDom") not in fake_api.queries
 
         # Verify WARNING log was recorded without raw tool arguments or secrets
         assert len(warning_logs) == 1
-        assert warning_logs[0][1]["tool"] == "show_hosts"
+        assert warning_logs[0][1]["tool"] == "list_objects"
         assert "sensitive-arg-should-not-be-logged" not in repr(warning_logs)
         assert "super-secret-api-key-val" not in repr(warning_logs)
 
@@ -700,8 +892,8 @@ async def test_unknown_domain_prevalidation_and_invalid_credentials_tool_failure
         #    message listing known domains rather than "internal error: InvalidCredentialsError"
         fake_api.raise_invalid_creds_for_domain = "Branch"
         res_cred = await server.call_tool(
-            "show_hosts",
-            {"mgmt_name": "mds1", "domain": "Branch"},
+            "list_objects",
+            {"mgmt_name": "mds1", "domain": "Branch", "types": ["host"]},
         )
         assert isinstance(res_cred, CallToolResult)
         assert res_cred.is_error is True
@@ -714,7 +906,7 @@ async def test_unknown_domain_prevalidation_and_invalid_credentials_tool_failure
 
 @pytest.mark.asyncio
 async def test_write_api_protection_sid_masking_and_unexpected_exception_handling() -> None:
-    """Scenario: `api_call` rejects non-`show-*` commands when `ARODONATA_MCP_ALLOW_WRITE_API=false`,
+    """Scenario: `api_call` rejects non-read-only commands when `ARODONATA_MCP_ALLOW_WRITE_API=false`,
     masks any echoed SID in error messages, and returns `'internal error: <ExceptionClass>'` on unexpected exceptions.
     """
     fake_api = MCPFakeApi()
@@ -725,7 +917,6 @@ async def test_write_api_protection_sid_masking_and_unexpected_exception_handlin
             client,
             auth_mode="host",
             allow_write_api=False,
-            live_compat=True,
             cpcrud=True,
         )
 
@@ -778,7 +969,7 @@ async def test_write_api_protection_sid_masking_and_unexpected_exception_handlin
         assert "simulated-unexpected-key-failure" not in crash_text
         fake_api.raise_unexpected_for_command = None
 
-        # 4. Change report, live_compat (where_used), and cpcrud tools work end-to-end
+        # 4. Change report, api_call(command="where-used"), and cpcrud tools work end-to-end
         rep_res = await server.call_tool(
             "change_report",
             {
@@ -795,8 +986,8 @@ async def test_write_api_protection_sid_masking_and_unexpected_exception_handlin
         assert "Ticket-100" in rep_data["rendered"]
 
         wu_res = await server.call_tool(
-            "where_used",
-            {"uid_or_name": "web-srv-1", "mgmt_name": "mds1", "domain": "Corp"},
+            "api_call",
+            {"command": "where-used", "payload": {"name": "web-srv-1"}, "mgmt_name": "mds1", "domain": "Corp"},
         )
         assert isinstance(wu_res, CallToolResult)
         assert wu_res.is_error is False
@@ -834,7 +1025,7 @@ async def test_mcp_cpcrud_tamper_resistance_staged_sessions_and_api_call_hardeni
     - `cpcrud_apply` rejects unsigned or tampered plans (e.g. `run-script` command injection).
     - `cpcrud_apply` rejects `retry_remaining > 3`.
     - `cpcrud_inverse` requires an `ApplyReport` or applied `plan_id`.
-    - `cpcrud_publish_staged` and `cpcrud_discard_staged` adopt and publish/discard staged sessions.
+    - `cpcrud_staged_session(action='publish'|'discard')` adopts and publishes/discards staged sessions.
     - `show_object` rejects non-canonical or traversal `obj_type` values.
     - `api_call` with `ALLOW_WRITE_API=false` permits `where-used` and `verify-policy` and rejects `publish`/`logout`/traversal.
     - `api_call` with `ALLOW_WRITE_API=true` isolates mutating commands in dedicated sessions and caps `timeout <= 300.0`.
@@ -847,7 +1038,6 @@ async def test_mcp_cpcrud_tamper_resistance_staged_sessions_and_api_call_hardeni
             client,
             auth_mode="host",
             allow_write_api=False,
-            live_compat=True,
             cpcrud=True,
         )
         await client.get_domains("mds1")
@@ -903,7 +1093,7 @@ async def test_mcp_cpcrud_tamper_resistance_staged_sessions_and_api_call_hardeni
         assert retry_res.is_error is True
         assert "retry_remaining" in _get_tool_text(retry_res)
 
-        # 4. W27: Staged session apply + cpcrud_publish_staged & cpcrud_discard_staged
+        # 4. W27: Staged session apply + cpcrud_staged_session(action="publish" | "discard")
         staged_apply_res = await server.call_tool(
             "cpcrud_apply",
             {"plan_id": signed_plan["plan_id"], "no_publish": True, "keep_session": True},
@@ -913,15 +1103,15 @@ async def test_mcp_cpcrud_tamper_resistance_staged_sessions_and_api_call_hardeni
         assert any(s["mgmt_name"] == "mds1" and s["domain_name"] == "Corp" for s in staged_report["staged_sessions"])
 
         pub_staged_res = await server.call_tool(
-            "cpcrud_publish_staged",
-            {"mgmt_name": "mds1", "domain": "Corp", "session_uid": "sess-staged-1"},
+            "cpcrud_staged_session",
+            {"mgmt_name": "mds1", "domain": "Corp", "session_uid": "sess-staged-1", "action": "publish"},
         )
         assert pub_staged_res.is_error is False
         assert _parse_tool_json(pub_staged_res)["published"] is True
 
         disc_staged_res = await server.call_tool(
-            "cpcrud_discard_staged",
-            {"mgmt_name": "mds1", "domain": "Corp", "session_uid": "sess-staged-2"},
+            "cpcrud_staged_session",
+            {"mgmt_name": "mds1", "domain": "Corp", "session_uid": "sess-staged-2", "action": "discard"},
         )
         assert disc_staged_res.is_error is False
         assert _parse_tool_json(disc_staged_res)["discarded"] is True

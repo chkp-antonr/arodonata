@@ -28,6 +28,112 @@ DEFAULT_SERVICE_TYPES: tuple[str, ...] = (
     "service-group",
 )
 
+OBJECT_TYPE_ALIASES: dict[str, str] = {
+    "range": "address-range",
+    "ip-range": "address-range",
+    "address_range": "address-range",
+    "dns": "dns-domain",
+    "fqdn": "dns-domain",
+    "dns_domain": "dns-domain",
+    "dynamic": "dynamic-object",
+    "dynamic_object": "dynamic-object",
+    "zone": "security-zone",
+    "security_zone": "security-zone",
+}
+
+SERVICE_TYPE_ALIASES: dict[str, str] = {
+    "tcp": "service-tcp",
+    "udp": "service-udp",
+    "icmp": "service-icmp",
+    "icmp6": "service-icmp6",
+    "icmpv6": "service-icmp6",
+    "sctp": "service-sctp",
+    "other": "service-other",
+    "dce-rpc": "service-dce-rpc",
+    "rpc": "service-rpc",
+    "gtp": "service-gtp",
+    "citrix-tcp": "service-citrix-tcp",
+    "compound-tcp": "service-compound-tcp",
+    "svc-group": "service-group",
+    "service_group": "service-group",
+}
+
+ASSET_TYPE_ALIASES: dict[str, str] = {
+    "gateway": "simple-gateway",
+    "simple_gateway": "simple-gateway",
+    "cluster": "simple-cluster",
+    "simple_cluster": "simple-cluster",
+    "member": "cluster-member",
+    "cluster_member": "cluster-member",
+    "vsx": "vsx-gateway",
+    "vsx_gateway": "vsx-gateway",
+    "vsx_cluster": "vsx-cluster",
+    "vs": "virtual-system",
+    "virtual_system": "virtual-system",
+    "server": "checkpoint-host",
+    "mgmt": "checkpoint-host",
+    "host-ckp": "checkpoint-host",
+    "checkpoint_host": "checkpoint-host",
+    "interoperable": "interoperable-device",
+    "interoperable_device": "interoperable-device",
+}
+
+CANONICAL_ASSET_TYPES: frozenset[str] = frozenset(
+    {
+        "simple-gateway",
+        "simple-cluster",
+        "cluster-member",
+        "vsx-gateway",
+        "vsx-cluster",
+        "vsx-cluster-member",
+        "virtual-system",
+        "vs-netobj",
+        "checkpoint-host",
+        "interoperable-device",
+        "CpmiGatewayPlain",
+        "CpmiGatewayCluster",
+        "CpmiClusterMember",
+        "CpmiVsxNetobj",
+        "CpmiVsxClusterNetobj",
+        "CpmiVsxClusterMember",
+        "CpmiVsNetobj",
+        "CpmiVsClusterNetobj",
+        "CpmiHostCkp",
+    }
+)
+
+
+def normalize_object_type(item_type: str) -> str:
+    """Normalize a network object type alias (e.g. `'range'` -> `'address-range'`)."""
+    clean = item_type.strip().lower()
+    return OBJECT_TYPE_ALIASES.get(clean, clean)
+
+
+def normalize_service_type(item_type: str) -> str:
+    """Normalize a service type alias (e.g. `'tcp'` -> `'service-tcp'`, `'group'` -> `'service-group'`)."""
+    clean = item_type.strip().lower()
+    if clean == "group":
+        return "service-group"
+    return SERVICE_TYPE_ALIASES.get(clean, clean)
+
+
+def normalize_asset_type(item_type: str) -> str:
+    """Normalize an asset type alias (e.g. `'gateway'` -> `'simple-gateway'`, `'cluster'` -> `'simple-cluster'`)."""
+    clean = item_type.strip().lower()
+    return ASSET_TYPE_ALIASES.get(clean, clean)
+
+
+def normalize_any_type(item_type: str) -> str:
+    """Normalize an object, service, or asset type alias across all scopes."""
+    clean = item_type.strip().lower()
+    if clean in OBJECT_TYPE_ALIASES:
+        return OBJECT_TYPE_ALIASES[clean]
+    if clean in SERVICE_TYPE_ALIASES:
+        return SERVICE_TYPE_ALIASES[clean]
+    if clean in ASSET_TYPE_ALIASES:
+        return ASSET_TYPE_ALIASES[clean]
+    return clean
+
 
 def utc_now() -> datetime:
     """Return current naive UTC datetime (tzinfo=None)."""
