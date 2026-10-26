@@ -39,9 +39,9 @@ Example: `/archive-task milestone-1-core-ports`
    - OpenSpec validation: `openspec validate --specs --no-interactive`
 
 5. **Commit to Branch & Open PR (Squash Merge)**:
-   - Ensure work was conducted in a dedicated branch (e.g. `feat/<topic>`, `fix/<topic>`, `chore/<topic>`). Working directly on `master` is strictly prohibited.
+   - Ensure work was conducted in a dedicated branch (e.g. `feat/<topic>`, `fix/<topic>`, `chore/<topic>`). Working directly on `master_v2` is strictly prohibited.
    - Stage changes: `git add .`
    - Commit to the active branch adhering to Conventional Commits: `git commit -m "<type>(<scope>): <description>"`.
    - Push branch to remote: `git push -u chkpar <feature-branch>`.
-   - Open Pull Request targeting `master`: `gh pr create --base master --title "<type>(<scope>): <description>" --body "<summary>"`.
-   - Integrate into `master` strictly via Pull Request and Squash Merge (`gh pr merge --squash` upon approval or via GitHub web interface).
+   - Open Pull Request targeting `master_v2`: `gh pr create --base master_v2 --title "<type>(<scope>): <description>" --body "<summary>"`.
+   - Integrate into `master_v2` strictly via Pull Request and Squash Merge (`gh pr merge --squash` upon approval or via GitHub web interface).

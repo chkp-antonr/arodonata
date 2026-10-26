@@ -105,14 +105,14 @@ Configured in `.ruff.toml`:
 ## 5. Git Branching, Commit Discipline & PR Workflow
 
 - **Git Workflow Command (`/git-workflow`)**:
-  - Use `/git-workflow <pr|pr nomerge|merge|cleanup|release>` (`.agents/workflows/git-workflow.md`, `.claude/commands/git-workflow.md`) to push topic branches to `chkpar`, open Pull Requests targeting `master`, squash-merge (`gh pr merge --squash --delete-branch`), fast-forward sync `master`, and prune merged local branches.
+  - Use `/git-workflow <pr|pr nomerge|merge|cleanup|release>` (`.agents/workflows/git-workflow.md`, `.claude/commands/git-workflow.md`) to push topic branches to `chkpar`, open Pull Requests targeting `master_v2`, squash-merge (`gh pr merge --squash --delete-branch`), fast-forward sync `master_v2`, and prune merged local branches.
 - **Dedicated Branches Only**:
   - All operations, bug fixes, refactoring, and feature work MUST be performed in dedicated branches (e.g. `feat/<topic>`, `fix/<topic>`, `chore/<topic>`).
-  - Direct commits and direct pushes to `master` are strictly prohibited.
+  - Direct commits and direct pushes to `master_v2` are strictly prohibited.
 - **Commits to Working Branch**:
   - All task commits MUST be made onto the active working branch adhering to Conventional Commits: `<type>(<scope>): <description>`.
-- **Integration to `master` via PR & Squash Merge Only**:
-  - Merging into `master` is executed strictly through a GitHub Pull Request (PR) with **Squash and Merge**.
-  - Direct local fast-forward or non-squash merges into `master` are forbidden.
+- **Integration to `master_v2` via PR & Squash Merge Only**:
+  - Merging into `master_v2` is executed strictly through a GitHub Pull Request (PR) with **Squash and Merge**.
+  - Direct local fast-forward or non-squash merges into `master_v2` are forbidden.
 - **Ask Before Commits**:
   - Never run `git commit` or `git push` without user alignment or explicit workflow step execution.
