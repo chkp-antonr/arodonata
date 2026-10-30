@@ -89,23 +89,39 @@ class SessionScope(BaseModel):
         """Return an `OwnedSession` matching `session_uid` if supplied on this scope."""
         if self.owned_sessions is None:
             return None
+
+        def _matches_scope(candidate: OwnedSession) -> bool:
+            if candidate.mgmt_name and candidate.mgmt_name.strip() != self.mgmt_name.strip():
+                return False
+            return not (
+                candidate.domain is not None
+                and self.domain is not None
+                and candidate.domain.strip().lower() != self.domain.strip().lower()
+            )
+
         if isinstance(self.owned_sessions, OwnedSession):
-            if self.owned_sessions.session_uid in (None, "", session_uid):
+            if not _matches_scope(self.owned_sessions):
+                return None
+            if self.owned_sessions.session_uid == session_uid:
+                return self.owned_sessions
+            if self.owned_sessions.session_uid in (None, "") and len(self.session_uids) == 1:
                 return self.owned_sessions
             return None
         if isinstance(self.owned_sessions, dict):
             if session_uid in self.owned_sessions:
-                return self.owned_sessions[session_uid]
+                cand = self.owned_sessions[session_uid]
+                return cand if _matches_scope(cand) else None
             if "*" in self.owned_sessions and len(self.session_uids) == 1:
-                return self.owned_sessions["*"]
+                cand = self.owned_sessions["*"]
+                return cand if _matches_scope(cand) else None
             return None
         if isinstance(self.owned_sessions, list):
             for item in self.owned_sessions:
-                if item.session_uid == session_uid:
+                if item.session_uid == session_uid and _matches_scope(item):
                     return item
             if len(self.owned_sessions) == 1 and len(self.session_uids) == 1:
                 only = self.owned_sessions[0]
-                if only.session_uid in (None, "", session_uid):
+                if only.session_uid in (None, "", session_uid) and _matches_scope(only):
                     return only
         return None
 

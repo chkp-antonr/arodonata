@@ -385,6 +385,7 @@ class AMgmtClient:
 
         active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key if domain is not None else None)
         using_cached_sid = False
+        active_auth_identity: str | None = None
         is_readonly = is_readonly_command(clean_cmd)
 
         if sid is not None:
@@ -409,6 +410,7 @@ class AMgmtClient:
                     "Use an isolated client.write_session(...) or pass an explicit dedicated sid."
                 )
             using_cached_sid = True
+            active_auth_identity = (await self._login_coordinator.resolve_credentials(mgmt_name, domain)).identity_key
             active_sid, target_ip = await self._login_coordinator.get_readonly_session(
                 mgmt_name,
                 domain,
@@ -454,7 +456,7 @@ class AMgmtClient:
                     target_ip = refreshed.active_ip
                     mds_ip = refreshed.active_mds_ip or endpoint.host
                     if using_cached_sid:
-                        await self._cache.evict_sid(mgmt_name, dom_key)
+                        await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=active_auth_identity)
                         active_sid, target_ip = await self._login_coordinator.get_readonly_session(
                             mgmt_name,
                             domain,
@@ -468,8 +470,12 @@ class AMgmtClient:
                 raise
 
         # Handle session expiration on cached read-only session -> evict SID, re-login, and retry once
-        if using_cached_sid and is_session_expired_result(res):
-            await self._cache.evict_sid(mgmt_name, dom_key)
+        is_self_show_session = clean_cmd.lower() == "show-session" and not (payload and payload.get("uid"))
+        if using_cached_sid and is_session_expired_result(
+            res,
+            command="show-session" if is_self_show_session else None,
+        ):
+            await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=active_auth_identity)
             active_sid, target_ip = await self._login_coordinator.get_readonly_session(
                 mgmt_name,
                 domain,
@@ -491,7 +497,7 @@ class AMgmtClient:
                 target_ip = refreshed.active_ip
                 mds_ip = refreshed.active_mds_ip or endpoint.host
                 if using_cached_sid:
-                    await self._cache.evict_sid(mgmt_name, dom_key)
+                    await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=active_auth_identity)
                     active_sid, target_ip = await self._login_coordinator.get_readonly_session(
                         mgmt_name,
                         domain,
@@ -502,7 +508,7 @@ class AMgmtClient:
 
         # If keepalive returned success=False, evict immediately from sid_cache
         if clean_cmd == "keepalive" and not res.success and using_cached_sid:
-            await self._cache.evict_sid(mgmt_name, dom_key)
+            await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=active_auth_identity)
 
         # Poll asynchronous server tasks via TaskWaiter if requested
         if res.success and wait_for_task and clean_cmd != "show-task":

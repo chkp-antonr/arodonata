@@ -112,6 +112,38 @@ class ValidationError(ArodonataError, ValueError):
     """Raised when a command, object type, template, or input parameter fails validation."""
 
 
+class AmbiguousObjectError(ValidationError):
+    """Raised when a cross-domain lookup (domain=None) matches entities in multiple domains."""
+
+    def __init__(
+        self,
+        mgmt_name: str,
+        query: str,
+        candidates: list[dict[str, Any]],
+        *,
+        known_sids: Iterable[str] | None = None,
+    ) -> None:
+        domains = sorted(
+            {
+                str(c.get("domain") or c.get("domain_name") or "")
+                for c in candidates
+                if c.get("domain") or c.get("domain_name")
+            }
+        )
+        ids = [
+            str(c.get("object_id") or c.get("service_id") or c.get("asset_id") or c.get("id") or "") for c in candidates
+        ]
+        preview = ", ".join(i for i in ids if i)[:200]
+        super().__init__(
+            f"Ambiguous lookup for {query!r} on {mgmt_name!r} matched across multiple domains "
+            f"({', '.join(domains)}): {preview}. Specify 'domain' or a 'mgmt:domain:name' composite ID.",
+            known_sids=known_sids,
+        )
+        self.mgmt_name = mgmt_name
+        self.query = query
+        self.candidates = candidates
+
+
 class ConfigurationError(ArodonataError):
     """Raised when configuration values are invalid, inconsistent, or unsupported."""
 

@@ -14,6 +14,7 @@ from arodonata.adapters.storage import DatabaseManager, SqlCacheAdapter
 from arodonata.core.context import AuthContext
 from arodonata.core.errors import ChangeReportInputError, UnsupportedFormat
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
+from arodonata.core.models.domains import DomainSyncState
 from arodonata.core.models.rulebase import (
     AccessRuleEntry,
     DomainRulebaseSnapshot,
@@ -613,7 +614,7 @@ async def test_object_only_session_skips_placement_and_omits_basis_banner() -> N
 
 @pytest.mark.asyncio
 async def test_post_publish_clean_owned_session_numbers_live_and_warms_cache() -> None:
-    """After `publish` (before `logout`), `OwnedSession` rotates to a clean working session (`changes == 0`) and numbers rules live without warnings."""
+    """After `publish` (before `logout`), `OwnedSession` rotates to a clean working session (`changes == 0`, `locks == 0`) and numbers rules live in-memory without writing uncoordinated snapshots to CachePort (`C2`, `W6`)."""
     db = DatabaseManager()
     await db.initialize()
     cache = SqlCacheAdapter(db)
@@ -637,6 +638,8 @@ async def test_post_publish_clean_owned_session_numbers_live_and_warms_cache() -
             "uid": "sess-rotated-clean-working",
             "state": "open",
             "changes": 0,
+            "locks": 0,
+            "number-of-published-changes": 0,
         }
         api.changes_by_session["sess-pub-target"] = {
             "tasks": [
@@ -707,10 +710,9 @@ async def test_post_publish_clean_owned_session_numbers_live_and_warms_cache() -
         assert sess_rep.rule_changes[0].rule_number == "1"
         assert sess_rep.rule_changes[0].package_name == "Standard"
 
-        # Verify SQLite rulebase cache was warmed by post-publish live read
-        warmed = await cache.get_domain_rulebase("mds1", "Corp")
-        assert len(warmed.access_rules) == 1
-        assert warmed.access_rules[0].uid == "r-pub-1"
+        # C2: Verify placement did NOT write an uncoordinated/unstamped snapshot directly to cache
+        unwarmed = await cache.get_domain_rulebase("mds1", "Corp")
+        assert unwarmed.access_rules == []
     finally:
         await db.close()
 
@@ -866,10 +868,9 @@ async def test_cold_cache_fetches_live_published_rulebase_and_warms_cache_plus_b
         assert rc.layer_uid == bare_layer_uid
         assert rc.layer_name == "Resolved-Inline-Layer"
 
-        # Verify cache was warmed so a second call hits cache
-        warmed = await cache.get_domain_rulebase("mds1", "Corp")
-        assert len(warmed.access_rules) == 1
-        assert warmed.access_rules[0].uid == "r-cold-1"
+        # C2: Standalone collect_change_report without refresh_rulebase_fn numbers in-memory without writing uncoordinated snapshots to cache
+        unwarmed = await cache.get_domain_rulebase("mds1", "Corp")
+        assert unwarmed.access_rules == []
     finally:
         await db.close()
 
@@ -999,5 +1000,234 @@ async def test_render_html_markdown_json_and_escaping() -> None:
         # Unsupported format ("pdf") raises UnsupportedFormat
         with pytest.raises(UnsupportedFormat):
             render_change_report(bundle.report, formats=("pdf",))
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_case2_strict_cleanliness_cross_domain_and_concurrent_refresh_race_protection() -> None:
+    """Verify C2 & W6:
+    - Case 2 post-publish OwnedSession rejects missing `changes`, `locks > 0`, `number-of-published-changes > 0`,
+      mismatched `OwnedSession.session_uid`, or wrong-domain SID (`owned_session_not_used`).
+    - Unkeyed `OwnedSession(session_uid=None)` is NOT matched when `len(session_uids) > 1`.
+    - `refresh_rulebase_fn` warms the cache via coordinator and a report never overwrites a newer stamped cached snapshot.
+    """
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = FakeReportsApi()
+
+    try:
+        api.sessions_by_uid["sess-pub-strict"] = {
+            "uid": "sess-pub-strict",
+            "name": "Strict Case 2",
+            "state": "published",
+            "publish-time": {"iso-8601": "2026-10-23T12:10:00Z"},
+            "changes": 1,
+        }
+        api.changes_by_session["sess-pub-strict"] = {
+            "tasks": [
+                {
+                    "task-details": [
+                        {
+                            "operations": {
+                                "added-objects": [
+                                    {
+                                        "uid": "r-strict-1",
+                                        "name": "Strict Rule",
+                                        "type": "access-rule",
+                                        "layer": "Corp Network",
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        # 1. Missing `changes` key -> rejected (emits owned_session_not_used)
+        sid_missing_changes = "sid-missing-changes"
+        api.sessions_by_uid[f"sid:{sid_missing_changes}"] = {"uid": "rot-1", "state": "open", "locks": 0}
+        rep_missing = await collect_change_report(
+            api,
+            cache,
+            [
+                SessionScope(
+                    mgmt_name="mds1",
+                    domain="Corp",
+                    session_uids=["sess-pub-strict"],
+                    owned_sessions=OwnedSession(sid=sid_missing_changes),
+                )
+            ],
+        )
+        assert any(w.code == "owned_session_not_used" for w in rep_missing.warnings)
+
+        # 2. `locks > 0` -> rejected
+        sid_locked = "sid-locked"
+        api.sessions_by_uid[f"sid:{sid_locked}"] = {"uid": "rot-2", "state": "open", "changes": 0, "locks": 1}
+        rep_locked = await collect_change_report(
+            api,
+            cache,
+            [
+                SessionScope(
+                    mgmt_name="mds1",
+                    domain="Corp",
+                    session_uids=["sess-pub-strict"],
+                    owned_sessions=OwnedSession(sid=sid_locked),
+                )
+            ],
+        )
+        assert any(w.code == "owned_session_not_used" for w in rep_locked.warnings)
+
+        # 3. `number-of-published-changes > 0` -> rejected
+        sid_pub_count = "sid-pub-count"
+        api.sessions_by_uid[f"sid:{sid_pub_count}"] = {
+            "uid": "rot-3",
+            "state": "open",
+            "changes": 0,
+            "locks": 0,
+            "number-of-published-changes": 2,
+        }
+        rep_pub_cnt = await collect_change_report(
+            api,
+            cache,
+            [
+                SessionScope(
+                    mgmt_name="mds1",
+                    domain="Corp",
+                    session_uids=["sess-pub-strict"],
+                    owned_sessions=OwnedSession(sid=sid_pub_count),
+                )
+            ],
+        )
+        assert any(w.code == "owned_session_not_used" for w in rep_pub_cnt.warnings)
+
+        # 4. Wrong domain reported by show-session -> rejected
+        sid_wrong_dom = "sid-wrong-dom"
+        api.sessions_by_uid[f"sid:{sid_wrong_dom}"] = {
+            "uid": "rot-4",
+            "state": "open",
+            "changes": 0,
+            "locks": 0,
+            "domain": {"name": "Branch"},
+        }
+        rep_wrong_dom = await collect_change_report(
+            api,
+            cache,
+            [
+                SessionScope(
+                    mgmt_name="mds1",
+                    domain="Corp",
+                    session_uids=["sess-pub-strict"],
+                    owned_sessions=OwnedSession(sid=sid_wrong_dom),
+                )
+            ],
+        )
+        assert any(w.code == "owned_session_not_used" for w in rep_wrong_dom.warnings)
+
+        # 5. Unkeyed OwnedSession(session_uid=None) on multi-session scope -> resolve_owned_session returns None
+        multi_scope = SessionScope(
+            mgmt_name="mds1",
+            domain="Corp",
+            session_uids=["sess-pub-strict", "sess-other-2"],
+            owned_sessions=OwnedSession(sid="unkeyed-sid"),
+        )
+        assert multi_scope.resolve_owned_session("sess-pub-strict") is None
+        assert multi_scope.resolve_owned_session("sess-other-2") is None
+
+        # 6. C2: Coordinator-delegated warming via refresh_rulebase_fn & protection of stamped cache
+        warmed_called: list[tuple[str, str]] = []
+
+        async def fake_refresh_rulebase(m: str, d: str) -> None:
+            warmed_called.append((m, d))
+            await cache.replace_domain_rulebase(
+                DomainRulebaseSnapshot(
+                    mgmt_name=m,
+                    domain_name=d,
+                    layers=[
+                        RulebaseLayerEntry(
+                            mgmt_name=m,
+                            domain_name=d,
+                            rulebase_type="access",
+                            uid="layer-net-1",
+                            name="Corp Network",
+                        )
+                    ],
+                    access_rules=[
+                        AccessRuleEntry(
+                            mgmt_name=m,
+                            domain_name=d,
+                            layer_uid="layer-net-1",
+                            layer_name="Corp Network",
+                            uid="r-strict-1",
+                            name="Strict Rule",
+                            position=1,
+                            enabled=True,
+                        )
+                    ],
+                )
+            )
+            await cache.upsert_sync_state(
+                DomainSyncState(
+                    mgmt_name=m,
+                    domain_name=d,
+                    scope="rulebase",
+                    item_type="*",
+                    last_session_uid="pub-sess-000",
+                    status="idle",
+                )
+            )
+
+        rep_coord = await collect_change_report(
+            api,
+            cache,
+            [SessionScope(mgmt_name="mds1", domain="Corp", session_uids=["sess-pub-strict"])],
+            refresh_rulebase_fn=fake_refresh_rulebase,
+        )
+        assert warmed_called == [("mds1", "Corp")]
+        assert rep_coord.sessions[0].numbering_source == "cache"
+        assert "session pub-sess-000" in rep_coord.sessions[0].numbering_basis
+
+        # Verify a subsequent Case 2 OwnedSession report does NOT overwrite the stamped cache
+        clean_sid = "sid-clean-no-overwrite"
+        api.sessions_by_uid[f"sid:{clean_sid}"] = {
+            "uid": "rot-clean",
+            "state": "open",
+            "changes": 0,
+            "locks": 0,
+            "number-of-published-changes": 0,
+        }
+        api.live_packages = [
+            {
+                "uid": "pkg-transient",
+                "name": "TransientPkg",
+                "access": True,
+                "access-layers": [{"uid": "l-trans", "name": "Corp Network", "position": 1}],
+            }
+        ]
+        api.live_rulebase_pages[("show-access-rulebase", "l-trans")] = {
+            "uid": "l-trans",
+            "name": "Corp Network",
+            "rulebase": [{"uid": "r-strict-1", "name": "Strict Rule", "type": "access-rule", "rule-number": 1}],
+            "to": 1,
+            "total": 1,
+        }
+        rep_case2 = await collect_change_report(
+            api,
+            cache,
+            [
+                SessionScope(
+                    mgmt_name="mds1",
+                    domain="Corp",
+                    session_uids=["sess-pub-strict"],
+                    owned_sessions=OwnedSession(sid=clean_sid),
+                )
+            ],
+        )
+        assert rep_case2.sessions[0].numbering_source == "live_published"
+        # Cache still holds the coordinator's stamped snapshot (`layer-net-1`), NOT `l-trans`!
+        cached_after = await cache.get_domain_rulebase("mds1", "Corp")
+        assert [lyr.uid for lyr in cached_after.layers] == ["layer-net-1"]
     finally:
         await db.close()

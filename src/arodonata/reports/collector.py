@@ -15,7 +15,7 @@ Implements `collect_change_report`:
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -530,6 +530,7 @@ async def collect_change_report(
     options: RenderOptions | None = None,
     max_uid_lookups: int = MAX_UID_LOOKUPS,
     now_fn: Callable[[], datetime] = utc_now,
+    refresh_rulebase_fn: Callable[[str, str], Awaitable[Any]] | None = None,
 ) -> ChangeReport:
     """Collect read-only session change evidence across `SessionScope` and `RangeScope` definitions."""
     if not scopes:
@@ -899,6 +900,7 @@ async def collect_change_report(
             owned_session=owned,
             warnings=warnings,
             now_fn=now_fn,
+            refresh_rulebase_fn=refresh_rulebase_fn,
         )
 
         session_reports.append(session_report)

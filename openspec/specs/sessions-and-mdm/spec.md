@@ -8,22 +8,22 @@ Defines the lifecycle of Check Point API sessions (`LoginCoordinator`, `SessionC
 
 ### Requirement: Persistent SID Caching and Auto-Recovery
 
-The system SHALL persist shared read-only session identifiers (`sid`) in `arodonata_sid_cache` keyed by `f"{mgmt_name}:{domain_key}:{auth_identity}"` (where `auth_identity` is an HMAC-SHA256 credential digest), re-authenticate when a cached session expires, evict a cached SID when `keepalive` returns `success=False`, and reject or isolate mutating commands so they never use `arodonata_sid_cache`.
+The system SHALL authenticate shared `arodonata_sid_cache` sessions with `"read-only": true`, key rows by `f"{mgmt_name}:{domain_key}:{auth_identity}"` (excluding `SIDCacheEntry.sid` from model dumps and defaulting `SIDCacheEntry.id` to include `auth_identity`), evict only the affected `auth_identity` row on expiry, failover, keepalive failure, or logout failure, and refuse mutating commands on `arodonata_sid_cache`.
 
 #### Scenario: Reuse of unexpired cached session scoped by authentication identity
 
-- **WHEN** a read-only API call targets `(mgmt_name, domain)` under resolved credentials (`auth_identity`) and a cached SID exists in `arodonata_sid_cache` with the exact `f"{mgmt_name}:{domain_key}:{auth_identity}"` key whose age is less than `session_expire_seconds`
-- **THEN** `LoginCoordinator` SHALL reuse that SID without performing a new login call, whereas a call with a different password, different API key, or `auth_identity=None` SHALL NEVER match or overwrite that cached SID
+- **WHEN** a read-only API call targets `(mgmt_name, domain)` under resolved credentials (`auth_identity`)
+- **THEN** `LoginCoordinator` SHALL authenticate new `arodonata_sid_cache` sessions with `"read-only": true`, reuse an unexpired row matching exact `f"{mgmt_name}:{domain_key}:{auth_identity}"`, omit raw `sid` from `SIDCacheEntry.model_dump()` / `model_dump_json()`, and NEVER match or overwrite another principal's cached SID
 
 #### Scenario: Transparent re-login on session expiration error
 
-- **WHEN** a read-only API call using a cached SID receives a session expiration error or a background `keepalive` returns `success=False`
-- **THEN** the client SHALL immediately evict only that specific `(mgmt_name, domain_key, auth_identity)` row from `arodonata_sid_cache` and, for active read-only API calls, acquire a fresh session via `LoginCoordinator` and retry the call once transparently
+- **WHEN** a read-only API call using a cached SID encounters session expiration or CMA failover, a background `keepalive` returns `success=False`, or `logout_all` evicts an unloggable cached SID
+- **THEN** the client SHALL evict ONLY that specific `(mgmt_name, domain_key, auth_identity)` row from `arodonata_sid_cache` (leaving other administrators' cached SIDs for the same domain intact) and, for active read-only API calls, acquire a fresh session via `LoginCoordinator` and retry once
 
 #### Scenario: Dedicated write sessions bypass global SID cache
 
 - **WHEN** `create_dedicated_session` or `write_session` is called for isolated write workflows
-- **THEN** `LoginCoordinator` SHALL authenticate a fresh session with retry/backoff resilience, return `(sid, server_ip)` without storing the SID in `arodonata_sid_cache`, keep the SID registered in `_active_dedicated_sids` until `logout_sid()` succeeds, and shield `discard`/`logout_sid()` against `asyncio.CancelledError` (`BaseException`)
+- **THEN** `LoginCoordinator` SHALL authenticate a fresh read-write session (`"read-only"` omitted/`False`) with retry/backoff resilience, return `(sid, server_ip)` without storing the SID in `arodonata_sid_cache`, keep the SID registered in `_active_dedicated_sids` until `logout_sid()` succeeds, and shield `discard`/`logout_sid()` against `asyncio.CancelledError` (`BaseException`)
 
 #### Scenario: Mutating commands refused on shared cached SID path
 
@@ -65,12 +65,12 @@ The system SHALL serialize and rate-limit logins per hosting MDS member (`active
 
 ### Requirement: Per-MDS-Member Concurrency Semaphore
 
-The `RateLimiter` SHALL cap in-flight API requests per MDS member to `concurrent_limit` (default 4, max 20) using database-backed slot locks (with TTL `>= max(api_timeout, login_timeout) + 60s`) and FIFO in-process waiter queues, guaranteeing local FIFO slot release in `finally` even if database lock release raises an error or is cancelled.
+The `RateLimiter` SHALL cap in-flight API requests per MDS member to `concurrent_limit` (default 4, max 20) using database-backed slot locks (with TTL `>= max(api_timeout, login_timeout) + 60s`) and FIFO in-process waiter queues, suppressing database `Exception` errors during shielded DB lock release while always releasing the local FIFO slot and propagating `asyncio.CancelledError`.
 
 #### Scenario: Fair waiter wakeup on slot release
 
-- **WHEN** all `concurrent_limit` slots for an MDS member are occupied, multiple coroutines are waiting, and the active slot holder exits (even if the database lock release raises an exception or `asyncio.CancelledError`)
-- **THEN** `RateLimiter` SHALL always release the local FIFO slot in `finally` (shielding DB lock cleanup) and wake the longest-waiting coroutine in arrival order within the client, or raise a timeout error if no slot becomes free within `rate_limit_slot_timeout`
+- **WHEN** all `concurrent_limit` slots for an MDS member are occupied, multiple coroutines are waiting, and the active slot holder exits (including when DB lock release raises an `Exception` or the task receives `asyncio.CancelledError`)
+- **THEN** `RateLimiter` SHALL shield DB lock cleanup (`suppress(Exception)`), ALWAYS release the local FIFO slot in `finally` to wake the longest-waiting coroutine in arrival order, and re-raise `asyncio.CancelledError` if cancellation occurred rather than swallowing it
 
 #### Scenario: Coalesced background keepalive sweeps
 
@@ -98,7 +98,7 @@ The `RateLimiter` SHALL cap in-flight API requests per MDS member to `concurrent
 
 ### Requirement: Multi-Domain Discovery, Failover IP Resolution, and Global Domain Support
 
-`DomainService` SHALL discover and cache all domains on MDS servers (`show-domains`), synthesize an explicit `Global` domain row (`show-global-domain`), and track each domain's `active_ip`, `active_mds_ip`, and standby servers.
+`DomainService` and `LoginCoordinator` SHALL discover and cache domains on MDS servers (`show-domains`, `show-mdss`, `show-global-domain`), track each domain's `active_ip`, `active_mds_ip`, and standby servers, and validate any caller-supplied `explicit_server_ip` against configured endpoint hosts and discovered MDS/domain server addresses for `mgmt_name`.
 
 #### Scenario: Opt-in Global domain visibility
 
@@ -114,3 +114,8 @@ The `RateLimiter` SHALL cap in-flight API requests per MDS member to `concurrent
 
 - **WHEN** a customer or `Global` domain login runs before `domains` is cached (cold cache) or when a domain's cached `active_ip` fails with a failover/unreachable error code
 - **THEN** `LoginCoordinator` SHALL query the MDS system domain (`show-domains`, `show-mdss`, and `show-global-domain`) to resolve and cache the domain's `active_ip` (CMA IP) and `active_mds_ip` in the `domains` table before authenticating against the domain
+
+#### Scenario: Untrusted explicit_server_ip rejected before connection or SID transmission
+
+- **WHEN** `resolve_target_ips` (via `api_call`, `get_readonly_session`, `create_dedicated_session`, `keepalive_sid`, or `logout_sid`) receives an `explicit_server_ip` that does not match `mgmt_name`'s configured endpoint host or any cached domain `active_ip`, `active_mds_ip`, or `standby_ips` / MDS member IP for `mgmt_name`
+- **THEN** `LoginCoordinator` SHALL reject the target with `ValidationError` before opening a TLS connection, learning a TOFU certificate, or transmitting `X-chkp-sid`

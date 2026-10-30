@@ -35,6 +35,7 @@ from arodonata.core.errors import (
     MissingConfigurationError,
     ServerIdentityError,
     TransportError,
+    ValidationError,
 )
 from arodonata.core.models.common import ApiCallResult, utc_now
 from arodonata.core.models.domains import DomainInfo, SIDCacheEntry
@@ -51,8 +52,13 @@ def normalize_domain_key(domain: str | None) -> str:
     return domain.strip()
 
 
-def is_session_expired_result(result: ApiCallResult) -> bool:
-    """Return `True` if `result` indicates an invalid or expired Check Point session (`sid`)."""
+def is_session_expired_result(result: ApiCallResult, *, command: str | None = None) -> bool:
+    """Return `True` if `result` indicates an invalid or expired Check Point session (`sid`).
+
+    On Check Point MDSM, after `revert-to-revision` wipes sessions created after the target
+    revision, calling `show-session` with no `uid` parameter on a wiped session returns
+    `generic_err_object_not_found` (`Requested object [<session-uid>] not found`).
+    """
     if result.success:
         return False
     code = (result.error_code or "").lower()
@@ -62,6 +68,12 @@ def is_session_expired_result(result: ApiCallResult) -> bool:
         "err_session_expired",
         "session_expired",
         "unauthorized",
+    ):
+        return True
+    if (
+        command is not None
+        and command.strip().lower().lstrip("/") == "show-session"
+        and (code == "generic_err_object_not_found" or "requested object" in msg and "not found" in msg)
     ):
         return True
     return any(
@@ -311,7 +323,28 @@ class LoginCoordinator:
         """Resolve `(server_ip, active_mds_ip, port)` for `(mgmt_name, domain)`."""
         endpoint = self.get_server_endpoint(mgmt_name)
         if explicit_server_ip:
-            return explicit_server_ip, endpoint.host, endpoint.port
+            cleaned_ip = explicit_server_ip.strip()
+            trusted_ips: set[str] = {endpoint.host}
+            for dom in await self._cache.get_domains(mgmt_name, include_global=True):
+                if dom.active_ip:
+                    trusted_ips.add(dom.active_ip)
+                if dom.active_mds_ip:
+                    trusted_ips.add(dom.active_mds_ip)
+                for st_ip in dom.standby_ips:
+                    if st_ip:
+                        trusted_ips.add(st_ip)
+            for entry in await self._cache.list_sids(mgmt_name=mgmt_name):
+                if entry.server_ip:
+                    trusted_ips.add(entry.server_ip)
+            for (m_name, _sid), srv_ip in self._active_dedicated_sids.items():
+                if m_name == mgmt_name and srv_ip:
+                    trusted_ips.add(srv_ip)
+            if cleaned_ip not in trusted_ips:
+                raise ValidationError(
+                    f"Untrusted explicit server_ip {explicit_server_ip!r} for management server {mgmt_name!r}. "
+                    f"Known trusted hosts: {sorted(trusted_ips)}."
+                )
+            return cleaned_ip, endpoint.host, endpoint.port
 
         dom_key = normalize_domain_key(domain)
         if dom_key != SYSTEM_DOMAIN_SENTINEL:
@@ -432,7 +465,7 @@ class LoginCoordinator:
                     domain,
                     auth=auth,
                     explicit_server_ip=server_ip,
-                    read_only=False,
+                    read_only=True,
                 )
                 now = self._now()
                 entry = SIDCacheEntry(
@@ -810,7 +843,19 @@ class LoginCoordinator:
     ) -> bool:
         """Send `keepalive` for a cached or explicit session; immediately evict from `sid_cache` on failure."""
         dom_key = normalize_domain_key(domain)
-        cached = await self._cache.get_sid(mgmt_name, dom_key)
+        cached: SIDCacheEntry | None = None
+        if sid:
+            for entry in await self._cache.list_sids(mgmt_name=mgmt_name):
+                if entry.sid == sid:
+                    cached = entry
+                    break
+        if cached is None:
+            resolved_identity: str | None = None
+            try:
+                resolved_identity = (await self.resolve_credentials(mgmt_name, domain)).identity_key
+            except Exception:
+                resolved_identity = None
+            cached = await self._cache.get_sid(mgmt_name, dom_key, auth_identity=resolved_identity)
         target_sid = sid or (cached.sid if cached is not None else None)
         if not target_sid:
             return False
@@ -927,7 +972,11 @@ class LoginCoordinator:
                 if await self.logout_sid(entry.mgmt_name, entry.sid, server_ip=entry.server_ip):
                     logged_out += 1
                 else:
-                    await self._cache.evict_sid(entry.mgmt_name, entry.domain_name)
+                    await self._cache.evict_sid(
+                        entry.mgmt_name,
+                        entry.domain_name,
+                        auth_identity=entry.auth_identity,
+                    )
         return logged_out
 
 

@@ -19,6 +19,7 @@ from arodonata.core.context import (
 )
 from arodonata.core.errors import (
     AmbiguousLayerName,
+    AmbiguousObjectError,
     ApiTimeoutError,
     ArodonataError,
     AuthenticationError,
@@ -139,6 +140,7 @@ __all__ = [
     "AMgmtClient",
     "ActionResult",
     "AmbiguousLayerName",
+    "AmbiguousObjectError",
     "ApiTimeoutError",
     "ApplyReport",
     "ArodonataASGIApp",

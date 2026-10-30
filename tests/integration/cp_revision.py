@@ -30,6 +30,33 @@ REVERT_TIMEOUT_SECONDS = 900.0
 REVERT_LOCK_RETRIES = 6
 REVERT_LOCK_BACKOFF_SECONDS = 5.0
 
+# Prefixes used by integration test write sessions across buckets b1-b6.
+# If the most recently published session in a domain starts with one of these
+# prefixes, an earlier test run was interrupted before reverting to baseline.
+TEST_SESSION_PREFIXES: tuple[str, ...] = (
+    "it-",
+    "b1-",
+    "b2-",
+    "b3-",
+    "b4-",
+    "b5-",
+    "b6-",
+    "cpcrud-",
+    "bump-",
+    "forced-",
+    "cleanup-",
+    "conc-",
+    "cp-revert-",
+    "cp-discard-",
+)
+
+
+def is_test_session_name(name: str | None) -> bool:
+    """Return True if ``name`` matches a known integration test session prefix."""
+    if not name:
+        return False
+    return name.startswith(TEST_SESSION_PREFIXES)
+
 
 @dataclass(frozen=True)
 class DomainBaseline:
@@ -125,14 +152,55 @@ async def find_named_session(
     raise RuntimeError(f"Named revision {session_name!r} not found in domain {domain!r}")
 
 
+async def find_last_clean_session(
+    client: ArodonataClient,
+    mgmt_name: str,
+    domain: str,
+) -> DomainBaseline:
+    """Locate the most recent non-test published session in ``domain`` (scans up to 200 recent sessions)."""
+    res = await client.api_call(
+        mgmt_name,
+        "show-sessions",
+        {"view-published-sessions": True, "limit": 200, "details-level": "standard"},
+        domain=domain,
+    )
+    if not res.success:
+        raise RuntimeError(f"show-sessions failed in {domain}: {res.error_code} {res.error_message}")
+    objects: list[dict[str, Any]] = res.data.get("objects") or []
+    if not objects:
+        raise RuntimeError(
+            f"Domain {domain!r} has zero published sessions — cannot establish a revert baseline. "
+            f"Publish at least one session in {domain!r} on the lab before running integration tests."
+        )
+    for obj in objects:
+        name = obj.get("name")
+        if not is_test_session_name(name):
+            pub_time = (obj.get("publish-time") or {}).get("iso-8601")
+            return DomainBaseline(
+                domain=domain,
+                session_uid=obj["uid"],
+                session_name=name,
+                published_iso=pub_time,
+            )
+    raise RuntimeError(f"No clean (non-test) published session found in the last {len(objects)} sessions of {domain!r}")
+
+
 async def snapshot_baseline(
     client: ArodonataClient,
     mgmt_name: str,
     mgmt_ip: str,
     domains: list[str],
     revision_name: str | None = None,
+    *,
+    auto_recover_dirty: bool = True,
 ) -> BaselineSnapshot:
-    """Capture the baseline session UID for each domain."""
+    """Capture the baseline session UID for each domain.
+
+    If ``auto_recover_dirty=True`` and a domain's head session matches a known
+    integration-test session prefix (meaning an earlier test run was interrupted
+    before teardown could revert), automatically locate the last clean non-test
+    session and revert the domain back to it before recording the baseline.
+    """
     snap = BaselineSnapshot(
         mgmt_name=mgmt_name,
         mgmt_ip=mgmt_ip,
@@ -141,8 +209,33 @@ async def snapshot_baseline(
     for dom in domains:
         if revision_name:
             base = await find_named_session(client, mgmt_name, dom, revision_name)
+            if auto_recover_dirty:
+                current = await last_published_session(client, mgmt_name, dom)
+                if current.session_uid != base.session_uid:
+                    logger.warning(
+                        "cp_baseline_dirty_auto_reverting",
+                        domain=dom,
+                        dirty_session_uid=current.session_uid,
+                        dirty_session_name=current.session_name,
+                        clean_session_uid=base.session_uid,
+                        clean_session_name=base.session_name,
+                    )
+                    await revert_domain_to(client, mgmt_name, base)
         else:
-            base = await last_published_session(client, mgmt_name, dom)
+            head = await last_published_session(client, mgmt_name, dom)
+            if auto_recover_dirty and is_test_session_name(head.session_name):
+                base = await find_last_clean_session(client, mgmt_name, dom)
+                logger.warning(
+                    "cp_baseline_dirty_auto_reverting",
+                    domain=dom,
+                    dirty_session_uid=head.session_uid,
+                    dirty_session_name=head.session_name,
+                    clean_session_uid=base.session_uid,
+                    clean_session_name=base.session_name,
+                )
+                await revert_domain_to(client, mgmt_name, base)
+            else:
+                base = head
         snap.domains[dom] = base
         logger.info(
             "cp_baseline_captured",
@@ -298,6 +391,9 @@ async def revert_domain_to(
             f"revert-to-revision to {baseline.session_uid} in {baseline.domain} failed: "
             f"{res.error_code} {res.error_message} data={res.data}"
         )
+    # Evict all cached read-only SIDs for this domain across all test users/identities
+    # because Check Point revert-to-revision wipes any session opened after the target revision.
+    await client.cache.evict_sid(mgmt_name, baseline.domain, auth_identity=None)
     client.invalidate_domain(mgmt_name, baseline.domain)
     logger.info("cp_revert_complete", domain=baseline.domain, to_session=baseline.session_uid)
     return True

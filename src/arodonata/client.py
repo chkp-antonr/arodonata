@@ -42,7 +42,7 @@ from arodonata.core.context import (
 from arodonata.core.context import (
     user_context as _ctx_user_context,
 )
-from arodonata.core.errors import SessionError
+from arodonata.core.errors import AmbiguousObjectError, SessionError, ValidationError
 from arodonata.core.events import CPCRUDEvent, SyncProgressEvent
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
@@ -1336,6 +1336,14 @@ class ArodonataClient:
         """Collect read-only auditable session change evidence (`ChangeReport`) across `scopes`."""
         if not self._db.is_initialized:
             await self._db.initialize()
+
+        async def _warm_rulebase(m_name: str, d_name: str) -> Any:
+            return await self.refresh_rulebases(
+                mgmt_name=m_name,
+                domains=[d_name] if d_name else None,
+                mode="smart",
+            )
+
         return await _collect_change_report(
             self._api,
             self._cache,
@@ -1343,6 +1351,7 @@ class ArodonataClient:
             options=options,
             max_uid_lookups=max_uid_lookups,
             now_fn=self._now,
+            refresh_rulebase_fn=_warm_rulebase,
         )
 
     @traced
@@ -1372,6 +1381,14 @@ class ArodonataClient:
         """Collect and render a `ChangeReport` across `scopes` into `formats`."""
         if not self._db.is_initialized:
             await self._db.initialize()
+
+        async def _warm_rulebase(m_name: str, d_name: str) -> Any:
+            return await self.refresh_rulebases(
+                mgmt_name=m_name,
+                domains=[d_name] if d_name else None,
+                mode="smart",
+            )
+
         return await _build_change_report(
             self._api,
             self._cache,
@@ -1380,6 +1397,7 @@ class ArodonataClient:
             options=options,
             max_uid_lookups=max_uid_lookups,
             now_fn=self._now,
+            refresh_rulebase_fn=_warm_rulebase,
         )
 
     # ------------------------------------------------------------------
@@ -1615,6 +1633,10 @@ class ArodonataClient:
         cache_ttl: float | None = None,
     ) -> CPObject | CPService | Asset | None:
         """Find a single `CPObject`, `CPService`, or `Asset` by exact `uid` or `name` in `(mgmt_name, domain)` (or across all domains when `domain` is `None`), including active `WriteSession` overlay."""
+        clean_query = name_or_uid.strip() if name_or_uid else ""
+        if not clean_query:
+            raise ValidationError("name_or_uid must not be empty or whitespace")
+
         if not self._db.is_initialized:
             await self._db.initialize()
 
@@ -1625,20 +1647,20 @@ class ArodonataClient:
         is_asset_type = clean_type is not None and clean_type in {t.lower() for t in CANONICAL_ASSET_TYPES}
 
         eff_domain = domain.strip() if domain and domain.strip() else None
-        lookup_key = name_or_uid
+        lookup_key = clean_query
         if eff_domain:
             composite_prefix = f"{mgmt_name}:{eff_domain}:"
-            if name_or_uid.startswith(composite_prefix):
-                lookup_key = name_or_uid.removeprefix(composite_prefix)
-        elif name_or_uid.startswith(f"{mgmt_name}:"):
-            parts = name_or_uid.split(":", 2)
-            if len(parts) == 3 and parts[1] and parts[2]:
-                eff_domain = parts[1]
-                lookup_key = parts[2]
-        lookup_names = list(dict.fromkeys([name_or_uid, lookup_key]))
+            if clean_query.startswith(composite_prefix):
+                lookup_key = clean_query.removeprefix(composite_prefix)
+        elif clean_query.startswith(f"{mgmt_name}:"):
+            parts = clean_query.split(":", 2)
+            if len(parts) == 3 and parts[1].strip() and parts[2].strip():
+                eff_domain = parts[1].strip()
+                lookup_key = parts[2].strip()
+        lookup_names = list(dict.fromkeys([clean_query, lookup_key]))
 
-        if not is_service_type and not is_asset_type:
-            if eff_domain:
+        if eff_domain is not None:
+            if not is_service_type and not is_asset_type:
                 by_uid = await self._object_service.get_object_by_uid(
                     mgmt_name,
                     eff_domain,
@@ -1649,28 +1671,19 @@ class ArodonataClient:
                 if by_uid is not None and (clean_type is None or by_uid.type.lower() == clean_type):
                     return by_uid
 
-            objs = await self._object_service.get_objects(
-                mgmt_name=mgmt_name,
-                domain=eff_domain,
-                types=[clean_type] if clean_type else None,
-                names=lookup_names if eff_domain else None,
-                include_global=(eff_domain == "Global"),
-                cache_mode=("cache" if cache_mode != "force" else cache_mode) if eff_domain else cache_mode,
-                cache_ttl=cache_ttl,
-            )
-            if eff_domain and objs:
-                return objs[0]
-            if not eff_domain and objs:
-                for o in objs:
-                    if o.uid in (name_or_uid, lookup_key) or o.name in (name_or_uid, lookup_key) or o.id == name_or_uid:
-                        return o
-                needle_lower = lookup_key.strip().lower()
-                for o in objs:
-                    if o.uid.lower() == needle_lower or o.name.lower() == needle_lower:
-                        return o
+                objs = await self._object_service.get_objects(
+                    mgmt_name=mgmt_name,
+                    domain=eff_domain,
+                    types=[clean_type] if clean_type else None,
+                    names=lookup_names,
+                    include_global=(eff_domain == "Global"),
+                    cache_mode="cache" if cache_mode != "force" else cache_mode,
+                    cache_ttl=cache_ttl,
+                )
+                if objs:
+                    return objs[0]
 
-        if is_service_type or clean_type is None:
-            if eff_domain:
+            if is_service_type or clean_type is None:
                 svc_by_uid = await self._service_cache.get_service_by_uid(
                     mgmt_name,
                     eff_domain,
@@ -1681,54 +1694,149 @@ class ArodonataClient:
                 if svc_by_uid is not None and (clean_type is None or svc_by_uid.type.lower() == clean_type):
                     return svc_by_uid
 
-            svcs = await self._service_cache.get_services(
+                svcs = await self._service_cache.get_services(
+                    mgmt_name=mgmt_name,
+                    domain=eff_domain,
+                    types=[clean_type] if clean_type else None,
+                    names=lookup_names,
+                    include_global=(eff_domain == "Global"),
+                    cache_mode="cache" if cache_mode != "force" else cache_mode,
+                    cache_ttl=cache_ttl,
+                )
+                if svcs:
+                    return svcs[0]
+
+            if is_asset_type or clean_type is None:
+                assets = await self._asset_service.get_assets(
+                    mgmt_name=mgmt_name,
+                    domain=eff_domain,
+                    types=[clean_type] if clean_type else None,
+                    include_global=(eff_domain == "Global"),
+                    cache_mode=cache_mode,
+                    cache_ttl=cache_ttl,
+                )
+                needle_lower = clean_query.lower()
+                lookup_lower = lookup_key.lower()
+                for asset in assets:
+                    if (
+                        asset.uid in (clean_query, lookup_key)
+                        or asset.name in (clean_query, lookup_key)
+                        or asset.asset_id == clean_query
+                        or asset.id == clean_query
+                    ):
+                        return asset
+                for asset in assets:
+                    if (
+                        asset.name.lower() in (needle_lower, lookup_lower)
+                        or asset.asset_id.lower() == needle_lower
+                        or asset.id.lower() == needle_lower
+                    ):
+                        return asset
+
+            return None
+
+        # Cross-domain lookup (eff_domain is None): strictly cache-only and includes Global
+        needle_lower = clean_query.lower()
+        lookup_lower = lookup_key.lower()
+        exact_matches: list[CPObject | CPService | Asset] = []
+        ci_matches: list[CPObject | CPService | Asset] = []
+
+        if not is_service_type and not is_asset_type:
+            objs = await self._object_service.get_objects(
                 mgmt_name=mgmt_name,
-                domain=eff_domain,
+                domain=None,
                 types=[clean_type] if clean_type else None,
-                names=lookup_names if eff_domain else None,
-                include_global=(eff_domain == "Global"),
-                cache_mode=("cache" if cache_mode != "force" else cache_mode) if eff_domain else cache_mode,
+                names=None,
+                include_global=True,
+                cache_mode="cache",
                 cache_ttl=cache_ttl,
             )
-            if eff_domain and svcs:
-                return svcs[0]
-            if not eff_domain and svcs:
-                for s in svcs:
-                    if s.uid in (name_or_uid, lookup_key) or s.name in (name_or_uid, lookup_key) or s.id == name_or_uid:
-                        return s
-                needle_lower = lookup_key.strip().lower()
-                for s in svcs:
-                    if s.uid.lower() == needle_lower or s.name.lower() == needle_lower:
-                        return s
+            for o in objs:
+                if (
+                    o.uid in (clean_query, lookup_key)
+                    or o.name in (clean_query, lookup_key)
+                    or o.object_id == clean_query
+                    or o.id == clean_query
+                ):
+                    exact_matches.append(o)
+                elif (
+                    o.uid.lower() in (needle_lower, lookup_lower)
+                    or o.name.lower() in (needle_lower, lookup_lower)
+                    or o.object_id.lower() == needle_lower
+                    or o.id.lower() == needle_lower
+                ):
+                    ci_matches.append(o)
+
+        if is_service_type or clean_type is None:
+            svcs = await self._service_cache.get_services(
+                mgmt_name=mgmt_name,
+                domain=None,
+                types=[clean_type] if clean_type else None,
+                names=None,
+                include_global=True,
+                cache_mode="cache",
+                cache_ttl=cache_ttl,
+            )
+            for s in svcs:
+                if (
+                    s.uid in (clean_query, lookup_key)
+                    or s.name in (clean_query, lookup_key)
+                    or s.service_id == clean_query
+                    or s.id == clean_query
+                ):
+                    exact_matches.append(s)
+                elif (
+                    s.uid.lower() in (needle_lower, lookup_lower)
+                    or s.name.lower() in (needle_lower, lookup_lower)
+                    or s.service_id.lower() == needle_lower
+                    or s.id.lower() == needle_lower
+                ):
+                    ci_matches.append(s)
 
         if is_asset_type or clean_type is None:
             assets = await self._asset_service.get_assets(
                 mgmt_name=mgmt_name,
-                domain=eff_domain,
+                domain=None,
                 types=[clean_type] if clean_type else None,
-                include_global=(eff_domain == "Global"),
-                cache_mode=cache_mode,
+                include_global=True,
+                cache_mode="cache",
                 cache_ttl=cache_ttl,
             )
-            needle_lower = name_or_uid.strip().lower()
-            lookup_lower = lookup_key.strip().lower()
             for asset in assets:
                 if (
-                    asset.uid in (name_or_uid, lookup_key)
-                    or asset.name in (name_or_uid, lookup_key)
-                    or asset.asset_id == name_or_uid
-                    or asset.id == name_or_uid
+                    asset.uid in (clean_query, lookup_key)
+                    or asset.name in (clean_query, lookup_key)
+                    or asset.asset_id == clean_query
+                    or asset.id == clean_query
                 ):
-                    return asset
-            for asset in assets:
-                if (
+                    exact_matches.append(asset)
+                elif (
                     asset.name.lower() in (needle_lower, lookup_lower)
                     or asset.asset_id.lower() == needle_lower
                     or asset.id.lower() == needle_lower
                 ):
-                    return asset
+                    ci_matches.append(asset)
 
-        return None
+        chosen_pool = exact_matches if exact_matches else ci_matches
+        if not chosen_pool:
+            return None
+
+        deduped: list[CPObject | CPService | Asset] = []
+        seen_keys: set[tuple[str, str]] = set()
+        for item in chosen_pool:
+            key = (item.domain_name, item.uid)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                deduped.append(item)
+
+        distinct_domains = {item.domain_name for item in deduped}
+        if len(distinct_domains) > 1:
+            raise AmbiguousObjectError(
+                mgmt_name,
+                clean_query,
+                [item.model_dump(mode="json") for item in deduped],
+            )
+        return deduped[0]
 
     @traced
     async def get_group_members(
@@ -1743,6 +1851,8 @@ class ArodonataClient:
         cache_ttl: float | None = None,
     ) -> list[CPObject | CPService | Asset]:
         """Resolve direct (and optionally recursive) member `CPObject`, `CPService`, or child `Asset` items for a group, service-group, cluster, or VSX container in `(mgmt_name, domain)`."""
+        if not group_name_or_uid or not group_name_or_uid.strip():
+            raise ValidationError("group_name_or_uid must not be empty or whitespace")
         if not self._db.is_initialized:
             await self._db.initialize()
         return await self._search_service.get_group_members(
@@ -1766,8 +1876,9 @@ class ArodonataClient:
         server_ip: str | None = None,
         timeout: float | None = None,
         auth: AuthContext | None = None,
+        force_disconnect: bool = False,
     ) -> ApiCallResult:
-        """Adopt `session_uid` via `take-over-session`, publish it, log out, and invalidate the domain cache."""
+        """Adopt `session_uid`, publish it, log out, and invalidate the domain cache."""
         return await self._cpcrud.publish_staged_session(
             mgmt_name,
             domain,
@@ -1776,6 +1887,7 @@ class ArodonataClient:
             server_ip=server_ip,
             timeout=timeout,
             auth=auth,
+            force_disconnect=force_disconnect,
         )
 
     async def stream_publish_staged_session(
@@ -1788,8 +1900,9 @@ class ArodonataClient:
         server_ip: str | None = None,
         timeout: float | None = None,
         auth: AuthContext | None = None,
+        force_disconnect: bool = False,
     ) -> AsyncIterator[CPCRUDEvent]:
-        """Adopt `session_uid` via `take-over-session`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate the domain cache."""
+        """Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate the domain cache."""
         async for ev in self._cpcrud.stream_publish_staged_session(
             mgmt_name,
             domain,
@@ -1798,6 +1911,7 @@ class ArodonataClient:
             server_ip=server_ip,
             timeout=timeout,
             auth=auth,
+            force_disconnect=force_disconnect,
         ):
             yield ev
 
@@ -1811,8 +1925,9 @@ class ArodonataClient:
         sid: str | None = None,
         server_ip: str | None = None,
         auth: AuthContext | None = None,
+        force_disconnect: bool = False,
     ) -> ApiCallResult:
-        """Adopt `session_uid` via `take-over-session`, discard uncommitted changes, and log out."""
+        """Adopt `session_uid`, discard uncommitted changes, and log out."""
         return await self._cpcrud.discard_staged_session(
             mgmt_name,
             domain,
@@ -1820,6 +1935,7 @@ class ArodonataClient:
             sid=sid,
             server_ip=server_ip,
             auth=auth,
+            force_disconnect=force_disconnect,
         )
 
 

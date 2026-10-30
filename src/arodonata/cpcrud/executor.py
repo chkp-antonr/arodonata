@@ -16,7 +16,7 @@ Implements `Executor`:
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from datetime import datetime
@@ -124,6 +124,7 @@ class Executor:
         self._now = now_fn
         self._last_report: ApplyReport | None = None
         self._last_staged_publish_result: ApiCallResult | None = None
+        self._staged_sessions: OrderedDict[tuple[str, str, str], StagedSessionInfo] = OrderedDict()
 
     @property
     def last_report(self) -> ApplyReport | None:
@@ -215,7 +216,11 @@ class Executor:
 
         resolved_auth = auth or get_auth_context()
         resolved_user = user or get_user_context()
-        eff_session_name = session_name or (resolved_user.session_name if resolved_user else None)
+        eff_session_name = (
+            session_name
+            or (resolved_user.session_name if resolved_user else None)
+            or ("arodonata-cpcrud-staged" if (no_publish and keep_session) else "arodonata-cpcrud")
+        )
         eff_session_desc = session_description or (resolved_user.session_description if resolved_user else None)
 
         for mgmt_name, dom_name in domain_order:
@@ -409,6 +414,12 @@ class Executor:
                     session_name=eff_session_name,
                 )
                 staged_sessions.append(staged_info)
+                if session_uid:
+                    st_key = (mgmt_name, dom_key, session_uid)
+                    self._staged_sessions.pop(st_key, None)
+                    self._staged_sessions[st_key] = staged_info
+                    while len(self._staged_sessions) > 256:
+                        self._staged_sessions.popitem(last=False)
 
             try:
                 with write_session_context(ws):
@@ -1015,62 +1026,61 @@ class Executor:
         sid: str | None = None,
         server_ip: str | None = None,
         auth: AuthContext | None = None,
+        force_disconnect: bool = False,
     ) -> tuple[str | None, str | None, ApiCallResult]:
-        """Adopt ownership of `session_uid` via `take-over-session` (with fallback to `switch-session`), opening a fresh dedicated session if `sid` expired."""
+        """Adopt ownership of `session_uid` via direct SID reuse or verified `take-over-session` (with fallback to `switch-session`)."""
         resolved_auth = auth or get_auth_context()
-        takeover_payload: dict[str, Any] = {
-            "uid": session_uid,
-            "disconnect-active-session": True,
-        }
-        switch_payload: dict[str, Any] = {
-            "uid": session_uid,
-        }
+        dom_key = normalize_domain_key(domain)
+        staged_entry = self._staged_sessions.get((mgmt_name, dom_key, session_uid))
 
-        async def _try_adopt_on_sid(target_sid: str, target_ip: str | None) -> ApiCallResult:
-            take_res = await self._api.api_call(
-                mgmt_name,
-                "take-over-session",
-                takeover_payload,
-                domain=domain or None,
-                sid=target_sid,
-                server_ip=target_ip,
-            )
-            if take_res.success:
-                return take_res
+        candidate_sid = sid or (staged_entry.sid if staged_entry is not None else None)
+        candidate_ip = server_ip or (staged_entry.server_ip if staged_entry is not None else None)
 
-            # Fallback to switch-session if take-over-session is rejected (e.g. session already owned or disconnected)
-            sw_res = await self._api.api_call(
-                mgmt_name,
-                "switch-session",
-                switch_payload,
-                domain=domain or None,
-                sid=target_sid,
-                server_ip=target_ip,
-            )
-            if sw_res.success:
-                return sw_res
-            return take_res
-
-        if sid:
+        # 1. If we already have the active SID for session_uid, verify via `show-session {}` and reuse directly
+        if candidate_sid:
             try:
-                adopt_res = await _try_adopt_on_sid(sid, server_ip)
-                if adopt_res.success:
-                    return sid, server_ip, adopt_res
+                verify_res = await self._api.api_call(
+                    mgmt_name,
+                    "show-session",
+                    {},
+                    domain=domain or None,
+                    sid=candidate_sid,
+                    server_ip=candidate_ip,
+                )
+                if verify_res.success and isinstance(verify_res.data, dict):
+                    s_uid = str(verify_res.data.get("uid") or "").strip()
+                    s_state = str(verify_res.data.get("state") or "").strip().lower()
+                    has_pub = bool(verify_res.data.get("publish-time"))
+                    if s_uid == session_uid:
+                        if s_state in ("published", "discarded") or has_pub:
+                            return (
+                                None,
+                                None,
+                                ApiCallResult(
+                                    success=False,
+                                    status_code=400,
+                                    error_code="session_not_open",
+                                    error_message=f"Staged session {session_uid} is already {s_state or 'published'}.",
+                                ),
+                            )
+                        return candidate_sid, candidate_ip, verify_res
             except ServerIdentityError:
                 raise
             except Exception:
                 pass
 
+        # 2. Open a fresh dedicated session to inspect provenance and adopt session_uid
         try:
             fresh_sid, fresh_ip = await self._api.create_dedicated_session(
                 mgmt_name,
                 domain or None,
                 auth=resolved_auth,
+                session_name="arodonata-cpcrud-adopt",
             )
         except ServerIdentityError:
             raise
         except Exception as exc:
-            safe_err = redact_sid(str(exc), known_sids=[sid] if sid else None)
+            safe_err = redact_sid(str(exc), known_sids=[candidate_sid] if candidate_sid else None)
             return (
                 None,
                 None,
@@ -1082,8 +1092,18 @@ class Executor:
                 ),
             )
 
+        known_sids = [s for s in (candidate_sid, fresh_sid) if s]
+
+        # 3. Inspect target session metadata via `show-session {"uid": session_uid}` before takeover
         try:
-            take_res = await _try_adopt_on_sid(fresh_sid, fresh_ip)
+            info_res = await self._api.api_call(
+                mgmt_name,
+                "show-session",
+                {"uid": session_uid},
+                domain=domain or None,
+                sid=fresh_sid,
+                server_ip=fresh_ip,
+            )
         except ServerIdentityError:
             with suppress(Exception):
                 await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
@@ -1091,7 +1111,108 @@ class Executor:
         except Exception as exc:
             with suppress(Exception):
                 await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
-            safe_err = redact_sid(str(exc), known_sids=[s for s in (sid, fresh_sid) if s])
+            safe_err = redact_sid(str(exc), known_sids=known_sids)
+            return (
+                None,
+                None,
+                ApiCallResult(
+                    success=False,
+                    status_code=500,
+                    error_message=f"Failed to inspect staged session {session_uid}: {safe_err}",
+                    error_code="session_inspect_failed",
+                ),
+            )
+
+        if not info_res.success or not isinstance(info_res.data, dict):
+            with suppress(Exception):
+                await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+            safe_err = redact_sid(
+                info_res.error_message or info_res.error_code or f"Unable to inspect session {session_uid}",
+                known_sids=known_sids,
+            )
+            return (
+                None,
+                None,
+                info_res.model_copy(update={"error_message": safe_err}),
+            )
+
+        s_data = info_res.data
+        s_state = str(s_data.get("state") or "").strip().lower()
+        has_pub = bool(s_data.get("publish-time"))
+        if s_state in ("published", "discarded") or has_pub:
+            with suppress(Exception):
+                await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+            return (
+                None,
+                None,
+                ApiCallResult(
+                    success=False,
+                    status_code=400,
+                    error_code="session_not_open",
+                    error_message=f"Staged session {session_uid} is already {s_state or 'published'}.",
+                ),
+            )
+
+        s_name = str(s_data.get("name") or s_data.get("session-name") or "").strip().lower()
+        s_app = str(s_data.get("application") or "").strip().lower()
+        is_arodonata_session = staged_entry is not None or s_name.startswith("arodonata") or s_app == "arodonata"
+        if not is_arodonata_session:
+            with suppress(Exception):
+                await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+            return (
+                None,
+                None,
+                ApiCallResult(
+                    success=False,
+                    status_code=403,
+                    error_code="foreign_session_refused",
+                    error_message=(
+                        f"Refusing to adopt foreign or non-Arodonata session {session_uid} "
+                        f"(name={s_name!r}, application={s_app!r})."
+                    ),
+                ),
+            )
+
+        # 4. Perform non-disruptive take-over-session (or force_disconnect if explicitly requested),
+        #    falling back to switch-session for disconnected sessions of the same administrator.
+        takeover_payload: dict[str, Any] = {"uid": session_uid}
+        if force_disconnect:
+            takeover_payload["disconnect-active-session"] = True
+        switch_payload: dict[str, Any] = {"uid": session_uid}
+
+        try:
+            take_res = await self._api.api_call(
+                mgmt_name,
+                "take-over-session",
+                takeover_payload,
+                domain=domain or None,
+                sid=fresh_sid,
+                server_ip=fresh_ip,
+            )
+            if not take_res.success:
+                sw_res = await self._api.api_call(
+                    mgmt_name,
+                    "switch-session",
+                    switch_payload,
+                    domain=domain or None,
+                    sid=fresh_sid,
+                    server_ip=fresh_ip,
+                )
+                if sw_res.success:
+                    take_res = sw_res
+                else:
+                    take_err = take_res.error_message or take_res.error_code or f"HTTP {take_res.status_code}"
+                    sw_err = sw_res.error_message or sw_res.error_code or f"HTTP {sw_res.status_code}"
+                    combined_err = f"take-over-session failed ({take_err}); switch-session fallback failed ({sw_err})"
+                    take_res = take_res.model_copy(update={"error_message": combined_err})
+        except ServerIdentityError:
+            with suppress(Exception):
+                await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+            raise
+        except Exception as exc:
+            with suppress(Exception):
+                await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+            safe_err = redact_sid(str(exc), known_sids=known_sids)
             return (
                 None,
                 None,
@@ -1108,7 +1229,7 @@ class Executor:
                 await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
             safe_err = redact_sid(
                 take_res.error_message or take_res.error_code or "take-over-session failed",
-                known_sids=[s for s in (sid, fresh_sid) if s],
+                known_sids=known_sids,
             )
             return (
                 None,
@@ -1128,9 +1249,11 @@ class Executor:
         server_ip: str | None = None,
         timeout: float | None = None,
         auth: AuthContext | None = None,
+        force_disconnect: bool = False,
     ) -> AsyncIterator[CPCRUDEvent]:
-        """Adopt `session_uid` via `take-over-session`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate domain cache."""
+        """Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate domain cache."""
         dom_label = f"{mgmt_name}:{domain}" if domain else mgmt_name
+        dom_key = normalize_domain_key(domain)
         yield CPCRUDStartedEvent(
             mgmt_name=mgmt_name,
             domain=domain or None,
@@ -1145,6 +1268,7 @@ class Executor:
             sid=sid,
             server_ip=server_ip,
             auth=auth,
+            force_disconnect=force_disconnect,
         )
         if not take_res.success or active_sid is None:
             err_msg = take_res.error_message or take_res.error_code or "take-over-session failed"
@@ -1199,6 +1323,7 @@ class Executor:
                     await self._api.logout_sid(mgmt_name, sid, server_ip=server_ip)
 
         if pub_res.success:
+            self._staged_sessions.pop((mgmt_name, dom_key, session_uid), None)
             self._invalidate_domain(mgmt_name, domain)
             self._last_staged_publish_result = pub_res
             yield CPCRUDDomainPublishedEvent(
@@ -1254,8 +1379,9 @@ class Executor:
         server_ip: str | None = None,
         timeout: float | None = None,
         auth: AuthContext | None = None,
+        force_disconnect: bool = False,
     ) -> ApiCallResult:
-        """Adopt `session_uid` via `take-over-session`, publish it, log out, and invalidate the domain cache."""
+        """Adopt `session_uid`, publish it, log out, and invalidate the domain cache."""
         span_attrs(mgmt_name=mgmt_name, domain=domain, session_uid=session_uid)
         async for _ in self.stream_publish_staged_session(
             mgmt_name,
@@ -1265,6 +1391,7 @@ class Executor:
             server_ip=server_ip,
             timeout=timeout,
             auth=auth,
+            force_disconnect=force_disconnect,
         ):
             pass
         assert self._last_staged_publish_result is not None
@@ -1280,9 +1407,11 @@ class Executor:
         sid: str | None = None,
         server_ip: str | None = None,
         auth: AuthContext | None = None,
+        force_disconnect: bool = False,
     ) -> ApiCallResult:
-        """Adopt `session_uid` via `take-over-session`, discard all uncommitted changes in the session, and log out."""
+        """Adopt `session_uid`, discard all uncommitted changes in the session, and log out."""
         span_attrs(mgmt_name=mgmt_name, domain=domain, session_uid=session_uid)
+        dom_key = normalize_domain_key(domain)
         active_sid, active_ip, take_res = await self._adopt_staged_session(
             mgmt_name,
             domain,
@@ -1290,6 +1419,7 @@ class Executor:
             sid=sid,
             server_ip=server_ip,
             auth=auth,
+            force_disconnect=force_disconnect,
         )
         if not take_res.success or active_sid is None:
             return take_res
@@ -1310,6 +1440,7 @@ class Executor:
                     known_sids=known_sids,
                 )
                 return disc_res.model_copy(update={"error_message": safe_err})
+            self._staged_sessions.pop((mgmt_name, dom_key, session_uid), None)
             return disc_res
         except ServerIdentityError:
             raise

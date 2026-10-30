@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import html
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -646,6 +646,7 @@ async def build_change_report(
     options: RenderOptions | None = None,
     max_uid_lookups: int = MAX_UID_LOOKUPS,
     now_fn: Callable[[], datetime] = utc_now,
+    refresh_rulebase_fn: Callable[[str, str], Awaitable[Any]] | None = None,
 ) -> RenderedReportBundle:
     """Collect a `ChangeReport` and render it into `formats` in a single call."""
     # Pre-validate requested formats before making network calls
@@ -663,6 +664,7 @@ async def build_change_report(
         options=options,
         max_uid_lookups=max_uid_lookups,
         now_fn=now_fn,
+        refresh_rulebase_fn=refresh_rulebase_fn,
     )
     return render_change_report(report, formats=formats, options=options)
 

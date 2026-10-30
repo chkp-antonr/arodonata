@@ -17,6 +17,7 @@ from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import AuthContext
 from arodonata.core.errors import REDACTED_PLACEHOLDER, InvalidCredentialsError
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
+from arodonata.core.models.objects import CPObject
 from arodonata.mcp import create_mcp_server
 
 
@@ -134,7 +135,18 @@ class MCPFakeApi:
                         "publish-time": {"iso-8601": "2026-10-24T10:00:00Z"},
                     },
                 )
-            return ApiCallResult(success=True, data={"locks": 0, "changes": 0, "number-of-published-changes": 0})
+            return ApiCallResult(
+                success=True,
+                data={
+                    "uid": (payload or {}).get("uid") or "sess-staged-mcp-1",
+                    "name": "arodonata-cpcrud-staged",
+                    "application": "arodonata",
+                    "state": "open",
+                    "locks": 0,
+                    "changes": 0,
+                    "number-of-published-changes": 0,
+                },
+            )
         if command == "show-changes":
             return ApiCallResult(
                 success=True,
@@ -1104,7 +1116,22 @@ async def test_mcp_cpcrud_tamper_resistance_staged_sessions_and_api_call_hardeni
         assert retry_res.is_error is True
         assert "retry_remaining" in _get_tool_text(retry_res)
 
-        # 4. W27: Staged session apply + cpcrud_staged_session(action="publish" | "discard")
+        # 4. W27 & C1 & W2: Staged session apply + cpcrud_staged_session(action="publish" | "discard")
+        # Verify cpcrud_staged_session schema omits server_ip (W2)
+        cpcrud_tools = await server.list_tools()
+        staged_tool = next(t for t in cpcrud_tools if t.name == "cpcrud_staged_session")
+        assert "server_ip" not in staged_tool.input_schema.get("properties", {})
+
+        # Verify unregistered/foreign session_uid is rejected with ToolFailure BEFORE any Check Point call (C1)
+        calls_before_foreign = len(fake_api.calls)
+        foreign_staged_res = await server.call_tool(
+            "cpcrud_staged_session",
+            {"mgmt_name": "mds1", "domain": "Corp", "session_uid": "foreign-smartconsole-uid-999", "action": "discard"},
+        )
+        assert foreign_staged_res.is_error is True
+        assert "Unknown or foreign staged session_uid" in _get_tool_text(foreign_staged_res)
+        assert len(fake_api.calls) == calls_before_foreign
+
         staged_apply_res = await server.call_tool(
             "cpcrud_apply",
             {"plan_id": signed_plan["plan_id"], "no_publish": True, "keep_session": True},
@@ -1112,17 +1139,27 @@ async def test_mcp_cpcrud_tamper_resistance_staged_sessions_and_api_call_hardeni
         assert staged_apply_res.is_error is False
         staged_report = _parse_tool_json(staged_apply_res)
         assert any(s["mgmt_name"] == "mds1" and s["domain_name"] == "Corp" for s in staged_report["staged_sessions"])
+        staged_uid_1 = staged_report["staged_sessions"][0]["session_uid"]
+        assert staged_uid_1 == "sess-staged-mcp-1"
 
         pub_staged_res = await server.call_tool(
             "cpcrud_staged_session",
-            {"mgmt_name": "mds1", "domain": "Corp", "session_uid": "sess-staged-1", "action": "publish"},
+            {"mgmt_name": "mds1", "domain": "Corp", "session_uid": staged_uid_1, "action": "publish"},
         )
         assert pub_staged_res.is_error is False
         assert _parse_tool_json(pub_staged_res)["published"] is True
 
+        # Stage a second session and discard it
+        staged_apply_2 = await server.call_tool(
+            "cpcrud_apply",
+            {"plan_id": signed_plan["plan_id"], "no_publish": True, "keep_session": True},
+        )
+        assert staged_apply_2.is_error is False
+        staged_uid_2 = _parse_tool_json(staged_apply_2)["staged_sessions"][0]["session_uid"]
+
         disc_staged_res = await server.call_tool(
             "cpcrud_staged_session",
-            {"mgmt_name": "mds1", "domain": "Corp", "session_uid": "sess-staged-2", "action": "discard"},
+            {"mgmt_name": "mds1", "domain": "Corp", "session_uid": staged_uid_2, "action": "discard"},
         )
         assert disc_staged_res.is_error is False
         assert _parse_tool_json(disc_staged_res)["discarded"] is True
@@ -1150,3 +1187,117 @@ async def test_mcp_cpcrud_tamper_resistance_staged_sessions_and_api_call_hardeni
         assert add_host_detail["sid"] == "dedicated-sid-999"
         assert add_host_detail["timeout"] == 300.0
         assert ("mds1", "dedicated-sid-999") in fake_api.logged_out_sids
+
+
+@pytest.mark.asyncio
+async def test_mcp_cross_domain_show_object_and_get_group_members_ambiguity_and_zero_login() -> None:
+    """Scenario (`W3`, `I3`):
+    - `show_object` and `get_group_members` with `domain` omitted use `cache_mode='cache'` and `include_global=True` (zero live API calls).
+    - When matching entities exist across multiple cached domains, both tools return `match_type='ambiguous'` with candidate objects.
+    """
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        server = create_mcp_server(client, auth_mode="host")
+
+        # Seed domains and objects into cache directly
+        await client.get_domains("mds1")
+        await client.cache.replace_domain_objects(
+            "mds1",
+            "Global",
+            [
+                CPObject(uid="h-glob-dns", name="GlobalDNS", type="host", mgmt_name="mds1", domain_name="Global"),
+                CPObject(
+                    uid="g-glob-admins",
+                    name="GlobalAdmins",
+                    type="group",
+                    mgmt_name="mds1",
+                    domain_name="Global",
+                    members=["h-glob-dns"],
+                ),
+            ],
+            types=["host", "group"],
+        )
+        await client.cache.replace_domain_objects(
+            "mds1",
+            "Corp",
+            [
+                CPObject(uid="h-dup-corp", name="SharedHost", type="host", mgmt_name="mds1", domain_name="Corp"),
+                CPObject(
+                    uid="g-dup-corp",
+                    name="SharedGroup",
+                    type="group",
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    members=["h-dup-corp"],
+                ),
+            ],
+            types=["host", "group"],
+        )
+        await client.cache.replace_domain_objects(
+            "mds1",
+            "Branch",
+            [
+                CPObject(uid="h-dup-branch", name="SharedHost", type="host", mgmt_name="mds1", domain_name="Branch"),
+                CPObject(
+                    uid="g-dup-branch",
+                    name="SharedGroup",
+                    type="group",
+                    mgmt_name="mds1",
+                    domain_name="Branch",
+                    members=["h-dup-branch"],
+                ),
+            ],
+            types=["host", "group"],
+        )
+
+        calls_before = len(fake_api.calls)
+        queries_before = len(fake_api.queries)
+
+        # 1. Global entity and group are visible when domain is omitted, with zero API calls
+        glob_obj_res = await server.call_tool(
+            "show_object",
+            {"uid_or_name": "GlobalDNS", "mgmt_name": "mds1"},
+        )
+        assert glob_obj_res.is_error is False
+        glob_obj_data = _parse_tool_json(glob_obj_res)
+        assert glob_obj_data["match_type"] == "exact"
+        assert glob_obj_data["domain"] == "Global"
+        assert glob_obj_data["object"]["uid"] == "h-glob-dns"
+
+        glob_grp_res = await server.call_tool(
+            "get_group_members",
+            {"group_name_or_uid": "GlobalAdmins", "mgmt_name": "mds1"},
+        )
+        assert glob_grp_res.is_error is False
+        glob_grp_data = _parse_tool_json(glob_grp_res)
+        assert glob_grp_data["total"] == 1
+        assert glob_grp_data["objects"][0]["name"] == "GlobalDNS"
+
+        # 2. Cross-domain collision returns match_type="ambiguous" in both show_object and get_group_members
+        amb_obj_res = await server.call_tool(
+            "show_object",
+            {"uid_or_name": "SharedHost", "mgmt_name": "mds1"},
+        )
+        assert amb_obj_res.is_error is False
+        amb_obj_data = _parse_tool_json(amb_obj_res)
+        assert amb_obj_data["match_type"] == "ambiguous"
+        assert amb_obj_data["total"] == 2
+        assert {o["domain_name"] for o in amb_obj_data["objects"]} == {"Corp", "Branch"}
+        assert "Ambiguous lookup" in amb_obj_data["hint"]
+
+        amb_grp_res = await server.call_tool(
+            "get_group_members",
+            {"group_name_or_uid": "SharedGroup", "mgmt_name": "mds1"},
+        )
+        assert amb_grp_res.is_error is False
+        amb_grp_data = _parse_tool_json(amb_grp_res)
+        assert amb_grp_data["match_type"] == "ambiguous"
+        assert amb_grp_data["total"] == 2
+        assert {o["domain_name"] for o in amb_grp_data["objects"]} == {"Corp", "Branch"}
+        assert "Ambiguous lookup" in amb_grp_data["hint"]
+
+        # Verify zero new live API calls or queries were triggered
+        assert len(fake_api.calls) == calls_before
+        assert len(fake_api.queries) == queries_before

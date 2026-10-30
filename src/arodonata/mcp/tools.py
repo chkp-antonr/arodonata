@@ -33,9 +33,16 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult
 
 from arodonata.adapters.checkpoint.client import SERVICE_COMMAND_TYPES, is_readonly_command
+from arodonata.adapters.checkpoint.sessions import normalize_domain_key
 from arodonata.adapters.checkpoint.transport import validate_command_name
 from arodonata.client import ArodonataClient
-from arodonata.core.errors import InvalidCredentialsError, ValidationError, redact_sid, sanitize_mapping
+from arodonata.core.errors import (
+    AmbiguousObjectError,
+    InvalidCredentialsError,
+    ValidationError,
+    redact_sid,
+    sanitize_mapping,
+)
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
     CANONICAL_ASSET_TYPES,
@@ -56,7 +63,7 @@ from arodonata.core.models.services import CPService
 from arodonata.core.services.object_service import resolve_object_query_command
 from arodonata.core.services.search_service import classify_search_term, matches_classified_term
 from arodonata.core.services.service_cache import resolve_service_query_command
-from arodonata.cpcrud import ApplyReport, IpConflictPolicy, NameConflictPolicy, Plan
+from arodonata.cpcrud import ApplyReport, IpConflictPolicy, NameConflictPolicy, Plan, StagedSessionInfo
 from arodonata.cpcrud.state_reader import OBJECT_ITEM_TYPES, SERVICE_ITEM_TYPES
 from arodonata.mcp.config import ArodonataMCPSettings
 from arodonata.mcp.errors import (
@@ -834,11 +841,15 @@ def register_mcp_tools(
                 )
             clean_obj_type = normalized_candidate
 
-        query_str = uid_or_name.strip()
+        query_str = uid_or_name.strip() if uid_or_name else ""
+        if not query_str:
+            raise ToolFailure("uid_or_name must not be empty or whitespace", mgmt_name=eff_mgmt, domain=eff_domain)
         query_lower = query_str.lower()
         has_explicit_wildcard = "*" in query_str or "?" in query_str
 
         if not is_live:
+            eff_mode: CacheMode = "cache" if eff_domain is None else mode
+            eff_include_global = True if eff_domain is None else (eff_domain == "Global")
             is_service_type = clean_obj_type is not None and (
                 clean_obj_type in SERVICE_COMMAND_TYPES or clean_obj_type.startswith("service-")
             )
@@ -847,13 +858,30 @@ def register_mcp_tools(
 
             # Tier 1: Fast path for exact UID or exact name match when no wildcard is present
             if not has_explicit_wildcard and not is_layer_or_pkg_type:
-                found_exact = await client.find_object(
-                    eff_mgmt,
-                    eff_domain,
-                    query_str,
-                    obj_type=clean_obj_type,
-                    cache_mode=mode,
-                )
+                try:
+                    found_exact = await client.find_object(
+                        eff_mgmt,
+                        eff_domain,
+                        query_str,
+                        obj_type=clean_obj_type,
+                        cache_mode=eff_mode,
+                    )
+                except AmbiguousObjectError as exc:
+                    return json_tool_result(
+                        {
+                            "from": 1 if exc.candidates else 0,
+                            "to": len(exc.candidates),
+                            "total": len(exc.candidates),
+                            "match_type": "ambiguous",
+                            "source": "cache",
+                            "cache_age_seconds": None,
+                            "mgmt_name": eff_mgmt,
+                            "domain": None,
+                            "object": None,
+                            "objects": exc.candidates,
+                            "hint": str(exc),
+                        }
+                    )
                 if found_exact is not None:
                     matched_domain = getattr(found_exact, "domain_name", None) or target_domain
                     scope_name, item_type_val = _entity_scope_and_type(found_exact)
@@ -888,8 +916,8 @@ def register_mcp_tools(
                     mgmt_name=eff_mgmt,
                     domain=eff_domain,
                     types=[clean_obj_type] if clean_obj_type else None,
-                    include_global=(eff_domain == "Global"),
-                    cache_mode="cache" if not has_explicit_wildcard else mode,
+                    include_global=eff_include_global,
+                    cache_mode="cache" if not has_explicit_wildcard else eff_mode,
                 )
                 candidates.extend(objs)
 
@@ -898,8 +926,8 @@ def register_mcp_tools(
                     mgmt_name=eff_mgmt,
                     domain=eff_domain,
                     types=[clean_obj_type] if clean_obj_type else None,
-                    include_global=(eff_domain == "Global"),
-                    cache_mode="cache" if not has_explicit_wildcard else mode,
+                    include_global=eff_include_global,
+                    cache_mode="cache" if not has_explicit_wildcard else eff_mode,
                 )
                 candidates.extend(svcs)
 
@@ -908,8 +936,8 @@ def register_mcp_tools(
                     mgmt_name=eff_mgmt,
                     domain=eff_domain,
                     types=[clean_obj_type] if clean_obj_type else None,
-                    include_global=(eff_domain == "Global"),
-                    cache_mode="cache" if not has_explicit_wildcard else mode,
+                    include_global=eff_include_global,
+                    cache_mode="cache" if not has_explicit_wildcard else eff_mode,
                 )
                 candidates.extend(assets)
 
@@ -917,7 +945,7 @@ def register_mcp_tools(
                 if eff_domain is not None:
                     layer_domains = [eff_domain]
                 else:
-                    cached_doms = await client.cache.get_domains(eff_mgmt, include_global=False)
+                    cached_doms = await client.cache.get_domains(eff_mgmt, include_global=True)
                     layer_domains = [d.name for d in cached_doms] if cached_doms else ["default"]
                 for l_dom in layer_domains:
                     snap = await client.cache.get_domain_rulebase(eff_mgmt, l_dom)
@@ -934,26 +962,50 @@ def register_mcp_tools(
 
             # Check Tier 1 exact match on layers/packages (or case-insensitive exact name across all candidates)
             if not has_explicit_wildcard:
-                for cand in candidates:
-                    if cand.uid.lower() == query_lower or cand.name.lower() == query_lower:
-                        matched_domain = getattr(cand, "domain_name", None) or target_domain
-                        scope_name, item_type_val = _entity_scope_and_type(cand)
-                        age = await _compute_cache_age(client, eff_mgmt, matched_domain, scope_name, item_type_val)
-                        obj_dict = _serialize_any_entity(cand, details_level=details_level)
+                exact_cands = [
+                    cand for cand in candidates if cand.uid.lower() == query_lower or cand.name.lower() == query_lower
+                ]
+                if exact_cands:
+                    cand_domains = {getattr(c, "domain_name", None) or target_domain for c in exact_cands}
+                    if eff_domain is None and len(cand_domains) > 1:
+                        serialized_amb = [_serialize_any_entity(c, details_level="standard") for c in exact_cands]
                         return json_tool_result(
                             {
                                 "from": 1,
-                                "to": 1,
-                                "total": 1,
-                                "match_type": "exact",
+                                "to": len(serialized_amb),
+                                "total": len(serialized_amb),
+                                "match_type": "ambiguous",
                                 "source": "cache",
-                                "cache_age_seconds": age,
+                                "cache_age_seconds": None,
                                 "mgmt_name": eff_mgmt,
-                                "domain": matched_domain,
-                                "object": obj_dict,
-                                "objects": [obj_dict],
+                                "domain": None,
+                                "object": None,
+                                "objects": serialized_amb,
+                                "hint": (
+                                    f"Ambiguous lookup for {uid_or_name!r} on {eff_mgmt!r} matched across "
+                                    f"multiple domains ({', '.join(sorted(cand_domains))}). Specify 'domain'."
+                                ),
                             }
                         )
+                    cand = exact_cands[0]
+                    matched_domain = getattr(cand, "domain_name", None) or target_domain
+                    scope_name, item_type_val = _entity_scope_and_type(cand)
+                    age = await _compute_cache_age(client, eff_mgmt, matched_domain, scope_name, item_type_val)
+                    obj_dict = _serialize_any_entity(cand, details_level=details_level)
+                    return json_tool_result(
+                        {
+                            "from": 1,
+                            "to": 1,
+                            "total": 1,
+                            "match_type": "exact",
+                            "source": "cache",
+                            "cache_age_seconds": age,
+                            "mgmt_name": eff_mgmt,
+                            "domain": matched_domain,
+                            "object": obj_dict,
+                            "objects": [obj_dict],
+                        }
+                    )
 
             # Tier 2: Explicit wildcard (`*` or `?` in `uid_or_name`) — anchored fnmatchcase without extra `*`
             if has_explicit_wildcard:
@@ -1154,15 +1206,33 @@ def register_mcp_tools(
         eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
         target_domain = eff_domain or "default"
         mode, _ = _normalize_cache_mode(cache_mode, default="smart")
+        eff_mode: CacheMode = "cache" if eff_domain is None else mode
 
-        members = await client.search_service.get_group_members(
-            eff_mgmt,
-            eff_domain,
-            group_name_or_uid,
-            recursive=recursive,
-            max_depth=max_depth,
-            cache_mode=mode,
-        )
+        try:
+            members = await client.search_service.get_group_members(
+                eff_mgmt,
+                eff_domain,
+                group_name_or_uid,
+                recursive=recursive,
+                max_depth=max_depth,
+                cache_mode=eff_mode,
+            )
+        except AmbiguousObjectError as exc:
+            return json_tool_result(
+                {
+                    "from": 1 if exc.candidates else 0,
+                    "to": len(exc.candidates),
+                    "total": len(exc.candidates),
+                    "match_type": "ambiguous",
+                    "source": "cache",
+                    "cache_age_seconds": None,
+                    "group": group_name_or_uid,
+                    "mgmt_name": eff_mgmt,
+                    "domain": None,
+                    "objects": exc.candidates,
+                    "hint": str(exc),
+                }
+            )
         matched_domain = (getattr(members[0], "domain_name", None) if members else None) or eff_domain or target_domain
         age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "group")
         serialized = [_serialize_any_entity(m, details_level="standard") for m in members]
@@ -1798,12 +1868,22 @@ def register_mcp_tools(
     if mcp_settings.cpcrud:
         plan_hmac_key = secrets.token_bytes(32)
         plan_store: OrderedDict[str, tuple[Plan, ApplyReport | None]] = OrderedDict()
+        staged_session_store: OrderedDict[tuple[str, str, str], StagedSessionInfo] = OrderedDict()
 
         def _store_plan_entry(plan_id: str, plan_obj: Plan, report_obj: ApplyReport | None = None) -> None:
             plan_store[plan_id] = (plan_obj, report_obj)
             plan_store.move_to_end(plan_id)
             while len(plan_store) > MAX_STORED_PLANS:
                 plan_store.popitem(last=False)
+
+        def _store_staged_session(info: StagedSessionInfo) -> None:
+            if not info.session_uid or not info.session_uid.strip():
+                return
+            key = (info.mgmt_name, normalize_domain_key(info.domain_name), info.session_uid.strip())
+            staged_session_store[key] = info
+            staged_session_store.move_to_end(key)
+            while len(staged_session_store) > MAX_STORED_PLANS:
+                staged_session_store.popitem(last=False)
 
         def _resolve_verified_plan(
             plan: dict[str, Any] | None,
@@ -1919,6 +1999,9 @@ def register_mcp_tools(
             )
             if eff_plan_id:
                 _store_plan_entry(eff_plan_id, parsed_plan, report)
+            if no_publish and keep_session:
+                for st_info in report.staged_sessions:
+                    _store_staged_session(st_info)
             report_dict = report.model_dump(mode="json")
             if eff_plan_id:
                 report_dict["plan_id"] = eff_plan_id
@@ -1957,7 +2040,7 @@ def register_mcp_tools(
         @server.tool(
             name="cpcrud_staged_session",
             description=(
-                "Adopt a staged Check Point session (created with keep_session=True) via take-over-session "
+                "Adopt a staged Check Point session (created by cpcrud_apply with no_publish=True, keep_session=True) "
                 "and either publish (action='publish', invalidating the domain cache) or discard "
                 "(action='discard') uncommitted changes before logging out cleanly."
             ),
@@ -1968,7 +2051,6 @@ def register_mcp_tools(
             action: Literal["publish", "discard"] = "publish",
             mgmt_name: str | None = None,
             domain: str | None = None,
-            server_ip: str | None = None,
             timeout: float | None = None,
         ) -> CallToolResult:
             if not session_uid or not session_uid.strip():
@@ -1979,15 +2061,28 @@ def register_mcp_tools(
             client = client_getter()
             eff_mgmt = resolve_mgmt_name(client, mgmt_name)
             eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
+            target_uid = session_uid.strip()
+            st_key = (eff_mgmt, normalize_domain_key(eff_domain), target_uid)
+            stored_staged = staged_session_store.get(st_key)
+            if stored_staged is None:
+                raise ToolFailure(
+                    f"Unknown or foreign staged session_uid {target_uid!r} on {eff_mgmt!r} ({eff_domain or 'System Data'}). "
+                    "cpcrud_staged_session only operates on sessions created by cpcrud_apply(..., no_publish=True, keep_session=True) "
+                    "on this MCP server.",
+                    mgmt_name=eff_mgmt,
+                    domain=eff_domain,
+                )
 
             if action == "publish":
                 eff_timeout = min(float(timeout), MAX_MCP_API_TIMEOUT_SECONDS) if timeout and timeout > 0 else None
                 res = await client.cpcrud.publish_staged_session(
                     eff_mgmt,
                     eff_domain,
-                    session_uid=session_uid.strip(),
-                    server_ip=server_ip,
+                    session_uid=target_uid,
+                    sid=stored_staged.sid,
+                    server_ip=stored_staged.server_ip,
                     timeout=eff_timeout,
+                    force_disconnect=False,
                 )
                 known_sids = await collect_known_sids(client, eff_mgmt)
                 if not res.success:
@@ -1998,11 +2093,12 @@ def register_mcp_tools(
                         domain=eff_domain,
                         known_sids=known_sids,
                     )
+                staged_session_store.pop(st_key, None)
                 return json_tool_result(
                     {
                         "mgmt_name": eff_mgmt,
                         "domain": eff_domain,
-                        "session_uid": session_uid.strip(),
+                        "session_uid": target_uid,
                         "action": "publish",
                         "published": True,
                         "discarded": False,
@@ -2014,8 +2110,10 @@ def register_mcp_tools(
             res = await client.cpcrud.discard_staged_session(
                 eff_mgmt,
                 eff_domain,
-                session_uid=session_uid.strip(),
-                server_ip=server_ip,
+                session_uid=target_uid,
+                sid=stored_staged.sid,
+                server_ip=stored_staged.server_ip,
+                force_disconnect=False,
             )
             known_sids = await collect_known_sids(client, eff_mgmt)
             if not res.success:
@@ -2026,11 +2124,12 @@ def register_mcp_tools(
                     domain=eff_domain,
                     known_sids=known_sids,
                 )
+            staged_session_store.pop(st_key, None)
             return json_tool_result(
                 {
                     "mgmt_name": eff_mgmt,
                     "domain": eff_domain,
-                    "session_uid": session_uid.strip(),
+                    "session_uid": target_uid,
                     "action": "discard",
                     "published": False,
                     "discarded": True,

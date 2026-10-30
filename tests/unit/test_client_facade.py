@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from arodonata import ArodonataClient
+from arodonata import AmbiguousObjectError, ArodonataClient, ValidationError
 from arodonata.core.config import ArodonataSettings
+from arodonata.core.models.objects import CPObject
 from tests.unit.test_client import FacadeFakeApi
 
 
@@ -36,3 +37,35 @@ async def test_client_facade_composite_identifier_resolution() -> None:
 
         members = await client.get_group_members("mds1", "Corp", "mds1:Corp:grp-base-1")
         assert [m.uid for m in members] == ["h-base-1"]
+
+        # Blank input raises ValidationError
+        with pytest.raises(ValidationError):
+            await client.find_object("mds1", None, "   ")
+        with pytest.raises(ValidationError):
+            await client.get_group_members("mds1", None, "")
+
+        # Seed Global and DMZ objects into cache directly
+        await client.cache.replace_domain_objects(
+            "mds1",
+            "Global",
+            [CPObject(uid="h-glob-1", name="global-ntp", type="host", mgmt_name="mds1", domain_name="Global")],
+            types=["host"],
+        )
+        await client.cache.replace_domain_objects(
+            "mds1",
+            "DMZ",
+            [CPObject(uid="h-dmz-dup", name="host-base-1", type="host", mgmt_name="mds1", domain_name="DMZ")],
+            types=["host"],
+        )
+
+        # Cross-domain find_object (domain=None) finds Global objects without remote sync
+        calls_before = len(fake_api.calls)
+        glob_obj = await client.find_object("mds1", None, "global-ntp", cache_mode="smart")
+        assert glob_obj is not None and glob_obj.domain_name == "Global"
+        assert len(fake_api.calls) == calls_before
+
+        # Cross-domain find_object raises AmbiguousObjectError when matching across Corp and DMZ
+        with pytest.raises(AmbiguousObjectError) as exc_info:
+            await client.find_object("mds1", None, "host-base-1", cache_mode="smart")
+        assert {c["domain_name"] for c in exc_info.value.candidates} == {"Corp", "DMZ"}
+        assert len(fake_api.calls) == calls_before
