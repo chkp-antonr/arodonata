@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v2.1.1 (2026-10-30)
+
+### Fix
+
+- **reports**: support post-publish OwnedSession placement, cold-cache fallback, and cross-domain lookups (#56)
+
 ### Security
 
 - Explicit `server_ip` trust validation and MCP staged-session boundary hardening (`arodonata.adapters.checkpoint.sessions`, `arodonata.cpcrud.executor`, `arodonata.mcp.tools`): `LoginCoordinator.resolve_target_ips()` and `LoginCoordinator.create_dedicated_session()` now verify that any caller-supplied `server_ip` belongs to the configured management host or cached `DomainInfo` IPs (`active_ip`, `active_mds_ip`, `standby_ips`, `servers`) before opening a socket, raising `ValidationError` on untrusted destinations; and MCP `cpcrud_staged_session` resolves target domain endpoints internally rather than accepting an unverified `server_ip` argument.
