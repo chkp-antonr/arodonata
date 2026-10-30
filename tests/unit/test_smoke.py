@@ -6,7 +6,7 @@ from arodonata import AmbiguousObjectError, ArodonataError, ValidationError
 
 def test_version() -> None:
     """Verify package version is exposed."""
-    assert arodonata.__version__ == "2.1.0"
+    assert arodonata.__version__ == "2.1.1"
 
 
 def test_ambiguous_object_error_inherits_validation_error() -> None:
