@@ -11,6 +11,7 @@ import pytest
 from arodonata.adapters.storage import DatabaseManager, SqlCacheAdapter, SqlLockAdapter
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import AuthContext, SessionOverlay, WriteSession, write_session_context
+from arodonata.core.errors import AmbiguousObjectError, ValidationError
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
 from arodonata.core.models.domains import DomainInfo, DomainSyncState
@@ -595,5 +596,126 @@ async def test_search_objects_exact_match_and_wildcards() -> None:
             cache_mode="cache",
         )
         assert {m.name for m in wild_res.matches} == {".example.com", ".sub.example.com"}
+    finally:
+        await db.close()
+
+
+class CountingSearchApi(SearchFakeApi):
+    """Fake API that counts `api_call` and `api_query` invocations."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+        self.query_count = 0
+
+    async def api_call(
+        self, mgmt_name: str, command: str, payload: dict[str, Any] | None = None, **kwargs: Any
+    ) -> ApiCallResult:
+        self.call_count += 1
+        return await super().api_call(mgmt_name, command, payload, **kwargs)
+
+    async def api_query(self, mgmt_name: str, command: str, **kwargs: Any) -> ApiQueryResult:
+        self.query_count += 1
+        return await super().api_query(mgmt_name, command, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_cross_domain_get_group_members_cache_only_global_visibility_and_ambiguity() -> None:
+    """`SearchService.get_group_members` with `domain=None` rejects blank targets, triggers zero remote syncs, includes Global, and raises `AmbiguousObjectError` on multi-domain collisions (`W3`, `I3`)."""
+    db = DatabaseManager()
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        lock_port = SqlLockAdapter(db)
+        api = CountingSearchApi()
+        settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+        domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+        coordinator = DomainSyncCoordinator(
+            settings=settings,
+            api=api,
+            cache=cache,
+            lock_port=lock_port,
+            domain_service=domain_service,
+        )
+        obj_service = ObjectService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+        svc_service = ServiceCacheService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+        search_service = SearchService(cache=cache, object_service=obj_service, service_cache=svc_service)
+
+        # Blank or whitespace group_name_or_uid is rejected with ValidationError immediately
+        with pytest.raises(ValidationError, match="group_name_or_uid must not be empty"):
+            await search_service.get_group_members("mds1", None, "   ")
+
+        await cache.upsert_domains(
+            [
+                DomainInfo(mgmt_name="mds1", uid="d-corp", name="Corp"),
+                DomainInfo(mgmt_name="mds1", uid="d-dmz", name="DMZ"),
+                DomainInfo(mgmt_name="mds1", uid="d-glob", name="Global", is_global=True),
+            ]
+        )
+        await cache.replace_domain_objects(
+            "mds1",
+            "Global",
+            [
+                CPObject(uid="h-glob-1", name="glob-dns", type="host", mgmt_name="mds1", domain_name="Global"),
+                CPObject(
+                    uid="g-glob-1",
+                    name="GlobalSharedGroup",
+                    type="group",
+                    mgmt_name="mds1",
+                    domain_name="Global",
+                    members=["h-glob-1"],
+                ),
+            ],
+            types=["host", "group"],
+        )
+        await cache.replace_domain_objects(
+            "mds1",
+            "Corp",
+            [
+                CPObject(uid="h-corp-1", name="corp-srv", type="host", mgmt_name="mds1", domain_name="Corp"),
+                CPObject(
+                    uid="g-shared-corp",
+                    name="SharedGroup",
+                    type="group",
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    members=["h-corp-1"],
+                ),
+            ],
+            types=["host", "group"],
+        )
+        await cache.replace_domain_objects(
+            "mds1",
+            "DMZ",
+            [
+                CPObject(uid="h-dmz-1", name="dmz-srv", type="host", mgmt_name="mds1", domain_name="DMZ"),
+                CPObject(
+                    uid="g-shared-dmz",
+                    name="SharedGroup",
+                    type="group",
+                    mgmt_name="mds1",
+                    domain_name="DMZ",
+                    members=["h-dmz-1"],
+                ),
+            ],
+            types=["host", "group"],
+        )
+
+        # 1. Global group is visible when domain=None and triggers zero API calls even with cache_mode="smart"
+        glob_members = await search_service.get_group_members("mds1", None, "GlobalSharedGroup", cache_mode="smart")
+        assert [m.name for m in glob_members] == ["glob-dns"]
+        assert api.call_count == 0
+        assert api.query_count == 0
+
+        # 2. Multi-domain collision raises AmbiguousObjectError without triggering API calls
+        with pytest.raises(AmbiguousObjectError) as exc_info:
+            await search_service.get_group_members("mds1", None, "SharedGroup", cache_mode="smart")
+        assert len(exc_info.value.candidates) == 2
+        assert {c["domain_name"] for c in exc_info.value.candidates} == {"Corp", "DMZ"}
+        assert api.call_count == 0
+        assert api.query_count == 0
+
+        # 3. Disambiguating via composite ID (mds1:Corp:SharedGroup) succeeds even when domain=None
+        corp_members = await search_service.get_group_members("mds1", None, "mds1:Corp:SharedGroup", cache_mode="cache")
+        assert [m.name for m in corp_members] == ["corp-srv"]
     finally:
         await db.close()

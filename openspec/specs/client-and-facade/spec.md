@@ -36,7 +36,7 @@ Defines the primary composition root and unified developer facade (`ArodonataCli
 
 ### Requirement: User-Aware Domain Helper Functions
 
-`ArodonataClient` SHALL provide session and object mutation/lookup methods (`write_session`, `auth_context`, `add_object`, `set_object`, `delete_object`, `find_object`, `get_group_members`) propagating `WriteSession`, `AuthContext`, and `UserContext` via `contextvars`, resolving `find_object` across cached `arodonata_objects` (`CPObject`), `arodonata_services` (`CPService`), and `arodonata_assets` (`Asset`) by UID, name, or composite identifier (`object_id`, `service_id`, `asset_id`, `id`), expanding `get_group_members` across network groups (`arodonata_objects`), service groups (`arodonata_services`), and cluster/VSX containers (`arodonata_assets`, including cross-domain Virtual Systems), auto-wrapping standalone object mutations in an isolated write session, stripping secret request fields from `SessionOverlay`, and masking secrets in `ApiCallResult`.
+`ArodonataClient` SHALL provide `contextvars`-aware session, mutation, and lookup helpers (`write_session`, `auth_context`, `add_object`, `set_object`, `delete_object`, `find_object`, `get_group_members`), auto-wrapping standalone object mutations in an isolated write session, stripping secret request fields from `SessionOverlay`, and redacting secrets in `ApiCallResult`.
 
 #### Scenario: Context manager write_session publishes on success and discards on exception
 
@@ -75,3 +75,26 @@ All major client, transport, login, lock, cache, and CPCRUD entry points SHALL b
 
 - **WHEN** `span_attrs(**attrs)` is called inside a traced operation or an exception with a chained `__cause__` / `__context__` is recorded on a span
 - **THEN** non-`None` attributes SHALL be set on the current OpenTelemetry span under the `arodonata.<key>` namespace with recursive secret/SID redaction applied to mappings, lists, and chained exception messages, operating as a zero-overhead no-op when no `TracerProvider` is configured by the host application
+
+### Requirement: Cache-Only Cross-Domain Entity Lookup and Ambiguity Refusal
+
+`ArodonataClient.find_object()` and `ArodonataClient.get_group_members()` SHALL require a non-empty target identifier (`ValidationError` on empty/blank input), and when `domain` is `None` (and cannot be extracted from a `mgmt:domain:key` composite ID) SHALL query strictly from local cache (`cache_mode="cache"`, `include_global=True`) and raise `AmbiguousObjectError` if more than one domain matches.
+
+#### Scenario: Blank target identifier rejected immediately
+
+- **WHEN** `client.find_object(mgmt_name, domain, "")` or `client.get_group_members(mgmt_name, domain, "   ")` is called with an empty or whitespace-only target string
+- **THEN** the method SHALL raise `ValidationError` immediately without scanning cached or remote domains
+
+#### Scenario: Cross-domain lookup runs cache-only with Global visibility and raises AmbiguousObjectError on multi-domain collision
+
+- **WHEN** `await client.find_object(mgmt_name, None, name_or_uid)` or `await client.get_group_members(mgmt_name, None, group_name_or_uid)` is called without a domain
+- **THEN** it SHALL search cached `arodonata_objects`, `arodonata_services`, and `arodonata_assets` across all cached domains including `"Global"` using `cache_mode="cache"` (triggering zero live domain logins or whole-MDS syncs), return the match when unique to a single domain, and raise `AmbiguousObjectError` listing the candidate domains and composite IDs when multiple domains match
+
+### Requirement: Coordinator-Delegated Cold-Cache Rulebase Warming in Client Change Reports
+
+`ArodonataClient.collect_change_report()` and `ArodonataClient.build_change_report()` SHALL wire cold-cache rulebase placement fallback through `ArodonataClient.refresh_rulebases(..., mode="smart")` so any rulebase cache population triggered during report generation obeys `DomainSyncCoordinator` distributed locks, dirty-session checks, and `DomainSyncState` stamps.
+
+#### Scenario: Cold-cache report collection via ArodonataClient warms rulebase through coordinator
+
+- **WHEN** `await client.collect_change_report(scopes)` processes a session with rule changes on a domain whose `arodonata_rulebase_*` cache is empty and no `OwnedSession` handled placement
+- **THEN** `ArodonataClient` SHALL invoke `refresh_rulebases(mgmt_name=mgmt_name, domains=[domain_name], mode="smart")` via `DomainSyncCoordinator` rather than performing an unlocked direct `replace_domain_rulebase` write

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import html
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -365,7 +365,8 @@ def _render_session_html(s: SessionChangeReport, options: RenderOptions) -> str:
     if s.description:
         lines.append(f"<br><strong>Description:</strong> {_esc_html(s.description)}")
     lines.append("</div>")
-    lines.append(f'<div class="basis-banner">{_esc_html(s.numbering_basis)}</div>')
+    if s.rule_changes and s.numbering_basis:
+        lines.append(f'<div class="basis-banner">{_esc_html(s.numbering_basis)}</div>')
 
     # Rule changes table
     if s.rule_changes:
@@ -521,7 +522,8 @@ def _render_markdown_document(
         lines.append(f"- **Published**: {_esc_md(_format_dt_utc(s.published_at))}")
         if s.description:
             lines.append(f"- **Description**: {_esc_md(s.description)}")
-        lines.append(f"- **Numbering Basis**: {_esc_md(s.numbering_basis)}")
+        if s.rule_changes and s.numbering_basis:
+            lines.append(f"- **Numbering Basis**: {_esc_md(s.numbering_basis)}")
         lines.append("")
 
         if s.rule_changes:
@@ -644,6 +646,7 @@ async def build_change_report(
     options: RenderOptions | None = None,
     max_uid_lookups: int = MAX_UID_LOOKUPS,
     now_fn: Callable[[], datetime] = utc_now,
+    refresh_rulebase_fn: Callable[[str, str], Awaitable[Any]] | None = None,
 ) -> RenderedReportBundle:
     """Collect a `ChangeReport` and render it into `formats` in a single call."""
     # Pre-validate requested formats before making network calls
@@ -661,6 +664,7 @@ async def build_change_report(
         options=options,
         max_uid_lookups=max_uid_lookups,
         now_fn=now_fn,
+        refresh_rulebase_fn=refresh_rulebase_fn,
     )
     return render_change_report(report, formats=formats, options=options)
 

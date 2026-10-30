@@ -63,9 +63,15 @@ class ExecutorFakeApi:
             )
 
         if command == "show-session":
+            target_uid = (payload or {}).get("uid") or "staged-sess-uid-777"
             return ApiCallResult(
                 success=True,
-                data={"uid": "staged-sess-uid-777", "name": "Staged-Change"},
+                data={
+                    "uid": target_uid,
+                    "name": "arodonata-cpcrud-staged",
+                    "application": "arodonata",
+                    "state": "open",
+                },
             )
 
         remaining = self.flaky_command_failures_remaining.get(command, 0)
@@ -269,12 +275,19 @@ async def test_executor_retry_remaining_folds_retry_pass_into_cumulative_report(
 
 @pytest.mark.asyncio
 async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_failure() -> None:
-    """Verify `publish_staged_session`, `stream_publish_staged_session`, and `discard_staged_session` adopt via `take-over-session`, fall back to a fresh session when `sid` expired, and contain publish failures."""
+    """Verify `publish_staged_session`, `stream_publish_staged_session`, and `discard_staged_session`:
+    - Inspect session provenance via `show-session {"uid": session_uid}` before takeover.
+    - Omit `"disconnect-active-session"` by default (`force_disconnect=False`).
+    - Reuse active `sid` directly when `show-session {}` confirms ownership of `session_uid`.
+    - Fall back to a fresh session when `sid` expired, and fall back to `switch-session` when `take-over-session` fails.
+    - Refuse foreign/SmartConsole or already published/discarded sessions (`C1`, `W6`).
+    - Report both `take-over-session` and `switch-session` errors when both fail (`I6`).
+    """
     api = ExecutorFakeApi()
     invalidated: list[tuple[str, str | None]] = []
     executor = Executor(api=api, on_domain_invalidated=lambda m, d: invalidated.append((m, d)))
 
-    # 1. Staged session takeover + publish (without passing sid -> opens fresh session and takes over)
+    # 1. Staged session takeover + publish (without passing sid -> opens fresh session, inspects show-session, takes over non-disruptively)
     pub_events = [
         ev
         async for ev in executor.stream_publish_staged_session(
@@ -289,19 +302,42 @@ async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_
     assert invalidated == [("mds1", "Corp")]
     assert (
         "mds1",
+        "show-session",
+        {"uid": "staged-sess-uid-777"},
+        "Corp",
+        "secret-ws-sid-999",
+    ) in api.calls
+    assert (
+        "mds1",
         "take-over-session",
-        {"uid": "staged-sess-uid-777", "take-over-lock": True},
+        {"uid": "staged-sess-uid-777"},
         "Corp",
         "secret-ws-sid-999",
     ) in api.calls
     assert ("mds1", "publish", {}, "Corp", "secret-ws-sid-999") in api.calls
     assert "secret-ws-sid-999" in api.logged_out_sids
 
-    # 2. Fallback to fresh session when the supplied staged `sid` expired (first take-over-session fails)
+    # 1b. Direct SID reuse when active `sid` still owns `session_uid` (no take-over-session needed!)
     api.calls.clear()
     api.logged_out_sids.clear()
     invalidated.clear()
-    api.flaky_command_failures_remaining["take-over-session"] = 1
+    reuse_res = await executor.publish_staged_session(
+        "mds1",
+        "Corp",
+        session_uid="staged-sess-uid-777",
+        sid="active-staged-sid-555",
+        server_ip="10.1.0.1",
+    )
+    assert reuse_res.success is True
+    assert invalidated == [("mds1", "Corp")]
+    assert [c[1] for c in api.calls] == ["show-session", "publish"]
+    assert "active-staged-sid-555" in api.logged_out_sids
+
+    # 2. Fallback to fresh session when the supplied staged `sid` expired (`show-session {}` fails on expired sid)
+    api.calls.clear()
+    api.logged_out_sids.clear()
+    invalidated.clear()
+    api.flaky_command_failures_remaining["show-session"] = 1
 
     pub_res = await executor.publish_staged_session(
         "mds1",
@@ -312,20 +348,53 @@ async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_
     )
     assert pub_res.success is True
     assert invalidated == [("mds1", "Corp")]
-    takeover_sids = [c[4] for c in api.calls if c[1] == "take-over-session"]
-    assert takeover_sids == ["expired-staged-sid-111", "secret-ws-sid-999"]
+    show_sids = [c[4] for c in api.calls if c[1] == "show-session"]
+    assert show_sids == ["expired-staged-sid-111", "secret-ws-sid-999"]
     assert "secret-ws-sid-999" in api.logged_out_sids
 
-    # 3. Staged session takeover + discard
+    # 2b. Fallback to switch-session on fresh session when take-over-session is rejected
+    api.calls.clear()
+    api.logged_out_sids.clear()
+    invalidated.clear()
+    api.flaky_command_failures_remaining["take-over-session"] = 1
+
+    pub_sw_res = await executor.publish_staged_session(
+        "mds1",
+        "Corp",
+        session_uid="staged-sess-uid-889",
+    )
+    assert pub_sw_res.success is True
+    assert invalidated == [("mds1", "Corp")]
+    assert [c[1] for c in api.calls] == ["show-session", "take-over-session", "switch-session", "publish"]
+    assert "secret-ws-sid-999" in api.logged_out_sids
+
+    # 2c. Both take-over-session and switch-session fail -> combined error message (I6) and fresh_sid logged out
+    api.calls.clear()
+    api.logged_out_sids.clear()
+    api.flaky_command_failures_remaining["take-over-session"] = 1
+    api.flaky_command_failures_remaining["switch-session"] = 1
+    both_fail_res = await executor.publish_staged_session(
+        "mds1",
+        "Corp",
+        session_uid="staged-sess-uid-both-fail",
+    )
+    assert both_fail_res.success is False
+    assert "take-over-session failed" in (both_fail_res.error_message or "")
+    assert "switch-session fallback failed" in (both_fail_res.error_message or "")
+    assert "secret-ws-sid-999" in api.logged_out_sids
+
+    # 3. Staged session takeover + discard (with force_disconnect=True explicitly)
     api.calls.clear()
     api.logged_out_sids.clear()
     disc_res = await executor.discard_staged_session(
         "mds1",
         "Corp",
         session_uid="staged-sess-uid-999",
+        force_disconnect=True,
     )
     assert disc_res.success is True
-    assert [c[1] for c in api.calls] == ["take-over-session", "discard"]
+    assert [c[1] for c in api.calls] == ["show-session", "take-over-session", "discard"]
+    assert api.calls[1][2] == {"uid": "staged-sess-uid-999", "disconnect-active-session": True}
     assert "secret-ws-sid-999" in api.logged_out_sids
 
     # 4. Failure containment and SID redaction when publish task fails
@@ -342,6 +411,52 @@ async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_
     assert fail_res.success is False
     assert "secret-ws-sid-999" not in (fail_res.error_message or "")
     assert invalidated == []
+    assert "secret-ws-sid-999" in api.logged_out_sids
+
+    # 5. C1 & W6: Foreign SmartConsole session and already-published session are refused before take-over-session!
+    orig_call = api.api_call
+
+    async def provenance_api_call(
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ApiCallResult:
+        if command == "show-session":
+            t_uid = (payload or {}).get("uid")
+            if t_uid == "foreign-smartconsole-uid":
+                return ApiCallResult(
+                    success=True,
+                    data={"uid": t_uid, "name": "Admin-Edit", "application": "SmartConsole", "state": "open"},
+                )
+            if t_uid == "already-published-uid":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "uid": t_uid,
+                        "name": "arodonata-cpcrud-staged",
+                        "application": "arodonata",
+                        "state": "published",
+                        "publish-time": {"iso-8601": "2026-10-30T10:00:00Z"},
+                    },
+                )
+        return await orig_call(mgmt_name, command, payload, **kwargs)
+
+    api.api_call = provenance_api_call  # type: ignore[method-assign]
+    api.calls.clear()
+    api.logged_out_sids.clear()
+    foreign_res = await executor.discard_staged_session("mds1", "Corp", session_uid="foreign-smartconsole-uid")
+    assert foreign_res.success is False
+    assert foreign_res.error_code == "foreign_session_refused"
+    assert not any(c[1] in ("take-over-session", "switch-session", "discard") for c in api.calls)
+    assert "secret-ws-sid-999" in api.logged_out_sids
+
+    api.calls.clear()
+    api.logged_out_sids.clear()
+    pub_already_res = await executor.publish_staged_session("mds1", "Corp", session_uid="already-published-uid")
+    assert pub_already_res.success is False
+    assert pub_already_res.error_code == "session_not_open"
+    assert not any(c[1] in ("take-over-session", "switch-session", "publish") for c in api.calls)
     assert "secret-ws-sid-999" in api.logged_out_sids
 
 

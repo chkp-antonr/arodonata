@@ -43,7 +43,7 @@ class SIDCacheEntry(BaseModel):
     id: str = ""
     mgmt_name: str
     domain_name: str
-    sid: str = Field(repr=False)
+    sid: str = Field(repr=False, exclude=True)
     server_ip: str
     session_uid: str | None = None
     auth_identity: str | None = None
@@ -53,7 +53,11 @@ class SIDCacheEntry(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
-            self.id = f"{self.mgmt_name}:{self.domain_name}"
+            self.id = (
+                f"{self.mgmt_name}:{self.domain_name}:{self.auth_identity}"
+                if self.auth_identity
+                else f"{self.mgmt_name}:{self.domain_name}"
+            )
         self.created_at = to_naive_utc(self.created_at) or utc_now()
         self.last_used_at = to_naive_utc(self.last_used_at) or utc_now()
         self.expires_at = to_naive_utc(self.expires_at)

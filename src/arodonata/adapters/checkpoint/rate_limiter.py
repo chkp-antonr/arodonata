@@ -179,7 +179,7 @@ class RateLimiter:
             try:
                 if db_lock_info is not None and self._lock_port is not None:
                     lock_key, owner_id = db_lock_info
-                    with suppress(BaseException):
+                    with suppress(Exception):
                         await asyncio.shield(self._lock_port.release(lock_key, owner_id=owner_id))
             finally:
                 self._release_local_fifo_slot(target_ip, local_slot)

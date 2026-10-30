@@ -15,7 +15,7 @@ Implements `collect_change_report`:
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -350,6 +350,11 @@ def _parse_rule_and_object_changes(
                         layer_uid = str(core.get("layer-uid") or raw.get("layer_uid"))
                     if not layer_name and isinstance(core.get("layer-name") or raw.get("layer_name"), str):
                         layer_name = str(core.get("layer-name") or raw.get("layer_name"))
+                    if not layer_name and is_bare_uid(layer_uid):
+                        if layer_uid in known_names:
+                            layer_name = known_names[layer_uid]
+                        else:
+                            bare_uids_out.add(layer_uid)
 
                     pkg_raw = core.get("package") or raw.get("package") or old_core.get("package")
                     pkg_uid: str | None = None
@@ -486,6 +491,8 @@ def _replace_resolved_uids_in_session(
         return val
 
     for rc in session_report.rule_changes:
+        if not rc.layer_name and rc.layer_uid in resolved:
+            rc.layer_name = resolved[rc.layer_uid]
         rc.action = _sub(rc.action)
         rc.source = _sub_list(rc.source)
         rc.destination = _sub_list(rc.destination)
@@ -523,6 +530,7 @@ async def collect_change_report(
     options: RenderOptions | None = None,
     max_uid_lookups: int = MAX_UID_LOOKUPS,
     now_fn: Callable[[], datetime] = utc_now,
+    refresh_rulebase_fn: Callable[[str, str], Awaitable[Any]] | None = None,
 ) -> ChangeReport:
     """Collect read-only session change evidence across `SessionScope` and `RangeScope` definitions."""
     if not scopes:
@@ -892,6 +900,7 @@ async def collect_change_report(
             owned_session=owned,
             warnings=warnings,
             now_fn=now_fn,
+            refresh_rulebase_fn=refresh_rulebase_fn,
         )
 
         session_reports.append(session_report)

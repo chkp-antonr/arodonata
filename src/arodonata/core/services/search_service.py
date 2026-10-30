@@ -24,6 +24,7 @@ from datetime import datetime
 from fnmatch import fnmatchcase
 from typing import Any, Literal
 
+from arodonata.core.errors import AmbiguousObjectError, ValidationError
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
     CANONICAL_ASSET_TYPES,
@@ -386,38 +387,62 @@ class SearchService:
     async def get_group_members(
         self,
         mgmt_name: str,
-        domain: str,
-        group_name_or_uid: str,
+        domain: str | None = None,
+        group_name_or_uid: str = "",
         *,
         recursive: bool = True,
         max_depth: int = 5,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
     ) -> list[CPObject | CPService | Asset]:
-        """Return direct (and optionally recursive) member `CPObject`, `CPService`, or child `Asset` items for a group, service-group, cluster, or VSX container in `(mgmt_name, domain)`."""
+        """Return direct (and optionally recursive) member `CPObject`, `CPService`, or child `Asset` items for a group, service-group, cluster, or VSX container in `(mgmt_name, domain)` (or across all domains when `domain` is `None`)."""
+        clean_target = group_name_or_uid.strip() if group_name_or_uid else ""
+        if not clean_target:
+            raise ValidationError("group_name_or_uid must not be empty or whitespace")
+
+        eff_domain = domain.strip() if domain and domain.strip() else None
+        if eff_domain is None and clean_target.startswith(f"{mgmt_name}:"):
+            parts = clean_target.split(":", 2)
+            if len(parts) == 3 and parts[1].strip() and parts[2].strip():
+                eff_domain = parts[1].strip()
+
+        eff_cache_mode: CacheMode = "cache" if eff_domain is None else cache_mode
+        eff_include_global = True if eff_domain is None else (eff_domain == "Global")
+
         all_objs = await self._object_service.get_objects(
             mgmt_name=mgmt_name,
-            domain=domain,
-            include_global=(domain == "Global"),
-            cache_mode=cache_mode,
+            domain=eff_domain,
+            include_global=eff_include_global,
+            cache_mode=eff_cache_mode,
             cache_ttl=cache_ttl,
         )
-        by_uid: dict[str, CPObject] = {o.uid: o for o in all_objs}
-        target_group: CPObject | None = by_uid.get(group_name_or_uid)
-        if target_group is None:
-            for obj in all_objs:
-                if (group_name_or_uid in (obj.name, obj.object_id, obj.id)) and (
-                    obj.type in ("group", "group-with-exclusion") or obj.members
-                ):
-                    target_group = obj
-                    break
-            if target_group is None:
-                for obj in all_objs:
-                    if group_name_or_uid in (obj.name, obj.object_id, obj.id):
-                        target_group = obj
-                        break
+        target_group: CPObject | None = None
+        group_candidates: list[CPObject] = [o for o in all_objs if o.uid == clean_target]
+        if not group_candidates:
+            group_candidates = [
+                o
+                for o in all_objs
+                if clean_target in (o.name, o.object_id, o.id)
+                and (o.type in ("group", "group-with-exclusion") or o.members)
+            ]
+        if not group_candidates:
+            group_candidates = [o for o in all_objs if clean_target in (o.name, o.object_id, o.id)]
+        if group_candidates:
+            distinct_domains = {o.domain_name for o in group_candidates}
+            if eff_domain is None and len(distinct_domains) > 1:
+                raise AmbiguousObjectError(
+                    mgmt_name,
+                    clean_target,
+                    [o.model_dump(mode="json") for o in group_candidates],
+                )
+            target_group = group_candidates[0]
 
         if target_group is not None:
+            group_domain = target_group.domain_name
+            scoped_objs = [o for o in all_objs if o.domain_name in (group_domain, "Global")]
+            by_uid: dict[str, CPObject] = {o.uid: o for o in scoped_objs}
+            for o in all_objs:
+                by_uid.setdefault(o.uid, o)
             members: list[CPObject | CPService | Asset] = []
             seen_uids: set[str] = {target_group.uid}
             queue: deque[tuple[str, int]] = deque((m_uid, 1) for m_uid in target_group.members)
@@ -442,31 +467,41 @@ class SearchService:
         if self._service_cache is not None:
             all_svcs = await self._service_cache.get_services(
                 mgmt_name=mgmt_name,
-                domain=domain,
-                include_global=(domain == "Global"),
-                cache_mode=cache_mode,
+                domain=eff_domain,
+                include_global=eff_include_global,
+                cache_mode=eff_cache_mode,
                 cache_ttl=cache_ttl,
             )
         else:
-            all_svcs = await self._cache.get_services(mgmt_name=mgmt_name, domain_name=domain)
-            all_svcs = ServiceCacheService.apply_context_overlay(all_svcs, mgmt_name=mgmt_name, domain_name=domain)
+            all_svcs = await self._cache.get_services(mgmt_name=mgmt_name, domain_name=eff_domain)
+            all_svcs = ServiceCacheService.apply_context_overlay(all_svcs, mgmt_name=mgmt_name, domain_name=eff_domain)
 
-        svc_by_uid: dict[str, CPService] = {s.uid: s for s in all_svcs}
-        target_svc_group: CPService | None = svc_by_uid.get(group_name_or_uid)
-        if target_svc_group is None:
-            for svc in all_svcs:
-                if (group_name_or_uid in (svc.name, svc.service_id, svc.id)) and (
-                    svc.type == "service-group" or svc.members
-                ):
-                    target_svc_group = svc
-                    break
-            if target_svc_group is None:
-                for svc in all_svcs:
-                    if group_name_or_uid in (svc.name, svc.service_id, svc.id):
-                        target_svc_group = svc
-                        break
+        target_svc_group: CPService | None = None
+        svc_candidates: list[CPService] = [s for s in all_svcs if s.uid == clean_target]
+        if not svc_candidates:
+            svc_candidates = [
+                s
+                for s in all_svcs
+                if clean_target in (s.name, s.service_id, s.id) and (s.type == "service-group" or s.members)
+            ]
+        if not svc_candidates:
+            svc_candidates = [s for s in all_svcs if clean_target in (s.name, s.service_id, s.id)]
+        if svc_candidates:
+            distinct_svc_domains = {s.domain_name for s in svc_candidates}
+            if eff_domain is None and len(distinct_svc_domains) > 1:
+                raise AmbiguousObjectError(
+                    mgmt_name,
+                    clean_target,
+                    [s.model_dump(mode="json") for s in svc_candidates],
+                )
+            target_svc_group = svc_candidates[0]
 
         if target_svc_group is not None:
+            svc_domain = target_svc_group.domain_name
+            scoped_svcs = [s for s in all_svcs if s.domain_name in (svc_domain, "Global")]
+            svc_by_uid: dict[str, CPService] = {s.uid: s for s in scoped_svcs}
+            for s in all_svcs:
+                svc_by_uid.setdefault(s.uid, s)
             svc_members: list[CPObject | CPService | Asset] = []
             seen_svc_uids: set[str] = {target_svc_group.uid}
             svc_queue: deque[tuple[str, int]] = deque((m_uid, 1) for m_uid in target_svc_group.members)
@@ -491,29 +526,40 @@ class SearchService:
         if self._asset_service is not None:
             all_assets = await self._asset_service.get_assets(
                 mgmt_name=mgmt_name,
-                domain=domain,
-                include_global=(domain == "Global"),
-                cache_mode=cache_mode,
+                domain=eff_domain,
+                include_global=eff_include_global,
+                cache_mode=eff_cache_mode,
                 cache_ttl=cache_ttl,
             )
         else:
-            all_assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=domain)
+            all_assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=eff_domain)
 
         asset_by_uid: dict[str, Asset] = {a.uid: a for a in all_assets}
-        target_asset: Asset | None = asset_by_uid.get(group_name_or_uid)
-        needle_lower = group_name_or_uid.strip().lower()
-        if target_asset is None:
-            for asset in all_assets:
+        needle_lower = clean_target.lower()
+        asset_candidates: list[Asset] = [a for a in all_assets if a.uid == clean_target]
+        if not asset_candidates:
+            asset_candidates = [
+                a
+                for a in all_assets
                 if (
-                    asset.name == group_name_or_uid
-                    or asset.asset_id == group_name_or_uid
-                    or asset.id == group_name_or_uid
-                    or asset.name.lower() == needle_lower
-                    or asset.asset_id.lower() == needle_lower
-                    or asset.id.lower() == needle_lower
-                ):
-                    target_asset = asset
-                    break
+                    a.name == clean_target
+                    or a.asset_id == clean_target
+                    or a.id == clean_target
+                    or a.name.lower() == needle_lower
+                    or a.asset_id.lower() == needle_lower
+                    or a.id.lower() == needle_lower
+                )
+            ]
+        target_asset: Asset | None = None
+        if asset_candidates:
+            distinct_asset_domains = {a.domain_name for a in asset_candidates}
+            if eff_domain is None and len(distinct_asset_domains) > 1:
+                raise AmbiguousObjectError(
+                    mgmt_name,
+                    clean_target,
+                    [a.model_dump(mode="json") for a in asset_candidates],
+                )
+            target_asset = asset_candidates[0]
 
         if target_asset is not None:
             # Also load cross-domain assets on the same mgmt_name if VSX children reside in tenant domains

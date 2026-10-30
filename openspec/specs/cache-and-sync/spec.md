@@ -79,7 +79,7 @@ Defines the database-backed cache layer (`DatabaseManager`, `SqlCacheAdapter`, `
 
 ### Requirement: Asset and Gateway Cache with Cluster and VSX Relationships
 
-`AssetRefreshService` (`refresh_assets`, `stream_refresh_assets`) and `SqlCacheAdapter` SHALL persist gateways, clusters, cluster members, VSX gateways/clusters (via encapsulated `generic-object` topology queries), and management servers in the `arodonata_assets` table across domains concurrently via `DomainSyncCoordinator` (`scope="assets"`, `item_type="*"`) with both UID primary keys (`id`) and indexed human-readable composite identifiers (`asset_id`), and enrich parent-child relationships (`parent_uid`, `parent_name`, `parent_id`, `parent_asset_id`, `member_uids`, `member_asset_ids`, `virtual_system_uids`, `virtual_system_asset_ids`) via `ClusterRelationshipManager` and `VSXRelationshipManager`, including cross-domain VSX parent/child links on the same management server.
+`AssetRefreshService` (`refresh_assets`, `stream_refresh_assets`) and `SqlCacheAdapter` SHALL persist gateways, clusters, cluster members, VSX gateways/clusters (via encapsulated `generic-object` topology queries), and management servers in `arodonata_assets` concurrently across domains via `DomainSyncCoordinator` (`scope="assets"`, `item_type="*"`) with UID primary keys (`id`) and indexed composite identifiers (`asset_id`).
 
 #### Scenario: Concurrent domain asset collection with interleaved SSE events
 
@@ -117,7 +117,7 @@ Defines the database-backed cache layer (`DatabaseManager`, `SqlCacheAdapter`, `
 
 ### Requirement: Cache-First Object Search with Recursive Group Membership Resolution
 
-`SearchService.search_objects()` SHALL classify comma-separated search terms (IPv4 address, CIDR subnet, address range, wildcard pattern, UID, human-readable composite identifier `object_id` / `id`, or object name), support `exact_match: bool = False` for case-insensitive exact name/FQDN matching, query cached objects (including any active `WriteSession` overlay in `contextvars`) across target servers and domains, and traverse parent group memberships up to `max_depth` (default 2), returning a typed `SearchResult` whose `GroupMembershipNode` entries include `id`, `object_id`, `parent_uids`, and `parent_object_ids`.
+`SearchService.search_objects()` SHALL classify comma-separated search terms (IPv4, CIDR, address range, wildcard, UID, composite ID, or name), support `exact_match: bool = False`, query cached objects with active `WriteSession` `contextvars` overlays across target servers/domains, and resolve parent group memberships up to `max_depth` (default 2) into `SearchResult` with dual UID and composite group links.
 
 #### Scenario: Search resolves direct matches and containing groups with human-readable composite IDs
 
@@ -128,3 +128,30 @@ Defines the database-backed cache layer (`DatabaseManager`, `SqlCacheAdapter`, `
 
 - **WHEN** `await client.search_objects(".example.com", exact_match=True)` is called on a domain containing `.example.com` and `sub.example.com`
 - **THEN** it SHALL return only `.example.com` (and its parent groups) without matching `sub.example.com`, while wildcard terms (`*.example.com`) continue to match via anchored `fnmatchcase`
+
+### Requirement: Cluster and Cross-Domain VSX Parent-Child Topology Enrichment
+
+`ClusterRelationshipManager` and `VSXRelationshipManager` SHALL enrich cached `arodonata_assets` rows with bidirectional parent-child topology attributes (`parent_uid`, `parent_name`, `parent_id`, `parent_asset_id`, `member_uids`, `member_asset_ids`, `virtual_system_uids`, and `virtual_system_asset_ids`), including cross-domain VSX parent/child links on the same management server.
+
+#### Scenario: Cluster members and VSX virtual systems link bidirectionally to parent containers
+
+- **WHEN** asset refresh reconciles cluster members and VSX virtual systems on `mgmt_name`
+- **THEN** each child member or virtual system SHALL reference its parent's UID and composite `asset_id`, and each parent cluster or VSX container SHALL list all child UIDs and composite `asset_id`s across domains on `mgmt_name`
+
+### Requirement: Exclusive Coordinator-Synchronized Rulebase Cache Writes
+
+Shared `arodonata_rulebase_*` cache tables SHALL be written exclusively under `DomainSyncCoordinator` per-domain distributed locks after `verify_session_clean` succeeds and within an atomic transaction that updates `arodonata_domain_sync_state` (`scope="rulebase"`, `item_type="*"`); read-only consumers (including `arodonata.reports`) SHALL NEVER invoke `CachePort.replace_domain_rulebase` directly out-of-band.
+
+#### Scenario: Concurrent report generation cannot overwrite a newer stamped rulebase snapshot
+
+- **WHEN** `refresh_rulebases` updates `arodonata_rulebase_*` and `arodonata_domain_sync_state` while a concurrent `collect_change_report` call numbers rule changes
+- **THEN** `collect_change_report` SHALL NOT perform unlocked `replace_domain_rulebase` writes that could replace the newer cached rulebase under a fresh `DomainSyncState` stamp
+
+### Requirement: Cross-Domain Group Member Resolution with Ambiguity Detection
+
+`SearchService.get_group_members()` SHALL reject empty or whitespace-only `group_name_or_uid` inputs with `ValidationError`, and when `domain` is `None` (and not encoded in a `mgmt:domain:name` composite ID) SHALL resolve the target container across cached domains including `"Global"` using `cache_mode="cache"`, raising `AmbiguousObjectError` if matching containers exist in more than one domain.
+
+#### Scenario: Cross-domain group member lookup detects multi-domain name collision without whole-MDS sync
+
+- **WHEN** `SearchService.get_group_members(mgmt_name, None, "SharedGroup")` runs against a cache where `"SharedGroup"` exists in two distinct domains
+- **THEN** it SHALL execute zero remote domain refreshes (`cache_mode="cache"`) and raise `AmbiguousObjectError` enumerating the matching domains and composite identifiers

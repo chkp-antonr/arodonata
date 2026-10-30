@@ -24,6 +24,7 @@ from arodonata.core.errors import (
     ServerIdentityError,
     SessionError,
     SessionStateError,
+    ValidationError,
 )
 from arodonata.core.models.domains import DomainInfo, SIDCacheEntry
 from arodonata.core.models.objects import CPObject
@@ -757,3 +758,176 @@ async def test_write_session_publish_failure_discards_and_shielded_logout_retain
     # Closing the client retries logout and clears active_dedicated_sids
     await client.close()
     assert ("mds1", "sid_ws_pubfail") not in client.login_coordinator.active_dedicated_sids
+
+
+async def test_sid_cache_entry_excludes_sid_on_dump_and_includes_auth_identity_in_id(
+    tmp_path: Path,
+) -> None:
+    """Verify I2: SIDCacheEntry.model_dump() / model_dump_json() omit `sid` and `id` includes `auth_identity`."""
+    secret_sid = "sid_top_secret_token_999"
+    entry = SIDCacheEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        sid=secret_sid,
+        server_ip="10.0.0.10",
+        session_uid="u-1",
+        auth_identity="user:alice",
+    )
+    assert entry.id == "mds1:Corp:user:alice"
+    assert secret_sid not in repr(entry)
+    assert secret_sid not in str(entry)
+    dumped = entry.model_dump()
+    assert "sid" not in dumped
+    assert secret_sid not in json.dumps(dumped, default=str)
+    assert secret_sid not in entry.model_dump_json()
+
+    # Verify SqlCacheAdapter.upsert_sid and get_sid still persist and retrieve `sid`
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    client = _build_client(tmp_path, server, rig)
+    await client.db.initialize()
+    await client.cache.upsert_sid(entry)
+    loaded = await client.cache.get_sid("mds1", "Corp", auth_identity="user:alice")
+    assert loaded is not None
+    assert loaded.sid == secret_sid
+    assert loaded.id == "mds1:Corp:user:alice"
+    await client.close()
+
+
+async def test_readonly_login_payload_and_identity_scoped_sid_eviction(
+    tmp_path: Path,
+) -> None:
+    """Verify I1 and W1:
+    - Shared read-only login sends `"read-only": True` in payload (whereas dedicated WriteSession omits `"read-only"`).
+    - When Alice's cached SID expires or fails keepalive, Bob's cached SID on the same `(mgmt_name, domain)` is NOT evicted.
+    """
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    dyn_settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1")
+    client = _build_client(tmp_path, server, rig, settings=dyn_settings)
+    await client.db.initialize()
+
+    # 1. Alice logs into Corp via shared read-only session -> payload has "read-only": True
+    with auth_context(username="alice", password="pw-alice", user_id="alice"):
+        res_a = await client.api_call("mds1", "show-hosts", domain="Corp")
+        assert res_a.success is True
+        login_calls = [c for c in server.calls if c["command"] == "login"]
+        assert len(login_calls) == 1
+        assert login_calls[0]["payload"].get("read-only") is True
+        alice_sid_1 = login_calls[0]["sid"] or "sid_token_1_secret"
+        alice_identity = AuthContext(username="alice", password="pw-alice", user_id="alice").identity_key
+
+    # 2. Bob logs into Corp via shared read-only session -> payload has "read-only": True
+    with auth_context(username="bob", password="pw-bob", user_id="bob"):
+        res_b = await client.api_call("mds1", "show-hosts", domain="Corp")
+        assert res_b.success is True
+        bob_identity = AuthContext(username="bob", password="pw-bob", user_id="bob").identity_key
+
+    assert await client.cache.get_sid("mds1", "Corp", auth_identity=alice_identity) is not None
+    bob_cached_before = await client.cache.get_sid("mds1", "Corp", auth_identity=bob_identity)
+    assert bob_cached_before is not None
+    assert bob_cached_before.sid == "sid_token_2_secret"
+
+    # 3. Alice's session expires on next api_call -> Alice's SID is evicted and re-logged in,
+    #    while Bob's cached SID in arodonata_sid_cache remains untouched!
+    server.handlers.append((401, {"code": "generic_err_invalid_session_id", "message": "Invalid session id"}))
+    server.handlers.append((200, {"sid": "sid_alice_renewed", "uid": "u-alice-2"}))
+    server.handlers.append((200, {"objects": [], "total": 0}))
+
+    with auth_context(username="alice", password="pw-alice", user_id="alice"):
+        res_a2 = await client.api_call("mds1", "show-hosts", domain="Corp")
+        assert res_a2.success is True
+
+    alice_cached_after = await client.cache.get_sid("mds1", "Corp", auth_identity=alice_identity)
+    assert alice_cached_after is not None
+    assert alice_cached_after.sid == "sid_alice_renewed"
+    assert alice_cached_after.sid != alice_sid_1
+
+    bob_cached_after = await client.cache.get_sid("mds1", "Corp", auth_identity=bob_identity)
+    assert bob_cached_after is not None
+    assert bob_cached_after.sid == "sid_token_2_secret"
+
+    # 4. Dedicated write_session login omits "read-only"
+    server.calls.clear()
+    with auth_context(username="alice", password="pw-alice", user_id="alice"):
+        async with client.write_session("mds1", "Corp", publish_on_exit=False):
+            ws_login = [c for c in server.calls if c["command"] == "login"]
+            assert len(ws_login) == 1
+            assert "read-only" not in ws_login[0]["payload"]
+
+    await client.close()
+
+
+async def test_explicit_server_ip_validated_against_trusted_server_and_domain_ips(
+    tmp_path: Path,
+) -> None:
+    """Verify W2: explicit_server_ip must belong to endpoint.host or cached domain IPs for mgmt_name."""
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    client = _build_client(tmp_path, server, rig)
+    await client.db.initialize()
+
+    # Seed a domain with active_ip=10.0.0.15, active_mds_ip=10.0.0.1, standby_ips=["10.0.0.16"]
+    await client.cache.upsert_domains(
+        [
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="dom-corp",
+                name="Corp",
+                active_ip="10.0.0.15",
+                active_mds_ip="10.0.0.1",
+                standby_ips=["10.0.0.16"],
+            )
+        ]
+    )
+
+    # 1. Known CMA IP (10.0.0.15) and standby IP (10.0.0.16) are accepted
+    ip1, mds1, _ = await client.login_coordinator.resolve_target_ips("mds1", "Corp", explicit_server_ip="10.0.0.15")
+    assert ip1 == "10.0.0.15"
+    assert mds1 == "10.0.0.1"
+
+    ip2, _, _ = await client.login_coordinator.resolve_target_ips("mds1", "Corp", explicit_server_ip="10.0.0.16")
+    assert ip2 == "10.0.0.16"
+
+    # 2. Untrusted attacker IP (198.51.100.99) is rejected with ValidationError before any network call
+    server.calls.clear()
+    with pytest.raises(ValidationError, match="Untrusted explicit server_ip '198.51.100.99'"):
+        await client.api_call("mds1", "show-hosts", domain="Corp", server_ip="198.51.100.99")
+    assert len(server.calls) == 0
+
+    with pytest.raises(ValidationError, match="Untrusted explicit server_ip '198.51.100.99'"):
+        await client.login_coordinator.create_dedicated_session("mds1", "Corp", server_ip="198.51.100.99")
+    assert len(server.calls) == 0
+
+    await client.close()
+
+
+async def test_show_session_not_found_after_revert_evicts_sid_and_relogins(tmp_path: Path) -> None:
+    """Verify that show-session (without uid) returning generic_err_object_not_found evicts SID and re-logins."""
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    client = _build_client(tmp_path, server, rig)
+    await client.db.initialize()
+
+    # 1. Seed initial read-only session via show-hosts
+    res1 = await client.api_call("mds1", "show-hosts", domain="Corp")
+    assert res1.success is True
+
+    # 2. Next self show-session returns 404 generic_err_object_not_found (session wiped by revert-to-revision)
+    server.handlers.append(
+        (
+            404,
+            {
+                "code": "generic_err_object_not_found",
+                "message": "Requested object [ca3866b7-fb2c-42d9-9957-7aa19e5167b8] not found",
+            },
+        )
+    )
+    server.handlers.append((200, {"sid": "sid_after_revert", "uid": "u-reverted"}))
+    server.handlers.append((200, {"uid": "u-reverted", "locks": 0, "changes": 0, "number-of-published-changes": 0}))
+
+    res2 = await client.api_call("mds1", "show-session", {}, domain="Corp")
+    assert res2.success is True
+    assert res2.data["uid"] == "u-reverted"
+
+    await client.close()

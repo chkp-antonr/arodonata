@@ -189,3 +189,72 @@ async def test_login_gate_min_interval_pacing_shared_cooldown_and_wait_timeout()
         await c1
     sweep_ready.set()
     assert await c2 == "sweep-ok"
+
+
+async def test_rate_limiter_slot_propagates_cancelled_error_and_releases_local_slot() -> None:
+    """Verify I4: cancelling a task during distributed lock release in RateLimiter.slot
+    still releases the local FIFO slot (waking queued waiters) and propagates CancelledError.
+    """
+    release_started = asyncio.Event()
+    allow_release_finish = asyncio.Event()
+
+    class SlowReleaseLockPort:
+        async def acquire(
+            self,
+            lock_key: str,
+            ttl_seconds: float = 180.0,
+            owner_id: str | None = None,
+            wait_timeout: float = 0.0,
+        ) -> bool:
+            return True
+
+        async def release(self, lock_key: str, owner_id: str | None = None) -> bool:
+            release_started.set()
+            await allow_release_finish.wait()
+            return True
+
+        def lock(
+            self,
+            lock_key: str,
+            ttl_seconds: float = 180.0,
+            owner_id: str | None = None,
+            wait_timeout: float = 0.0,
+        ) -> Any:
+            raise NotImplementedError
+
+    from typing import Any
+
+    limiter = RateLimiter(concurrent_limit=1, lock_port=SlowReleaseLockPort())  # type: ignore[arg-type]
+    in_slot = asyncio.Event()
+    exit_slot = asyncio.Event()
+
+    async def holder() -> None:
+        async with limiter.slot("10.0.0.99"):
+            in_slot.set()
+            await exit_slot.wait()
+
+    h_task = asyncio.create_task(holder())
+    await in_slot.wait()
+
+    waiter_acquired = asyncio.Event()
+
+    async def waiter() -> None:
+        async with limiter.slot("10.0.0.99"):
+            waiter_acquired.set()
+
+    w_task = asyncio.create_task(waiter())
+    await asyncio.sleep(0.01)
+
+    # Trigger exit of holder so it enters `await asyncio.shield(self._lock_port.release(...))`
+    exit_slot.set()
+    await release_started.wait()
+
+    # Cancel holder while it is awaiting the shielded release
+    h_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await h_task
+
+    # Waiter must be woken up because _release_local_fifo_slot ran in the outer finally block
+    allow_release_finish.set()
+    await asyncio.wait_for(w_task, timeout=1.0)
+    assert waiter_acquired.is_set()

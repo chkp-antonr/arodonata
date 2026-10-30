@@ -14,8 +14,9 @@ Numbers added, modified, moved, and deleted rules according to SmartConsole hier
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Any
 
 from arodonata.core.errors import ServerIdentityError, redact_sid
 from arodonata.core.models.common import utc_now
@@ -36,6 +37,12 @@ from arodonata.rulebase.refresh import collect_domain_rulebase_snapshot
 def _format_utc_timestamp(dt: datetime) -> str:
     utc_dt = dt.astimezone(UTC) if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
     return utc_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _snapshot_has_rules_or_layers(snapshot: DomainRulebaseSnapshot) -> bool:
+    return bool(
+        snapshot.access_rules or snapshot.nat_rules or snapshot.https_rules or snapshot.threat_rules or snapshot.layers
+    )
 
 
 def _apply_snapshot_locations_to_rules(
@@ -105,6 +112,7 @@ async def apply_session_rule_placement(
     owned_session: OwnedSession | None = None,
     warnings: list[ReportWarning],
     now_fn: Callable[[], datetime] = utc_now,
+    refresh_rulebase_fn: Callable[[str, str], Awaitable[Any]] | None = None,
 ) -> None:
     """Populate SmartConsole rule numbers on `session_report.rule_changes` via `OwnedSession` or cached snapshot."""
     mgmt_name = session_report.mgmt_name
@@ -116,6 +124,33 @@ async def apply_session_rule_placement(
         session_uid=session_uid,
         has_owned_session=(owned_session is not None),
     )
+
+    if not session_report.rule_changes:
+        session_report.numbering_basis = ""
+        session_report.numbering_source = "not_applicable"
+        return
+
+    if owned_session is not None:
+        raw_sid = owned_session.sid
+        srv_ip = owned_session.server_ip or None
+        if (
+            owned_session.domain is not None
+            and domain_name
+            and owned_session.domain.strip().lower() != domain_name.strip().lower()
+        ):
+            warnings.append(
+                ReportWarning(
+                    code="owned_session_not_used",
+                    mgmt_name=mgmt_name,
+                    domain=domain_name,
+                    session_uid=session_uid,
+                    message=(
+                        f"OwnedSession domain ({owned_session.domain!r}) does not match target domain "
+                        f"({domain_name!r}); falling back to cached rulebase snapshot."
+                    ),
+                )
+            )
+            owned_session = None
 
     if owned_session is not None:
         raw_sid = owned_session.sid
@@ -152,35 +187,38 @@ async def apply_session_rule_placement(
                 live_uid = str(s_data.get("uid") or "")
                 live_state = str(s_data.get("state") or "").strip().lower()
                 has_pub_time = bool(s_data.get("publish-time"))
+                raw_dom = s_data.get("domain")
+                rep_dom = (
+                    str(raw_dom.get("name") or "")
+                    if isinstance(raw_dom, dict)
+                    else (str(raw_dom) if isinstance(raw_dom, str) else "")
+                ).strip()
+                domain_matches = not (domain_name and rep_dom and rep_dom.lower() != domain_name.strip().lower())
+                owned_uid_matches = not (
+                    owned_session.session_uid
+                    and owned_session.session_uid.strip()
+                    and owned_session.session_uid.strip() != session_uid
+                )
 
-                if live_uid and live_uid != session_uid:
-                    warnings.append(
-                        ReportWarning(
-                            code="owned_session_not_used",
-                            mgmt_name=mgmt_name,
-                            domain=domain_name,
-                            session_uid=session_uid,
-                            message=(
-                                f"OwnedSession UID ({live_uid}) does not match target session ({session_uid}); "
-                                "falling back to cached rulebase snapshot."
-                            ),
-                        )
-                    )
-                elif live_state in ("published", "discarded") or has_pub_time:
-                    warnings.append(
-                        ReportWarning(
-                            code="owned_session_not_used",
-                            mgmt_name=mgmt_name,
-                            domain=domain_name,
-                            session_uid=session_uid,
-                            message=(
-                                f"OwnedSession for {session_uid} is already {live_state or 'published'}; "
-                                "falling back to cached rulebase snapshot."
-                            ),
-                        )
-                    )
-                else:
-                    # Live read-only rulebase collection in the owned session
+                has_changes_key = "changes" in s_data and s_data["changes"] is not None
+                has_locks_key = "locks" in s_data and s_data["locks"] is not None
+                live_changes = int(s_data["changes"]) if has_changes_key else -1
+                live_locks = int(s_data["locks"]) if has_locks_key else -1
+                live_pub_changes = int(s_data.get("number-of-published-changes") or 0)
+
+                target_is_published = (
+                    session_report.state.strip().lower() == "published" or session_report.published_at is not None
+                )
+
+                if (
+                    domain_matches
+                    and owned_uid_matches
+                    and (not live_uid or live_uid == session_uid)
+                    and live_state not in ("published", "discarded")
+                    and not has_pub_time
+                    and not target_is_published
+                ):
+                    # Case 1: Live read-only rulebase collection in the unpublished owned session
                     live_snapshot = await collect_domain_rulebase_snapshot(
                         api,
                         mgmt_name,
@@ -193,6 +231,71 @@ async def apply_session_rule_placement(
                     session_report.numbering_basis = f"Numbering read live in the owned session at {ts_str} UTC"
                     session_report.numbering_source = "owned_session"
                     return
+                if (
+                    domain_matches
+                    and owned_uid_matches
+                    and target_is_published
+                    and live_state not in ("published", "discarded")
+                    and not has_pub_time
+                    and has_changes_key
+                    and has_locks_key
+                    and live_changes == 0
+                    and live_locks == 0
+                    and live_pub_changes == 0
+                ):
+                    # Case 2: Target session is published and OwnedSession is verified clean (post-publish before logout).
+                    # Number strictly in-memory without writing uncoordinated snapshots into CachePort (C2).
+                    live_snapshot = await collect_domain_rulebase_snapshot(
+                        api,
+                        mgmt_name,
+                        domain_name,
+                        sid=raw_sid,
+                        server_ip=srv_ip,
+                    )
+                    _apply_snapshot_locations_to_rules(session_report.rule_changes, live_snapshot)
+                    ts_str = _format_utc_timestamp(now_fn())
+                    session_report.numbering_basis = f"Numbering read live after publish at {ts_str} UTC"
+                    session_report.numbering_source = "live_published"
+                    return
+                if not domain_matches:
+                    warnings.append(
+                        ReportWarning(
+                            code="owned_session_not_used",
+                            mgmt_name=mgmt_name,
+                            domain=domain_name,
+                            session_uid=session_uid,
+                            message=(
+                                f"OwnedSession domain ({rep_dom!r}) does not match target domain ({domain_name!r}); "
+                                "falling back to cached rulebase snapshot."
+                            ),
+                        )
+                    )
+                elif live_uid and live_uid != session_uid:
+                    warnings.append(
+                        ReportWarning(
+                            code="owned_session_not_used",
+                            mgmt_name=mgmt_name,
+                            domain=domain_name,
+                            session_uid=session_uid,
+                            message=(
+                                f"OwnedSession UID ({live_uid}) does not match target session ({session_uid}) or is not clean; "
+                                "falling back to cached rulebase snapshot."
+                            ),
+                        )
+                    )
+                else:
+                    warnings.append(
+                        ReportWarning(
+                            code="owned_session_not_used",
+                            mgmt_name=mgmt_name,
+                            domain=domain_name,
+                            session_uid=session_uid,
+                            message=(
+                                f"OwnedSession for {session_uid} is already {live_state or 'published'} or not clean; "
+                                "falling back to cached rulebase snapshot."
+                            ),
+                        )
+                    )
         except ServerIdentityError:
             raise
         except Exception as exc:
@@ -214,13 +317,18 @@ async def apply_session_rule_placement(
     cached_snapshot = await cache.get_domain_rulebase(mgmt_name, domain_name)
     sync_state = await cache.get_sync_state(mgmt_name, domain_name, "rulebase", "*")
 
-    has_cached_rules = bool(
-        cached_snapshot.access_rules
-        or cached_snapshot.nat_rules
-        or cached_snapshot.https_rules
-        or cached_snapshot.threat_rules
-        or cached_snapshot.layers
-    )
+    has_cached_rules = _snapshot_has_rules_or_layers(cached_snapshot)
+    if not has_cached_rules and refresh_rulebase_fn is not None:
+        try:
+            await refresh_rulebase_fn(mgmt_name, domain_name)
+            cached_snapshot = await cache.get_domain_rulebase(mgmt_name, domain_name)
+            sync_state = await cache.get_sync_state(mgmt_name, domain_name, "rulebase", "*")
+            has_cached_rules = _snapshot_has_rules_or_layers(cached_snapshot)
+        except ServerIdentityError:
+            raise
+        except Exception:
+            has_cached_rules = False
+
     if has_cached_rules:
         _apply_snapshot_locations_to_rules(session_report.rule_changes, cached_snapshot)
         if sync_state is not None and sync_state.last_session_uid:
@@ -236,6 +344,22 @@ async def apply_session_rule_placement(
             session_report.numbering_basis = "Numbering from cached rulebase snapshot"
         session_report.numbering_source = "cache"
     else:
+        # Cold-cache fallback: attempt read-only in-memory live published rulebase fetch without mutating CachePort (C2)
+        fallback_snapshot: DomainRulebaseSnapshot | None = None
+        try:
+            fallback_snapshot = await collect_domain_rulebase_snapshot(api, mgmt_name, domain_name)
+        except ServerIdentityError:
+            raise
+        except Exception:
+            fallback_snapshot = None
+
+        if fallback_snapshot is not None and _snapshot_has_rules_or_layers(fallback_snapshot):
+            _apply_snapshot_locations_to_rules(session_report.rule_changes, fallback_snapshot)
+            ts_str = _format_utc_timestamp(now_fn())
+            session_report.numbering_basis = f"Numbering read live from published rulebase at {ts_str} UTC"
+            session_report.numbering_source = "live_published"
+            return
+
         for rc in session_report.rule_changes:
             if rc.operation == "deleted" and not rc.rule_number:
                 rc.rule_number = rc.old_rule_number or "DELETED"

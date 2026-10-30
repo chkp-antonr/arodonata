@@ -214,8 +214,9 @@ class CPCRUDService:
         server_ip: str | None = None,
         timeout: float | None = None,
         auth: AuthContext | None = None,
+        force_disconnect: bool = False,
     ) -> ApiCallResult:
-        """Adopt `session_uid` via `take-over-session`, publish it, log out, and invalidate the domain cache."""
+        """Adopt `session_uid`, publish it, log out, and invalidate the domain cache."""
         if self._ensure_initialized is not None:
             res = self._ensure_initialized()
             if hasattr(res, "__await__"):
@@ -229,6 +230,7 @@ class CPCRUDService:
             server_ip=server_ip,
             timeout=timeout,
             auth=auth,
+            force_disconnect=force_disconnect,
         )
 
     async def stream_publish_staged_session(
@@ -241,8 +243,9 @@ class CPCRUDService:
         server_ip: str | None = None,
         timeout: float | None = None,
         auth: AuthContext | None = None,
+        force_disconnect: bool = False,
     ) -> AsyncIterator[CPCRUDEvent]:
-        """Adopt `session_uid` via `take-over-session`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate the domain cache."""
+        """Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate the domain cache."""
         if self._ensure_initialized is not None:
             res = self._ensure_initialized()
             if hasattr(res, "__await__"):
@@ -256,6 +259,7 @@ class CPCRUDService:
             server_ip=server_ip,
             timeout=timeout,
             auth=auth,
+            force_disconnect=force_disconnect,
         ):
             yield ev
 
@@ -269,8 +273,9 @@ class CPCRUDService:
         sid: str | None = None,
         server_ip: str | None = None,
         auth: AuthContext | None = None,
+        force_disconnect: bool = False,
     ) -> ApiCallResult:
-        """Adopt `session_uid` via `take-over-session`, discard uncommitted changes, and log out."""
+        """Adopt `session_uid`, discard uncommitted changes, and log out."""
         if self._ensure_initialized is not None:
             res = self._ensure_initialized()
             if hasattr(res, "__await__"):
@@ -283,6 +288,7 @@ class CPCRUDService:
             sid=sid,
             server_ip=server_ip,
             auth=auth,
+            force_disconnect=force_disconnect,
         )
 
 
