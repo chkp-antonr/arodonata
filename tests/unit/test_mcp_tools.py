@@ -582,6 +582,17 @@ async def test_show_object_three_tier_matching_and_pagination() -> None:
         assert gw_data["object"]["interfaces"][0]["name"] == "eth0"
         assert gw_data["object"]["network_security_blades"]["firewall"] is True
 
+        # Tier 1 without domain: searches across all domains on mds1 instead of defaulting to non-existent 'default'
+        gw_no_dom = await server.call_tool(
+            "show_object",
+            {"uid_or_name": "corp-gw-01", "mgmt_name": "mds1", "obj_type": "gateway"},
+        )
+        assert gw_no_dom.is_error is False
+        gw_no_dom_data = _parse_tool_json(gw_no_dom)
+        assert gw_no_dom_data["match_type"] == "exact"
+        assert gw_no_dom_data["domain"] == "Corp"
+        assert gw_no_dom_data["object"]["uid"] == "gw-corp-1"
+
         # Tier 1: Exact match on rulebase layer
         lyr_res = await server.call_tool(
             "show_object",

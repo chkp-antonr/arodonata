@@ -547,8 +547,8 @@ async def test_live_owned_session_numbering_and_strict_sid_redaction() -> None:
 
 
 @pytest.mark.asyncio
-async def test_owned_session_already_published_falls_back_to_cache_with_warning() -> None:
-    """When `OwnedSession` is already published, placement emits `owned_session_not_used` and falls back to cached rulebase."""
+async def test_object_only_session_skips_placement_and_omits_basis_banner() -> None:
+    """When a session has zero `rule_changes`, placement is skipped (`not_applicable`) and no basis banner is rendered."""
     db = DatabaseManager()
     await db.initialize()
     cache = SqlCacheAdapter(db)
@@ -556,14 +556,208 @@ async def test_owned_session_already_published_falls_back_to_cache_with_warning(
 
     try:
         owned = OwnedSession(sid="published-sid-111", server_ip="10.1.0.1")
+        api.sessions_by_uid["sess-obj-only"] = {
+            "uid": "sess-obj-only",
+            "name": "Decom Host Cleanup",
+            "state": "published",
+            "publish-time": {"iso-8601": "2026-10-23T12:00:00Z"},
+            "changes": 1,
+        }
+        api.changes_by_session["sess-obj-only"] = {
+            "tasks": [
+                {
+                    "task-details": [
+                        {
+                            "operations": {
+                                "deleted-objects": [
+                                    {
+                                        "uid": "h-del-1",
+                                        "name": "legacy-host-01",
+                                        "type": "host",
+                                        "ipv4-address": "10.99.0.10",
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        bundle = await build_change_report(
+            api,
+            cache,
+            [SessionScope(mgmt_name="mds1", domain="Corp", session_uids=["sess-obj-only"], owned_sessions=owned)],
+            formats=("html", "markdown", "json"),
+        )
+        sess_rep = bundle.report.sessions[0]
+        assert sess_rep.rule_changes == []
+        assert len(sess_rep.object_changes) == 1
+        assert sess_rep.numbering_source == "not_applicable"
+        assert sess_rep.numbering_basis == ""
+        assert bundle.report.warnings == []
+
+        # Verify apply_session_rule_placement did not issue an extra show-session {} or show-packages call
+        placement_show_session_calls = [c for c in api.calls if c[1] == "show-session" and not (c[2] or {}).get("uid")]
+        assert placement_show_session_calls == []
+        assert [c for c in api.calls if c[1] == "show-packages"] == []
+
+        assert bundle.html is not None
+        assert bundle.markdown is not None
+        html_str = bundle.html.decode("utf-8")
+        assert '<div class="basis-banner">' not in html_str
+        assert "Numbering Basis" not in bundle.markdown
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_post_publish_clean_owned_session_numbers_live_and_warms_cache() -> None:
+    """After `publish` (before `logout`), `OwnedSession` rotates to a clean working session (`changes == 0`) and numbers rules live without warnings."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = FakeReportsApi()
+
+    try:
+        post_pub_sid = "post-publish-live-sid-777"
+        owned = OwnedSession(sid=post_pub_sid, server_ip="10.1.0.1")
+
+        # Target session was just published
+        api.sessions_by_uid["sess-pub-target"] = {
+            "uid": "sess-pub-target",
+            "name": "MMP Decom Rules",
+            "user-name": "mmp-bot",
+            "state": "published",
+            "publish-time": {"iso-8601": "2026-10-23T12:05:00Z"},
+            "changes": 1,
+        }
+        # Calling `show-session {}` with `post_pub_sid` after `publish` returns the newly rotated clean working session
+        api.sessions_by_uid[f"sid:{post_pub_sid}"] = {
+            "uid": "sess-rotated-clean-working",
+            "state": "open",
+            "changes": 0,
+        }
+        api.changes_by_session["sess-pub-target"] = {
+            "tasks": [
+                {
+                    "task-details": [
+                        {
+                            "operations": {
+                                "modified-objects": [
+                                    {
+                                        "uid": "r-pub-1",
+                                        "name": "Decom Rule 1",
+                                        "type": "access-rule",
+                                        "layer": "Corp Network",
+                                        "new-object": {
+                                            "uid": "r-pub-1",
+                                            "name": "Decom Rule 1",
+                                            "type": "access-rule",
+                                            "enabled": False,
+                                        },
+                                        "old-object": {
+                                            "uid": "r-pub-1",
+                                            "name": "Decom Rule 1",
+                                            "type": "access-rule",
+                                            "enabled": True,
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        api.live_packages = [
+            {
+                "uid": "pkg-corp",
+                "name": "Standard",
+                "access": True,
+                "access-layers": [{"uid": "l-corp", "name": "Corp Network", "position": 1}],
+            }
+        ]
+        api.live_rulebase_pages[("show-access-rulebase", "l-corp")] = {
+            "uid": "l-corp",
+            "name": "Corp Network",
+            "rulebase": [
+                {
+                    "uid": "r-pub-1",
+                    "name": "Decom Rule 1",
+                    "type": "access-rule",
+                    "rule-number": 7,
+                    "enabled": False,
+                }
+            ],
+            "to": 1,
+            "total": 1,
+        }
+
+        report = await collect_change_report(
+            api,
+            cache,
+            [SessionScope(mgmt_name="mds1", domain="Corp", session_uids=["sess-pub-target"], owned_sessions=owned)],
+        )
+
+        assert report.warnings == []
+        sess_rep = report.sessions[0]
+        assert sess_rep.numbering_source == "live_published"
+        assert sess_rep.numbering_basis.startswith("Numbering read live after publish at ")
+        assert sess_rep.rule_changes[0].rule_number == "1"
+        assert sess_rep.rule_changes[0].package_name == "Standard"
+
+        # Verify SQLite rulebase cache was warmed by post-publish live read
+        warmed = await cache.get_domain_rulebase("mds1", "Corp")
+        assert len(warmed.access_rules) == 1
+        assert warmed.access_rules[0].uid == "r-pub-1"
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_dirty_unrelated_owned_session_emits_warning_and_falls_back_to_cache() -> None:
+    """When `OwnedSession` points to a different session with uncommitted edits (`changes > 0`), placement emits `owned_session_not_used` and falls back to cache."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = FakeReportsApi()
+
+    try:
+        owned = OwnedSession(sid="dirty-other-sid-222", server_ip="10.1.0.1")
         api.sessions_by_uid["sess-pub-1"] = {
             "uid": "sess-pub-1",
             "name": "Already Published",
             "state": "published",
             "publish-time": {"iso-8601": "2026-10-23T12:00:00Z"},
+            "changes": 1,
         }
-        api.sessions_by_uid["sid:published-sid-111"] = api.sessions_by_uid["sess-pub-1"]
-        api.changes_by_session["sess-pub-1"] = {"tasks": [{"task-details": [{"operations": {}}]}]}
+        # Unrelated session with dirty uncommitted changes (`changes: 3`)
+        api.sessions_by_uid["sid:dirty-other-sid-222"] = {
+            "uid": "sess-other-dirty",
+            "state": "open",
+            "changes": 3,
+        }
+        api.changes_by_session["sess-pub-1"] = {
+            "tasks": [
+                {
+                    "task-details": [
+                        {
+                            "operations": {
+                                "added-objects": [
+                                    {
+                                        "uid": "r-added-1",
+                                        "name": "Added Rule",
+                                        "type": "access-rule",
+                                        "layer": "Corp Network",
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
 
         report = await collect_change_report(
             api,
@@ -572,10 +766,110 @@ async def test_owned_session_already_published_falls_back_to_cache_with_warning(
         )
 
         assert any(w.code == "owned_session_not_used" for w in report.warnings)
-        assert (
-            "cached rulebase" in report.sessions[0].numbering_basis
-            or "unnumbered" in report.sessions[0].numbering_source
+        assert report.sessions[0].numbering_source == "unnumbered"
+        assert report.sessions[0].numbering_basis == "Numbering from cached rulebase snapshot (unavailable)"
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_cold_cache_fetches_live_published_rulebase_and_warms_cache_plus_bare_layer_uid() -> None:
+    """When cache is cold and no `OwnedSession` is supplied, rule changes trigger an on-demand live published rulebase read and bare `layer_uid` resolves via `show-object`."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = FakeReportsApi()
+
+    try:
+        bare_layer_uid = str(uuid.uuid4())
+        api.objects_by_uid[bare_layer_uid] = {
+            "uid": bare_layer_uid,
+            "name": "Resolved-Inline-Layer",
+            "type": "access-layer",
+        }
+        api.sessions_by_uid["sess-cold-1"] = {
+            "uid": "sess-cold-1",
+            "name": "Cold Cache Session",
+            "state": "published",
+            "publish-time": {"iso-8601": "2026-10-23T12:00:00Z"},
+            "changes": 1,
+        }
+        api.changes_by_session["sess-cold-1"] = {
+            "tasks": [
+                {
+                    "task-details": [
+                        {
+                            "operations": {
+                                "modified-objects": [
+                                    {
+                                        "uid": "r-cold-1",
+                                        "name": "Cold Cache Rule",
+                                        "type": "access-rule",
+                                        "layer": bare_layer_uid,
+                                        "new-object": {
+                                            "uid": "r-cold-1",
+                                            "name": "Cold Cache Rule",
+                                            "type": "access-rule",
+                                            "layer": bare_layer_uid,
+                                            "enabled": True,
+                                        },
+                                        "old-object": {
+                                            "uid": "r-cold-1",
+                                            "name": "Cold Cache Rule",
+                                            "type": "access-rule",
+                                            "layer": bare_layer_uid,
+                                            "enabled": True,
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        api.live_packages = [
+            {
+                "uid": "pkg-cold",
+                "name": "ColdPkg",
+                "access": True,
+                "access-layers": [{"uid": bare_layer_uid, "name": "Resolved-Inline-Layer", "position": 1}],
+            }
+        ]
+        api.live_rulebase_pages[("show-access-rulebase", bare_layer_uid)] = {
+            "uid": bare_layer_uid,
+            "name": "Resolved-Inline-Layer",
+            "rulebase": [
+                {
+                    "uid": "r-cold-1",
+                    "name": "Cold Cache Rule",
+                    "type": "access-rule",
+                    "rule-number": 3,
+                    "enabled": True,
+                }
+            ],
+            "to": 1,
+            "total": 1,
+        }
+
+        report = await collect_change_report(
+            api,
+            cache,
+            [SessionScope(mgmt_name="mds1", domain="Corp", session_uids=["sess-cold-1"])],
         )
+
+        sess_rep = report.sessions[0]
+        assert sess_rep.numbering_source == "live_published"
+        assert sess_rep.numbering_basis.startswith("Numbering read live from published rulebase at ")
+        rc = sess_rep.rule_changes[0]
+        assert rc.rule_number == "1"
+        assert rc.layer_uid == bare_layer_uid
+        assert rc.layer_name == "Resolved-Inline-Layer"
+
+        # Verify cache was warmed so a second call hits cache
+        warmed = await cache.get_domain_rulebase("mds1", "Corp")
+        assert len(warmed.access_rules) == 1
+        assert warmed.access_rules[0].uid == "r-cold-1"
     finally:
         await db.close()
 

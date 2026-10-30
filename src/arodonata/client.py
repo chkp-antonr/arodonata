@@ -1607,14 +1607,14 @@ class ArodonataClient:
     async def find_object(
         self,
         mgmt_name: str,
-        domain: str,
-        name_or_uid: str,
+        domain: str | None = None,
+        name_or_uid: str = "",
         *,
         obj_type: str | None = None,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
     ) -> CPObject | CPService | Asset | None:
-        """Find a single `CPObject`, `CPService`, or `Asset` by exact `uid` or `name` in `(mgmt_name, domain)`, including active `WriteSession` overlay."""
+        """Find a single `CPObject`, `CPService`, or `Asset` by exact `uid` or `name` in `(mgmt_name, domain)` (or across all domains when `domain` is `None`), including active `WriteSession` overlay."""
         if not self._db.is_initialized:
             await self._db.initialize()
 
@@ -1624,64 +1624,89 @@ class ArodonataClient:
         )
         is_asset_type = clean_type is not None and clean_type in {t.lower() for t in CANONICAL_ASSET_TYPES}
 
-        composite_prefix = f"{mgmt_name}:{domain}:"
-        lookup_key = (
-            name_or_uid.removeprefix(composite_prefix) if name_or_uid.startswith(composite_prefix) else name_or_uid
-        )
+        eff_domain = domain.strip() if domain and domain.strip() else None
+        lookup_key = name_or_uid
+        if eff_domain:
+            composite_prefix = f"{mgmt_name}:{eff_domain}:"
+            if name_or_uid.startswith(composite_prefix):
+                lookup_key = name_or_uid.removeprefix(composite_prefix)
+        elif name_or_uid.startswith(f"{mgmt_name}:"):
+            parts = name_or_uid.split(":", 2)
+            if len(parts) == 3 and parts[1] and parts[2]:
+                eff_domain = parts[1]
+                lookup_key = parts[2]
         lookup_names = list(dict.fromkeys([name_or_uid, lookup_key]))
 
         if not is_service_type and not is_asset_type:
-            by_uid = await self._object_service.get_object_by_uid(
-                mgmt_name,
-                domain,
-                lookup_key,
-                cache_mode=cache_mode,
-                cache_ttl=cache_ttl,
-            )
-            if by_uid is not None and (clean_type is None or by_uid.type.lower() == clean_type):
-                return by_uid
+            if eff_domain:
+                by_uid = await self._object_service.get_object_by_uid(
+                    mgmt_name,
+                    eff_domain,
+                    lookup_key,
+                    cache_mode=cache_mode,
+                    cache_ttl=cache_ttl,
+                )
+                if by_uid is not None and (clean_type is None or by_uid.type.lower() == clean_type):
+                    return by_uid
 
             objs = await self._object_service.get_objects(
                 mgmt_name=mgmt_name,
-                domain=domain,
+                domain=eff_domain,
                 types=[clean_type] if clean_type else None,
-                names=lookup_names,
-                include_global=(domain == "Global"),
-                cache_mode="cache" if cache_mode != "force" else cache_mode,
+                names=lookup_names if eff_domain else None,
+                include_global=(eff_domain == "Global"),
+                cache_mode=("cache" if cache_mode != "force" else cache_mode) if eff_domain else cache_mode,
                 cache_ttl=cache_ttl,
             )
-            if objs:
+            if eff_domain and objs:
                 return objs[0]
+            if not eff_domain and objs:
+                for o in objs:
+                    if o.uid in (name_or_uid, lookup_key) or o.name in (name_or_uid, lookup_key) or o.id == name_or_uid:
+                        return o
+                needle_lower = lookup_key.strip().lower()
+                for o in objs:
+                    if o.uid.lower() == needle_lower or o.name.lower() == needle_lower:
+                        return o
 
         if is_service_type or clean_type is None:
-            svc_by_uid = await self._service_cache.get_service_by_uid(
-                mgmt_name,
-                domain,
-                lookup_key,
-                cache_mode=cache_mode,
-                cache_ttl=cache_ttl,
-            )
-            if svc_by_uid is not None and (clean_type is None or svc_by_uid.type.lower() == clean_type):
-                return svc_by_uid
+            if eff_domain:
+                svc_by_uid = await self._service_cache.get_service_by_uid(
+                    mgmt_name,
+                    eff_domain,
+                    lookup_key,
+                    cache_mode=cache_mode,
+                    cache_ttl=cache_ttl,
+                )
+                if svc_by_uid is not None and (clean_type is None or svc_by_uid.type.lower() == clean_type):
+                    return svc_by_uid
 
             svcs = await self._service_cache.get_services(
                 mgmt_name=mgmt_name,
-                domain=domain,
+                domain=eff_domain,
                 types=[clean_type] if clean_type else None,
-                names=lookup_names,
-                include_global=(domain == "Global"),
-                cache_mode="cache" if cache_mode != "force" else cache_mode,
+                names=lookup_names if eff_domain else None,
+                include_global=(eff_domain == "Global"),
+                cache_mode=("cache" if cache_mode != "force" else cache_mode) if eff_domain else cache_mode,
                 cache_ttl=cache_ttl,
             )
-            if svcs:
+            if eff_domain and svcs:
                 return svcs[0]
+            if not eff_domain and svcs:
+                for s in svcs:
+                    if s.uid in (name_or_uid, lookup_key) or s.name in (name_or_uid, lookup_key) or s.id == name_or_uid:
+                        return s
+                needle_lower = lookup_key.strip().lower()
+                for s in svcs:
+                    if s.uid.lower() == needle_lower or s.name.lower() == needle_lower:
+                        return s
 
         if is_asset_type or clean_type is None:
             assets = await self._asset_service.get_assets(
                 mgmt_name=mgmt_name,
-                domain=domain,
+                domain=eff_domain,
                 types=[clean_type] if clean_type else None,
-                include_global=(domain == "Global"),
+                include_global=(eff_domain == "Global"),
                 cache_mode=cache_mode,
                 cache_ttl=cache_ttl,
             )
@@ -1709,8 +1734,8 @@ class ArodonataClient:
     async def get_group_members(
         self,
         mgmt_name: str,
-        domain: str,
-        group_name_or_uid: str,
+        domain: str | None = None,
+        group_name_or_uid: str = "",
         *,
         recursive: bool = True,
         max_depth: int = 5,

@@ -849,14 +849,15 @@ def register_mcp_tools(
             if not has_explicit_wildcard and not is_layer_or_pkg_type:
                 found_exact = await client.find_object(
                     eff_mgmt,
-                    target_domain,
+                    eff_domain,
                     query_str,
                     obj_type=clean_obj_type,
                     cache_mode=mode,
                 )
                 if found_exact is not None:
+                    matched_domain = getattr(found_exact, "domain_name", None) or target_domain
                     scope_name, item_type_val = _entity_scope_and_type(found_exact)
-                    age = await _compute_cache_age(client, eff_mgmt, target_domain, scope_name, item_type_val)
+                    age = await _compute_cache_age(client, eff_mgmt, matched_domain, scope_name, item_type_val)
                     obj_dict = _serialize_any_entity(found_exact, details_level=details_level)
                     return json_tool_result(
                         {
@@ -867,7 +868,7 @@ def register_mcp_tools(
                             "source": "cache",
                             "cache_age_seconds": age,
                             "mgmt_name": eff_mgmt,
-                            "domain": target_domain,
+                            "domain": matched_domain,
                             "object": obj_dict,
                             "objects": [obj_dict],
                         }
@@ -885,9 +886,9 @@ def register_mcp_tools(
             if want_objs:
                 objs = await client.get_objects(
                     mgmt_name=eff_mgmt,
-                    domain=target_domain,
+                    domain=eff_domain,
                     types=[clean_obj_type] if clean_obj_type else None,
-                    include_global=(target_domain == "Global"),
+                    include_global=(eff_domain == "Global"),
                     cache_mode="cache" if not has_explicit_wildcard else mode,
                 )
                 candidates.extend(objs)
@@ -895,9 +896,9 @@ def register_mcp_tools(
             if want_svcs:
                 svcs = await client.get_services(
                     mgmt_name=eff_mgmt,
-                    domain=target_domain,
+                    domain=eff_domain,
                     types=[clean_obj_type] if clean_obj_type else None,
-                    include_global=(target_domain == "Global"),
+                    include_global=(eff_domain == "Global"),
                     cache_mode="cache" if not has_explicit_wildcard else mode,
                 )
                 candidates.extend(svcs)
@@ -905,32 +906,39 @@ def register_mcp_tools(
             if want_assets:
                 assets = await client.get_gateways(
                     mgmt_name=eff_mgmt,
-                    domain=target_domain,
+                    domain=eff_domain,
                     types=[clean_obj_type] if clean_obj_type else None,
-                    include_global=(target_domain == "Global"),
+                    include_global=(eff_domain == "Global"),
                     cache_mode="cache" if not has_explicit_wildcard else mode,
                 )
                 candidates.extend(assets)
 
             if want_layers:
-                snap = await client.cache.get_domain_rulebase(eff_mgmt, target_domain)
-                if clean_obj_type in (None, "package", "policy-package"):
-                    candidates.extend(extract_policy_packages(snap))
-                if clean_obj_type in (None, "layer", "access-layer", "https-layer", "threat-layer"):
-                    for l_entry in snap.layers:
-                        if (
-                            clean_obj_type in ("access-layer", "https-layer", "threat-layer")
-                            and f"{l_entry.rulebase_type}-layer" != clean_obj_type
-                        ):
-                            continue
-                        candidates.append(l_entry)
+                if eff_domain is not None:
+                    layer_domains = [eff_domain]
+                else:
+                    cached_doms = await client.cache.get_domains(eff_mgmt, include_global=False)
+                    layer_domains = [d.name for d in cached_doms] if cached_doms else ["default"]
+                for l_dom in layer_domains:
+                    snap = await client.cache.get_domain_rulebase(eff_mgmt, l_dom)
+                    if clean_obj_type in (None, "package", "policy-package"):
+                        candidates.extend(extract_policy_packages(snap))
+                    if clean_obj_type in (None, "layer", "access-layer", "https-layer", "threat-layer"):
+                        for l_entry in snap.layers:
+                            if (
+                                clean_obj_type in ("access-layer", "https-layer", "threat-layer")
+                                and f"{l_entry.rulebase_type}-layer" != clean_obj_type
+                            ):
+                                continue
+                            candidates.append(l_entry)
 
             # Check Tier 1 exact match on layers/packages (or case-insensitive exact name across all candidates)
             if not has_explicit_wildcard:
                 for cand in candidates:
                     if cand.uid.lower() == query_lower or cand.name.lower() == query_lower:
+                        matched_domain = getattr(cand, "domain_name", None) or target_domain
                         scope_name, item_type_val = _entity_scope_and_type(cand)
-                        age = await _compute_cache_age(client, eff_mgmt, target_domain, scope_name, item_type_val)
+                        age = await _compute_cache_age(client, eff_mgmt, matched_domain, scope_name, item_type_val)
                         obj_dict = _serialize_any_entity(cand, details_level=details_level)
                         return json_tool_result(
                             {
@@ -941,7 +949,7 @@ def register_mcp_tools(
                                 "source": "cache",
                                 "cache_age_seconds": age,
                                 "mgmt_name": eff_mgmt,
-                                "domain": target_domain,
+                                "domain": matched_domain,
                                 "object": obj_dict,
                                 "objects": [obj_dict],
                             }
@@ -950,8 +958,9 @@ def register_mcp_tools(
             # Tier 2: Explicit wildcard (`*` or `?` in `uid_or_name`) — anchored fnmatchcase without extra `*`
             if has_explicit_wildcard:
                 wildcard_matches = [c for c in candidates if fnmatchcase(c.name.lower(), query_lower)]
-                age = await _compute_cache_age(client, eff_mgmt, target_domain, "objects", "*")
+                age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "*")
                 if len(wildcard_matches) == 1:
+                    matched_domain = getattr(wildcard_matches[0], "domain_name", None) or target_domain
                     single_dict = _serialize_any_entity(wildcard_matches[0], details_level=details_level)
                     return json_tool_result(
                         {
@@ -962,7 +971,7 @@ def register_mcp_tools(
                             "source": "cache",
                             "cache_age_seconds": age,
                             "mgmt_name": eff_mgmt,
-                            "domain": target_domain,
+                            "domain": matched_domain,
                             "object": single_dict,
                             "objects": [single_dict],
                         }
@@ -980,7 +989,7 @@ def register_mcp_tools(
                         "source": "cache",
                         "cache_age_seconds": age,
                         "mgmt_name": eff_mgmt,
-                        "domain": target_domain,
+                        "domain": eff_domain or target_domain,
                         "object": None,
                         "objects": serialized_wild,
                     }
@@ -989,11 +998,16 @@ def register_mcp_tools(
             # Tier 3: Substring candidate fallback when no exact match was found
             substring_matches = [c for c in candidates if query_lower and query_lower in c.name.lower()]
             if substring_matches:
-                age = await _compute_cache_age(client, eff_mgmt, target_domain, "objects", "*")
+                age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "*")
                 eff_offset = max(0, offset)
                 eff_limit = max(1, min(limit, 500))
                 sliced_sub = substring_matches[eff_offset : eff_offset + eff_limit]
                 serialized_sub = [_serialize_any_entity(c, details_level="standard") for c in sliced_sub]
+                matched_sub_domain = (
+                    (getattr(substring_matches[0], "domain_name", None) or target_domain)
+                    if len(substring_matches) == 1
+                    else (eff_domain or target_domain)
+                )
                 return json_tool_result(
                     {
                         "from": (eff_offset + 1) if serialized_sub else 0,
@@ -1003,7 +1017,7 @@ def register_mcp_tools(
                         "source": "cache",
                         "cache_age_seconds": age,
                         "mgmt_name": eff_mgmt,
-                        "domain": target_domain,
+                        "domain": matched_sub_domain,
                         "object": serialized_sub[0] if len(substring_matches) == 1 and serialized_sub else None,
                         "objects": serialized_sub,
                         "hint": (
@@ -1143,13 +1157,14 @@ def register_mcp_tools(
 
         members = await client.search_service.get_group_members(
             eff_mgmt,
-            target_domain,
+            eff_domain,
             group_name_or_uid,
             recursive=recursive,
             max_depth=max_depth,
             cache_mode=mode,
         )
-        age = await _compute_cache_age(client, eff_mgmt, target_domain, "objects", "group")
+        matched_domain = (getattr(members[0], "domain_name", None) if members else None) or eff_domain or target_domain
+        age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "group")
         serialized = [_serialize_any_entity(m, details_level="standard") for m in members]
         envelope = _build_page_envelope(
             serialized,
@@ -1160,7 +1175,7 @@ def register_mcp_tools(
             extra={
                 "group": group_name_or_uid,
                 "mgmt_name": eff_mgmt,
-                "domain": target_domain,
+                "domain": matched_domain,
             },
         )
         return json_tool_result(envelope)

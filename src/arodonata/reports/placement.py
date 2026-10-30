@@ -14,6 +14,7 @@ Numbers added, modified, moved, and deleted rules according to SmartConsole hier
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -36,6 +37,12 @@ from arodonata.rulebase.refresh import collect_domain_rulebase_snapshot
 def _format_utc_timestamp(dt: datetime) -> str:
     utc_dt = dt.astimezone(UTC) if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
     return utc_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _snapshot_has_rules_or_layers(snapshot: DomainRulebaseSnapshot) -> bool:
+    return bool(
+        snapshot.access_rules or snapshot.nat_rules or snapshot.https_rules or snapshot.threat_rules or snapshot.layers
+    )
 
 
 def _apply_snapshot_locations_to_rules(
@@ -117,6 +124,11 @@ async def apply_session_rule_placement(
         has_owned_session=(owned_session is not None),
     )
 
+    if not session_report.rule_changes:
+        session_report.numbering_basis = ""
+        session_report.numbering_source = "not_applicable"
+        return
+
     if owned_session is not None:
         raw_sid = owned_session.sid
         srv_ip = owned_session.server_ip or None
@@ -152,7 +164,51 @@ async def apply_session_rule_placement(
                 live_uid = str(s_data.get("uid") or "")
                 live_state = str(s_data.get("state") or "").strip().lower()
                 has_pub_time = bool(s_data.get("publish-time"))
+                live_changes = int(s_data.get("changes") or 0)
+                target_is_published = (
+                    session_report.state.strip().lower() == "published" or session_report.published_at is not None
+                )
 
+                if (
+                    (not live_uid or live_uid == session_uid)
+                    and live_state not in ("published", "discarded")
+                    and not has_pub_time
+                    and not target_is_published
+                ):
+                    # Case 1: Live read-only rulebase collection in the unpublished owned session
+                    live_snapshot = await collect_domain_rulebase_snapshot(
+                        api,
+                        mgmt_name,
+                        domain_name,
+                        sid=raw_sid,
+                        server_ip=srv_ip,
+                    )
+                    _apply_snapshot_locations_to_rules(session_report.rule_changes, live_snapshot)
+                    ts_str = _format_utc_timestamp(now_fn())
+                    session_report.numbering_basis = f"Numbering read live in the owned session at {ts_str} UTC"
+                    session_report.numbering_source = "owned_session"
+                    return
+                if (
+                    target_is_published
+                    and live_state != "discarded"
+                    and (not live_uid or live_uid == session_uid or live_changes == 0)
+                ):
+                    # Case 2: Target session is published and OwnedSession is clean (post-publish before logout)
+                    live_snapshot = await collect_domain_rulebase_snapshot(
+                        api,
+                        mgmt_name,
+                        domain_name,
+                        sid=raw_sid,
+                        server_ip=srv_ip,
+                    )
+                    _apply_snapshot_locations_to_rules(session_report.rule_changes, live_snapshot)
+                    if _snapshot_has_rules_or_layers(live_snapshot):
+                        with contextlib.suppress(Exception):
+                            await cache.replace_domain_rulebase(live_snapshot)
+                    ts_str = _format_utc_timestamp(now_fn())
+                    session_report.numbering_basis = f"Numbering read live after publish at {ts_str} UTC"
+                    session_report.numbering_source = "live_published"
+                    return
                 if live_uid and live_uid != session_uid:
                     warnings.append(
                         ReportWarning(
@@ -166,7 +222,7 @@ async def apply_session_rule_placement(
                             ),
                         )
                     )
-                elif live_state in ("published", "discarded") or has_pub_time:
+                else:
                     warnings.append(
                         ReportWarning(
                             code="owned_session_not_used",
@@ -179,20 +235,6 @@ async def apply_session_rule_placement(
                             ),
                         )
                     )
-                else:
-                    # Live read-only rulebase collection in the owned session
-                    live_snapshot = await collect_domain_rulebase_snapshot(
-                        api,
-                        mgmt_name,
-                        domain_name,
-                        sid=raw_sid,
-                        server_ip=srv_ip,
-                    )
-                    _apply_snapshot_locations_to_rules(session_report.rule_changes, live_snapshot)
-                    ts_str = _format_utc_timestamp(now_fn())
-                    session_report.numbering_basis = f"Numbering read live in the owned session at {ts_str} UTC"
-                    session_report.numbering_source = "owned_session"
-                    return
         except ServerIdentityError:
             raise
         except Exception as exc:
@@ -214,13 +256,7 @@ async def apply_session_rule_placement(
     cached_snapshot = await cache.get_domain_rulebase(mgmt_name, domain_name)
     sync_state = await cache.get_sync_state(mgmt_name, domain_name, "rulebase", "*")
 
-    has_cached_rules = bool(
-        cached_snapshot.access_rules
-        or cached_snapshot.nat_rules
-        or cached_snapshot.https_rules
-        or cached_snapshot.threat_rules
-        or cached_snapshot.layers
-    )
+    has_cached_rules = _snapshot_has_rules_or_layers(cached_snapshot)
     if has_cached_rules:
         _apply_snapshot_locations_to_rules(session_report.rule_changes, cached_snapshot)
         if sync_state is not None and sync_state.last_session_uid:
@@ -236,6 +272,24 @@ async def apply_session_rule_placement(
             session_report.numbering_basis = "Numbering from cached rulebase snapshot"
         session_report.numbering_source = "cache"
     else:
+        # Cold-cache fallback: attempt read-only live published rulebase fetch
+        fallback_snapshot: DomainRulebaseSnapshot | None = None
+        try:
+            fallback_snapshot = await collect_domain_rulebase_snapshot(api, mgmt_name, domain_name)
+        except ServerIdentityError:
+            raise
+        except Exception:
+            fallback_snapshot = None
+
+        if fallback_snapshot is not None and _snapshot_has_rules_or_layers(fallback_snapshot):
+            _apply_snapshot_locations_to_rules(session_report.rule_changes, fallback_snapshot)
+            with contextlib.suppress(Exception):
+                await cache.replace_domain_rulebase(fallback_snapshot)
+            ts_str = _format_utc_timestamp(now_fn())
+            session_report.numbering_basis = f"Numbering read live from published rulebase at {ts_str} UTC"
+            session_report.numbering_source = "live_published"
+            return
+
         for rc in session_report.rule_changes:
             if rc.operation == "deleted" and not rc.rule_number:
                 rc.rule_number = rc.old_rule_number or "DELETED"

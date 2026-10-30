@@ -350,6 +350,11 @@ def _parse_rule_and_object_changes(
                         layer_uid = str(core.get("layer-uid") or raw.get("layer_uid"))
                     if not layer_name and isinstance(core.get("layer-name") or raw.get("layer_name"), str):
                         layer_name = str(core.get("layer-name") or raw.get("layer_name"))
+                    if not layer_name and is_bare_uid(layer_uid):
+                        if layer_uid in known_names:
+                            layer_name = known_names[layer_uid]
+                        else:
+                            bare_uids_out.add(layer_uid)
 
                     pkg_raw = core.get("package") or raw.get("package") or old_core.get("package")
                     pkg_uid: str | None = None
@@ -486,6 +491,8 @@ def _replace_resolved_uids_in_session(
         return val
 
     for rc in session_report.rule_changes:
+        if not rc.layer_name and rc.layer_uid in resolved:
+            rc.layer_name = resolved[rc.layer_uid]
         rc.action = _sub(rc.action)
         rc.source = _sub_list(rc.source)
         rc.destination = _sub_list(rc.destination)

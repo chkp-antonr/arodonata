@@ -22,22 +22,37 @@ Defines read-only collection (`collect_change_report`), rulebase placement numbe
 
 #### Scenario: Reference UID name resolution with bounded show-object lookups
 
-- **WHEN** `show-changes` returns bare UIDs for group members or NAT fields not already named in the session's own change entries
-- **THEN** the collector SHALL resolve up to 200 distinct UIDs per report via read-only `show-object` calls and emit a `names_unresolved` `ReportWarning` if the cap is exceeded or a lookup fails
+- **WHEN** `show-changes` returns bare UIDs for rule layers (`layer`), group members, rule fields, or NAT fields not already named in the session's own change entries
+- **THEN** the collector SHALL resolve up to 200 distinct UIDs per report (checking local cache first, then read-only `show-object` calls), populate `RuleChangeEntry.layer_name` when `layer_uid` resolves to a named layer, and emit a `names_unresolved` `ReportWarning` if the cap is exceeded or a lookup fails
 
 ### Requirement: Owned Session Live Numbering and Cached Snapshot Fallback
 
-The change report builder SHALL number added, modified, moved, and deleted rules according to SmartConsole hierarchy using either a caller-supplied unpublished `OwnedSession` (`sid`, `server_ip`) or the domain's cached rulebase snapshot, labeling each session with its exact numbering basis.
+The change report builder SHALL number added, modified, moved, and deleted rules according to SmartConsole hierarchy using a caller-supplied `OwnedSession` (`sid`, `server_ip`), the domain's cached rulebase snapshot, or an on-demand read-only published rulebase fetch when the cache is cold, labeling each session that contains rule changes with its exact numbering basis and skipping placement altogether for sessions without rule changes.
+
+#### Scenario: Object-only session skips rulebase placement and omits numbering banner
+
+- **WHEN** a collected `SessionChangeReport` contains zero `rule_changes`
+- **THEN** `apply_session_rule_placement` SHALL return immediately without calling `show-session`, `collect_domain_rulebase_snapshot`, or `CachePort.get_domain_rulebase`, setting `numbering_source = "not_applicable"` and `numbering_basis = ""`, and HTML/Markdown rendering SHALL omit the numbering basis banner/line for that session
 
 #### Scenario: Read-only live numbering via OwnedSession with strict SID hygiene
 
-- **WHEN** a `SessionScope` supplies an `OwnedSession` matching an unpublished session in the scope
-- **THEN** the collector SHALL verify ownership via `show-session`, read `show-packages` and `show-*-rulebase` using that SID strictly read-only (never publishing, discarding, or logging out), label the session `"Numbering read live in the owned session at <time> UTC"`, and NEVER include or log the SID in `ChangeReport`, `RawResponse`, HTML, JSON, Markdown, or `repr()`
+- **WHEN** a `SessionScope` supplies an `OwnedSession` matching an unpublished session with rule changes in the scope
+- **THEN** the collector SHALL verify ownership via `show-session`, read `show-packages` and `show-*-rulebase` using that SID strictly read-only (never publishing, discarding, or logging out), label the session `"Numbering read live in the owned session at <time> UTC"` (`numbering_source = "owned_session"`), and NEVER include or log the SID in `ChangeReport`, `RawResponse`, HTML, JSON, Markdown, or `repr()`
+
+#### Scenario: Post-publish live numbering via clean OwnedSession before logout
+
+- **WHEN** a `SessionScope` supplies an `OwnedSession` for an already-published session with rule changes (such as immediately after `publish` and before `logout`) and `show-session` on that SID confirms a live, non-discarded session with zero uncommitted changes (`changes == 0` when rotated to a new working session UID)
+- **THEN** the collector SHALL read the published rulebase snapshot live through that SID without emitting `owned_session_not_used`, best-effort warm `CachePort.replace_domain_rulebase`, and label the session `"Numbering read live after publish at <time> UTC"` (`numbering_source = "live_published"`)
 
 #### Scenario: Graceful fallback when OwnedSession is already published or expired
 
-- **WHEN** a supplied `OwnedSession` no longer corresponds to an unpublished session or its SID fails
-- **THEN** the collector SHALL record an `owned_session_not_used` or `owned_session_error` warning and fall back to numbering from the rulebase cache
+- **WHEN** a supplied `OwnedSession` fails verification, is `discarded`, does not match an unpublished target session, or belongs to a different open session with uncommitted edits (`changes > 0`) on a published target session, and the session has rule changes
+- **THEN** the collector SHALL record an `owned_session_not_used` or `owned_session_error` warning and fall back to numbering from the domain's cached rulebase snapshot (or cold-cache live published rulebase fallback)
+
+#### Scenario: Cold-cache on-demand live published rulebase fallback
+
+- **WHEN** a session has rule changes, no usable `OwnedSession` handled numbering, and `CachePort.get_domain_rulebase` contains no cached rules or layers for `(mgmt_name, domain_name)`
+- **THEN** the collector SHALL attempt a read-only `collect_domain_rulebase_snapshot` against `ApiPort`, apply rule numbering and best-effort persist the snapshot via `CachePort.replace_domain_rulebase` with basis `"Numbering read live from published rulebase at <time> UTC"` (`numbering_source = "live_published"`), falling back to `"Numbering from cached rulebase snapshot (unavailable)"` (`numbering_source = "unnumbered"`) only if the live snapshot fetch fails or returns empty
 
 ### Requirement: Multi-Format Evidence Rendering and Safe Markup Escaping
 

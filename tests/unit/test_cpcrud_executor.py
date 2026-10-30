@@ -290,18 +290,19 @@ async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_
     assert (
         "mds1",
         "take-over-session",
-        {"uid": "staged-sess-uid-777", "take-over-lock": True},
+        {"uid": "staged-sess-uid-777", "disconnect-active-session": True},
         "Corp",
         "secret-ws-sid-999",
     ) in api.calls
     assert ("mds1", "publish", {}, "Corp", "secret-ws-sid-999") in api.calls
     assert "secret-ws-sid-999" in api.logged_out_sids
 
-    # 2. Fallback to fresh session when the supplied staged `sid` expired (first take-over-session fails)
+    # 2. Fallback to fresh session when the supplied staged `sid` expired (first take-over-session and switch-session fail)
     api.calls.clear()
     api.logged_out_sids.clear()
     invalidated.clear()
     api.flaky_command_failures_remaining["take-over-session"] = 1
+    api.flaky_command_failures_remaining["switch-session"] = 1
 
     pub_res = await executor.publish_staged_session(
         "mds1",
@@ -314,6 +315,22 @@ async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_
     assert invalidated == [("mds1", "Corp")]
     takeover_sids = [c[4] for c in api.calls if c[1] == "take-over-session"]
     assert takeover_sids == ["expired-staged-sid-111", "secret-ws-sid-999"]
+    assert "secret-ws-sid-999" in api.logged_out_sids
+
+    # 2b. Fallback to switch-session on fresh session when take-over-session is rejected
+    api.calls.clear()
+    api.logged_out_sids.clear()
+    invalidated.clear()
+    api.flaky_command_failures_remaining["take-over-session"] = 1
+
+    pub_sw_res = await executor.publish_staged_session(
+        "mds1",
+        "Corp",
+        session_uid="staged-sess-uid-889",
+    )
+    assert pub_sw_res.success is True
+    assert invalidated == [("mds1", "Corp")]
+    assert [c[1] for c in api.calls] == ["take-over-session", "switch-session", "publish"]
     assert "secret-ws-sid-999" in api.logged_out_sids
 
     # 3. Staged session takeover + discard

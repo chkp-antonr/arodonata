@@ -386,19 +386,20 @@ class SearchService:
     async def get_group_members(
         self,
         mgmt_name: str,
-        domain: str,
-        group_name_or_uid: str,
+        domain: str | None = None,
+        group_name_or_uid: str = "",
         *,
         recursive: bool = True,
         max_depth: int = 5,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
     ) -> list[CPObject | CPService | Asset]:
-        """Return direct (and optionally recursive) member `CPObject`, `CPService`, or child `Asset` items for a group, service-group, cluster, or VSX container in `(mgmt_name, domain)`."""
+        """Return direct (and optionally recursive) member `CPObject`, `CPService`, or child `Asset` items for a group, service-group, cluster, or VSX container in `(mgmt_name, domain)` (or across all domains when `domain` is `None`)."""
+        eff_domain = domain.strip() if domain and domain.strip() else None
         all_objs = await self._object_service.get_objects(
             mgmt_name=mgmt_name,
-            domain=domain,
-            include_global=(domain == "Global"),
+            domain=eff_domain,
+            include_global=(eff_domain == "Global"),
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
         )
@@ -442,14 +443,14 @@ class SearchService:
         if self._service_cache is not None:
             all_svcs = await self._service_cache.get_services(
                 mgmt_name=mgmt_name,
-                domain=domain,
-                include_global=(domain == "Global"),
+                domain=eff_domain,
+                include_global=(eff_domain == "Global"),
                 cache_mode=cache_mode,
                 cache_ttl=cache_ttl,
             )
         else:
-            all_svcs = await self._cache.get_services(mgmt_name=mgmt_name, domain_name=domain)
-            all_svcs = ServiceCacheService.apply_context_overlay(all_svcs, mgmt_name=mgmt_name, domain_name=domain)
+            all_svcs = await self._cache.get_services(mgmt_name=mgmt_name, domain_name=eff_domain)
+            all_svcs = ServiceCacheService.apply_context_overlay(all_svcs, mgmt_name=mgmt_name, domain_name=eff_domain)
 
         svc_by_uid: dict[str, CPService] = {s.uid: s for s in all_svcs}
         target_svc_group: CPService | None = svc_by_uid.get(group_name_or_uid)
@@ -491,13 +492,13 @@ class SearchService:
         if self._asset_service is not None:
             all_assets = await self._asset_service.get_assets(
                 mgmt_name=mgmt_name,
-                domain=domain,
-                include_global=(domain == "Global"),
+                domain=eff_domain,
+                include_global=(eff_domain == "Global"),
                 cache_mode=cache_mode,
                 cache_ttl=cache_ttl,
             )
         else:
-            all_assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=domain)
+            all_assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=eff_domain)
 
         asset_by_uid: dict[str, Asset] = {a.uid: a for a in all_assets}
         target_asset: Asset | None = asset_by_uid.get(group_name_or_uid)

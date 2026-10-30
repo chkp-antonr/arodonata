@@ -281,7 +281,7 @@ class SessionChangeReport(BaseModel):
     locks: int = 0
     changes_count: int = 0
     numbering_basis: str = "Numbering from cached rulebase snapshot"
-    numbering_source: Literal["owned_session", "cache", "unnumbered"] = "cache"
+    numbering_source: Literal["owned_session", "live_published", "cache", "unnumbered", "not_applicable"] = "cache"
     rule_changes: list[RuleChangeEntry] = Field(default_factory=list)
     object_changes: list[ObjectChangeEntry] = Field(default_factory=list)
     resolved_names: dict[str, str] = Field(default_factory=dict)

@@ -365,7 +365,8 @@ def _render_session_html(s: SessionChangeReport, options: RenderOptions) -> str:
     if s.description:
         lines.append(f"<br><strong>Description:</strong> {_esc_html(s.description)}")
     lines.append("</div>")
-    lines.append(f'<div class="basis-banner">{_esc_html(s.numbering_basis)}</div>')
+    if s.rule_changes and s.numbering_basis:
+        lines.append(f'<div class="basis-banner">{_esc_html(s.numbering_basis)}</div>')
 
     # Rule changes table
     if s.rule_changes:
@@ -521,7 +522,8 @@ def _render_markdown_document(
         lines.append(f"- **Published**: {_esc_md(_format_dt_utc(s.published_at))}")
         if s.description:
             lines.append(f"- **Description**: {_esc_md(s.description)}")
-        lines.append(f"- **Numbering Basis**: {_esc_md(s.numbering_basis)}")
+        if s.rule_changes and s.numbering_basis:
+            lines.append(f"- **Numbering Basis**: {_esc_md(s.numbering_basis)}")
         lines.append("")
 
         if s.rule_changes:

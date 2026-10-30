@@ -1016,25 +1016,46 @@ class Executor:
         server_ip: str | None = None,
         auth: AuthContext | None = None,
     ) -> tuple[str | None, str | None, ApiCallResult]:
-        """Adopt ownership of `session_uid` via `take-over-session`, falling back to a fresh dedicated session if `sid` expired."""
+        """Adopt ownership of `session_uid` via `take-over-session` (with fallback to `switch-session`), opening a fresh dedicated session if `sid` expired."""
         resolved_auth = auth or get_auth_context()
         takeover_payload: dict[str, Any] = {
             "uid": session_uid,
-            "take-over-lock": True,
+            "disconnect-active-session": True,
         }
+        switch_payload: dict[str, Any] = {
+            "uid": session_uid,
+        }
+
+        async def _try_adopt_on_sid(target_sid: str, target_ip: str | None) -> ApiCallResult:
+            take_res = await self._api.api_call(
+                mgmt_name,
+                "take-over-session",
+                takeover_payload,
+                domain=domain or None,
+                sid=target_sid,
+                server_ip=target_ip,
+            )
+            if take_res.success:
+                return take_res
+
+            # Fallback to switch-session if take-over-session is rejected (e.g. session already owned or disconnected)
+            sw_res = await self._api.api_call(
+                mgmt_name,
+                "switch-session",
+                switch_payload,
+                domain=domain or None,
+                sid=target_sid,
+                server_ip=target_ip,
+            )
+            if sw_res.success:
+                return sw_res
+            return take_res
 
         if sid:
             try:
-                take_res = await self._api.api_call(
-                    mgmt_name,
-                    "take-over-session",
-                    takeover_payload,
-                    domain=domain or None,
-                    sid=sid,
-                    server_ip=server_ip,
-                )
-                if take_res.success:
-                    return sid, server_ip, take_res
+                adopt_res = await _try_adopt_on_sid(sid, server_ip)
+                if adopt_res.success:
+                    return sid, server_ip, adopt_res
             except ServerIdentityError:
                 raise
             except Exception:
@@ -1062,14 +1083,7 @@ class Executor:
             )
 
         try:
-            take_res = await self._api.api_call(
-                mgmt_name,
-                "take-over-session",
-                takeover_payload,
-                domain=domain or None,
-                sid=fresh_sid,
-                server_ip=fresh_ip,
-            )
+            take_res = await _try_adopt_on_sid(fresh_sid, fresh_ip)
         except ServerIdentityError:
             with suppress(Exception):
                 await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)

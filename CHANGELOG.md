@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Post-publish `OwnedSession` live rulebase numbering, object-only session placement short-circuit, cold-cache live published rulebase fallback, and bare `layer_uid` resolution (`arodonata.reports`): `apply_session_rule_placement()` now accepts a clean post-publish `OwnedSession` (`state == "published"` or `published_at is not None` with `changes == 0` on the rotated working session) to read the published rulebase live via `sid` without emitting `owned_session_not_used` and best-effort warm `CachePort.replace_domain_rulebase()` (`numbering_source = "live_published"`, `numbering_basis = "Numbering read live after publish at <time> UTC"`); short-circuits immediately when `session_report.rule_changes` is empty (`numbering_source = "not_applicable"`, `numbering_basis = ""`) while omitting `.basis-banner` and `- **Numbering Basis**:` in HTML and Markdown renderers; falls back to an on-demand read-only `collect_domain_rulebase_snapshot()` + cache warm when the local SQL rulebase cache is cold (`numbering_source = "live_published"`, `numbering_basis = "Numbering read live from published rulebase at <time> UTC"`); and resolves bare UUID `layer` references on rule changes via cache and bounded `show-object` lookups into `RuleChangeEntry.layer_name`.
+- Cross-domain `domain=None` lookups and CPCRUD staged session takeover (`arodonata.client`, `arodonata.core.services.search_service`, `arodonata.mcp.tools`, `arodonata.cpcrud.executor`): `ArodonataClient.find_object()`, `SearchService.get_group_members()`, and MCP `show_object` / `get_group_members` now search across all cached domains when `domain` is omitted instead of defaulting to a literal `"default"` domain; and `Executor._adopt_staged_session()` passes `{"uid": session_uid, "disconnect-active-session": True}` to `take-over-session` with automatic fallback to `switch-session`.
+
 ## v2.1.0 (2026-10-26)
 
 ### Feat

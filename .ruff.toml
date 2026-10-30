@@ -1,5 +1,6 @@
 line-length = 120
 target-version = "py313"
+extend-exclude = ["*.md"]
 
 [lint]
 select = [
