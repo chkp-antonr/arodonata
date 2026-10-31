@@ -19,6 +19,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import arlogi
+
 from arodonata.core.errors import ChangeReportInputError, ServerIdentityError, redact_sid, sanitize_mapping
 from arodonata.core.models.common import to_naive_utc, utc_now
 from arodonata.core.models.rulebase import RulebaseType
@@ -41,6 +43,8 @@ from arodonata.reports.models import (
     SessionScope,
 )
 from arodonata.reports.placement import apply_session_rule_placement
+
+logger = arlogi.get_logger(__name__)
 
 MAX_UID_LOOKUPS = 200
 
@@ -1163,18 +1167,12 @@ async def collect_change_report(
             include_system_objects=eff_opts.include_system_objects,
         )
         if filtered_sys_cnt > 0:
-            warnings.append(
-                ReportWarning(
-                    code="system_objects_filtered",
-                    mgmt_name=mgmt_name,
-                    domain=dom_name or None,
-                    session_uid=s_uid,
-                    message=(
-                        f"Filtered {filtered_sys_cnt} background 'System' maintenance object(s) from session {s_uid} "
-                        "(pass include_system_objects=True to include)."
-                    ),
-                    details={"filtered_count": filtered_sys_cnt},
-                )
+            logger.debug(
+                "Filtered background 'System' maintenance objects from session change report",
+                mgmt_name=mgmt_name,
+                domain=dom_name or None,
+                session_uid=s_uid,
+                filtered_count=filtered_sys_cnt,
             )
 
         # 3. Resolve bare UIDs not already named in the session's own change entries (bounded at 200 per report)

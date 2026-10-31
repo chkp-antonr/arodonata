@@ -1664,12 +1664,11 @@ async def test_old_object_bare_uid_resolution_enriched_summaries_and_system_nois
         )
         sess = report.sessions[0]
 
-        # Only non-System objects included, and system_objects_filtered warning emitted
+        # Only non-System objects included, and no noisy system_objects_filtered warning emitted
         obj_uids = [o.uid for o in sess.object_changes]
         assert obj_uids == ["grp-clients", "ar-1", "net-1"]
         sys_warns = [w for w in report.warnings if w.code == "system_objects_filtered"]
-        assert len(sys_warns) == 1
-        assert sys_warns[0].details == {"filtered_count": 3}
+        assert len(sys_warns) == 0
 
         # Verify show-object was called ONLY for uid_api_member (not for cached or nested-dict UIDs)
         show_obj_uids = [str((c[2] or {}).get("uid")) for c in api.calls if c[1] == "show-object"]
@@ -1912,7 +1911,7 @@ async def test_review_fixes_multi_layer_sort_system_delete_track_uid_composite_d
     - #1: Multi-layer + NAT rule sorting groups by `(package, rulebase_type, layer)` before rule number so section headers never interleave across layers.
     - #2: User deletion (`deleted-objects`) or modification without new `meta-info` of an object originally created by `System` (`old-object.meta-info.last-modifier == "System"`) is NOT filtered out.
     - #3 & #7: Bare UUID in `track` (`{"type": "<uuid>"}`) resolves via `show-object` into `rc.track` and renders in both HTML and Markdown `Track` columns (including inline `track` diff).
-    - #4: Filtering background `System` objects emits `system_objects_filtered` `ReportWarning(details={"filtered_count": ...})`.
+    - #4: Filtering background `System` objects logs at DEBUG level without emitting a user-facing `ReportWarning`.
     - #5: String `'false'` / `'true'` in `enabled` `field-changes` parses `'false'` as `False` (`✗ -> ✓`) rather than `True`.
     - #6 & #10: Modifying `subnet4` on a `/24` network preserves `/24` (`subnet4=10.0.0.0 -> 10.1.0.0/24`); modifying `ipv4-address-last` on an `address-range` renders inline inside `range=10.20.0.10-10.20.0.50 -> 10.20.0.60` without duplicating `ipv4-address-last=...`; and comments containing `, port=80` do not split into fake clauses.
     - #8: A rule comment containing literal `"diff-added"` with an unannotated scalar fallback diff still receives `<span class="diff-highlight">`.
