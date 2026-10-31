@@ -19,8 +19,10 @@ from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import (
     AccessRuleEntry,
     DomainRulebaseSnapshot,
+    NatRuleEntry,
     RulebaseLayerEntry,
     RulebasePackageLayerEntry,
+    RulebaseSectionEntry,
 )
 from arodonata.reports.collector import collect_change_report
 from arodonata.reports.models import (
@@ -1662,9 +1664,12 @@ async def test_old_object_bare_uid_resolution_enriched_summaries_and_system_nois
         )
         sess = report.sessions[0]
 
-        # Only non-System objects included
+        # Only non-System objects included, and system_objects_filtered warning emitted
         obj_uids = [o.uid for o in sess.object_changes]
         assert obj_uids == ["grp-clients", "ar-1", "net-1"]
+        sys_warns = [w for w in report.warnings if w.code == "system_objects_filtered"]
+        assert len(sys_warns) == 1
+        assert sys_warns[0].details == {"filtered_count": 3}
 
         # Verify show-object was called ONLY for uid_api_member (not for cached or nested-dict UIDs)
         show_obj_uids = [str((c[2] or {}).get("uid")) for c in api.calls if c[1] == "show-object"]
@@ -1897,5 +1902,374 @@ async def test_inline_cell_diffs_html_markdown_escaping_and_json_roundtrip() -> 
         assert "<script>" not in sc_html_str
         assert '<td class="col-num">1</td>' in sc_html_str
         assert '<span class="action-accept">●</span>Accept' in sc_html_str
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_review_fixes_multi_layer_sort_system_delete_track_uid_composite_diffs_and_bool_parsing() -> None:
+    """Verify code-review fixes (#1-#10):
+    - #1: Multi-layer + NAT rule sorting groups by `(package, rulebase_type, layer)` before rule number so section headers never interleave across layers.
+    - #2: User deletion (`deleted-objects`) or modification without new `meta-info` of an object originally created by `System` (`old-object.meta-info.last-modifier == "System"`) is NOT filtered out.
+    - #3 & #7: Bare UUID in `track` (`{"type": "<uuid>"}`) resolves via `show-object` into `rc.track` and renders in both HTML and Markdown `Track` columns (including inline `track` diff).
+    - #4: Filtering background `System` objects emits `system_objects_filtered` `ReportWarning(details={"filtered_count": ...})`.
+    - #5: String `'false'` / `'true'` in `enabled` `field-changes` parses `'false'` as `False` (`✗ -> ✓`) rather than `True`.
+    - #6 & #10: Modifying `subnet4` on a `/24` network preserves `/24` (`subnet4=10.0.0.0 -> 10.1.0.0/24`); modifying `ipv4-address-last` on an `address-range` renders inline inside `range=10.20.0.10-10.20.0.50 -> 10.20.0.60` without duplicating `ipv4-address-last=...`; and comments containing `, port=80` do not split into fake clauses.
+    - #8: A rule comment containing literal `"diff-added"` with an unannotated scalar fallback diff still receives `<span class="diff-highlight">`.
+    """
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = FakeReportsApi()
+
+    try:
+        track_old_uid = str(uuid.uuid4())
+        track_new_uid = str(uuid.uuid4())
+        api.objects_by_uid[track_old_uid] = {"uid": track_old_uid, "name": "None", "type": "track"}
+        api.objects_by_uid[track_new_uid] = {"uid": track_new_uid, "name": "Log", "type": "track"}
+
+        await cache.replace_domain_rulebase(
+            DomainRulebaseSnapshot(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                layers=[
+                    RulebaseLayerEntry(
+                        mgmt_name="mds1",
+                        domain_name="Corp",
+                        package_name="Standard",
+                        rulebase_type="access",
+                        uid="l-net",
+                        name="Network",
+                        position=1,
+                    ),
+                    RulebaseLayerEntry(
+                        mgmt_name="mds1",
+                        domain_name="Corp",
+                        package_name="Standard",
+                        rulebase_type="access",
+                        uid="l-app",
+                        name="AppControl",
+                        position=2,
+                    ),
+                ],
+                sections=[
+                    RulebaseSectionEntry(
+                        mgmt_name="mds1",
+                        domain_name="Corp",
+                        rulebase_type="access",
+                        layer_uid="l-net",
+                        layer_name="Network",
+                        uid="sec-net",
+                        name="NetSection",
+                        position=1,
+                        from_rule=1,
+                        to_rule=3,
+                    ),
+                    RulebaseSectionEntry(
+                        mgmt_name="mds1",
+                        domain_name="Corp",
+                        rulebase_type="access",
+                        layer_uid="l-app",
+                        layer_name="AppControl",
+                        uid="sec-app",
+                        name="AppSection",
+                        position=1,
+                        from_rule=1,
+                        to_rule=2,
+                    ),
+                    RulebaseSectionEntry(
+                        mgmt_name="mds1",
+                        domain_name="Corp",
+                        rulebase_type="nat",
+                        layer_uid="pkg-std",
+                        layer_name="Standard",
+                        uid="sec-nat",
+                        name="NatSection",
+                        position=1,
+                        from_rule=1,
+                        to_rule=1,
+                    ),
+                ],
+                access_rules=[
+                    AccessRuleEntry(
+                        mgmt_name="mds1",
+                        domain_name="Corp",
+                        package_name="Standard",
+                        layer_uid="l-net",
+                        layer_name="Network",
+                        section_uid="sec-net",
+                        section_name="NetSection",
+                        uid="r-net-1",
+                        name="NetRule1",
+                        position=1,
+                        enabled=True,
+                    ),
+                    AccessRuleEntry(
+                        mgmt_name="mds1",
+                        domain_name="Corp",
+                        package_name="Standard",
+                        layer_uid="l-net",
+                        layer_name="Network",
+                        section_uid="sec-net",
+                        section_name="NetSection",
+                        uid="r-net-3",
+                        name="NetRule3",
+                        position=3,
+                        enabled=True,
+                    ),
+                    AccessRuleEntry(
+                        mgmt_name="mds1",
+                        domain_name="Corp",
+                        package_name="Standard",
+                        layer_uid="l-app",
+                        layer_name="AppControl",
+                        section_uid="sec-app",
+                        section_name="AppSection",
+                        uid="r-app-1",
+                        name="AppRule1",
+                        position=1,
+                        enabled=True,
+                    ),
+                    AccessRuleEntry(
+                        mgmt_name="mds1",
+                        domain_name="Corp",
+                        package_name="Standard",
+                        layer_uid="l-app",
+                        layer_name="AppControl",
+                        section_uid="sec-app",
+                        section_name="AppSection",
+                        uid="r-app-2",
+                        name="AppRule2",
+                        position=2,
+                        enabled=True,
+                    ),
+                ],
+                nat_rules=[
+                    NatRuleEntry(
+                        mgmt_name="mds1",
+                        domain_name="Corp",
+                        package_uid="pkg-std",
+                        package_name="Standard",
+                        section_uid="sec-nat",
+                        section_name="NatSection",
+                        uid="r-nat-1",
+                        name="NatRule1",
+                        position=1,
+                        enabled=True,
+                    )
+                ],
+            )
+        )
+
+        api.sessions_by_uid["s-rev"] = {
+            "uid": "s-rev",
+            "name": "Review Fixes Session",
+            "user-name": "operator",
+            "state": "published",
+            "publish-time": {"iso-8601": "2026-10-31T15:00:00Z"},
+            "changes": 9,
+        }
+        api.changes_by_session["s-rev"] = {
+            "tasks": [
+                {
+                    "task-details": [
+                        {
+                            "operations": {
+                                "deleted-objects": [
+                                    # #2: Deleted object whose old-object had last-modifier="System" must NOT be filtered
+                                    {
+                                        "uid": "obj-del-sys-created",
+                                        "name": "Legacy_System_Created_Host",
+                                        "type": "host",
+                                        "old-object": {
+                                            "uid": "obj-del-sys-created",
+                                            "name": "Legacy_System_Created_Host",
+                                            "type": "host",
+                                            "ipv4-address": "10.99.0.1",
+                                            "meta-info": {"last-modifier": "System"},
+                                        },
+                                    }
+                                ],
+                                "modified-objects": [
+                                    # Rules out of layer order: Net#3, App#2, Nat#1, Net#1, App#1
+                                    {
+                                        "new-object": {
+                                            "uid": "r-net-3",
+                                            "name": "NetRule3",
+                                            "type": "access-rule",
+                                            "layer": "l-net",
+                                            "enabled": True,
+                                            # #3: Bare UUID in track dict
+                                            "track": {"type": track_new_uid},
+                                            # #8: Comment containing literal 'diff-added' substring
+                                            "comments": "Contains literal diff-added token",
+                                        },
+                                        "old-object": {
+                                            "uid": "r-net-3",
+                                            "name": "NetRule3",
+                                            "type": "access-rule",
+                                            "layer": "l-net",
+                                            "enabled": True,
+                                            "track": {"type": track_old_uid},
+                                            "comments": "Contains literal diff-added token",
+                                        },
+                                        "field-changes": [
+                                            # #5: String boolean values in field-changes
+                                            {
+                                                "field-name": "enabled",
+                                                "old-value": "false",
+                                                "new-value": "true",
+                                            },
+                                            # #8: Explicit field-change where old_value is None -> unannotated fallback
+                                            {
+                                                "field-name": "comments",
+                                                "old-value": None,
+                                                "new-value": "Contains literal diff-added token",
+                                            },
+                                        ],
+                                    },
+                                    {
+                                        "new-object": {
+                                            "uid": "r-app-2",
+                                            "name": "AppRule2",
+                                            "type": "access-rule",
+                                            "layer": "l-app",
+                                            "enabled": True,
+                                        }
+                                    },
+                                    {
+                                        "new-object": {
+                                            "uid": "r-nat-1",
+                                            "name": "NatRule1",
+                                            "type": "nat-rule",
+                                            "package": "Standard",
+                                            "enabled": True,
+                                        }
+                                    },
+                                    {
+                                        "new-object": {
+                                            "uid": "r-net-1",
+                                            "name": "NetRule1",
+                                            "type": "access-rule",
+                                            "layer": "l-net",
+                                            "enabled": True,
+                                        }
+                                    },
+                                    {
+                                        "new-object": {
+                                            "uid": "r-app-1",
+                                            "name": "AppRule1",
+                                            "type": "access-rule",
+                                            "layer": "l-app",
+                                            "enabled": True,
+                                        }
+                                    },
+                                    # #6 & #10: Network object with subnet4 change on /24 and comment containing ', port=80'
+                                    {
+                                        "new-object": {
+                                            "uid": "net-sub-diff",
+                                            "name": "Corp_Subnet",
+                                            "type": "network",
+                                            "subnet4": "10.1.0.0",
+                                            "mask-length4": 24,
+                                            "comments": "Note: legacy, port=80, range=1-2",
+                                            "meta-info": {"last-modifier": "operator"},
+                                        },
+                                        "old-object": {
+                                            "uid": "net-sub-diff",
+                                            "name": "Corp_Subnet",
+                                            "type": "network",
+                                            "subnet4": "10.0.0.0",
+                                            "mask-length4": 24,
+                                            "comments": "Note: legacy, port=80, range=1-2",
+                                            "meta-info": {"last-modifier": "System"},
+                                        },
+                                    },
+                                    # #6 & #10: Address-range with ipv4-address-last modified
+                                    {
+                                        "new-object": {
+                                            "uid": "ar-last-diff",
+                                            "name": "Corp_Range",
+                                            "type": "address-range",
+                                            "ipv4-address-first": "10.20.0.10",
+                                            "ipv4-address-last": "10.20.0.60",
+                                        },
+                                        "old-object": {
+                                            "uid": "ar-last-diff",
+                                            "name": "Corp_Range",
+                                            "type": "address-range",
+                                            "ipv4-address-first": "10.20.0.10",
+                                            "ipv4-address-last": "10.20.0.50",
+                                            # #2: old-object had System modifier, new-object omits meta-info -> NOT filtered
+                                            "meta-info": {"last-modifier": "System"},
+                                        },
+                                    },
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        bundle = await build_change_report(
+            api,
+            cache,
+            [SessionScope(mgmt_name="mds1", domain="Corp", session_uids=["s-rev"])],
+            formats=("html", "markdown", "json"),
+        )
+        assert bundle.html is not None
+        assert bundle.markdown is not None
+        html_str = bundle.html.decode("utf-8")
+        md_str = bundle.markdown
+        sess = bundle.report.sessions[0]
+
+        # #1: Rules are grouped by layer first, then sorted by rule_number within each layer
+        ordered_uids = [r.uid for r in sess.rule_changes]
+        assert ordered_uids == ["r-net-1", "r-net-3", "r-app-1", "r-app-2", "r-nat-1"]
+        # Each section header appears only ONCE in HTML (not split/repeated by interleaved rule numbers)
+        assert html_str.count('<tr class="section-row">') == 3
+        assert html_str.count("NetSection (1-2)") == 1
+        assert html_str.count("AppSection (1-2)") == 1
+        assert html_str.count("NatSection (1)") == 1
+
+        # #2: Deleted System-created object and modified object without new meta-info are preserved
+        obj_uids = [o.uid for o in sess.object_changes]
+        assert "obj-del-sys-created" in obj_uids
+        assert "net-sub-diff" in obj_uids
+        assert "ar-last-diff" in obj_uids
+
+        # #3 & #7: Bare UUID in track resolved to "Log" (and old_value resolved to "None"), rendered in HTML & Markdown
+        r_net3 = next(r for r in sess.rule_changes if r.uid == "r-net-3")
+        assert r_net3.track == "Log"
+        track_diff = next(d for d in r_net3.field_diffs if d.field_name == "track")
+        assert track_diff.old_value == "None"
+        assert track_diff.new_value == "Log"
+        assert '<span class="diff-removed">None</span><span class="diff-arrow">→</span>' in html_str
+        assert "| Track |" in md_str
+        assert "| None -> Log |" in md_str
+
+        # #5: String "false" -> "true" in enabled diff rendered as ✗ -> ✓ (NOT ✓ -> ✓)
+        assert '<span class="diff-removed">✗</span><span class="diff-arrow">→</span>✓' in html_str
+        assert "| ✗ -> ✓ |" in md_str
+
+        # #6 & #10: Composite subnet4=old->new/24 and range=first-old->new without losing /24 or duplicating clauses
+        assert (
+            'subnet4=<span class="diff-removed">10.0.0.0</span><span class="diff-arrow">→</span>'
+            '<span class="diff-highlight">10.1.0.0</span>/24' in html_str
+        )
+        assert "subnet4=10.0.0.0 -> 10.1.0.0/24" in md_str
+        assert (
+            'range=10.20.0.10-<span class="diff-removed">10.20.0.50</span><span class="diff-arrow">→</span>'
+            '<span class="diff-highlight">10.20.0.60</span>' in html_str
+        )
+        assert "range=10.20.0.10-10.20.0.50 -> 10.20.0.60" in md_str
+        assert "ipv4-address-last=" not in html_str
+        assert "ipv4-address-last=" not in md_str
+        # Comment with ', port=80, range=1-2' stayed intact inside comments=...
+        assert "comments=Note: legacy, port=80, range=1-2" in md_str
+
+        # #8: Literal 'diff-added' in unannotated comment diff still gets wrapped in diff-highlight
+        assert '<span class="diff-highlight">Contains literal diff-added token</span>' in html_str
     finally:
         await db.close()

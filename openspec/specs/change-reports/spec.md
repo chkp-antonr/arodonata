@@ -71,7 +71,7 @@ The change report builder SHALL number added, modified, moved, and deleted rules
 #### Scenario: Inline diff markers in Markdown rule and object tables
 
 - **WHEN** `"markdown"` is requested in `formats` for a report containing modified rules or modified objects with `field_diffs`
-- **THEN** `render_change_report` SHALL render removed items (`[-<name>]`), added/replacement items (`[+<name>]`), and scalar `before -> after` transitions inline inside the Markdown `Rule Changes` and `Object Changes` table cells while escaping pipe characters, newlines, and raw HTML tags
+- **THEN** `render_change_report` SHALL render removed items (`[-<name>]`), added/replacement items (`[+<name>]`), and scalar `before -> after` transitions inline inside the Markdown `Rule Changes` (including the `Track` column) and `Object Changes` table cells while escaping pipe characters, newlines, and raw HTML tags
 
 #### Scenario: Round-trip JSON serialization with format_version check
 
@@ -95,9 +95,9 @@ When collecting modified rules and objects from `show-changes`, the collector SH
 #### Scenario: Non-rule object member diffs and enriched object summaries
 
 - **WHEN** `show-changes` returns modified, added, or deleted non-rule objects (including `group`, `host`, `network`, `address-range`, and `service-*`)
-- **THEN** the collector SHALL compute `FieldDiff` entries (including `added_items` and `removed_items` for `members`, and before/after values for `comments` and address/service attributes) and populate `ObjectChangeEntry.summary` with IPv4/IPv6 addresses, CIDR subnets, address-range bounds, service ports/protocols, resolved `members`, and `comments`
+- **THEN** the collector SHALL compute `FieldDiff` entries (including `added_items` and `removed_items` for `members`, and before/after values for `comments` and address/service attributes) and populate structured `ObjectChangeEntry.summary_fields` and formatted `ObjectChangeEntry.summary` with IPv4/IPv6 addresses, CIDR subnets, address-range bounds, service ports/protocols, resolved `members`, and `comments`
 
 #### Scenario: Background Check Point System maintenance objects excluded by default
 
-- **WHEN** `show-changes` for a non-`"System"` user session includes non-rule objects whose `meta-info.last-modifier` is `"System"` (or nameless/typeless internal `"System"` records such as `IpsProtectionUserSettings`, `cp-trusted-ca-certificate`, or `TrustedCaPackageConf`)
-- **THEN** the collector SHALL exclude those `"System"` non-rule entries from `SessionChangeReport.object_changes` by default (including them when `RenderOptions.include_system_objects` is `True`) while preserving the complete sanitized `show-changes` payload in `ChangeReport.raw_responses`
+- **WHEN** `show-changes` for a non-`"System"` user session includes non-deleted (`added` or `modified`) non-rule objects whose post-change `meta-info.last-modifier` is `"System"` (or nameless/typeless internal `"System"` records such as `IpsProtectionUserSettings`, `cp-trusted-ca-certificate`, or `TrustedCaPackageConf`)
+- **THEN** the collector SHALL exclude those `"System"` non-rule entries from `SessionChangeReport.object_changes` by default (never excluding `deleted` objects and never inspecting `old-object.meta-info.last-modifier`, and including them when `RenderOptions.include_system_objects` is `True`), emit a `system_objects_filtered` `ReportWarning` recording `filtered_count`, and preserve the complete sanitized `show-changes` payload in `ChangeReport.raw_responses`

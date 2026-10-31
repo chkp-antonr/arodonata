@@ -1000,6 +1000,7 @@ async def test_write_api_protection_sid_masking_and_unexpected_exception_handlin
                 "domain": "Corp",
                 "session_uids": ["sess-100"],
                 "format": "markdown",
+                "include_system_objects": True,
             },
         )
         assert isinstance(rep_res, CallToolResult)

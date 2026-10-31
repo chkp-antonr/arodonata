@@ -318,6 +318,23 @@ def _extract_track_str(
     return _extract_ref_str_or_uid(track_val, known_names, bare_uids_out)
 
 
+def _list_field_diff(field_name: str, old_refs: list[str], new_refs: list[str]) -> FieldDiff | None:
+    """Return a `FieldDiff` with deduplicated `added_items` and `removed_items` if `old_refs != new_refs`."""
+    if old_refs == new_refs:
+        return None
+    old_set = set(old_refs)
+    new_set = set(new_refs)
+    removed_items = list(dict.fromkeys(x for x in old_refs if x not in new_set))
+    added_items = list(dict.fromkeys(x for x in new_refs if x not in old_set))
+    return FieldDiff(
+        field_name=field_name,
+        old_value=old_refs,
+        new_value=new_refs,
+        added_items=added_items,
+        removed_items=removed_items,
+    )
+
+
 def _synthesize_rule_snapshot_diffs(
     old_core: dict[str, Any],
     core: dict[str, Any],
@@ -334,20 +351,9 @@ def _synthesize_rule_snapshot_diffs(
             continue
         old_refs = _extract_ref_list(old_core.get(field), known_names, bare_uids_out)
         new_refs = _extract_ref_list(core.get(field), known_names, bare_uids_out)
-        if old_refs != new_refs:
-            old_set = set(old_refs)
-            new_set = set(new_refs)
-            removed_items = list(dict.fromkeys(x for x in old_refs if x not in new_set))
-            added_items = list(dict.fromkeys(x for x in new_refs if x not in old_set))
-            synth.append(
-                FieldDiff(
-                    field_name=field,
-                    old_value=old_refs,
-                    new_value=new_refs,
-                    added_items=added_items,
-                    removed_items=removed_items,
-                )
-            )
+        ldiff = _list_field_diff(field, old_refs, new_refs)
+        if ldiff is not None:
+            synth.append(ldiff)
 
     for field in RULE_SCALAR_FIELDS:
         if field.lower() in existing_diff_fields:
@@ -391,20 +397,9 @@ def _synthesize_object_snapshot_diffs(
             continue
         old_refs = _extract_ref_list(old_core.get(field), known_names, bare_uids_out)
         new_refs = _extract_ref_list(core.get(field), known_names, bare_uids_out)
-        if old_refs != new_refs:
-            old_set = set(old_refs)
-            new_set = set(new_refs)
-            removed_items = list(dict.fromkeys(x for x in old_refs if x not in new_set))
-            added_items = list(dict.fromkeys(x for x in new_refs if x not in old_set))
-            synth.append(
-                FieldDiff(
-                    field_name=field,
-                    old_value=old_refs,
-                    new_value=new_refs,
-                    added_items=added_items,
-                    removed_items=removed_items,
-                )
-            )
+        ldiff = _list_field_diff(field, old_refs, new_refs)
+        if ldiff is not None:
+            synth.append(ldiff)
 
     for field in OBJECT_SCALAR_FIELDS:
         if field.lower() in existing_diff_fields:
@@ -448,12 +443,19 @@ def _is_system_maintenance_object(
     core: dict[str, Any],
     old_core: dict[str, Any],
     *,
+    op: ChangeOperation,
     session_user_name: str = "",
 ) -> bool:
-    """Return `True` if a non-rule change entry is a background Check Point `'System'` maintenance object."""
+    """Return `True` if a non-rule change entry is a background Check Point `'System'` maintenance object.
+
+    Never filters deletions (`op == "deleted"`), and inspects only post-change metadata (`core`, `raw`)
+    so user deletions or modifications of objects originally created by `'System'` are never hidden.
+    """
+    if op == "deleted":
+        return False
     raw_name = str(core.get("name") or raw.get("name") or old_core.get("name") or "").strip()
     raw_type = str(core.get("type") or raw.get("type") or old_core.get("type") or "").strip()
-    last_mod = _get_last_modifier(core, raw, old_core)
+    last_mod = _get_last_modifier(core, raw)
     norm_user = session_user_name.strip().lower()
     if last_mod.lower() == "system":
         if norm_user and norm_user != "system":
@@ -463,42 +465,77 @@ def _is_system_maintenance_object(
     return bool(raw_type.lower() in SYSTEM_INTERNAL_OBJECT_TYPES and last_mod.lower() in ("", "system"))
 
 
-def _build_object_summary(core: dict[str, Any], members: list[str]) -> str:
-    """Build a human-readable summary string for a non-rule policy object."""
+def _build_object_summary_fields(core: dict[str, Any], members: list[str]) -> dict[str, Any]:
+    """Extract structured summary attributes for a non-rule policy object."""
+    fields: dict[str, Any] = {}
+    for key in (
+        "ipv4-address",
+        "ipv6-address",
+        "subnet4",
+        "mask-length4",
+        "subnet-mask",
+        "subnet6",
+        "mask-length6",
+        "ipv4-address-first",
+        "ipv4-address-last",
+        "ipv6-address-first",
+        "ipv6-address-last",
+        "port",
+        "protocol",
+        "fqdn",
+    ):
+        if core.get(key) is not None:
+            fields[key] = core[key]
+    if members:
+        fields["members"] = list(members)
+    comments_str = str(core.get("comments") or "").strip()
+    if comments_str:
+        fields["comments"] = comments_str
+    return fields
+
+
+def _format_object_summary_from_fields(fields: dict[str, Any]) -> str:
+    """Format `summary_fields` into a human-readable summary string."""
     summary_parts: list[str] = []
-    if core.get("ipv4-address") is not None:
-        summary_parts.append(f"ipv4-address={core['ipv4-address']}")
-    if core.get("ipv6-address") is not None:
-        summary_parts.append(f"ipv6-address={core['ipv6-address']}")
-    if core.get("subnet4") is not None:
-        if core.get("mask-length4") is not None:
-            summary_parts.append(f"subnet4={core['subnet4']}/{core['mask-length4']}")
-        elif core.get("subnet-mask") is not None:
-            summary_parts.append(f"subnet4={core['subnet4']}/{core['subnet-mask']}")
+    if fields.get("ipv4-address") is not None:
+        summary_parts.append(f"ipv4-address={fields['ipv4-address']}")
+    if fields.get("ipv6-address") is not None:
+        summary_parts.append(f"ipv6-address={fields['ipv6-address']}")
+    if fields.get("subnet4") is not None:
+        if fields.get("mask-length4") is not None:
+            summary_parts.append(f"subnet4={fields['subnet4']}/{fields['mask-length4']}")
+        elif fields.get("subnet-mask") is not None:
+            summary_parts.append(f"subnet4={fields['subnet4']}/{fields['subnet-mask']}")
         else:
-            summary_parts.append(f"subnet4={core['subnet4']}")
-    if core.get("subnet6") is not None:
-        if core.get("mask-length6") is not None:
-            summary_parts.append(f"subnet6={core['subnet6']}/{core['mask-length6']}")
+            summary_parts.append(f"subnet4={fields['subnet4']}")
+    if fields.get("subnet6") is not None:
+        if fields.get("mask-length6") is not None:
+            summary_parts.append(f"subnet6={fields['subnet6']}/{fields['mask-length6']}")
         else:
-            summary_parts.append(f"subnet6={core['subnet6']}")
-    if core.get("ipv4-address-first") is not None or core.get("ipv4-address-last") is not None:
-        first4 = core.get("ipv4-address-first") or ""
-        last4 = core.get("ipv4-address-last") or ""
+            summary_parts.append(f"subnet6={fields['subnet6']}")
+    if fields.get("ipv4-address-first") is not None or fields.get("ipv4-address-last") is not None:
+        first4 = fields.get("ipv4-address-first") or ""
+        last4 = fields.get("ipv4-address-last") or ""
         summary_parts.append(f"range={first4}-{last4}")
-    if core.get("ipv6-address-first") is not None or core.get("ipv6-address-last") is not None:
-        first6 = core.get("ipv6-address-first") or ""
-        last6 = core.get("ipv6-address-last") or ""
+    if fields.get("ipv6-address-first") is not None or fields.get("ipv6-address-last") is not None:
+        first6 = fields.get("ipv6-address-first") or ""
+        last6 = fields.get("ipv6-address-last") or ""
         summary_parts.append(f"range6={first6}-{last6}")
     for key in ("port", "protocol", "fqdn"):
-        if core.get(key) is not None:
-            summary_parts.append(f"{key}={core[key]}")
-    if members:
-        summary_parts.append(f"members=[{', '.join(members)}]")
-    comments_str = str(core.get("comments") or "").strip()
+        if fields.get(key) is not None:
+            summary_parts.append(f"{key}={fields[key]}")
+    members = fields.get("members")
+    if isinstance(members, list) and members:
+        summary_parts.append(f"members=[{', '.join(str(m) for m in members)}]")
+    comments_str = str(fields.get("comments") or "").strip()
     if comments_str:
         summary_parts.append(f"comments={comments_str}")
     return ", ".join(summary_parts)
+
+
+def _build_object_summary(core: dict[str, Any], members: list[str]) -> str:
+    """Build a human-readable summary string for a non-rule policy object."""
+    return _format_object_summary_from_fields(_build_object_summary_fields(core, members))
 
 
 def _extract_session_user_from_changes(
@@ -590,12 +627,13 @@ def _parse_rule_and_object_changes(
     *,
     session_user_name: str = "",
     include_system_objects: bool = False,
-) -> tuple[list[RuleChangeEntry], list[ObjectChangeEntry]]:
+) -> tuple[list[RuleChangeEntry], list[ObjectChangeEntry], int]:
     """Parse `RuleChangeEntry` and `ObjectChangeEntry` models from `show-changes` operation buckets."""
     _collect_known_names_from_operations(ops_list, known_names)
 
     rules: list[RuleChangeEntry] = []
     objects: list[ObjectChangeEntry] = []
+    filtered_system_count = 0
 
     bucket_specs: list[tuple[str, ChangeOperation, bool]] = [
         ("added-rules", "added", True),
@@ -650,9 +688,11 @@ def _parse_rule_and_object_changes(
                         raw,
                         core,
                         old_core,
+                        op=op,
                         session_user_name=session_user_name,
                     )
                 ):
+                    filtered_system_count += 1
                     continue
 
                 f_diffs = _extract_field_diffs(raw, known_names, bare_uids_out)
@@ -786,18 +826,20 @@ def _parse_rule_and_object_changes(
                             if nk in nat_settings:
                                 _extract_ref_str_or_uid(nat_settings[nk], known_names, bare_uids_out)
 
+                    summary_fields = _build_object_summary_fields(core, members)
                     oc = ObjectChangeEntry(
                         uid=uid or f"obj:{len(objects) + 1}",
                         name=name,
                         object_type=obj_type,
                         operation=op,
-                        summary=_build_object_summary(core, members),
+                        summary=_format_object_summary_from_fields(summary_fields),
+                        summary_fields=summary_fields,
                         field_diffs=f_diffs,
                         raw_data=sanitize_mapping(dict(raw)),
                     )
                     objects.append(oc)
 
-    return rules, objects
+    return rules, objects, filtered_system_count
 
 
 def _replace_resolved_uids_in_session(
@@ -827,6 +869,7 @@ def _replace_resolved_uids_in_session(
         if not rc.layer_name and rc.layer_uid in resolved:
             rc.layer_name = resolved[rc.layer_uid]
         rc.action = _sub(rc.action)
+        rc.track = _sub(rc.track)
         rc.source = _sub_list(rc.source)
         rc.destination = _sub_list(rc.destination)
         rc.service = _sub_list(rc.service)
@@ -844,9 +887,14 @@ def _replace_resolved_uids_in_session(
             fd.removed_items = _sub_list(fd.removed_items)
 
     for oc in session_report.object_changes:
-        for uid, name in resolved.items():
-            if uid in oc.summary:
-                oc.summary = oc.summary.replace(uid, name)
+        if oc.summary_fields:
+            for k, v in list(oc.summary_fields.items()):
+                oc.summary_fields[k] = _sub_any(v)
+            oc.summary = _format_object_summary_from_fields(oc.summary_fields)
+        else:
+            for uid, name in resolved.items():
+                if uid in oc.summary:
+                    oc.summary = oc.summary.replace(uid, name)
         for fd in oc.field_diffs:
             fd.old_value = _sub_any(fd.old_value)
             fd.new_value = _sub_any(fd.new_value)
@@ -1107,13 +1155,27 @@ async def collect_change_report(
         session_user_name = str(s_meta_dict.get("user-name") or s_meta_dict.get("user") or changes_user_name or "")
         known_names: dict[str, str] = {}
         bare_uids: set[str] = set()
-        rule_changes, object_changes = _parse_rule_and_object_changes(
+        rule_changes, object_changes, filtered_sys_cnt = _parse_rule_and_object_changes(
             ops_list,
             known_names,
             bare_uids,
             session_user_name=session_user_name,
             include_system_objects=eff_opts.include_system_objects,
         )
+        if filtered_sys_cnt > 0:
+            warnings.append(
+                ReportWarning(
+                    code="system_objects_filtered",
+                    mgmt_name=mgmt_name,
+                    domain=dom_name or None,
+                    session_uid=s_uid,
+                    message=(
+                        f"Filtered {filtered_sys_cnt} background 'System' maintenance object(s) from session {s_uid} "
+                        "(pass include_system_objects=True to include)."
+                    ),
+                    details={"filtered_count": filtered_sys_cnt},
+                )
+            )
 
         # 3. Resolve bare UIDs not already named in the session's own change entries (bounded at 200 per report)
         unresolved_uids = [u for u in sorted(bare_uids) if u not in known_names]

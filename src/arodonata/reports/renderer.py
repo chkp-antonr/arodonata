@@ -16,6 +16,7 @@ from __future__ import annotations
 import html
 import re
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -372,6 +373,60 @@ def _render_field_diffs_html(diffs: Sequence[FieldDiff]) -> str:
     return "\n".join(rows)
 
 
+@dataclass(frozen=True)
+class _CellFormatter:
+    esc: Callable[[Any], str]
+    added_item: Callable[[str], str]
+    removed_item: Callable[[str], str]
+    transition: Callable[[str, str], str]
+    same_highlight: Callable[[str], str]
+    enabled_mark: Callable[[bool], str]
+    enabled_transition: Callable[[bool, bool], str]
+
+
+_HTML_FMT = _CellFormatter(
+    esc=_esc_html,
+    added_item=lambda s: f'<span class="diff-added">+ {_esc_html(s)}</span>',
+    removed_item=lambda s: f'<span class="diff-removed">- {_esc_html(s)}</span>',
+    transition=lambda old_s, new_s: (
+        f'<span class="diff-removed">{_esc_html(old_s)}</span>'
+        f'<span class="diff-arrow">→</span>'
+        f'<span class="diff-highlight">{_esc_html(new_s)}</span>'
+    ),
+    same_highlight=lambda s: f'<span class="diff-highlight">{_esc_html(s)}</span>',
+    enabled_mark=lambda en: "✓" if en else '<span class="disabled-marker" title="Disabled">✗</span>',
+    enabled_transition=lambda old_b, new_b: (
+        f'<span class="diff-removed">{"✓" if old_b else "✗"}</span>'
+        f'<span class="diff-arrow">→</span>'
+        f"{'✓' if new_b else '''<span class="disabled-marker" title="Disabled">✗</span>'''}"
+    ),
+)
+
+_MD_FMT = _CellFormatter(
+    esc=_esc_md,
+    added_item=lambda s: f"[+{_esc_md(s)}]",
+    removed_item=lambda s: f"[-{_esc_md(s)}]",
+    transition=lambda old_s, new_s: f"{_esc_md(old_s)} -> {_esc_md(new_s)}",
+    same_highlight=_esc_md,
+    enabled_mark=lambda en: "✓" if en else "✗",
+    enabled_transition=lambda old_b, new_b: f"{'✓' if old_b else '✗'} -> {'✓' if new_b else '✗'}",
+)
+
+
+def _parse_bool_diff_val(val: Any, *, default: bool) -> bool:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+    if isinstance(val, str):
+        norm = val.strip().lower()
+        if norm in ("true", "1", "yes", "on", "enabled"):
+            return True
+        if norm in ("false", "0", "no", "off", "disabled", ""):
+            return False
+    return default
+
+
 def _extract_added_removed(diff: FieldDiff) -> tuple[list[str], list[str]] | None:
     if diff.removed_items or diff.added_items:
         return list(diff.removed_items), list(diff.added_items)
@@ -387,154 +442,173 @@ def _extract_added_removed(diff: FieldDiff) -> tuple[list[str], list[str]] | Non
     return None
 
 
-def _render_enabled_cell_html(enabled: bool, diff: FieldDiff | None) -> str:
-    curr_html = "✓" if enabled else '<span class="disabled-marker" title="Disabled">✗</span>'
+def _render_enabled_cell(enabled: bool, diff: FieldDiff | None, fmt: _CellFormatter) -> tuple[str, bool]:
+    curr = fmt.enabled_mark(enabled)
     if diff is None:
-        return curr_html
-    old_bool = bool(diff.old_value) if diff.old_value is not None else (not enabled)
+        return curr, False
+    old_bool = _parse_bool_diff_val(diff.old_value, default=(not enabled))
     if old_bool == enabled:
-        return curr_html
-    old_sym = "✓" if old_bool else "✗"
-    return f'<span class="diff-removed">{old_sym}</span><span class="diff-arrow">→</span>{curr_html}'
+        return curr, False
+    return fmt.enabled_transition(old_bool, enabled), True
 
 
-def _render_enabled_cell_md(enabled: bool, diff: FieldDiff | None) -> str:
-    curr_mark = "✓" if enabled else "✗"
-    if diff is None:
-        return curr_mark
-    old_bool = bool(diff.old_value) if diff.old_value is not None else (not enabled)
-    if old_bool == enabled:
-        return curr_mark
-    old_mark = "✓" if old_bool else "✗"
-    return f"{old_mark} -> {curr_mark}"
-
-
-def _render_scalar_cell_html(current_val: Any, diff: FieldDiff | None, *, fallback: str = "") -> str:
+def _render_scalar_cell(
+    current_val: Any,
+    diff: FieldDiff | None,
+    fmt: _CellFormatter,
+    *,
+    fallback: str = "",
+) -> tuple[str, bool]:
     curr_str = str(current_val) if (current_val is not None and str(current_val) != "") else fallback
     if diff is None:
-        return _esc_html(curr_str)
+        return fmt.esc(curr_str), False
     old_str = str(diff.old_value) if diff.old_value is not None else ""
     new_str = str(diff.new_value) if (diff.new_value is not None and str(diff.new_value) != "") else curr_str
     if not old_str and new_str:
-        return f'<span class="diff-added">+ {_esc_html(new_str)}</span>'
+        return fmt.added_item(new_str), True
     if old_str and not new_str:
-        return f'<span class="diff-removed">- {_esc_html(old_str)}</span>'
+        return fmt.removed_item(old_str), True
     if old_str == new_str:
-        return f'<span class="diff-highlight">{_esc_html(new_str)}</span>'
-    return (
-        f'<span class="diff-removed">{_esc_html(old_str)}</span>'
-        f'<span class="diff-arrow">→</span>'
-        f'<span class="diff-highlight">{_esc_html(new_str)}</span>'
-    )
+        return fmt.same_highlight(new_str), True
+    return fmt.transition(old_str, new_str), True
 
 
-def _render_scalar_cell_md(current_val: Any, diff: FieldDiff | None, *, fallback: str = "") -> str:
-    curr_str = str(current_val) if (current_val is not None and str(current_val) != "") else fallback
-    if diff is None:
-        return _esc_md(curr_str)
-    old_str = str(diff.old_value) if diff.old_value is not None else ""
-    new_str = str(diff.new_value) if (diff.new_value is not None and str(diff.new_value) != "") else curr_str
-    if not old_str and new_str:
-        return f"[+{_esc_md(new_str)}]"
-    if old_str and not new_str:
-        return f"[-{_esc_md(old_str)}]"
-    if old_str == new_str:
-        return _esc_md(new_str)
-    return f"{_esc_md(old_str)} -> {_esc_md(new_str)}"
-
-
-def _render_list_cell_html(
+def _render_list_cell(
     current_items: Sequence[str],
     diff: FieldDiff | None,
+    fmt: _CellFormatter,
     *,
     empty_fallback: str = "Any",
     negate: bool = False,
-) -> str:
+) -> tuple[str, bool]:
     eff_curr = list(current_items) if current_items else ([empty_fallback] if empty_fallback else [])
+    annotated = False
     if diff is None:
-        base = _esc_html(eff_curr)
+        base = fmt.esc(eff_curr)
     else:
         ar = _extract_added_removed(diff)
         if ar is None:
-            base = _render_scalar_cell_html(", ".join(eff_curr), diff)
+            base, annotated = _render_scalar_cell(", ".join(eff_curr), diff, fmt)
         else:
             removed_list, added_list = ar
             added_set = set(added_list)
             kept_items = [x for x in eff_curr if x not in added_set]
-            tokens: list[str] = [_esc_html(k) for k in kept_items]
-            tokens.extend(f'<span class="diff-removed">- {_esc_html(r)}</span>' for r in removed_list)
-            tokens.extend(f'<span class="diff-added">+ {_esc_html(a)}</span>' for a in added_list)
-            base = ", ".join(tokens) if tokens else _esc_html(eff_curr)
+            tokens: list[str] = [fmt.esc(k) for k in kept_items]
+            tokens.extend(fmt.removed_item(r) for r in removed_list)
+            tokens.extend(fmt.added_item(a) for a in added_list)
+            base = ", ".join(tokens) if tokens else fmt.esc(eff_curr)
+            annotated = bool(removed_list or added_list)
     if negate:
         base = f"NOT ({base})"
-    return base
+    return base, annotated
 
 
-def _render_list_cell_md(
-    current_items: Sequence[str],
-    diff: FieldDiff | None,
-    *,
-    empty_fallback: str = "Any",
-    negate: bool = False,
-) -> str:
-    eff_curr = list(current_items) if current_items else ([empty_fallback] if empty_fallback else [])
-    if diff is None:
-        base = _esc_md(eff_curr)
-    else:
-        ar = _extract_added_removed(diff)
-        if ar is None:
-            base = _render_scalar_cell_md(", ".join(eff_curr), diff)
+def _summary_fields_for_object(oc: ObjectChangeEntry) -> dict[str, Any]:
+    if oc.summary_fields:
+        return dict(oc.summary_fields)
+    fields: dict[str, Any] = {}
+    if not oc.summary:
+        return fields
+    for raw_clause in _SUMMARY_SPLIT_RE.split(oc.summary):
+        if "=" not in raw_clause:
+            fields.setdefault("_raw", raw_clause)
+            continue
+        k, v = raw_clause.split("=", 1)
+        key = k.strip()
+        if key == "subnet4" and "/" in v:
+            net4, mask4 = v.split("/", 1)
+            fields["subnet4"] = net4
+            fields["mask-length4" if mask4.isdigit() else "subnet-mask"] = mask4
+        elif key == "subnet6" and "/" in v:
+            net6, mask6 = v.split("/", 1)
+            fields["subnet6"] = net6
+            fields["mask-length6"] = mask6
+        elif key == "range" and "-" in v:
+            f4, l4 = v.split("-", 1)
+            fields["ipv4-address-first"] = f4
+            fields["ipv4-address-last"] = l4
+        elif key == "range6" and "-" in v:
+            f6, l6 = v.split("-", 1)
+            fields["ipv6-address-first"] = f6
+            fields["ipv6-address-last"] = l6
+        elif key == "members" and v.startswith("[") and v.endswith("]"):
+            fields["members"] = [x.strip() for x in v[1:-1].split(",") if x.strip()]
         else:
-            removed_list, added_list = ar
-            added_set = set(added_list)
-            kept_items = [x for x in eff_curr if x not in added_set]
-            tokens: list[str] = [_esc_md(k) for k in kept_items]
-            tokens.extend(f"[-{_esc_md(r)}]" for r in removed_list)
-            tokens.extend(f"[+{_esc_md(a)}]" for a in added_list)
-            base = ", ".join(tokens) if tokens else _esc_md(eff_curr)
-    if negate:
-        base = f"NOT ({base})"
-    return base
+            fields[key] = v
+    return fields
 
 
-def _split_summary_clauses(summary: str) -> list[tuple[str, str]]:
-    if not summary:
-        return []
-    clauses: list[tuple[str, str]] = []
-    for raw_clause in _SUMMARY_SPLIT_RE.split(summary):
-        if "=" in raw_clause:
-            k, v = raw_clause.split("=", 1)
-            clauses.append((k.strip(), v))
-        else:
-            clauses.append(("", raw_clause))
-    return clauses
-
-
-def _render_object_details_html(oc: ObjectChangeEntry) -> str:
+def _render_object_details(oc: ObjectChangeEntry, fmt: _CellFormatter) -> str:
     if oc.operation != "modified" or not oc.field_diffs:
-        return _esc_html(oc.summary)
+        return fmt.esc(oc.summary)
     diffs_by_name: dict[str, FieldDiff] = {d.field_name.strip().lower(): d for d in oc.field_diffs}
+    sfields = _summary_fields_for_object(oc)
+    if not sfields and oc.summary:
+        return fmt.esc(oc.summary)
+
     rendered_fields: set[str] = set()
     parts: list[str] = []
 
-    for key, raw_val in _split_summary_clauses(oc.summary):
-        low_key = key.lower()
-        if low_key == "members" and "members" in diffs_by_name:
-            mdiff = diffs_by_name["members"]
-            curr_members = (
-                [str(x) for x in mdiff.new_value]
-                if isinstance(mdiff.new_value, list)
-                else ([x.strip() for x in raw_val[1:-1].split(",") if x.strip()] if raw_val.startswith("[") else [])
-            )
-            parts.append(f"members=[{_render_list_cell_html(curr_members, mdiff, empty_fallback='')}]")
-            rendered_fields.add("members")
-        elif low_key and low_key in diffs_by_name:
-            parts.append(f"{_esc_html(key)}={_render_scalar_cell_html(raw_val, diffs_by_name[low_key])}")
-            rendered_fields.add(low_key)
-        elif key:
-            parts.append(f"{_esc_html(key)}={_esc_html(raw_val)}")
+    def _scalar_val(field_key: str) -> str:
+        val = sfields.get(field_key)
+        d = diffs_by_name.get(field_key)
+        rendered_fields.add(field_key)
+        return _render_scalar_cell(val, d, fmt)[0]
+
+    for addr_k in ("ipv4-address", "ipv6-address"):
+        if addr_k in sfields or addr_k in diffs_by_name:
+            parts.append(f"{fmt.esc(addr_k)}={_scalar_val(addr_k)}")
+
+    if any(k in sfields or k in diffs_by_name for k in ("subnet4", "mask-length4", "subnet-mask")):
+        net4_s = _scalar_val("subnet4") if ("subnet4" in sfields or "subnet4" in diffs_by_name) else ""
+        if "mask-length4" in sfields or "mask-length4" in diffs_by_name:
+            mask4_s = _scalar_val("mask-length4")
+            parts.append(f"subnet4={net4_s}/{mask4_s}" if net4_s else f"mask-length4={mask4_s}")
+        elif "subnet-mask" in sfields or "subnet-mask" in diffs_by_name:
+            smask_s = _scalar_val("subnet-mask")
+            parts.append(f"subnet4={net4_s}/{smask_s}" if net4_s else f"subnet-mask={smask_s}")
         else:
-            parts.append(_esc_html(raw_val))
+            parts.append(f"subnet4={net4_s}")
+
+    if any(k in sfields or k in diffs_by_name for k in ("subnet6", "mask-length6")):
+        net6_s = _scalar_val("subnet6") if ("subnet6" in sfields or "subnet6" in diffs_by_name) else ""
+        if "mask-length6" in sfields or "mask-length6" in diffs_by_name:
+            mask6_s = _scalar_val("mask-length6")
+            parts.append(f"subnet6={net6_s}/{mask6_s}" if net6_s else f"mask-length6={mask6_s}")
+        else:
+            parts.append(f"subnet6={net6_s}")
+
+    if any(k in sfields or k in diffs_by_name for k in ("ipv4-address-first", "ipv4-address-last")):
+        f4_s = _scalar_val("ipv4-address-first")
+        l4_s = _scalar_val("ipv4-address-last")
+        parts.append(f"range={f4_s}-{l4_s}")
+
+    if any(k in sfields or k in diffs_by_name for k in ("ipv6-address-first", "ipv6-address-last")):
+        f6_s = _scalar_val("ipv6-address-first")
+        l6_s = _scalar_val("ipv6-address-last")
+        parts.append(f"range6={f6_s}-{l6_s}")
+
+    for k in ("port", "protocol", "fqdn"):
+        if k in sfields or k in diffs_by_name:
+            parts.append(f"{fmt.esc(k)}={_scalar_val(k)}")
+
+    if "members" in sfields or "members" in diffs_by_name:
+        mdiff = diffs_by_name.get("members")
+        raw_m = sfields.get("members")
+        curr_members = (
+            [str(x) for x in mdiff.new_value]
+            if (mdiff is not None and isinstance(mdiff.new_value, list))
+            else ([str(x) for x in raw_m] if isinstance(raw_m, list) else [])
+        )
+        m_rendered, _ = _render_list_cell(curr_members, mdiff, fmt, empty_fallback="")
+        parts.append(f"members=[{m_rendered}]")
+        rendered_fields.add("members")
+
+    if "comments" in sfields or "comments" in diffs_by_name:
+        parts.append(f"comments={_scalar_val('comments')}")
+
+    if "_raw" in sfields:
+        parts.append(fmt.esc(sfields["_raw"]))
 
     for d in oc.field_diffs:
         low_f = d.field_name.strip().lower()
@@ -543,49 +617,11 @@ def _render_object_details_html(oc: ObjectChangeEntry) -> str:
         rendered_fields.add(low_f)
         if low_f in ("members", "groups", "tags") or d.added_items or d.removed_items:
             curr_l = [str(x) for x in d.new_value] if isinstance(d.new_value, list) else []
-            parts.append(f"{_esc_html(d.field_name)}=[{_render_list_cell_html(curr_l, d, empty_fallback='')}]")
+            l_str, _ = _render_list_cell(curr_l, d, fmt, empty_fallback="")
+            parts.append(f"{fmt.esc(d.field_name)}=[{l_str}]")
         else:
-            parts.append(f"{_esc_html(d.field_name)}={_render_scalar_cell_html(d.new_value, d)}")
-
-    return ", ".join(parts)
-
-
-def _render_object_details_md(oc: ObjectChangeEntry) -> str:
-    if oc.operation != "modified" or not oc.field_diffs:
-        return _esc_md(oc.summary)
-    diffs_by_name: dict[str, FieldDiff] = {d.field_name.strip().lower(): d for d in oc.field_diffs}
-    rendered_fields: set[str] = set()
-    parts: list[str] = []
-
-    for key, raw_val in _split_summary_clauses(oc.summary):
-        low_key = key.lower()
-        if low_key == "members" and "members" in diffs_by_name:
-            mdiff = diffs_by_name["members"]
-            curr_members = (
-                [str(x) for x in mdiff.new_value]
-                if isinstance(mdiff.new_value, list)
-                else ([x.strip() for x in raw_val[1:-1].split(",") if x.strip()] if raw_val.startswith("[") else [])
-            )
-            parts.append(f"members=[{_render_list_cell_md(curr_members, mdiff, empty_fallback='')}]")
-            rendered_fields.add("members")
-        elif low_key and low_key in diffs_by_name:
-            parts.append(f"{_esc_md(key)}={_render_scalar_cell_md(raw_val, diffs_by_name[low_key])}")
-            rendered_fields.add(low_key)
-        elif key:
-            parts.append(f"{_esc_md(key)}={_esc_md(raw_val)}")
-        else:
-            parts.append(_esc_md(raw_val))
-
-    for d in oc.field_diffs:
-        low_f = d.field_name.strip().lower()
-        if low_f in rendered_fields or low_f == "name":
-            continue
-        rendered_fields.add(low_f)
-        if low_f in ("members", "groups", "tags") or d.added_items or d.removed_items:
-            curr_l = [str(x) for x in d.new_value] if isinstance(d.new_value, list) else []
-            parts.append(f"{_esc_md(d.field_name)}=[{_render_list_cell_md(curr_l, d, empty_fallback='')}]")
-        else:
-            parts.append(f"{_esc_md(d.field_name)}={_render_scalar_cell_md(d.new_value, d)}")
+            s_str, _ = _render_scalar_cell(d.new_value, d, fmt)
+            parts.append(f"{fmt.esc(d.field_name)}={s_str}")
 
     return ", ".join(parts)
 
@@ -648,11 +684,11 @@ def _format_action_token_html(action_val: str) -> str:
     return escaped
 
 
-def _render_action_cell_html(current_val: Any, diff: FieldDiff | None) -> str:
+def _render_action_cell_html(current_val: Any, diff: FieldDiff | None) -> tuple[str, bool]:
     curr_str = str(current_val) if current_val is not None else ""
     if diff is None:
-        return _format_action_token_html(curr_str)
-    return _render_scalar_cell_html(curr_str, diff)
+        return _format_action_token_html(curr_str), False
+    return _render_scalar_cell(curr_str, diff, _HTML_FMT)
 
 
 def _render_section_banner_html(rc: RuleChangeEntry) -> str:
@@ -711,74 +747,86 @@ def _render_session_html(s: SessionChangeReport, options: RenderOptions) -> str:
                 lines.append(_render_section_banner_html(rc))
                 last_section_key = section_key
 
-            en_cell = _render_enabled_cell_html(rc.enabled, diffs_map.get("enabled"))
+            en_cell, en_ann = _render_enabled_cell(rc.enabled, diffs_map.get("enabled"), _HTML_FMT)
 
             if rc.rulebase_type == "nat":
-                orig_src_h = _render_scalar_cell_html(
+                orig_src_h, os_ann = _render_scalar_cell(
                     rc.original_source or "Any",
                     diffs_map.get("original-source"),
+                    _HTML_FMT,
                     fallback="Any",
                 )
-                trans_src_h = _render_scalar_cell_html(
+                trans_src_h, ts_ann = _render_scalar_cell(
                     rc.translated_source or "Original",
                     diffs_map.get("translated-source"),
+                    _HTML_FMT,
                     fallback="Original",
                 )
                 src_str = f"{orig_src_h} → {trans_src_h}"
+                src_ann = os_ann or ts_ann
 
-                orig_dst_h = _render_scalar_cell_html(
+                orig_dst_h, od_ann = _render_scalar_cell(
                     rc.original_destination or "Any",
                     diffs_map.get("original-destination"),
+                    _HTML_FMT,
                     fallback="Any",
                 )
-                trans_dst_h = _render_scalar_cell_html(
+                trans_dst_h, td_ann = _render_scalar_cell(
                     rc.translated_destination or "Original",
                     diffs_map.get("translated-destination"),
+                    _HTML_FMT,
                     fallback="Original",
                 )
                 dst_str = f"{orig_dst_h} → {trans_dst_h}"
+                dst_ann = od_ann or td_ann
 
-                orig_svc_h = _render_scalar_cell_html(
+                orig_svc_h, osvc_ann = _render_scalar_cell(
                     rc.original_service or "Any",
                     diffs_map.get("original-service"),
+                    _HTML_FMT,
                     fallback="Any",
                 )
-                trans_svc_h = _render_scalar_cell_html(
+                trans_svc_h, tsvc_ann = _render_scalar_cell(
                     rc.translated_service or "Original",
                     diffs_map.get("translated-service"),
+                    _HTML_FMT,
                     fallback="Original",
                 )
                 svc_str = f"{orig_svc_h} → {trans_svc_h}"
-                act_str = _render_scalar_cell_html(rc.method or "nat", diffs_map.get("method"), fallback="nat")
+                svc_ann = osvc_ann or tsvc_ann
+                act_str, act_ann = _render_scalar_cell(
+                    rc.method or "nat", diffs_map.get("method"), _HTML_FMT, fallback="nat"
+                )
             else:
-                src_str = _render_list_cell_html(
+                src_str, src_ann = _render_list_cell(
                     rc.source,
                     diffs_map.get("source"),
+                    _HTML_FMT,
                     empty_fallback="Any",
                     negate=rc.source_negate,
                 )
-                dst_str = _render_list_cell_html(
+                dst_str, dst_ann = _render_list_cell(
                     rc.destination,
                     diffs_map.get("destination"),
+                    _HTML_FMT,
                     empty_fallback="Any",
                     negate=rc.destination_negate,
                 )
-                svc_str = _render_list_cell_html(
+                svc_str, svc_ann = _render_list_cell(
                     rc.service,
                     diffs_map.get("service"),
+                    _HTML_FMT,
                     empty_fallback="Any",
                     negate=rc.service_negate,
                 )
-                act_str = _render_action_cell_html(rc.action or "", diffs_map.get("action"))
+                act_str, act_ann = _render_action_cell_html(rc.action or "", diffs_map.get("action"))
 
-            track_str = _render_scalar_cell_html(rc.track or "", diffs_map.get("track"))
-            name_str = _render_scalar_cell_html(rc.name, diffs_map.get("name"))
-            comments_str = _render_scalar_cell_html(rc.comments, diffs_map.get("comments"))
+            track_str, track_ann = _render_scalar_cell(rc.track or "", diffs_map.get("track"), _HTML_FMT)
+            name_str, name_ann = _render_scalar_cell(rc.name, diffs_map.get("name"), _HTML_FMT)
+            comments_str, comments_ann = _render_scalar_cell(rc.comments, diffs_map.get("comments"), _HTML_FMT)
 
-            def _hl(cell_html: str, *field_names: str, _cf: set[str] = changed_f) -> str:
-                if any(fn in _cf for fn in field_names) and not any(
-                    cls in cell_html for cls in ("diff-removed", "diff-added", "diff-highlight")
-                ):
+            def _hl(cell_html: str, is_annotated: bool, *field_names: str, _cf: set[str] = changed_f) -> str:
+                if not is_annotated and any(fn in _cf for fn in field_names):
                     return f'<span class="diff-highlight">{cell_html}</span>'
                 return cell_html
 
@@ -787,14 +835,14 @@ def _render_session_html(s: SessionChangeReport, options: RenderOptions) -> str:
                 "<tr>"
                 f'<td class="col-num">{num_display}</td>'
                 f"<td>{_operation_badge_html(rc)}</td>"
-                f"<td>{_hl(en_cell, 'enabled')}</td>"
-                f"<td>{_hl(name_str, 'name')}</td>"
-                f"<td>{_hl(src_str, 'source', 'source-negate', 'original-source', 'translated-source')}</td>"
-                f"<td>{_hl(dst_str, 'destination', 'destination-negate', 'original-destination', 'translated-destination')}</td>"
-                f"<td>{_hl(svc_str, 'service', 'service-negate', 'original-service', 'translated-service')}</td>"
-                f"<td>{_hl(act_str, 'action', 'method')}</td>"
-                f"<td>{_hl(track_str, 'track')}</td>"
-                f"<td>{_hl(comments_str, 'comments')}</td>"
+                f"<td>{_hl(en_cell, en_ann, 'enabled')}</td>"
+                f"<td>{_hl(name_str, name_ann, 'name')}</td>"
+                f"<td>{_hl(src_str, src_ann, 'source', 'source-negate', 'original-source', 'translated-source')}</td>"
+                f"<td>{_hl(dst_str, dst_ann, 'destination', 'destination-negate', 'original-destination', 'translated-destination')}</td>"
+                f"<td>{_hl(svc_str, svc_ann, 'service', 'service-negate', 'original-service', 'translated-service')}</td>"
+                f"<td>{_hl(act_str, act_ann, 'action', 'method')}</td>"
+                f"<td>{_hl(track_str, track_ann, 'track')}</td>"
+                f"<td>{_hl(comments_str, comments_ann, 'comments')}</td>"
                 "</tr>"
             )
         lines.append("</tbody></table>")
@@ -828,14 +876,14 @@ def _render_session_html(s: SessionChangeReport, options: RenderOptions) -> str:
             oc_diffs_map: dict[str, FieldDiff] = (
                 {d.field_name.strip().lower(): d for d in oc.field_diffs} if oc.operation == "modified" else {}
             )
-            oc_name_html = _render_scalar_cell_html(oc.name, oc_diffs_map.get("name"))
+            oc_name_html, _ = _render_scalar_cell(oc.name, oc_diffs_map.get("name"), _HTML_FMT)
             lines.append(
                 "<tr>"
                 f"<td>{op_badge}</td>"
                 f"<td>{_esc_html(oc.object_type)}</td>"
                 f"<td>{oc_name_html}</td>"
                 f"<td><code>{_esc_html(oc.uid)}</code></td>"
-                f"<td>{_render_object_details_html(oc)}</td>"
+                f"<td>{_render_object_details(oc, _HTML_FMT)}</td>"
                 "</tr>"
             )
         lines.append("</tbody></table>")
@@ -900,80 +948,92 @@ def _render_markdown_document(
             lines.append("### Rule Changes")
             lines.append("")
             lines.append(
-                "| # | Status | Enabled | Layer / Section | Name | Source | Destination | Service | Action | Comments |"
+                "| # | Status | Enabled | Layer / Section | Name | Source | Destination | Service | Action | Track | Comments |"
             )
-            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
             for rc in s.rule_changes:
                 diffs_map_md: dict[str, FieldDiff] = (
                     {d.field_name.strip().lower(): d for d in rc.field_diffs} if rc.operation == "modified" else {}
                 )
-                en_mark = _render_enabled_cell_md(rc.enabled, diffs_map_md.get("enabled"))
+                en_mark, _ = _render_enabled_cell(rc.enabled, diffs_map_md.get("enabled"), _MD_FMT)
                 layer_sec = _esc_md(rc.layer_name or rc.package_name or rc.layer_uid)
                 if rc.section_name:
                     sec_r = f" ({_esc_md(rc.section_range)})" if rc.section_range else ""
                     layer_sec = f"{layer_sec} / {_esc_md(rc.section_name)}{sec_r}"
                 if rc.rulebase_type == "nat":
-                    orig_src_md = _render_scalar_cell_md(
+                    orig_src_md, _ = _render_scalar_cell(
                         rc.original_source or "Any",
                         diffs_map_md.get("original-source"),
+                        _MD_FMT,
                         fallback="Any",
                     )
-                    trans_src_md = _render_scalar_cell_md(
+                    trans_src_md, _ = _render_scalar_cell(
                         rc.translated_source or "Original",
                         diffs_map_md.get("translated-source"),
+                        _MD_FMT,
                         fallback="Original",
                     )
                     src = f"{orig_src_md} -> {trans_src_md}"
 
-                    orig_dst_md = _render_scalar_cell_md(
+                    orig_dst_md, _ = _render_scalar_cell(
                         rc.original_destination or "Any",
                         diffs_map_md.get("original-destination"),
+                        _MD_FMT,
                         fallback="Any",
                     )
-                    trans_dst_md = _render_scalar_cell_md(
+                    trans_dst_md, _ = _render_scalar_cell(
                         rc.translated_destination or "Original",
                         diffs_map_md.get("translated-destination"),
+                        _MD_FMT,
                         fallback="Original",
                     )
                     dst = f"{orig_dst_md} -> {trans_dst_md}"
 
-                    orig_svc_md = _render_scalar_cell_md(
+                    orig_svc_md, _ = _render_scalar_cell(
                         rc.original_service or "Any",
                         diffs_map_md.get("original-service"),
+                        _MD_FMT,
                         fallback="Any",
                     )
-                    trans_svc_md = _render_scalar_cell_md(
+                    trans_svc_md, _ = _render_scalar_cell(
                         rc.translated_service or "Original",
                         diffs_map_md.get("translated-service"),
+                        _MD_FMT,
                         fallback="Original",
                     )
                     svc = f"{orig_svc_md} -> {trans_svc_md}"
-                    act = _render_scalar_cell_md(rc.method or "nat", diffs_map_md.get("method"), fallback="nat")
+                    act, _ = _render_scalar_cell(
+                        rc.method or "nat", diffs_map_md.get("method"), _MD_FMT, fallback="nat"
+                    )
                 else:
-                    src = _render_list_cell_md(
+                    src, _ = _render_list_cell(
                         rc.source,
                         diffs_map_md.get("source"),
+                        _MD_FMT,
                         empty_fallback="Any",
                         negate=rc.source_negate,
                     )
-                    dst = _render_list_cell_md(
+                    dst, _ = _render_list_cell(
                         rc.destination,
                         diffs_map_md.get("destination"),
+                        _MD_FMT,
                         empty_fallback="Any",
                         negate=rc.destination_negate,
                     )
-                    svc = _render_list_cell_md(
+                    svc, _ = _render_list_cell(
                         rc.service,
                         diffs_map_md.get("service"),
+                        _MD_FMT,
                         empty_fallback="Any",
                         negate=rc.service_negate,
                     )
-                    act = _render_scalar_cell_md(rc.action or "", diffs_map_md.get("action"))
-                name_md = _render_scalar_cell_md(rc.name, diffs_map_md.get("name"))
-                comments_md = _render_scalar_cell_md(rc.comments, diffs_map_md.get("comments"))
+                    act, _ = _render_scalar_cell(rc.action or "", diffs_map_md.get("action"), _MD_FMT)
+                track_md, _ = _render_scalar_cell(rc.track or "", diffs_map_md.get("track"), _MD_FMT)
+                name_md, _ = _render_scalar_cell(rc.name, diffs_map_md.get("name"), _MD_FMT)
+                comments_md, _ = _render_scalar_cell(rc.comments, diffs_map_md.get("comments"), _MD_FMT)
                 lines.append(
                     f"| {_esc_md(rc.rule_number or '—')} | {_operation_label_md(rc)} | {en_mark} | "
-                    f"{layer_sec} | {name_md} | {src} | {dst} | {svc} | {act} | {comments_md} |"
+                    f"{layer_sec} | {name_md} | {src} | {dst} | {svc} | {act} | {track_md} | {comments_md} |"
                 )
             lines.append("")
 
@@ -1003,10 +1063,10 @@ def _render_markdown_document(
                 oc_diffs_md: dict[str, FieldDiff] = (
                     {d.field_name.strip().lower(): d for d in oc.field_diffs} if oc.operation == "modified" else {}
                 )
-                oc_name_md = _render_scalar_cell_md(oc.name, oc_diffs_md.get("name"))
+                oc_name_md, _ = _render_scalar_cell(oc.name, oc_diffs_md.get("name"), _MD_FMT)
                 lines.append(
                     f"| {op_lbl} | {_esc_md(oc.object_type)} | {oc_name_md} | "
-                    f"`{_esc_md(oc.uid)}` | {_render_object_details_md(oc)} |"
+                    f"`{_esc_md(oc.uid)}` | {_render_object_details(oc, _MD_FMT)} |"
                 )
             lines.append("")
 
