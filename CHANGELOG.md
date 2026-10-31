@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Snapshot-based `FieldDiff` synthesis, pre-change bare-UID resolution, `"System"` maintenance noise filtering, and SmartConsole-styled inline diff rendering (`arodonata.reports`, `arodonata.mcp.tools`): `collect_change_report()` now synthesizes `FieldDiff` entries (`old_value`, `new_value`, `added_items`, `removed_items`) directly from `old-object` and `new-object` snapshots whenever explicit `field-changes` are absent or partial (avoiding false-positive rule diffs when an unchanged referenced group has internal member edits), recursively harvests `{uid, name}` dictionaries across `old-object` and `new-object` and resolves bare UUIDs appearing only in `old-object` or `track` (such as removed `group.members` or `track.type`) via `CachePort` and bounded `show-object` lookups, populates structured `ObjectChangeEntry.summary_fields` and enriched `ObjectChangeEntry.summary` (`ipv6-address`, `subnet4/mask-length4`, `subnet6/mask-length6`, `address-range` bounds, `members`, `comments`), and excludes non-deleted background Check Point `"System"` maintenance non-rule objects by default (`RenderOptions.include_system_objects: bool = False`, also exposed on the `change_report` MCP tool) while emitting a `system_objects_filtered` `ReportWarning` (`details={"filtered_count": ...}`) and preserving `ChangeReport.raw_responses`; `apply_session_rule_placement()` groups rules by `(package, rulebase_type, layer)` before sorting in ascending SmartConsole order; and `render_change_report()` renders SmartConsole-styled HTML tables (dark-blue `#253245` headers, full-width pale-yellow `#eee8aa` access section banner rows `▾ <section_name> (<section_range>)`, shaded `No.` column, `Track` column in both HTML and Markdown, and `Accept`/`Drop` action indicators) with inline cell-level removed/added/before-after diffs (including composite `subnet4=net/mask` and `range=first-last` diffs) in both HTML and Markdown.
+
 ## v2.1.1 (2026-10-30)
 
 ### Fix

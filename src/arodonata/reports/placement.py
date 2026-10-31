@@ -45,6 +45,21 @@ def _snapshot_has_rules_or_layers(snapshot: DomainRulebaseSnapshot) -> bool:
     )
 
 
+def _rule_sort_key(
+    rc: RuleChangeEntry,
+    idx: int,
+    group_order: dict[tuple[str, str, str], int],
+) -> tuple[int, int, tuple[int, ...], int]:
+    group_key = (rc.package_name or rc.package_uid or "", rc.rulebase_type, rc.layer_name or rc.layer_uid or "")
+    grp_rank = group_order.get(group_key, idx)
+    num_str = (rc.rule_number or "").strip()
+    if num_str:
+        parts = num_str.split(".")
+        if all(p.isdigit() for p in parts):
+            return (grp_rank, 0, tuple(int(p) for p in parts), idx)
+    return (grp_rank, 1, (), idx)
+
+
 def _apply_snapshot_locations_to_rules(
     rule_changes: list[RuleChangeEntry],
     snapshot: DomainRulebaseSnapshot,
@@ -101,6 +116,16 @@ def _apply_snapshot_locations_to_rules(
 
         if rc.operation == "deleted" and not rc.rule_number:
             rc.rule_number = rc.old_rule_number or "DELETED"
+
+    group_order: dict[tuple[str, str, str], int] = {}
+    for idx, rc in enumerate(rule_changes):
+        group_key = (rc.package_name or rc.package_uid or "", rc.rulebase_type, rc.layer_name or rc.layer_uid or "")
+        if group_key not in group_order:
+            group_order[group_key] = idx
+
+    indexed = list(enumerate(rule_changes))
+    indexed.sort(key=lambda pair: _rule_sort_key(pair[1], pair[0], group_order))
+    rule_changes[:] = [rc for _, rc in indexed]
 
 
 @traced

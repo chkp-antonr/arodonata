@@ -1691,6 +1691,7 @@ def register_mcp_tools(
         include_object_changes: bool = True,
         include_field_diffs: bool = True,
         include_warnings: bool = True,
+        include_system_objects: bool = False,
     ) -> CallToolResult:
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
@@ -1738,6 +1739,7 @@ def register_mcp_tools(
             include_object_changes=include_object_changes,
             include_field_diffs=include_field_diffs,
             include_warnings=include_warnings,
+            include_system_objects=include_system_objects,
         )
         bundle = await client.build_change_report(
             parsed_scopes,

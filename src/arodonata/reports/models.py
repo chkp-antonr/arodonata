@@ -27,6 +27,7 @@ WarningCode = Literal[
     "owned_session_not_used",
     "owned_session_error",
     "rulebase_numbering_warning",
+    "system_objects_filtered",
     "partial_failure",
 ]
 
@@ -238,6 +239,7 @@ class ObjectChangeEntry(BaseModel):
     object_type: str = "object"
     operation: ChangeOperation = "modified"
     summary: str = ""
+    summary_fields: dict[str, Any] = Field(default_factory=dict)
     field_diffs: list[FieldDiff] = Field(default_factory=list)
     raw_data: dict[str, Any] = Field(default_factory=dict)
 
@@ -317,6 +319,7 @@ class RenderOptions(BaseModel):
     include_object_changes: bool = True
     include_field_diffs: bool = True
     include_warnings: bool = True
+    include_system_objects: bool = False
 
 
 class ChangeReport(BaseModel):
