@@ -56,6 +56,71 @@ RULE_OBJECT_TYPES: frozenset[str] = frozenset(
     }
 )
 
+RULE_LIST_REF_FIELDS: tuple[str, ...] = (
+    "source",
+    "destination",
+    "service",
+    "install-on",
+    "protected-scope",
+    "vpn",
+    "content",
+    "time",
+    "blade",
+    "site-category",
+)
+
+RULE_SCALAR_FIELDS: tuple[str, ...] = (
+    "enabled",
+    "name",
+    "action",
+    "method",
+    "track",
+    "comments",
+    "source-negate",
+    "destination-negate",
+    "service-negate",
+    "original-source",
+    "original-destination",
+    "original-service",
+    "translated-source",
+    "translated-destination",
+    "translated-service",
+)
+
+OBJECT_LIST_REF_FIELDS: tuple[str, ...] = (
+    "members",
+    "groups",
+    "tags",
+)
+
+OBJECT_SCALAR_FIELDS: tuple[str, ...] = (
+    "name",
+    "ipv4-address",
+    "ipv6-address",
+    "subnet4",
+    "subnet6",
+    "mask-length4",
+    "mask-length6",
+    "subnet-mask",
+    "ipv4-address-first",
+    "ipv4-address-last",
+    "ipv6-address-first",
+    "ipv6-address-last",
+    "port",
+    "protocol",
+    "fqdn",
+    "comments",
+    "color",
+)
+
+SYSTEM_INTERNAL_OBJECT_TYPES: frozenset[str] = frozenset(
+    {
+        "ipsprotectionusersettings",
+        "cp-trusted-ca-certificate",
+        "trustedcapackageconf",
+    }
+)
+
 
 def is_bare_uid(value: Any) -> bool:
     """Return `True` if `value` is a bare UUID string (`8-4-4-4-12` hex)."""
@@ -192,6 +257,30 @@ def _extract_field_diffs(
     return diffs
 
 
+def _harvest_uid_names_recursive(
+    node: Any,
+    known_names: dict[str, str],
+    *,
+    depth: int = 0,
+    max_depth: int = 6,
+) -> None:
+    """Recursively index `{uid, name}` dictionaries up to `max_depth`."""
+    if depth > max_depth:
+        return
+    if isinstance(node, dict):
+        uid = node.get("uid")
+        name = node.get("name")
+        if isinstance(uid, str) and uid and isinstance(name, str) and name:
+            known_names[uid] = name
+        for val in node.values():
+            if isinstance(val, (dict, list)):
+                _harvest_uid_names_recursive(val, known_names, depth=depth + 1, max_depth=max_depth)
+    elif isinstance(node, list):
+        for elem in node:
+            if isinstance(elem, (dict, list)):
+                _harvest_uid_names_recursive(elem, known_names, depth=depth + 1, max_depth=max_depth)
+
+
 def _collect_known_names_from_operations(ops_list: list[dict[str, Any]], known_names: dict[str, str]) -> None:
     """First pass over session change entries to index all `(uid -> name)` pairs already present."""
     for ops in ops_list:
@@ -212,18 +301,235 @@ def _collect_known_names_from_operations(ops_list: list[dict[str, Any]], known_n
             for item in items:
                 if not isinstance(item, dict):
                     continue
-                uid = item.get("uid")
-                name = item.get("name")
-                if isinstance(uid, str) and uid and isinstance(name, str) and name:
-                    known_names[uid] = name
-                # Also check nested new-object / old-object wrappers if present
-                for sub_key in ("new-object", "old-object", "object"):
-                    sub = item.get(sub_key)
-                    if isinstance(sub, dict):
-                        s_uid = sub.get("uid")
-                        s_name = sub.get("name")
-                        if isinstance(s_uid, str) and s_uid and isinstance(s_name, str) and s_name:
-                            known_names[s_uid] = s_name
+                _harvest_uid_names_recursive(item, known_names)
+
+
+def _extract_track_str(
+    track_val: Any,
+    known_names: dict[str, str],
+    bare_uids_out: set[str],
+) -> str | None:
+    if isinstance(track_val, dict):
+        return _extract_ref_str_or_uid(
+            track_val.get("type") or track_val,
+            known_names,
+            bare_uids_out,
+        )
+    return _extract_ref_str_or_uid(track_val, known_names, bare_uids_out)
+
+
+def _synthesize_rule_snapshot_diffs(
+    old_core: dict[str, Any],
+    core: dict[str, Any],
+    existing_diff_fields: set[str],
+    known_names: dict[str, str],
+    bare_uids_out: set[str],
+) -> list[FieldDiff]:
+    """Synthesize `FieldDiff` entries for a modified rule from `old-object` and `new-object` snapshots."""
+    synth: list[FieldDiff] = []
+    for field in RULE_LIST_REF_FIELDS:
+        if field.lower() in existing_diff_fields:
+            continue
+        if field not in old_core and field not in core:
+            continue
+        old_refs = _extract_ref_list(old_core.get(field), known_names, bare_uids_out)
+        new_refs = _extract_ref_list(core.get(field), known_names, bare_uids_out)
+        if old_refs != new_refs:
+            old_set = set(old_refs)
+            new_set = set(new_refs)
+            removed_items = list(dict.fromkeys(x for x in old_refs if x not in new_set))
+            added_items = list(dict.fromkeys(x for x in new_refs if x not in old_set))
+            synth.append(
+                FieldDiff(
+                    field_name=field,
+                    old_value=old_refs,
+                    new_value=new_refs,
+                    added_items=added_items,
+                    removed_items=removed_items,
+                )
+            )
+
+    for field in RULE_SCALAR_FIELDS:
+        if field.lower() in existing_diff_fields:
+            continue
+        if field not in old_core and field not in core:
+            continue
+        if field == "enabled":
+            old_v: Any = bool(old_core.get("enabled", True))
+            new_v: Any = bool(core.get("enabled", True))
+        elif field in ("source-negate", "destination-negate", "service-negate"):
+            old_v = bool(old_core.get(field, False))
+            new_v = bool(core.get(field, False))
+        elif field == "comments":
+            old_v = str(old_core.get("comments") or "")
+            new_v = str(core.get("comments") or "")
+        elif field == "track":
+            old_v = _extract_track_str(old_core.get("track"), known_names, bare_uids_out)
+            new_v = _extract_track_str(core.get("track"), known_names, bare_uids_out)
+        else:
+            old_v = _extract_ref_str_or_uid(old_core.get(field), known_names, bare_uids_out)
+            new_v = _extract_ref_str_or_uid(core.get(field), known_names, bare_uids_out)
+        if old_v != new_v:
+            synth.append(FieldDiff(field_name=field, old_value=old_v, new_value=new_v))
+
+    return synth
+
+
+def _synthesize_object_snapshot_diffs(
+    old_core: dict[str, Any],
+    core: dict[str, Any],
+    existing_diff_fields: set[str],
+    known_names: dict[str, str],
+    bare_uids_out: set[str],
+) -> list[FieldDiff]:
+    """Synthesize `FieldDiff` entries for a modified non-rule object from `old-object` and `new-object` snapshots."""
+    synth: list[FieldDiff] = []
+    for field in OBJECT_LIST_REF_FIELDS:
+        if field.lower() in existing_diff_fields:
+            continue
+        if field not in old_core and field not in core:
+            continue
+        old_refs = _extract_ref_list(old_core.get(field), known_names, bare_uids_out)
+        new_refs = _extract_ref_list(core.get(field), known_names, bare_uids_out)
+        if old_refs != new_refs:
+            old_set = set(old_refs)
+            new_set = set(new_refs)
+            removed_items = list(dict.fromkeys(x for x in old_refs if x not in new_set))
+            added_items = list(dict.fromkeys(x for x in new_refs if x not in old_set))
+            synth.append(
+                FieldDiff(
+                    field_name=field,
+                    old_value=old_refs,
+                    new_value=new_refs,
+                    added_items=added_items,
+                    removed_items=removed_items,
+                )
+            )
+
+    for field in OBJECT_SCALAR_FIELDS:
+        if field.lower() in existing_diff_fields:
+            continue
+        if field not in old_core and field not in core:
+            continue
+        if field == "comments":
+            old_v: Any = str(old_core.get("comments") or "")
+            new_v: Any = str(core.get("comments") or "")
+        else:
+            old_raw = old_core.get(field)
+            new_raw = core.get(field)
+            old_v = (
+                _extract_ref_str_or_uid(old_raw, known_names, bare_uids_out)
+                if isinstance(old_raw, (str, dict))
+                else old_raw
+            )
+            new_v = (
+                _extract_ref_str_or_uid(new_raw, known_names, bare_uids_out)
+                if isinstance(new_raw, (str, dict))
+                else new_raw
+            )
+        if old_v != new_v:
+            synth.append(FieldDiff(field_name=field, old_value=old_v, new_value=new_v))
+
+    return synth
+
+
+def _get_last_modifier(*dicts: dict[str, Any]) -> str:
+    for d in dicts:
+        meta = d.get("meta-info") or d.get("meta_info")
+        if isinstance(meta, dict):
+            mod = meta.get("last-modifier") or meta.get("last_modifier")
+            if isinstance(mod, str) and mod.strip():
+                return mod.strip()
+    return ""
+
+
+def _is_system_maintenance_object(
+    raw: dict[str, Any],
+    core: dict[str, Any],
+    old_core: dict[str, Any],
+    *,
+    session_user_name: str = "",
+) -> bool:
+    """Return `True` if a non-rule change entry is a background Check Point `'System'` maintenance object."""
+    raw_name = str(core.get("name") or raw.get("name") or old_core.get("name") or "").strip()
+    raw_type = str(core.get("type") or raw.get("type") or old_core.get("type") or "").strip()
+    last_mod = _get_last_modifier(core, raw, old_core)
+    norm_user = session_user_name.strip().lower()
+    if last_mod.lower() == "system":
+        if norm_user and norm_user != "system":
+            return True
+        if not raw_name or not raw_type or raw_type.lower() in SYSTEM_INTERNAL_OBJECT_TYPES:
+            return True
+    return bool(raw_type.lower() in SYSTEM_INTERNAL_OBJECT_TYPES and last_mod.lower() in ("", "system"))
+
+
+def _build_object_summary(core: dict[str, Any], members: list[str]) -> str:
+    """Build a human-readable summary string for a non-rule policy object."""
+    summary_parts: list[str] = []
+    if core.get("ipv4-address") is not None:
+        summary_parts.append(f"ipv4-address={core['ipv4-address']}")
+    if core.get("ipv6-address") is not None:
+        summary_parts.append(f"ipv6-address={core['ipv6-address']}")
+    if core.get("subnet4") is not None:
+        if core.get("mask-length4") is not None:
+            summary_parts.append(f"subnet4={core['subnet4']}/{core['mask-length4']}")
+        elif core.get("subnet-mask") is not None:
+            summary_parts.append(f"subnet4={core['subnet4']}/{core['subnet-mask']}")
+        else:
+            summary_parts.append(f"subnet4={core['subnet4']}")
+    if core.get("subnet6") is not None:
+        if core.get("mask-length6") is not None:
+            summary_parts.append(f"subnet6={core['subnet6']}/{core['mask-length6']}")
+        else:
+            summary_parts.append(f"subnet6={core['subnet6']}")
+    if core.get("ipv4-address-first") is not None or core.get("ipv4-address-last") is not None:
+        first4 = core.get("ipv4-address-first") or ""
+        last4 = core.get("ipv4-address-last") or ""
+        summary_parts.append(f"range={first4}-{last4}")
+    if core.get("ipv6-address-first") is not None or core.get("ipv6-address-last") is not None:
+        first6 = core.get("ipv6-address-first") or ""
+        last6 = core.get("ipv6-address-last") or ""
+        summary_parts.append(f"range6={first6}-{last6}")
+    for key in ("port", "protocol", "fqdn"):
+        if core.get(key) is not None:
+            summary_parts.append(f"{key}={core[key]}")
+    if members:
+        summary_parts.append(f"members=[{', '.join(members)}]")
+    comments_str = str(core.get("comments") or "").strip()
+    if comments_str:
+        summary_parts.append(f"comments={comments_str}")
+    return ", ".join(summary_parts)
+
+
+def _extract_session_user_from_changes(
+    data: dict[str, Any],
+    *,
+    session_uid: str | None = None,
+) -> str:
+    """Extract `user-name` from a `show-changes` response's `changes[].session` block if present."""
+    containers: list[dict[str, Any]] = []
+    if isinstance(data.get("tasks"), list):
+        for task in data["tasks"]:
+            if isinstance(task, dict) and isinstance(task.get("task-details"), list):
+                for detail in task["task-details"]:
+                    if isinstance(detail, dict) and isinstance(detail.get("changes"), list):
+                        for ch in detail["changes"]:
+                            if isinstance(ch, dict):
+                                containers.append(ch)
+    if isinstance(data.get("changes"), list):
+        for ch in data["changes"]:
+            if isinstance(ch, dict):
+                containers.append(ch)
+    for c in containers:
+        sess_dict = c.get("session")
+        if isinstance(sess_dict, dict):
+            c_uid = str(sess_dict.get("session-uid") or sess_dict.get("uid") or "")
+            if session_uid and c_uid and c_uid != session_uid:
+                continue
+            u_name = str(sess_dict.get("user-name") or sess_dict.get("user") or "").strip()
+            if u_name:
+                return u_name
+    return ""
 
 
 def _parse_change_containers(
@@ -281,6 +587,9 @@ def _parse_rule_and_object_changes(
     ops_list: list[dict[str, Any]],
     known_names: dict[str, str],
     bare_uids_out: set[str],
+    *,
+    session_user_name: str = "",
+    include_system_objects: bool = False,
 ) -> tuple[list[RuleChangeEntry], list[ObjectChangeEntry]]:
     """Parse `RuleChangeEntry` and `ObjectChangeEntry` models from `show-changes` operation buckets."""
     _collect_known_names_from_operations(ops_list, known_names)
@@ -312,8 +621,13 @@ def _parse_rule_and_object_changes(
                 if not isinstance(raw, dict):
                     continue
                 # Unwrap `new-object` / `old-object` if Check Point nested the payload
-                core = raw.get("new-object") if isinstance(raw.get("new-object"), dict) else raw
                 old_core = raw.get("old-object") if isinstance(raw.get("old-object"), dict) else {}
+                if isinstance(raw.get("new-object"), dict):
+                    core = raw["new-object"]
+                elif bucket_op == "deleted" and old_core:
+                    core = old_core
+                else:
+                    core = raw
                 assert isinstance(core, dict)
                 assert isinstance(old_core, dict)
                 # When an entry in `modified-objects` has `new-object` without `old-object`,
@@ -329,9 +643,32 @@ def _parse_rule_and_object_changes(
                 obj_type = str(core.get("type") or raw.get("type") or old_core.get("type") or "object")
 
                 is_rule = force_rule or obj_type.lower() in RULE_OBJECT_TYPES or obj_type.lower().endswith("-rule")
+                if (
+                    not is_rule
+                    and not include_system_objects
+                    and _is_system_maintenance_object(
+                        raw,
+                        core,
+                        old_core,
+                        session_user_name=session_user_name,
+                    )
+                ):
+                    continue
+
                 f_diffs = _extract_field_diffs(raw, known_names, bare_uids_out)
+                existing_diff_fields = {d.field_name.strip().lower() for d in f_diffs}
 
                 if is_rule:
+                    if op == "modified" and old_core:
+                        f_diffs.extend(
+                            _synthesize_rule_snapshot_diffs(
+                                old_core,
+                                core,
+                                existing_diff_fields,
+                                known_names,
+                                bare_uids_out,
+                            )
+                        )
                     rb_type = _rulebase_type_from_obj_type(obj_type)
                     layer_raw = core.get("layer") or raw.get("layer") or old_core.get("layer")
                     layer_uid = ""
@@ -377,17 +714,10 @@ def _parse_rule_and_object_changes(
                         or (rule_num and old_rule_num and rule_num != old_rule_num)
                         or any(d.field_name in ("rule-number", "position") for d in f_diffs)
                     )
-                    eff_op: ChangeOperation = "moved" if (op == "modified" and moved and not f_diffs) else op
+                    non_move_diffs = [d for d in f_diffs if d.field_name.lower() not in ("rule-number", "position")]
+                    eff_op: ChangeOperation = "moved" if (op == "modified" and moved and not non_move_diffs) else op
 
-                    track_val = core.get("track")
-                    if isinstance(track_val, dict):
-                        track_str = _extract_ref_str_or_uid(
-                            track_val.get("type") or track_val,
-                            known_names,
-                            bare_uids_out,
-                        )
-                    else:
-                        track_str = _extract_ref_str_or_uid(track_val, known_names, bare_uids_out)
+                    track_str = _extract_track_str(core.get("track"), known_names, bare_uids_out)
 
                     rc = RuleChangeEntry(
                         uid=uid or f"rule:{len(rules) + 1}",
@@ -439,6 +769,16 @@ def _parse_rule_and_object_changes(
                     rules.append(rc)
                 else:
                     # Non-rule object change (e.g., host, network, group, service)
+                    if op == "modified" and old_core:
+                        f_diffs.extend(
+                            _synthesize_object_snapshot_diffs(
+                                old_core,
+                                core,
+                                existing_diff_fields,
+                                known_names,
+                                bare_uids_out,
+                            )
+                        )
                     members = _extract_ref_list(core.get("members"), known_names, bare_uids_out)
                     nat_settings = core.get("nat-settings") or core.get("nat_settings")
                     if isinstance(nat_settings, dict):
@@ -446,19 +786,12 @@ def _parse_rule_and_object_changes(
                             if nk in nat_settings:
                                 _extract_ref_str_or_uid(nat_settings[nk], known_names, bare_uids_out)
 
-                    summary_parts: list[str] = []
-                    for key in ("ipv4-address", "subnet4", "port", "protocol", "fqdn"):
-                        if core.get(key) is not None:
-                            summary_parts.append(f"{key}={core[key]}")
-                    if members:
-                        summary_parts.append(f"members=[{', '.join(members)}]")
-
                     oc = ObjectChangeEntry(
                         uid=uid or f"obj:{len(objects) + 1}",
                         name=name,
                         object_type=obj_type,
                         operation=op,
-                        summary=", ".join(summary_parts),
+                        summary=_build_object_summary(core, members),
                         field_diffs=f_diffs,
                         raw_data=sanitize_mapping(dict(raw)),
                     )
@@ -713,11 +1046,13 @@ async def collect_change_report(
         s_meta_dict: dict[str, Any] = session_meta
 
         # 2. Fetch show-changes for this session
+        eff_opts = options or RenderOptions()
         changes_payload: dict[str, Any] = {
             "to-session": s_uid,
             "details-level": "full",
         }
         ops_list: list[dict[str, Any]] = []
+        changes_user_name = ""
         try:
             ch_res = await api.api_call(
                 mgmt_name,
@@ -740,6 +1075,7 @@ async def collect_change_report(
                     )
                 )
                 ops_list = _parse_change_containers(ch_res.data, session_uid=s_uid)
+                changes_user_name = _extract_session_user_from_changes(ch_res.data, session_uid=s_uid)
             else:
                 err_txt = redact_sid(
                     ch_res.error_message or ch_res.error_code or "show-changes failed",
@@ -768,9 +1104,16 @@ async def collect_change_report(
                 )
             )
 
+        session_user_name = str(s_meta_dict.get("user-name") or s_meta_dict.get("user") or changes_user_name or "")
         known_names: dict[str, str] = {}
         bare_uids: set[str] = set()
-        rule_changes, object_changes = _parse_rule_and_object_changes(ops_list, known_names, bare_uids)
+        rule_changes, object_changes = _parse_rule_and_object_changes(
+            ops_list,
+            known_names,
+            bare_uids,
+            session_user_name=session_user_name,
+            include_system_objects=eff_opts.include_system_objects,
+        )
 
         # 3. Resolve bare UIDs not already named in the session's own change entries (bounded at 200 per report)
         unresolved_uids = [u for u in sorted(bare_uids) if u not in known_names]
@@ -876,7 +1219,7 @@ async def collect_change_report(
             session_uid=s_uid,
             session_name=str(s_meta_dict.get("name") or s_meta_dict.get("session-name") or ""),
             description=str(s_meta_dict.get("description") or ""),
-            user_name=str(s_meta_dict.get("user-name") or s_meta_dict.get("user") or ""),
+            user_name=session_user_name,
             state=session_state,
             published_at=pub_at,
             last_modify_time=last_mod,

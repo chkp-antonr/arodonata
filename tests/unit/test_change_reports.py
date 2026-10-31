@@ -15,6 +15,7 @@ from arodonata.core.context import AuthContext
 from arodonata.core.errors import ChangeReportInputError, UnsupportedFormat
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
 from arodonata.core.models.domains import DomainSyncState
+from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import (
     AccessRuleEntry,
     DomainRulebaseSnapshot,
@@ -1229,5 +1230,672 @@ async def test_case2_strict_cleanliness_cross_domain_and_concurrent_refresh_race
         # Cache still holds the coordinator's stamped snapshot (`layer-net-1`), NOT `l-trans`!
         cached_after = await cache.get_domain_rulebase("mds1", "Corp")
         assert [lyr.uid for lyr in cached_after.layers] == ["layer-net-1"]
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_field_diffs_rules_partial_removal_sole_member_any_nat_merge_and_no_false_positive_group_diff() -> (
+    None
+):
+    """Synthesize `FieldDiff` entries from `old-object` vs `new-object` snapshots for rules and objects:
+    - Partial rule cell removal (`["t_grp_servers_G", "t_ar03_G"]` -> `["t_grp_servers_G"]`).
+    - Sole-member replacement with `Any` + rule disable (`["t_h02_G"]` -> `["Any"]`, `enabled: True -> False`, `comments`).
+    - NAT leg updates (`original-source`, `translated-destination`).
+    - Explicit `field-changes` merge without duplicating covered fields.
+    - Zero false-positive rule diffs when an unchanged referenced group has internal member edits.
+    """
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = FakeReportsApi()
+
+    try:
+        api.sessions_by_uid["s-decom"] = {
+            "uid": "s-decom",
+            "name": "MMP Decom Session",
+            "user-name": "mmp-operator",
+            "state": "published",
+            "publish-time": {"iso-8601": "2026-10-31T10:00:00Z"},
+            "changes": 4,
+        }
+        grp_clients_uid = str(uuid.uuid4())
+        grp_servers_uid = str(uuid.uuid4())
+        ar03_uid = str(uuid.uuid4())
+        h01_uid = str(uuid.uuid4())
+        h02_uid = str(uuid.uuid4())
+        h03_uid = str(uuid.uuid4())
+        any_uid = "97aeb369-9aea-11d5-bd16-0090272ccb30"
+
+        api.changes_by_session["s-decom"] = {
+            "tasks": [
+                {
+                    "task-details": [
+                        {
+                            "changes": [
+                                {
+                                    "session": {"uid": "s-decom", "user-name": "mmp-operator"},
+                                    "operations": {
+                                        "modified-objects": [
+                                            # Rule 1: Partial removal in destination + unchanged group in source whose internal members changed
+                                            {
+                                                "new-object": {
+                                                    "uid": "r-partial",
+                                                    "name": "Rule1_Clients_to_Servers",
+                                                    "type": "access-rule",
+                                                    "layer": "Network",
+                                                    "enabled": True,
+                                                    "action": {"uid": "act-1", "name": "Accept"},
+                                                    "source": [
+                                                        {
+                                                            "uid": grp_clients_uid,
+                                                            "name": "t_grp_clients_G",
+                                                            "type": "group",
+                                                            "members": [h02_uid, h03_uid],
+                                                        }
+                                                    ],
+                                                    "destination": [
+                                                        {
+                                                            "uid": grp_servers_uid,
+                                                            "name": "t_grp_servers_G",
+                                                            "type": "group",
+                                                        }
+                                                    ],
+                                                    "service": [{"uid": "svc-1", "name": "https"}],
+                                                    "comments": "[DECOMM: t_ar03_G]",
+                                                },
+                                                "old-object": {
+                                                    "uid": "r-partial",
+                                                    "name": "Rule1_Clients_to_Servers",
+                                                    "type": "access-rule",
+                                                    "layer": "Network",
+                                                    "enabled": True,
+                                                    "action": {"uid": "act-1", "name": "Accept"},
+                                                    "source": [
+                                                        {
+                                                            "uid": grp_clients_uid,
+                                                            "name": "t_grp_clients_G",
+                                                            "type": "group",
+                                                            "members": [
+                                                                {"uid": h01_uid, "name": "t_h01_G", "type": "host"},
+                                                                {"uid": h02_uid, "name": "t_h02_G", "type": "host"},
+                                                                {"uid": h03_uid, "name": "t_h03_G", "type": "host"},
+                                                            ],
+                                                        }
+                                                    ],
+                                                    "destination": [
+                                                        {
+                                                            "uid": grp_servers_uid,
+                                                            "name": "t_grp_servers_G",
+                                                            "type": "group",
+                                                        },
+                                                        {
+                                                            "uid": ar03_uid,
+                                                            "name": "t_ar03_G",
+                                                            "type": "address-range",
+                                                        },
+                                                    ],
+                                                    "service": [{"uid": "svc-1", "name": "https"}],
+                                                    "comments": "",
+                                                },
+                                            },
+                                            # Rule 2: Sole member replaced with Any + rule disabled
+                                            {
+                                                "new-object": {
+                                                    "uid": "r-sole-any",
+                                                    "name": "Rule3_Specific_Host_Traffic",
+                                                    "type": "access-rule",
+                                                    "layer": "Network",
+                                                    "enabled": False,
+                                                    "action": {"uid": "act-1", "name": "Accept"},
+                                                    "source": [{"uid": any_uid, "name": "Any"}],
+                                                    "destination": [{"uid": any_uid, "name": "Any"}],
+                                                    "service": [{"uid": any_uid, "name": "Any"}],
+                                                    "comments": "[DECOMM: t_h02_G]",
+                                                },
+                                                "old-object": {
+                                                    "uid": "r-sole-any",
+                                                    "name": "Rule3_Specific_Host_Traffic",
+                                                    "type": "access-rule",
+                                                    "layer": "Network",
+                                                    "enabled": True,
+                                                    "action": {"uid": "act-1", "name": "Accept"},
+                                                    "source": [{"uid": any_uid, "name": "Any"}],
+                                                    "destination": [
+                                                        {"uid": h02_uid, "name": "t_h02_G", "type": "host"}
+                                                    ],
+                                                    "service": [{"uid": any_uid, "name": "Any"}],
+                                                    "comments": "",
+                                                },
+                                            },
+                                            # Rule 3: NAT rule leg updates + explicit field-changes merge
+                                            {
+                                                "new-object": {
+                                                    "uid": "r-nat-1",
+                                                    "name": "NAT_Rule_1",
+                                                    "type": "nat-rule",
+                                                    "package": "Standard",
+                                                    "enabled": False,
+                                                    "method": "static",
+                                                    "original-source": {"uid": any_uid, "name": "Any"},
+                                                    "translated-destination": {"uid": "h-nat-new", "name": "nat-new"},
+                                                    "comments": "NAT updated",
+                                                },
+                                                "old-object": {
+                                                    "uid": "r-nat-1",
+                                                    "name": "NAT_Rule_1",
+                                                    "type": "nat-rule",
+                                                    "package": "Standard",
+                                                    "enabled": True,
+                                                    "method": "hide",
+                                                    "original-source": {"uid": h02_uid, "name": "t_h02_G"},
+                                                    "translated-destination": {"uid": "h-nat-old", "name": "nat-old"},
+                                                    "comments": "",
+                                                },
+                                                "field-changes": [
+                                                    {
+                                                        "field-name": "method",
+                                                        "old-value": "hide",
+                                                        "new-value": "static",
+                                                    }
+                                                ],
+                                            },
+                                        ]
+                                    },
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+
+        report = await collect_change_report(
+            api,
+            cache,
+            [SessionScope(mgmt_name="mds1", domain="Corp", session_uids=["s-decom"])],
+        )
+        sess = report.sessions[0]
+        assert len(sess.rule_changes) == 3
+
+        # 1. Partial removal in destination + NO false-positive source diff despite group member edit
+        r_partial = next(r for r in sess.rule_changes if r.uid == "r-partial")
+        partial_diffs = {d.field_name: d for d in r_partial.field_diffs}
+        assert "source" not in partial_diffs
+        assert "service" not in partial_diffs
+        assert "destination" in partial_diffs
+        assert partial_diffs["destination"].old_value == ["t_grp_servers_G", "t_ar03_G"]
+        assert partial_diffs["destination"].new_value == ["t_grp_servers_G"]
+        assert partial_diffs["destination"].removed_items == ["t_ar03_G"]
+        assert partial_diffs["destination"].added_items == []
+        assert "comments" in partial_diffs
+        assert partial_diffs["comments"].old_value == ""
+        assert partial_diffs["comments"].new_value == "[DECOMM: t_ar03_G]"
+
+        # 2. Sole member replaced by Any + rule disabled
+        r_sole = next(r for r in sess.rule_changes if r.uid == "r-sole-any")
+        sole_diffs = {d.field_name: d for d in r_sole.field_diffs}
+        assert "destination" in sole_diffs
+        assert sole_diffs["destination"].old_value == ["t_h02_G"]
+        assert sole_diffs["destination"].new_value == ["Any"]
+        assert sole_diffs["destination"].removed_items == ["t_h02_G"]
+        assert sole_diffs["destination"].added_items == ["Any"]
+        assert "enabled" in sole_diffs
+        assert sole_diffs["enabled"].old_value is True
+        assert sole_diffs["enabled"].new_value is False
+        assert "source" not in sole_diffs
+
+        # 3. NAT rule leg updates + explicit field-changes merged without duplicating `method`
+        r_nat = next(r for r in sess.rule_changes if r.uid == "r-nat-1")
+        assert [d.field_name for d in r_nat.field_diffs].count("method") == 1
+        nat_diffs = {d.field_name: d for d in r_nat.field_diffs}
+        assert nat_diffs["method"].old_value == "hide"
+        assert nat_diffs["method"].new_value == "static"
+        assert nat_diffs["original-source"].old_value == "t_h02_G"
+        assert nat_diffs["original-source"].new_value == "Any"
+        assert nat_diffs["translated-destination"].old_value == "nat-old"
+        assert nat_diffs["translated-destination"].new_value == "nat-new"
+        assert nat_diffs["enabled"].old_value is True
+        assert nat_diffs["enabled"].new_value is False
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_old_object_bare_uid_resolution_enriched_summaries_and_system_noise_filtering() -> None:
+    """Verify Task 1.3:
+    - Bare UUIDs appearing only in `old-object` (such as removed `group.members` UUIDs) resolve via
+      recursive `{uid, name}` harvesting, `CachePort`, and bounded `show-object` calls.
+    - `ObjectChangeEntry.summary` includes IPv6, CIDR masks, `address-range` bounds, `members`, and `comments`.
+    - Background Check Point `"System"` maintenance non-rule objects are excluded by default and included
+      when `RenderOptions.include_system_objects=True`, while `ChangeReport.raw_responses` stays unfiltered.
+    """
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = FakeReportsApi()
+
+    try:
+        # 1. Seed one removed member UID in CachePort and one in API show-object; one is nested in old-object rule dict
+        uid_cached_member = str(uuid.uuid4())
+        uid_api_member = str(uuid.uuid4())
+        uid_nested_member = str(uuid.uuid4())
+        uid_kept_member = str(uuid.uuid4())
+
+        await cache.upsert_objects(
+            [
+                CPObject(
+                    uid=uid_cached_member,
+                    name="t_h01_cached_G",
+                    type="host",
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    ipv4_address="10.0.0.1",
+                ),
+                CPObject(
+                    uid=uid_kept_member,
+                    name="t_h03_kept_G",
+                    type="host",
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    ipv4_address="10.0.0.3",
+                ),
+            ]
+        )
+        api.objects_by_uid[uid_api_member] = {
+            "uid": uid_api_member,
+            "name": "t_h02_api_G",
+            "type": "host",
+        }
+
+        api.sessions_by_uid["s-sys"] = {
+            "uid": "s-sys",
+            "name": "Decom Group & System Noise",
+            "user-name": "admin_user",
+            "state": "published",
+            "publish-time": {"iso-8601": "2026-10-31T11:00:00Z"},
+            "changes": 6,
+        }
+        api.changes_by_session["s-sys"] = {
+            "tasks": [
+                {
+                    "task-details": [
+                        {
+                            "operations": {
+                                "modified-objects": [
+                                    # Rule with nested {uid, name} inside old-object.source
+                                    {
+                                        "new-object": {
+                                            "uid": "r-nested",
+                                            "name": "Rule_With_Nested_Dict",
+                                            "type": "access-rule",
+                                            "layer": "Network",
+                                            "enabled": True,
+                                            "source": [{"uid": uid_kept_member, "name": "t_h03_kept_G"}],
+                                        },
+                                        "old-object": {
+                                            "uid": "r-nested",
+                                            "name": "Rule_With_Nested_Dict",
+                                            "type": "access-rule",
+                                            "layer": "Network",
+                                            "enabled": True,
+                                            "source": [
+                                                {"uid": uid_kept_member, "name": "t_h03_kept_G"},
+                                                {"uid": uid_nested_member, "name": "t_h04_nested_G"},
+                                            ],
+                                        },
+                                    },
+                                    # Group with bare UUID strings in old-object.members and new-object.members
+                                    {
+                                        "new-object": {
+                                            "uid": "grp-clients",
+                                            "name": "t_grp_clients_G",
+                                            "type": "group",
+                                            "members": [uid_kept_member],
+                                            "comments": "[DECOMM: t_h01_cached_G, t_h02_api_G, t_h04_nested_G]",
+                                            "meta-info": {"last-modifier": "admin_user"},
+                                        },
+                                        "old-object": {
+                                            "uid": "grp-clients",
+                                            "name": "t_grp_clients_G",
+                                            "type": "group",
+                                            "members": [
+                                                uid_cached_member,
+                                                uid_api_member,
+                                                uid_nested_member,
+                                                uid_kept_member,
+                                            ],
+                                            "comments": "Client group",
+                                            "meta-info": {"last-modifier": "admin_user"},
+                                        },
+                                    },
+                                    # Address-range object with enriched summary
+                                    {
+                                        "new-object": {
+                                            "uid": "ar-1",
+                                            "name": "t_ar03_G",
+                                            "type": "address-range",
+                                            "ipv4-address-first": "10.20.0.10",
+                                            "ipv4-address-last": "10.20.0.50",
+                                            "comments": "Range comment",
+                                            "meta-info": {"last-modifier": "admin_user"},
+                                        },
+                                        "old-object": {
+                                            "uid": "ar-1",
+                                            "name": "t_ar03_G",
+                                            "type": "address-range",
+                                            "ipv4-address-first": "10.20.0.1",
+                                            "ipv4-address-last": "10.20.0.50",
+                                            "comments": "Range comment",
+                                            "meta-info": {"last-modifier": "admin_user"},
+                                        },
+                                    },
+                                    # Network object with CIDR mask-length4 and IPv6 subnet6/mask-length6
+                                    {
+                                        "new-object": {
+                                            "uid": "net-1",
+                                            "name": "t_net_dual",
+                                            "type": "network",
+                                            "subnet4": "10.30.0.0",
+                                            "mask-length4": 24,
+                                            "subnet6": "2001:db8::",
+                                            "mask-length6": 64,
+                                            "meta-info": {"last-modifier": "admin_user"},
+                                        }
+                                    },
+                                    # Background Check Point System maintenance objects
+                                    {
+                                        "new-object": {
+                                            "uid": "sys-ips-1",
+                                            "name": None,
+                                            "type": "IpsProtectionUserSettings",
+                                            "meta-info": {"last-modifier": "System"},
+                                        },
+                                        "old-object": {
+                                            "uid": "sys-ips-1",
+                                            "name": None,
+                                            "type": "IpsProtectionUserSettings",
+                                            "meta-info": {"last-modifier": "System"},
+                                        },
+                                    },
+                                    {
+                                        "new-object": {
+                                            "uid": "sys-ca-1",
+                                            "name": "DigiCert_Root_CA",
+                                            "type": "cp-trusted-ca-certificate",
+                                            "meta-info": {"last-modifier": "System"},
+                                        },
+                                        "old-object": {
+                                            "uid": "sys-ca-1",
+                                            "name": "DigiCert_Root_CA",
+                                            "type": "cp-trusted-ca-certificate",
+                                            "meta-info": {"last-modifier": "System"},
+                                        },
+                                    },
+                                    {
+                                        "new-object": {
+                                            "uid": "sys-empty-type",
+                                            "name": "",
+                                            "type": "",
+                                            "meta-info": {"last-modifier": "System"},
+                                        },
+                                        "old-object": {
+                                            "uid": "sys-empty-type",
+                                            "name": "",
+                                            "type": "",
+                                            "meta-info": {"last-modifier": "System"},
+                                        },
+                                    },
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        # Default: include_system_objects=False
+        report = await collect_change_report(
+            api,
+            cache,
+            [SessionScope(mgmt_name="mds1", domain="Corp", session_uids=["s-sys"])],
+        )
+        sess = report.sessions[0]
+
+        # Only non-System objects included
+        obj_uids = [o.uid for o in sess.object_changes]
+        assert obj_uids == ["grp-clients", "ar-1", "net-1"]
+
+        # Verify show-object was called ONLY for uid_api_member (not for cached or nested-dict UIDs)
+        show_obj_uids = [str((c[2] or {}).get("uid")) for c in api.calls if c[1] == "show-object"]
+        assert show_obj_uids == [uid_api_member]
+
+        # Verify group member diffs resolved all 3 removed bare UUIDs to names
+        grp_entry = next(o for o in sess.object_changes if o.uid == "grp-clients")
+        grp_diffs = {d.field_name: d for d in grp_entry.field_diffs}
+        assert "members" in grp_diffs
+        assert grp_diffs["members"].removed_items == ["t_h01_cached_G", "t_h02_api_G", "t_h04_nested_G"]
+        assert grp_diffs["members"].new_value == ["t_h03_kept_G"]
+        assert "members=[t_h03_kept_G]" in grp_entry.summary
+        assert "comments=[DECOMM: t_h01_cached_G, t_h02_api_G, t_h04_nested_G]" in grp_entry.summary
+
+        # Verify enriched summaries for address-range and network
+        ar_entry = next(o for o in sess.object_changes if o.uid == "ar-1")
+        assert "range=10.20.0.10-10.20.0.50" in ar_entry.summary
+        assert "comments=Range comment" in ar_entry.summary
+        ar_diffs = {d.field_name: d for d in ar_entry.field_diffs}
+        assert ar_diffs["ipv4-address-first"].old_value == "10.20.0.1"
+        assert ar_diffs["ipv4-address-first"].new_value == "10.20.0.10"
+
+        net_entry = next(o for o in sess.object_changes if o.uid == "net-1")
+        assert net_entry.operation == "added"
+        assert "subnet4=10.30.0.0/24" in net_entry.summary
+        assert "subnet6=2001:db8::/64" in net_entry.summary
+
+        # Raw responses still preserve the unfiltered show-changes payload
+        show_changes_raw = next(r for r in report.raw_responses if r.command == "show-changes")
+        raw_mod_objs = show_changes_raw.response["tasks"][0]["task-details"][0]["operations"]["modified-objects"]
+        assert len(raw_mod_objs) == 7
+
+        # Opt-in: include_system_objects=True includes System objects
+        report_with_sys = await collect_change_report(
+            api,
+            cache,
+            [SessionScope(mgmt_name="mds1", domain="Corp", session_uids=["s-sys"])],
+            options=RenderOptions(include_system_objects=True),
+        )
+        sys_uids = [o.uid for o in report_with_sys.sessions[0].object_changes]
+        assert "sys-ips-1" in sys_uids
+        assert "sys-ca-1" in sys_uids
+        assert "sys-empty-type" in sys_uids
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_inline_cell_diffs_html_markdown_escaping_and_json_roundtrip() -> None:
+    """Verify Tasks 2.1 and 2.2:
+    - HTML renders `.diff-removed`, `.diff-added`, `.diff-arrow` inline inside `Rule Changes` and `Object Changes`
+      cells with strict HTML escaping and zero `<script>` tags.
+    - Markdown renders `[-name]`, `[+name]`, and `old -> new` inline inside `Rule Changes` and `Object Changes`
+      table cells with pipe/newline/HTML escaping.
+    - JSON round-trip (`ChangeReport.model_validate_json`) re-renders identical HTML and Markdown offline.
+    """
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = FakeReportsApi()
+
+    try:
+        api.sessions_by_uid["s-inline"] = {
+            "uid": "s-inline",
+            "name": "Inline Diff Evidence",
+            "user-name": "operator",
+            "state": "published",
+            "publish-time": {"iso-8601": "2026-10-31T11:30:00Z"},
+            "changes": 3,
+        }
+        h_keep_uid = str(uuid.uuid4())
+        h_rem_uid = str(uuid.uuid4())
+        any_uid = "97aeb369-9aea-11d5-bd16-0090272ccb30"
+
+        api.changes_by_session["s-inline"] = {
+            "tasks": [
+                {
+                    "task-details": [
+                        {
+                            "operations": {
+                                "modified-objects": [
+                                    # Rule 1: Partial removal in destination + XSS/pipe characters in removed item
+                                    {
+                                        "new-object": {
+                                            "uid": "r-inline-1",
+                                            "name": "Rule_Partial",
+                                            "type": "access-rule",
+                                            "layer": "Network",
+                                            "enabled": True,
+                                            "action": {"name": "Accept"},
+                                            "source": [{"uid": h_keep_uid, "name": "t_grp_clients_G"}],
+                                            "destination": [{"uid": "srv-1", "name": "t_grp_servers_G"}],
+                                            "service": [{"name": "https"}],
+                                            "comments": "[DECOMM: t_ar03_G]",
+                                        },
+                                        "old-object": {
+                                            "uid": "r-inline-1",
+                                            "name": "Rule_Partial",
+                                            "type": "access-rule",
+                                            "layer": "Network",
+                                            "enabled": True,
+                                            "action": {"name": "Accept"},
+                                            "source": [{"uid": h_keep_uid, "name": "t_grp_clients_G"}],
+                                            "destination": [
+                                                {"uid": "srv-1", "name": "t_grp_servers_G"},
+                                                {"uid": "ar-3", "name": "t_ar03_G<script>|bad"},
+                                            ],
+                                            "service": [{"name": "https"}],
+                                            "comments": "",
+                                        },
+                                    },
+                                    # Rule 2: Sole member replaced by Any + rule disabled
+                                    {
+                                        "new-object": {
+                                            "uid": "r-inline-2",
+                                            "name": "Rule_Sole_Any",
+                                            "type": "access-rule",
+                                            "layer": "Network",
+                                            "enabled": False,
+                                            "action": {"name": "Drop"},
+                                            "source": [{"uid": any_uid, "name": "Any"}],
+                                            "destination": [{"uid": any_uid, "name": "Any"}],
+                                            "service": [{"uid": any_uid, "name": "Any"}],
+                                            "comments": "Replaced\nwith|Any",
+                                        },
+                                        "old-object": {
+                                            "uid": "r-inline-2",
+                                            "name": "Rule_Sole_Any",
+                                            "type": "access-rule",
+                                            "layer": "Network",
+                                            "enabled": True,
+                                            "action": {"name": "Accept"},
+                                            "source": [{"uid": any_uid, "name": "Any"}],
+                                            "destination": [{"uid": h_rem_uid, "name": "t_h02_G"}],
+                                            "service": [{"uid": any_uid, "name": "Any"}],
+                                            "comments": "Old comment",
+                                        },
+                                    },
+                                    # Group: member removal with bare UUIDs
+                                    {
+                                        "new-object": {
+                                            "uid": "grp-inline-1",
+                                            "name": "t_grp_clients_G",
+                                            "type": "group",
+                                            "members": [h_keep_uid],
+                                            "comments": "[DECOMM: t_h02_G]",
+                                            "meta-info": {"last-modifier": "operator"},
+                                        },
+                                        "old-object": {
+                                            "uid": "grp-inline-1",
+                                            "name": "t_grp_clients_G",
+                                            "type": "group",
+                                            "members": [h_keep_uid, h_rem_uid],
+                                            "comments": "Initial group",
+                                            "meta-info": {"last-modifier": "operator"},
+                                        },
+                                    },
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        bundle = await build_change_report(
+            api,
+            cache,
+            [SessionScope(mgmt_name="mds1", domain="Corp", session_uids=["s-inline"])],
+            formats=("html", "markdown", "json"),
+        )
+        assert bundle.html is not None
+        assert bundle.markdown is not None
+        assert bundle.json_text is not None
+
+        html_str = bundle.html.decode("utf-8")
+        md_str = bundle.markdown
+
+        # HTML assertions: CSS classes, zero <script>, inline removed/added/arrow spans, XSS escaped
+        assert ".diff-removed" in html_str
+        assert ".diff-added" in html_str
+        assert ".diff-arrow" in html_str
+        assert "<script>" not in html_str
+        assert 't_grp_servers_G, <span class="diff-removed">- t_ar03_G&lt;script&gt;|bad</span>' in html_str
+        assert '<span class="diff-removed">- t_h02_G</span>, <span class="diff-added">+ Any</span>' in html_str
+        assert (
+            '<span class="diff-removed">✓</span><span class="diff-arrow">→</span>'
+            '<span class="disabled-marker" title="Disabled">✗</span>' in html_str
+        )
+        assert (
+            '<span class="diff-removed">Accept</span><span class="diff-arrow">→</span>'
+            '<span class="diff-highlight">Drop</span>' in html_str
+        )
+        assert 'members=[t_grp_clients_G, <span class="diff-removed">- t_h02_G</span>]' in html_str
+
+        # Markdown assertions: inline [-name], [+name], old -> new, pipe/newline/HTML escaped
+        assert "t_grp_servers_G, [-t_ar03_G&lt;script&gt;\\|bad]" in md_str
+        assert "[-t_h02_G], [+Any]" in md_str
+        assert "| ✓ -> ✗ |" in md_str
+        assert "| Accept -> Drop |" in md_str
+        assert "Old comment -> Replaced with\\|Any" in md_str
+        assert "members=[t_grp_clients_G, [-t_h02_G]]" in md_str
+
+        # Offline JSON round-trip produces byte-for-byte identical HTML and Markdown
+        reloaded = ChangeReport.model_validate_json(bundle.json_text)
+        rerendered = render_change_report(reloaded, formats=("html", "markdown"))
+        assert rerendered.html == bundle.html
+        assert rerendered.markdown == bundle.markdown
+
+        # Verify SmartConsole visual styling: dark-blue header CSS (#253245), yellow section rows (#eee8aa),
+        # grouped section banner rows, shaded No. column, Track column, and XSS escaping in section names
+        reloaded.sessions[0].rule_changes[0].section_name = "sect_A1_1_1<script>"
+        reloaded.sessions[0].rule_changes[0].section_range = "1-2"
+        reloaded.sessions[0].rule_changes[0].rule_number = "1"
+        reloaded.sessions[0].rule_changes[0].track = "Log"
+        reloaded.sessions[0].rule_changes[1].section_name = "sect_A1_1_1<script>"
+        reloaded.sessions[0].rule_changes[1].section_range = "1-2"
+        reloaded.sessions[0].rule_changes[1].rule_number = "2"
+        reloaded.sessions[0].rule_changes[1].track = "Log"
+        sc_html = render_change_report(reloaded, formats=("html",)).html
+        assert sc_html is not None
+        sc_html_str = sc_html.decode("utf-8")
+        assert "#253245" in sc_html_str
+        assert "#eee8aa" in sc_html_str
+        assert "<th>No.</th>" in sc_html_str
+        assert "<th>Services &amp; Applications</th>" in sc_html_str
+        assert "<th>Track</th>" in sc_html_str
+        assert sc_html_str.count('<tr class="section-row">') == 1
+        assert "sect_A1_1_1&lt;script&gt; (1-2)" in sc_html_str
+        assert "<script>" not in sc_html_str
+        assert '<td class="col-num">1</td>' in sc_html_str
+        assert '<span class="action-accept">●</span>Accept' in sc_html_str
     finally:
         await db.close()

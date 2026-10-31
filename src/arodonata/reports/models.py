@@ -317,6 +317,7 @@ class RenderOptions(BaseModel):
     include_object_changes: bool = True
     include_field_diffs: bool = True
     include_warnings: bool = True
+    include_system_objects: bool = False
 
 
 class ChangeReport(BaseModel):

@@ -45,6 +45,15 @@ def _snapshot_has_rules_or_layers(snapshot: DomainRulebaseSnapshot) -> bool:
     )
 
 
+def _rule_sort_key(rc: RuleChangeEntry, idx: int) -> tuple[int, tuple[int, ...], int]:
+    num_str = (rc.rule_number or "").strip()
+    if num_str:
+        parts = num_str.split(".")
+        if all(p.isdigit() for p in parts):
+            return (0, tuple(int(p) for p in parts), idx)
+    return (1, (), idx)
+
+
 def _apply_snapshot_locations_to_rules(
     rule_changes: list[RuleChangeEntry],
     snapshot: DomainRulebaseSnapshot,
@@ -101,6 +110,10 @@ def _apply_snapshot_locations_to_rules(
 
         if rc.operation == "deleted" and not rc.rule_number:
             rc.rule_number = rc.old_rule_number or "DELETED"
+
+    indexed = list(enumerate(rule_changes))
+    indexed.sort(key=lambda pair: _rule_sort_key(pair[1], pair[0]))
+    rule_changes[:] = [rc for _, rc in indexed]
 
 
 @traced
