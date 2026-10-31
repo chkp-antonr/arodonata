@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Replaced the user-facing `system_objects_filtered` `ReportWarning` in `collect_change_report()` with a structured `DEBUG`-level log entry via `arlogi` (`src/arodonata/reports/collector.py`, `openspec/specs/change-reports/spec.md`) so routine filtering of background Check Point `"System"` maintenance objects does not clutter rendered HTML/Markdown evidence reports.
+
 ## v2.2.0 (2026-10-31)
 
 ### Feat
