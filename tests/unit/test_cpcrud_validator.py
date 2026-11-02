@@ -209,19 +209,38 @@ def test_validate_template_application_site_in_objects_services_and_operations()
     }
     assert validate_template(valid_tpl) == []
 
-    missing_urls_tpl: dict[str, Any] = {
+    # R5: action="present" (default) without url-list/application-signature is allowed by static validation
+    # so existing application-site objects can be updated (comments/description/color) or checked for presence.
+    present_update_tpl: dict[str, Any] = {
         "version": 1,
         "mgmt_name": "mds1",
         "domain": "Corp",
         "objects": [
             {
                 "type": "application-site",
+                "name": "Site_existing",
+                "description": "Updated description only",
+                "comments": "Updated comments",
+            }
+        ],
+    }
+    assert validate_template(present_update_tpl) == []
+
+    # Explicit action="add" without url-list/application-signature is rejected by static validation.
+    missing_urls_add_tpl: dict[str, Any] = {
+        "version": 1,
+        "mgmt_name": "mds1",
+        "domain": "Corp",
+        "objects": [
+            {
+                "action": "add",
+                "type": "application-site",
                 "name": "Site_empty",
                 "primary-category": "Custom_Application_Site",
             }
         ],
     }
-    errs = validate_template(missing_urls_tpl)
+    errs = validate_template(missing_urls_add_tpl)
     assert len(errs) == 1
     assert "objects[0]" in errs[0]
     assert "url-list" in errs[0]

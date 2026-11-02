@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import gzip
 import importlib.resources
@@ -60,6 +61,13 @@ class ApiReferenceEngine:
                 decompressed = gzip.decompress(raw_bytes).decode("utf-8")
                 _DEFAULT_ENGINE = cls(json.loads(decompressed))
             return _DEFAULT_ENGINE
+
+    @classmethod
+    async def async_default(cls) -> ApiReferenceEngine:
+        """Return the lazily loaded singleton `ApiReferenceEngine`, decompressing off the event loop via `asyncio.to_thread` (`R9`)."""
+        if _DEFAULT_ENGINE is not None:
+            return _DEFAULT_ENGINE
+        return await asyncio.to_thread(cls.default)
 
     @classmethod
     def from_path(cls, path: Path | str) -> ApiReferenceEngine:

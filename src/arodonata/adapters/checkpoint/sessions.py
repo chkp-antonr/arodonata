@@ -17,9 +17,12 @@ Implements `LoginCoordinator` and `SessionCleaner`:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import socket
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -43,6 +46,44 @@ from arodonata.core.ports import AuthProvider, CachePort
 from arodonata.core.telemetry import span_attrs, traced
 
 SYSTEM_DOMAIN_SENTINEL = "System Data"
+
+
+def _canonicalize_host(host: str) -> str:
+    """Normalize an IP literal (IPv4/IPv6) or hostname into canonical lowercase string form."""
+    cleaned = host.strip()
+    if cleaned.startswith("[") and cleaned.endswith("]"):
+        cleaned = cleaned[1:-1].strip()
+    try:
+        return str(ipaddress.ip_address(cleaned))
+    except ValueError:
+        return cleaned.lower()
+
+
+def _is_ip_literal(host: str) -> bool:
+    """Return `True` if `host` is a valid IPv4 or IPv6 address literal."""
+    cleaned = host.strip()
+    if cleaned.startswith("[") and cleaned.endswith("]"):
+        cleaned = cleaned[1:-1].strip()
+    try:
+        ipaddress.ip_address(cleaned)
+        return True
+    except ValueError:
+        return False
+
+
+async def _resolve_hostname_ips(host: str) -> set[str]:
+    """Resolve a non-IP hostname to canonical IP strings (returning empty set on failure)."""
+    if not host or _is_ip_literal(host):
+        return set()
+    resolved: set[str] = set()
+    with suppress(Exception):
+        loop = asyncio.get_running_loop()
+        infos = await loop.getaddrinfo(host.strip(), None, type=socket.SOCK_STREAM)
+        for info in infos:
+            sockaddr = info[4]
+            if isinstance(sockaddr, tuple) and sockaddr and isinstance(sockaddr[0], str):
+                resolved.add(_canonicalize_host(sockaddr[0]))
+    return resolved
 
 
 def normalize_domain_key(domain: str | None) -> str:
@@ -287,6 +328,7 @@ class LoginCoordinator:
         self._inflight_logins: set[str] = set()
         self._evicted_auth_identities: set[tuple[str, str]] = set()
         self._active_dedicated_sids: dict[tuple[str, str], str] = {}
+        self._known_mds_ips: dict[str, set[str]] = defaultdict(set)
 
     @property
     def active_dedicated_sids(self) -> dict[tuple[str, str], str]:
@@ -313,6 +355,45 @@ class LoginCoordinator:
             f"Unknown management server {mgmt_name!r}. Configured servers: {sorted(servers.keys())}."
         )
 
+    async def _collect_trusted_hosts(
+        self,
+        mgmt_name: str,
+        endpoint_host: str,
+    ) -> tuple[set[str], list[DomainInfo]]:
+        """Collect canonicalized trusted host/IP strings and cached `DomainInfo` rows for `mgmt_name`."""
+        trusted_ips: set[str] = {_canonicalize_host(endpoint_host)}
+        for mds_ip in self._known_mds_ips.get(mgmt_name, set()):
+            if mds_ip:
+                trusted_ips.add(_canonicalize_host(mds_ip))
+        cached_domains = await self._cache.get_domains(mgmt_name, include_global=True)
+        for dom in cached_domains:
+            if dom.active_ip:
+                trusted_ips.add(_canonicalize_host(dom.active_ip))
+            if dom.active_mds_ip:
+                trusted_ips.add(_canonicalize_host(dom.active_mds_ip))
+            for st_ip in dom.standby_ips:
+                if st_ip:
+                    trusted_ips.add(_canonicalize_host(st_ip))
+            for srv in dom.servers:
+                if isinstance(srv, dict):
+                    for key in ("ipv4-address", "ipv6-address", "ip", "multi-domain-server-ip"):
+                        val = srv.get(key)
+                        if isinstance(val, str) and val.strip():
+                            trusted_ips.add(_canonicalize_host(val))
+                    mds_sub = srv.get("multi-domain-server")
+                    if isinstance(mds_sub, dict):
+                        for key in ("ipv4-address", "ipv6-address", "ip"):
+                            val = mds_sub.get(key)
+                            if isinstance(val, str) and val.strip():
+                                trusted_ips.add(_canonicalize_host(val))
+        for entry in await self._cache.list_sids(mgmt_name=mgmt_name):
+            if entry.server_ip:
+                trusted_ips.add(_canonicalize_host(entry.server_ip))
+        for (m_name, _sid), srv_ip in self._active_dedicated_sids.items():
+            if m_name == mgmt_name and srv_ip:
+                trusted_ips.add(_canonicalize_host(srv_ip))
+        return trusted_ips, cached_domains
+
     async def resolve_target_ips(
         self,
         mgmt_name: str,
@@ -324,22 +405,32 @@ class LoginCoordinator:
         endpoint = self.get_server_endpoint(mgmt_name)
         if explicit_server_ip:
             cleaned_ip = explicit_server_ip.strip()
-            trusted_ips: set[str] = {endpoint.host}
-            for dom in await self._cache.get_domains(mgmt_name, include_global=True):
-                if dom.active_ip:
-                    trusted_ips.add(dom.active_ip)
-                if dom.active_mds_ip:
-                    trusted_ips.add(dom.active_mds_ip)
-                for st_ip in dom.standby_ips:
-                    if st_ip:
-                        trusted_ips.add(st_ip)
-            for entry in await self._cache.list_sids(mgmt_name=mgmt_name):
-                if entry.server_ip:
-                    trusted_ips.add(entry.server_ip)
-            for (m_name, _sid), srv_ip in self._active_dedicated_sids.items():
-                if m_name == mgmt_name and srv_ip:
-                    trusted_ips.add(srv_ip)
-            if cleaned_ip not in trusted_ips:
+            canonical_ip = _canonicalize_host(cleaned_ip)
+            trusted_ips, cached_domains = await self._collect_trusted_hosts(mgmt_name, endpoint.host)
+
+            if canonical_ip not in trusted_ips:
+                dom_key = normalize_domain_key(domain)
+                cached_names = {d.name for d in cached_domains}
+                is_cold_or_missing_domain = not cached_domains or (
+                    dom_key != SYSTEM_DOMAIN_SENTINEL and dom_key not in cached_names
+                )
+                if is_cold_or_missing_domain:
+                    await self.refresh_domain_active_ip(
+                        mgmt_name,
+                        dom_key if dom_key != SYSTEM_DOMAIN_SENTINEL else "Global",
+                    )
+                    trusted_ips, _ = await self._collect_trusted_hosts(mgmt_name, endpoint.host)
+
+            if canonical_ip not in trusted_ips and (
+                not _is_ip_literal(endpoint.host) or not _is_ip_literal(cleaned_ip)
+            ):
+                endpoint_resolved = await _resolve_hostname_ips(endpoint.host)
+                trusted_ips.update(endpoint_resolved)
+                explicit_resolved = await _resolve_hostname_ips(cleaned_ip)
+                if explicit_resolved and explicit_resolved.intersection(trusted_ips):
+                    trusted_ips.add(canonical_ip)
+
+            if canonical_ip not in trusted_ips:
                 raise ValidationError(
                     f"Untrusted explicit server_ip {explicit_server_ip!r} for management server {mgmt_name!r}. "
                     f"Known trusted hosts: {sorted(trusted_ips)}."
@@ -782,9 +873,16 @@ class LoginCoordinator:
                     for m_obj in mdss_res.data["objects"]:
                         if isinstance(m_obj, dict):
                             m_name = m_obj.get("name")
-                            m_ip = m_obj.get("ipv4-address") or m_obj.get("ip")
-                            if isinstance(m_name, str) and m_name and isinstance(m_ip, str) and m_ip:
-                                mds_ip_by_name[m_name] = m_ip
+                            m_ip = (
+                                m_obj.get("ipv4-address")
+                                or m_obj.get("ip-address")
+                                or m_obj.get("ipv6-address")
+                                or m_obj.get("ip")
+                            )
+                            if isinstance(m_ip, str) and m_ip:
+                                self._known_mds_ips[mgmt_name].add(_canonicalize_host(m_ip))
+                                if isinstance(m_name, str) and m_name:
+                                    mds_ip_by_name[m_name] = m_ip
             except ServerIdentityError:
                 raise
             except Exception:

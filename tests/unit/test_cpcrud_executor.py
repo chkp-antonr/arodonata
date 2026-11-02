@@ -765,3 +765,40 @@ async def test_staged_session_mmp_restart_web_api_provenance_and_adopt_helper_cl
     )
     assert allow_foreign_ok.success is True
     assert [c[2] for c in api.calls if c[1] == "discard"] == [{"uid": "adopt-helper-uid-000"}, {}]
+
+    # 6. R1: Fail-closed when current_user is empty or target session user-name is missing
+    api.current_user = ""
+    api.calls.clear()
+    api.logged_out_sids.clear()
+    empty_caller_res = await executor.publish_staged_session(
+        "mds1",
+        "Corp",
+        session_uid="mmp-own-draft-uid",
+    )
+    assert empty_caller_res.success is False
+    assert empty_caller_res.error_code == "foreign_session_refused"
+    assert not any(c[1] in ("take-over-session", "switch-session", "publish") for c in api.calls)
+    assert "secret-ws-sid-999" in api.logged_out_sids
+
+    # 7. R4: Untrusted server_ip ValidationError in step 1 show-session is surfaced, not swallowed
+    from arodonata.core.errors import ValidationError
+
+    async def untrusted_ip_api_call(
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ApiCallResult:
+        if command == "show-session" and kwargs.get("server_ip") == "198.51.100.99":
+            raise ValidationError("Untrusted explicit server_ip '198.51.100.99'")
+        return await orig_call(mgmt_name, command, payload, **kwargs)
+
+    api.api_call = untrusted_ip_api_call  # type: ignore[method-assign]
+    with pytest.raises(ValidationError, match="Untrusted explicit server_ip '198.51.100.99'"):
+        await executor.publish_staged_session(
+            "mds1",
+            "Corp",
+            session_uid="mmp-own-draft-uid",
+            sid="explicit-caller-sid-123",
+            server_ip="198.51.100.99",
+        )

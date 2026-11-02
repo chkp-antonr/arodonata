@@ -850,7 +850,11 @@ def register_mcp_tools(
         has_explicit_wildcard = "*" in query_str or "?" in query_str
 
         if not is_live:
-            eff_mode: CacheMode = "cache" if eff_domain is None else mode
+            sync_domain, eff_mode = await client.search_service._resolve_implicit_domain_mode(
+                eff_mgmt,
+                eff_domain,
+                mode,
+            )
             eff_include_global = True if eff_domain is None else (eff_domain == "Global")
             is_service_type = clean_obj_type is not None and (
                 clean_obj_type in SERVICE_COMMAND_TYPES or clean_obj_type.startswith("service-")
@@ -913,33 +917,57 @@ def register_mcp_tools(
             want_assets = clean_obj_type is None or is_asset_type
             want_layers = clean_obj_type is None or is_layer_or_pkg_type
 
+            cand_mode: CacheMode = "cache" if not has_explicit_wildcard else eff_mode
             if want_objs:
+                if eff_domain is None and cand_mode != "cache" and sync_domain is not None:
+                    await client.refresh_objects(
+                        mgmt_name=eff_mgmt,
+                        domains=[sync_domain],
+                        types=[clean_obj_type] if clean_obj_type else None,
+                        include_global=False,
+                        mode=cand_mode,
+                    )
                 objs = await client.get_objects(
                     mgmt_name=eff_mgmt,
                     domain=eff_domain,
                     types=[clean_obj_type] if clean_obj_type else None,
                     include_global=eff_include_global,
-                    cache_mode="cache" if not has_explicit_wildcard else eff_mode,
+                    cache_mode="cache" if eff_domain is None else cand_mode,
                 )
                 candidates.extend(objs)
 
             if want_svcs:
+                if eff_domain is None and cand_mode != "cache" and sync_domain is not None:
+                    await client.refresh_services(
+                        mgmt_name=eff_mgmt,
+                        domains=[sync_domain],
+                        types=[clean_obj_type] if clean_obj_type else None,
+                        include_global=False,
+                        mode=cand_mode,
+                    )
                 svcs = await client.get_services(
                     mgmt_name=eff_mgmt,
                     domain=eff_domain,
                     types=[clean_obj_type] if clean_obj_type else None,
                     include_global=eff_include_global,
-                    cache_mode="cache" if not has_explicit_wildcard else eff_mode,
+                    cache_mode="cache" if eff_domain is None else cand_mode,
                 )
                 candidates.extend(svcs)
 
             if want_assets:
+                if eff_domain is None and cand_mode != "cache" and sync_domain is not None:
+                    await client.refresh_assets(
+                        mgmt_name=eff_mgmt,
+                        domains=[sync_domain],
+                        include_global=False,
+                        mode=cand_mode,
+                    )
                 assets = await client.get_gateways(
                     mgmt_name=eff_mgmt,
                     domain=eff_domain,
                     types=[clean_obj_type] if clean_obj_type else None,
                     include_global=eff_include_global,
-                    cache_mode="cache" if not has_explicit_wildcard else eff_mode,
+                    cache_mode="cache" if eff_domain is None else cand_mode,
                 )
                 candidates.extend(assets)
 
@@ -948,7 +976,11 @@ def register_mcp_tools(
                     layer_domains = [eff_domain]
                 else:
                     cached_doms = await client.cache.get_domains(eff_mgmt, include_global=True)
-                    layer_domains = [d.name for d in cached_doms] if cached_doms else ["default"]
+                    layer_domains = (
+                        [d.name for d in cached_doms]
+                        if cached_doms
+                        else ([sync_domain] if sync_domain else ["default"])
+                    )
                 for l_dom in layer_domains:
                     snap = await client.cache.get_domain_rulebase(eff_mgmt, l_dom)
                     if clean_obj_type in (None, "package", "policy-package"):
@@ -964,11 +996,31 @@ def register_mcp_tools(
 
             # Check Tier 1 exact match on layers/packages (or case-insensitive exact name across all candidates)
             if not has_explicit_wildcard:
-                exact_cands = [
+                raw_exact_cands = [
                     cand for cand in candidates if cand.uid.lower() == query_lower or cand.name.lower() == query_lower
                 ]
+                exact_cands: list[CPObject | CPService | Asset | RulebaseLayerEntry | PolicyPackageInfo] = []
+                by_cand_uid: dict[str, CPObject | CPService | Asset | RulebaseLayerEntry | PolicyPackageInfo] = {}
+                cand_order: list[str] = []
+                for c in raw_exact_cands:
+                    c_uid = c.uid
+                    if c_uid not in by_cand_uid:
+                        by_cand_uid[c_uid] = c
+                        cand_order.append(c_uid)
+                    else:
+                        prev = by_cand_uid[c_uid]
+                        c_dom = getattr(c, "domain_name", None)
+                        c_orig = getattr(c, "original_domain", None) or c_dom
+                        prev_dom = getattr(prev, "domain_name", None)
+                        prev_orig = getattr(prev, "original_domain", None) or prev_dom
+                        if (c_dom == c_orig and prev_dom != prev_orig) or (c_dom == "Global" and prev_dom != "Global"):
+                            by_cand_uid[c_uid] = c
+                exact_cands = [by_cand_uid[u] for u in cand_order]
                 if exact_cands:
-                    cand_domains = {getattr(c, "domain_name", None) or target_domain for c in exact_cands}
+                    cand_domains = {
+                        getattr(c, "original_domain", None) or getattr(c, "domain_name", None) or target_domain
+                        for c in exact_cands
+                    }
                     if eff_domain is None and len(cand_domains) > 1:
                         serialized_amb = [_serialize_any_entity(c, details_level="standard") for c in exact_cands]
                         return json_tool_result(
@@ -1208,10 +1260,14 @@ def register_mcp_tools(
         eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
         target_domain = eff_domain or "default"
         mode, _ = _normalize_cache_mode(cache_mode, default="smart")
-        eff_mode: CacheMode = "cache" if eff_domain is None else mode
+        sync_domain, eff_mode = await client.search_service._resolve_implicit_domain_mode(
+            eff_mgmt,
+            eff_domain,
+            mode,
+        )
 
         try:
-            members = await client.search_service.get_group_members(
+            resolved_group, members = await client.search_service.resolve_group_with_members(
                 eff_mgmt,
                 eff_domain,
                 group_name_or_uid,
@@ -1235,8 +1291,13 @@ def register_mcp_tools(
                     "hint": str(exc),
                 }
             )
-        matched_domain = (getattr(members[0], "domain_name", None) if members else None) or eff_domain or target_domain
-        age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "group")
+        matched_domain = (
+            (getattr(resolved_group, "domain_name", None) if resolved_group is not None else None)
+            or eff_domain
+            or sync_domain
+            or target_domain
+        )
+        age = await _compute_cache_age(client, eff_mgmt, matched_domain, "objects", "group")
         serialized = [_serialize_any_entity(m, details_level="standard") for m in members]
         envelope = _build_page_envelope(
             serialized,
@@ -1896,6 +1957,7 @@ def register_mcp_tools(
             raise ToolFailure(f"Invalid action {action!r}. Expected 'search', 'describe', or 'validate'.")
 
         client = client_getter()
+        await client.ensure_api_reference()
         eff_version = client._resolve_api_version(version, mgmt_name=mgmt_name)
 
         if clean_action == "search":

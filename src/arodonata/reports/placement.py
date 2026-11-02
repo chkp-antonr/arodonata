@@ -9,7 +9,9 @@ Numbers added, modified, moved, and deleted rules according to SmartConsole hier
    - Scrubs any occurrence of the SID from warnings, errors, and raw responses.
 2. When no `OwnedSession` is supplied, or the `OwnedSession` is already published / fails:
    - Records an `owned_session_not_used` or `owned_session_error` `ReportWarning`.
-   - Falls back to numbering from the domain's cached rulebase snapshot (`CachePort.get_domain_rulebase`).
+   - Falls back to numbering from the domain's cached rulebase snapshot (`CachePort.get_domain_rulebase`),
+     warming it first via the coordinator-backed `refresh_rulebase_fn` when provided and the cache is cold,
+     or performing a read-only in-memory published rulebase snapshot read when no coordinator callback is provided.
 """
 
 from __future__ import annotations
@@ -339,13 +341,18 @@ async def apply_session_rule_placement(
             )
 
     # Fallback: number rules from the domain's cached rulebase snapshot
+    clean_domain = (domain_name or "").strip()
+    is_system_or_empty_domain = not clean_domain or clean_domain.lower() == "system data"
+
     cached_snapshot = await cache.get_domain_rulebase(mgmt_name, domain_name)
     sync_state = await cache.get_sync_state(mgmt_name, domain_name, "rulebase", "*")
 
     has_cached_rules = _snapshot_has_rules_or_layers(cached_snapshot)
-    if not has_cached_rules and refresh_rulebase_fn is not None:
+    warmed_via_coordinator = False
+    if not has_cached_rules and refresh_rulebase_fn is not None and not is_system_or_empty_domain:
+        warmed_via_coordinator = True
         try:
-            await refresh_rulebase_fn(mgmt_name, domain_name)
+            await refresh_rulebase_fn(mgmt_name, clean_domain)
             cached_snapshot = await cache.get_domain_rulebase(mgmt_name, domain_name)
             sync_state = await cache.get_sync_state(mgmt_name, domain_name, "rulebase", "*")
             has_cached_rules = _snapshot_has_rules_or_layers(cached_snapshot)
@@ -369,14 +376,16 @@ async def apply_session_rule_placement(
             session_report.numbering_basis = "Numbering from cached rulebase snapshot"
         session_report.numbering_source = "cache"
     else:
-        # Cold-cache fallback: attempt read-only in-memory live published rulebase fetch without mutating CachePort (C2)
+        # Cold-cache fallback when no coordinator refresh callback ran: attempt read-only in-memory
+        # live published rulebase fetch without mutating CachePort (C2).
         fallback_snapshot: DomainRulebaseSnapshot | None = None
-        try:
-            fallback_snapshot = await collect_domain_rulebase_snapshot(api, mgmt_name, domain_name)
-        except ServerIdentityError:
-            raise
-        except Exception:
-            fallback_snapshot = None
+        if not warmed_via_coordinator and clean_domain.lower() != "system data":
+            try:
+                fallback_snapshot = await collect_domain_rulebase_snapshot(api, mgmt_name, domain_name)
+            except ServerIdentityError:
+                raise
+            except Exception:
+                fallback_snapshot = None
 
         if fallback_snapshot is not None and _snapshot_has_rules_or_layers(fallback_snapshot):
             _apply_snapshot_locations_to_rules(session_report.rule_changes, fallback_snapshot)

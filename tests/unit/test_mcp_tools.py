@@ -1303,3 +1303,161 @@ async def test_mcp_cross_domain_show_object_and_get_group_members_ambiguity_and_
         # Verify zero new live API calls or queries were triggered
         assert len(fake_api.calls) == calls_before
         assert len(fake_api.queries) == queries_before
+
+        # 3. R3: Replicated Global object across Global, Corp, and Branch with identical UID and original_domain="Global"
+        # is deduplicated by UID and does not trigger false AmbiguousObjectError
+        await client.cache.upsert_objects(
+            [
+                CPObject(
+                    uid="h-glob-dns",
+                    name="GlobalDNS",
+                    type="host",
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    original_domain="Global",
+                ),
+                CPObject(
+                    uid="h-glob-dns",
+                    name="GlobalDNS",
+                    type="host",
+                    mgmt_name="mds1",
+                    domain_name="Branch",
+                    original_domain="Global",
+                ),
+            ]
+        )
+        dedup_obj = await client.find_object("mds1", None, "GlobalDNS")
+        assert dedup_obj is not None
+        assert dedup_obj.uid == "h-glob-dns"
+        assert dedup_obj.domain_name == "Global"
+
+        dedup_show_res = await server.call_tool(
+            "show_object",
+            {"uid_or_name": "GlobalDNS", "mgmt_name": "mds1"},
+        )
+        assert dedup_show_res.is_error is False
+        dedup_show_data = _parse_tool_json(dedup_show_res)
+        assert dedup_show_data["match_type"] == "exact"
+        assert dedup_show_data["domain"] == "Global"
+
+        # 4. R7: get_group_members returns the group's own domain ("Corp") even when members[0] is in "Global" or group is empty
+        await client.cache.upsert_objects(
+            [
+                CPObject(
+                    uid="h-glob-only",
+                    name="GlobalOnlyHost",
+                    type="host",
+                    mgmt_name="mds1",
+                    domain_name="Global",
+                ),
+                CPObject(
+                    uid="g-corp-with-global-member",
+                    name="CorpGroupWithGlobal",
+                    type="group",
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    members=["h-glob-only"],
+                ),
+                CPObject(
+                    uid="g-corp-empty",
+                    name="CorpEmptyGroup",
+                    type="group",
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    members=[],
+                ),
+            ]
+        )
+        corp_glob_grp_res = await server.call_tool(
+            "get_group_members",
+            {"group_name_or_uid": "CorpGroupWithGlobal", "mgmt_name": "mds1"},
+        )
+        assert corp_glob_grp_res.is_error is False
+        corp_glob_grp_data = _parse_tool_json(corp_glob_grp_res)
+        assert corp_glob_grp_data["domain"] == "Corp"
+        assert corp_glob_grp_data["objects"][0]["domain_name"] == "Global"
+
+        corp_empty_grp_res = await server.call_tool(
+            "get_group_members",
+            {"group_name_or_uid": "CorpEmptyGroup", "mgmt_name": "mds1"},
+        )
+        assert corp_empty_grp_res.is_error is False
+        corp_empty_grp_data = _parse_tool_json(corp_empty_grp_res)
+        assert corp_empty_grp_data["domain"] == "Corp"
+        assert corp_empty_grp_data["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_single_domain_smc_implicit_domain_refresh_and_async_api_reference() -> None:
+    """Verify R2 and R9:
+    - R2: On a single-domain server (SMC), `find_object`, `show_object`, and `get_group_members`
+      with `domain=None` and `cache_mode="smart"` warm the cold cache via `refresh_objects`
+      instead of silently degrading to `cache_mode="cache"`.
+    - R9: `_resolve_api_version` does not force synchronous decompression when `client._api_reference` is `None`,
+      and `await client.ensure_api_reference()` loads the engine asynchronously.
+    """
+    from arodonata.core.models.domains import DomainInfo
+
+    fake_api = MCPFakeApi()
+    orig_api_call = fake_api.api_call
+
+    async def _smc_api_call(mgmt_name: str, command: str, payload: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+        res = await orig_api_call(mgmt_name, command, payload, **kwargs)
+        if command == "show-domains" and isinstance(res.data, dict) and isinstance(res.data.get("objects"), list):
+            return res.model_copy(
+                update={"data": {"objects": [d for d in res.data["objects"] if d.get("name") == "Corp"]}}
+            )
+        return res
+
+    fake_api.api_call = _smc_api_call  # type: ignore[method-assign]
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        # R9: _resolve_api_version does not instantiate client._api_reference
+        assert client._api_reference is None
+        ver = client._resolve_api_version(None, mgmt_name="mds1")
+        assert ver == "v2.2"
+        assert client._api_reference is None
+        eng = await client.ensure_api_reference()
+        assert eng is not None
+        assert client._api_reference is eng
+
+        # Seed a single non-global domain ("Corp") so mds1 acts as a single-domain server
+        single_dom = [DomainInfo(mgmt_name="mds1", uid="dom-corp", name="Corp", active_ip="10.1.0.1")]
+        await client.cache.upsert_domains(single_dom)
+
+        # R2: Cold object cache on single-domain server with domain=None warms the single domain ("Corp")
+        assert await client.cache.get_objects(mgmt_name="mds1") == []
+        found = await client.find_object("mds1", None, "web-srv-1", cache_mode="smart")
+        assert found is not None
+        assert found.name == "web-srv-1"
+        assert found.domain_name == "Corp"
+
+        # Reset object cache, advance published_uid, and verify MCP show_object with domain=None (cache_mode="smart") warms "Corp"
+        await client.cache.replace_domain_objects("mds1", "Corp", [], types=["host", "network", "group"])
+        fake_api.published_uid = "pub-uid-smc-2"
+        client.invalidate_domain("mds1", "Corp")
+        assert await client.cache.get_objects(mgmt_name="mds1") == []
+        server = create_mcp_server(client, auth_mode="host")
+        show_res = await server.call_tool(
+            "show_object",
+            {"uid_or_name": "web-srv-1", "mgmt_name": "mds1"},
+        )
+        assert show_res.is_error is False
+        show_data = _parse_tool_json(show_res)
+        assert show_data["match_type"] == "exact"
+        assert show_data["domain"] == "Corp"
+
+        # Reset object cache, advance published_uid, and verify MCP get_group_members with domain=None (cache_mode="smart") warms "Corp"
+        await client.cache.replace_domain_objects("mds1", "Corp", [], types=["host", "network", "group"])
+        fake_api.published_uid = "pub-uid-smc-3"
+        client.invalidate_domain("mds1", "Corp")
+        assert await client.cache.get_objects(mgmt_name="mds1") == []
+        grp_res = await server.call_tool(
+            "get_group_members",
+            {"group_name_or_uid": "grp-web-servers", "mgmt_name": "mds1"},
+        )
+        assert grp_res.is_error is False
+        grp_data = _parse_tool_json(grp_res)
+        assert grp_data["domain"] == "Corp"
+        assert grp_data["total"] == 1

@@ -949,7 +949,7 @@ class Planner:
                     message=f"Update {obj_type} {existing.name!r} ({', '.join(sorted(diffs.keys()))}).",
                 )
 
-            # Case B: Name does not exist -> check IP/subnet/range conflict
+            # Case B: Name does not exist -> check IP/subnet/range/url-list conflict
             ip_matches: list[CPObject] = []
             auto_name: str | None = None
 
@@ -963,7 +963,12 @@ class Planner:
                     or spec.get("ipv6-address")
                 )
                 if isinstance(ip_val, str) and ip_val.strip():
-                    ip_matches = await reader.find_host_by_ip(mgmt_name, domain_name, ip_val.strip())
+                    ip_matches = await reader.find_objects_by_value(
+                        mgmt_name,
+                        domain_name,
+                        obj_type="host",
+                        ip_address=ip_val.strip(),
+                    )
                     auto_name = prefixes.format_host(ip_val.strip())
             elif obj_type == "network":
                 sub_val = spec.get("subnet4") or spec.get("subnet")
@@ -971,16 +976,42 @@ class Planner:
                 submask_raw = spec.get("subnet_mask") or spec.get("subnet-mask")
                 norm_mask = normalize_mask_length(mask_raw, submask_raw)
                 if isinstance(sub_val, str) and sub_val.strip() and norm_mask is not None:
-                    ip_matches = await reader.find_network_by_subnet(mgmt_name, domain_name, sub_val.strip(), norm_mask)
+                    ip_matches = await reader.find_objects_by_value(
+                        mgmt_name,
+                        domain_name,
+                        obj_type="network",
+                        subnet4=sub_val.strip(),
+                        mask_length4=norm_mask,
+                    )
                     auto_name = prefixes.format_network(sub_val.strip(), norm_mask)
             elif obj_type == "address-range":
                 f_val = spec.get("ipv4_address_first") or spec.get("ipv4-address-first")
                 l_val = spec.get("ipv4_address_last") or spec.get("ipv4-address-last")
                 if isinstance(f_val, str) and f_val.strip() and isinstance(l_val, str) and l_val.strip():
-                    ip_matches = await reader.find_address_range_by_bounds(
-                        mgmt_name, domain_name, f_val.strip(), l_val.strip()
+                    ip_matches = await reader.find_objects_by_value(
+                        mgmt_name,
+                        domain_name,
+                        obj_type="address-range",
+                        first_ip=f_val.strip(),
+                        last_ip=l_val.strip(),
                     )
                     auto_name = prefixes.format_address_range(f_val.strip(), l_val.strip())
+            elif obj_type == "application-site":
+                raw_urls = spec.get("url-list") if "url-list" in spec else spec.get("url_list")
+                url_vals = [str(u).strip() for u in raw_urls if str(u).strip()] if isinstance(raw_urls, list) else []
+                raw_regex = (
+                    spec.get("urls-defined-as-regular-expression")
+                    if "urls-defined-as-regular-expression" in spec
+                    else spec.get("urls_defined_as_regular_expression")
+                )
+                if url_vals:
+                    ip_matches = await reader.find_objects_by_value(
+                        mgmt_name,
+                        domain_name,
+                        obj_type="application-site",
+                        url_list=url_vals,
+                        urls_defined_as_regular_expression=bool(raw_regex),
+                    )
 
             target_create_name = req_name
             extra_create_flags: dict[str, Any] = {}
@@ -1048,6 +1079,31 @@ class Planner:
                         )
 
             # Case C: Plan CREATE
+            if obj_type == "application-site":
+                raw_urls = spec.get("url-list") if "url-list" in spec else spec.get("url_list")
+                has_urls = isinstance(raw_urls, list) and any(str(u).strip() for u in raw_urls)
+                raw_sig = spec.get("application-signature") or spec.get("application_signature")
+                has_sig = bool(str(raw_sig or "").strip())
+                if not has_urls and not has_sig:
+                    err_msg = (
+                        f"Cannot create application-site {target_create_name!r}: "
+                        "'url-list' (or 'url_list') or 'application-signature' (or 'application_signature') is required."
+                    )
+                    return PlannedAction(
+                        action_id=action_id,
+                        mgmt_name=mgmt_name,
+                        domain_name=domain_name,
+                        operation=verb,
+                        object_type=obj_type,
+                        name=target_create_name,
+                        requested_name=req_name or target_create_name,
+                        resolved_name=target_create_name,
+                        outcome=Outcome.ERROR,
+                        desired_spec=dict(spec),
+                        message=err_msg,
+                        error=err_msg,
+                    )
+
             add_payload = _build_add_object_payload(obj_type, target_create_name, spec)
             add_payload.update(extra_create_flags)
             virt_cp = CPObject.from_cp_dict(
@@ -1919,7 +1975,7 @@ def _build_add_object_payload(
         raw_cat = spec.get("primary-category") or spec.get("primary_category")
         if isinstance(raw_cat, str) and raw_cat.strip():
             payload["primary-category"] = raw_cat.strip()
-        elif url_list:
+        else:
             payload["primary-category"] = "Custom_Application_Site"
         if url_list:
             payload["url-list"] = url_list

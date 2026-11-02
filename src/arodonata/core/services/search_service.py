@@ -383,8 +383,76 @@ class SearchService:
 
         return result
 
+    async def _resolve_implicit_domain_mode(
+        self,
+        mgmt_name: str,
+        eff_domain: str | None,
+        cache_mode: CacheMode,
+    ) -> tuple[str | None, CacheMode]:
+        """Resolve `(single_domain_or_none, effective_cache_mode)` when `domain` is omitted (`R2`).
+
+        On a single-domain server (SMC), preserves the caller's `cache_mode` and targets the
+        single domain for refresh; on a multi-domain MDS (`> 1` non-global domains), forces
+        `cache_mode="cache"` for cross-domain fan-out.
+        """
+        if eff_domain is not None:
+            return eff_domain, cache_mode
+        if cache_mode == "cache":
+            return None, "cache"
+
+        cached_domains = await self._cache.get_domains(mgmt_name, include_global=True)
+        if not cached_domains:
+            cached_objs = await self._cache.get_objects(mgmt_name=mgmt_name)
+            seeded_non_global = {o.domain_name for o in cached_objs if o.domain_name and o.domain_name != "Global"}
+            if len(seeded_non_global) > 1:
+                return None, "cache"
+            coord = getattr(self._object_service, "_coordinator", None)
+            dom_svc = getattr(coord, "_domain_service", None) if coord is not None else None
+            if dom_svc is not None:
+                try:
+                    cached_domains = await dom_svc.get_domains(
+                        mgmt_name=mgmt_name,
+                        include_global=True,
+                        cache_mode="smart",
+                    )
+                except Exception:
+                    cached_domains = await self._cache.get_domains(mgmt_name, include_global=True)
+
+        non_global = [d.name for d in cached_domains if not d.is_global and d.name != "Global"]
+        if len(non_global) > 1:
+            return None, "cache"
+        if len(non_global) == 1:
+            return non_global[0], cache_mode
+        return "default", cache_mode
+
+    @staticmethod
+    def _dedup_entities_by_uid(
+        items: Sequence[CPObject | CPService | Asset],
+    ) -> list[CPObject | CPService | Asset]:
+        """Deduplicate cross-domain entities by `uid` (`R3`), preferring the owning (`original_domain` / `Global`) copy."""
+        by_uid: dict[str, CPObject | CPService | Asset] = {}
+        order: list[str] = []
+        for item in items:
+            uid = item.uid
+            if uid not in by_uid:
+                by_uid[uid] = item
+                order.append(uid)
+            else:
+                existing = by_uid[uid]
+                orig = getattr(item, "original_domain", None) or item.domain_name
+                existing_orig = getattr(existing, "original_domain", None) or existing.domain_name
+                # Prefer the copy stored under its own original_domain (e.g. Global)
+                if (
+                    item.domain_name == orig
+                    and existing.domain_name != existing_orig
+                    or item.domain_name == "Global"
+                    and existing.domain_name != "Global"
+                ):
+                    by_uid[uid] = item
+        return [by_uid[u] for u in order]
+
     @traced
-    async def get_group_members(
+    async def resolve_group_with_members(
         self,
         mgmt_name: str,
         domain: str | None = None,
@@ -394,8 +462,8 @@ class SearchService:
         max_depth: int = 5,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
-    ) -> list[CPObject | CPService | Asset]:
-        """Return direct (and optionally recursive) member `CPObject`, `CPService`, or child `Asset` items for a group, service-group, cluster, or VSX container in `(mgmt_name, domain)` (or across all domains when `domain` is `None`)."""
+    ) -> tuple[CPObject | CPService | Asset | None, list[CPObject | CPService | Asset]]:
+        """Resolve `(target_group_entity, members)` for `group_name_or_uid` in `(mgmt_name, domain)` (`R2`, `R3`, `R7`)."""
         clean_target = group_name_or_uid.strip() if group_name_or_uid else ""
         if not clean_target:
             raise ValidationError("group_name_or_uid must not be empty or whitespace")
@@ -406,14 +474,23 @@ class SearchService:
             if len(parts) == 3 and parts[1].strip() and parts[2].strip():
                 eff_domain = parts[1].strip()
 
-        eff_cache_mode: CacheMode = "cache" if eff_domain is None else cache_mode
+        sync_domain, eff_cache_mode = await self._resolve_implicit_domain_mode(mgmt_name, eff_domain, cache_mode)
         eff_include_global = True if eff_domain is None else (eff_domain == "Global")
+
+        if eff_domain is None and eff_cache_mode != "cache" and sync_domain is not None:
+            await self._object_service.refresh_objects(
+                mgmt_name=mgmt_name,
+                domains=[sync_domain],
+                include_global=False,
+                mode=eff_cache_mode,
+                cache_ttl=cache_ttl,
+            )
 
         all_objs = await self._object_service.get_objects(
             mgmt_name=mgmt_name,
             domain=eff_domain,
             include_global=eff_include_global,
-            cache_mode=eff_cache_mode,
+            cache_mode="cache" if eff_domain is None else eff_cache_mode,
             cache_ttl=cache_ttl,
         )
         target_group: CPObject | None = None
@@ -428,14 +505,15 @@ class SearchService:
         if not group_candidates:
             group_candidates = [o for o in all_objs if clean_target in (o.name, o.object_id, o.id)]
         if group_candidates:
-            distinct_domains = {o.domain_name for o in group_candidates}
+            deduped_groups = [c for c in self._dedup_entities_by_uid(group_candidates) if isinstance(c, CPObject)]
+            distinct_domains = {(o.original_domain or o.domain_name) for o in deduped_groups}
             if eff_domain is None and len(distinct_domains) > 1:
                 raise AmbiguousObjectError(
                     mgmt_name,
                     clean_target,
-                    [o.model_dump(mode="json") for o in group_candidates],
+                    [o.model_dump(mode="json") for o in deduped_groups],
                 )
-            target_group = group_candidates[0]
+            target_group = deduped_groups[0]
 
         if target_group is not None:
             group_domain = target_group.domain_name
@@ -461,15 +539,23 @@ class SearchService:
                         if child_uid not in seen_uids:
                             queue.append((child_uid, depth + 1))
 
-            return members
+            return target_group, members
 
         # 2. Check arodonata_services for a matching service-group
         if self._service_cache is not None:
+            if eff_domain is None and eff_cache_mode != "cache" and sync_domain is not None:
+                await self._service_cache.refresh_services(
+                    mgmt_name=mgmt_name,
+                    domains=[sync_domain],
+                    include_global=False,
+                    mode=eff_cache_mode,
+                    cache_ttl=cache_ttl,
+                )
             all_svcs = await self._service_cache.get_services(
                 mgmt_name=mgmt_name,
                 domain=eff_domain,
                 include_global=eff_include_global,
-                cache_mode=eff_cache_mode,
+                cache_mode="cache" if eff_domain is None else eff_cache_mode,
                 cache_ttl=cache_ttl,
             )
         else:
@@ -487,14 +573,15 @@ class SearchService:
         if not svc_candidates:
             svc_candidates = [s for s in all_svcs if clean_target in (s.name, s.service_id, s.id)]
         if svc_candidates:
-            distinct_svc_domains = {s.domain_name for s in svc_candidates}
+            deduped_svcs = [c for c in self._dedup_entities_by_uid(svc_candidates) if isinstance(c, CPService)]
+            distinct_svc_domains = {(s.original_domain or s.domain_name) for s in deduped_svcs}
             if eff_domain is None and len(distinct_svc_domains) > 1:
                 raise AmbiguousObjectError(
                     mgmt_name,
                     clean_target,
-                    [s.model_dump(mode="json") for s in svc_candidates],
+                    [s.model_dump(mode="json") for s in deduped_svcs],
                 )
-            target_svc_group = svc_candidates[0]
+            target_svc_group = deduped_svcs[0]
 
         if target_svc_group is not None:
             svc_domain = target_svc_group.domain_name
@@ -520,15 +607,23 @@ class SearchService:
                         if child_uid not in seen_svc_uids:
                             svc_queue.append((child_uid, depth + 1))
 
-            return svc_members
+            return target_svc_group, svc_members
 
         # 3. Check arodonata_assets for a matching cluster or VSX container
         if self._asset_service is not None:
+            if eff_domain is None and eff_cache_mode != "cache" and sync_domain is not None:
+                await self._asset_service.refresh_assets(
+                    mgmt_name=mgmt_name,
+                    domains=[sync_domain],
+                    include_global=False,
+                    mode=eff_cache_mode,
+                    cache_ttl=cache_ttl,
+                )
             all_assets = await self._asset_service.get_assets(
                 mgmt_name=mgmt_name,
                 domain=eff_domain,
                 include_global=eff_include_global,
-                cache_mode=eff_cache_mode,
+                cache_mode="cache" if eff_domain is None else eff_cache_mode,
                 cache_ttl=cache_ttl,
             )
         else:
@@ -552,14 +647,15 @@ class SearchService:
             ]
         target_asset: Asset | None = None
         if asset_candidates:
-            distinct_asset_domains = {a.domain_name for a in asset_candidates}
+            deduped_assets = [c for c in self._dedup_entities_by_uid(asset_candidates) if isinstance(c, Asset)]
+            distinct_asset_domains = {a.domain_name for a in deduped_assets}
             if eff_domain is None and len(distinct_asset_domains) > 1:
                 raise AmbiguousObjectError(
                     mgmt_name,
                     clean_target,
-                    [a.model_dump(mode="json") for a in asset_candidates],
+                    [a.model_dump(mode="json") for a in deduped_assets],
                 )
-            target_asset = asset_candidates[0]
+            target_asset = deduped_assets[0]
 
         if target_asset is not None:
             # Also load cross-domain assets on the same mgmt_name if VSX children reside in tenant domains
@@ -595,9 +691,33 @@ class SearchService:
                 child_asset = asset_by_uid.get(cuid)
                 if child_asset is not None:
                     asset_members.append(child_asset)
-            return asset_members
+            return target_asset, asset_members
 
-        return []
+        return None, []
+
+    @traced
+    async def get_group_members(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        group_name_or_uid: str = "",
+        *,
+        recursive: bool = True,
+        max_depth: int = 5,
+        cache_mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> list[CPObject | CPService | Asset]:
+        """Return direct (and optionally recursive) member `CPObject`, `CPService`, or child `Asset` items for a group, service-group, cluster, or VSX container in `(mgmt_name, domain)` (or across all domains when `domain` is `None`)."""
+        _, members = await self.resolve_group_with_members(
+            mgmt_name,
+            domain,
+            group_name_or_uid,
+            recursive=recursive,
+            max_depth=max_depth,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+        return members
 
     @traced
     async def describe_objects(

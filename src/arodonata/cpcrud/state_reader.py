@@ -81,9 +81,6 @@ TYPE_TO_SHOW_PLURAL_CMD: dict[str, str] = {
     "service-group": "show-service-groups",
 }
 
-_TYPE_TO_SHOW_SINGLE = TYPE_TO_SHOW_SINGLE_CMD
-_TYPE_TO_SHOW_PLURAL = TYPE_TO_SHOW_PLURAL_CMD
-
 
 class StateLookupError(ArodonataError):
     """Raised when a cache or live API state lookup fails during planning."""
@@ -946,8 +943,6 @@ __all__ = [
     "StateLookupError",
     "TYPE_TO_SHOW_PLURAL_CMD",
     "TYPE_TO_SHOW_SINGLE_CMD",
-    "_TYPE_TO_SHOW_PLURAL",
-    "_TYPE_TO_SHOW_SINGLE",
     "is_not_found_error",
     "normalize_mask_length",
 ]

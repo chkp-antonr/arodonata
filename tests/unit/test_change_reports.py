@@ -2272,3 +2272,119 @@ async def test_review_fixes_multi_layer_sort_system_delete_track_uid_composite_d
         assert '<span class="diff-highlight">Contains literal diff-added token</span>' in html_str
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_placement_skips_refresh_on_empty_or_system_data_domain_and_avoids_double_live_fetch() -> None:
+    """Verify R6:
+    1. When `session_report.domain_name` is empty (`""`) or `"System Data"`, `apply_session_rule_placement`
+       does not invoke `refresh_rulebase_fn` (preventing an accidental `domains=None` all-domain refresh).
+    2. When `refresh_rulebase_fn` runs for a regular domain and the domain still has 0 rules,
+       `collect_domain_rulebase_snapshot` is not called a second time.
+    """
+    from arodonata.reports.models import RuleChangeEntry, SessionChangeReport
+    from arodonata.reports.placement import apply_session_rule_placement
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = FakeReportsApi()
+
+    try:
+        refresh_calls: list[tuple[str, str]] = []
+
+        async def _track_refresh(m_name: str, d_name: str) -> None:
+            refresh_calls.append((m_name, d_name))
+
+        # 1. "System Data" domain never calls refresh_rulebase_fn or show-packages
+        sys_report = SessionChangeReport(
+            mgmt_name="mds1",
+            domain_name="System Data",
+            session_uid="s-sysdata",
+            session_name="System Session",
+            user_name="admin",
+            state="published",
+            rule_changes=[
+                RuleChangeEntry(
+                    uid="r-sys-1",
+                    name="SysRule",
+                    rulebase_type="access",
+                    operation="added",
+                    layer_uid="l-1",
+                    layer_name="Network",
+                )
+            ],
+        )
+        api.calls.clear()
+        await apply_session_rule_placement(
+            sys_report,
+            api=api,
+            cache=cache,
+            warnings=[],
+            refresh_rulebase_fn=_track_refresh,
+        )
+        assert refresh_calls == []
+        assert api.calls == []
+        assert sys_report.numbering_source == "unnumbered"
+
+        # 2. Empty domain_name ("") never calls refresh_rulebase_fn
+        empty_dom_report = SessionChangeReport(
+            mgmt_name="mds1",
+            domain_name="",
+            session_uid="s-empty-dom",
+            session_name="Empty Dom Session",
+            user_name="admin",
+            state="published",
+            rule_changes=[
+                RuleChangeEntry(
+                    uid="r-emp-1",
+                    name="EmpRule",
+                    rulebase_type="access",
+                    operation="added",
+                    layer_uid="l-1",
+                    layer_name="Network",
+                )
+            ],
+        )
+        await apply_session_rule_placement(
+            empty_dom_report,
+            api=api,
+            cache=cache,
+            warnings=[],
+            refresh_rulebase_fn=_track_refresh,
+        )
+        assert refresh_calls == []
+
+        # 3. Regular domain ("EmptyDomain") where refresh_rulebase_fn runs and finds 0 rules
+        # does NOT trigger a redundant second live `collect_domain_rulebase_snapshot` (show-packages) call
+        api.calls.clear()
+        empty_cma_report = SessionChangeReport(
+            mgmt_name="mds1",
+            domain_name="EmptyDomain",
+            session_uid="s-empty-cma",
+            session_name="Empty CMA Session",
+            user_name="admin",
+            state="published",
+            rule_changes=[
+                RuleChangeEntry(
+                    uid="r-cma-1",
+                    name="CmaRule",
+                    rulebase_type="access",
+                    operation="deleted",
+                    layer_uid="l-1",
+                    layer_name="Network",
+                )
+            ],
+        )
+        await apply_session_rule_placement(
+            empty_cma_report,
+            api=api,
+            cache=cache,
+            warnings=[],
+            refresh_rulebase_fn=_track_refresh,
+        )
+        assert refresh_calls == [("mds1", "EmptyDomain")]
+        assert api.calls == []
+        assert empty_cma_report.numbering_source == "unnumbered"
+    finally:
+        await db.close()
