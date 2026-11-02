@@ -1888,6 +1888,8 @@ class ArodonataClient:
         timeout: float | None = None,
         auth: AuthContext | None = None,
         force_disconnect: bool = False,
+        expected_session_name: str | None = None,
+        allow_foreign: bool = False,
     ) -> ApiCallResult:
         """Adopt `session_uid`, publish it, log out, and invalidate the domain cache."""
         return await self._cpcrud.publish_staged_session(
@@ -1899,6 +1901,8 @@ class ArodonataClient:
             timeout=timeout,
             auth=auth,
             force_disconnect=force_disconnect,
+            expected_session_name=expected_session_name,
+            allow_foreign=allow_foreign,
         )
 
     async def stream_publish_staged_session(
@@ -1912,6 +1916,8 @@ class ArodonataClient:
         timeout: float | None = None,
         auth: AuthContext | None = None,
         force_disconnect: bool = False,
+        expected_session_name: str | None = None,
+        allow_foreign: bool = False,
     ) -> AsyncIterator[CPCRUDEvent]:
         """Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate the domain cache."""
         async for ev in self._cpcrud.stream_publish_staged_session(
@@ -1923,6 +1929,8 @@ class ArodonataClient:
             timeout=timeout,
             auth=auth,
             force_disconnect=force_disconnect,
+            expected_session_name=expected_session_name,
+            allow_foreign=allow_foreign,
         ):
             yield ev
 
@@ -1937,6 +1945,8 @@ class ArodonataClient:
         server_ip: str | None = None,
         auth: AuthContext | None = None,
         force_disconnect: bool = False,
+        expected_session_name: str | None = None,
+        allow_foreign: bool = False,
     ) -> ApiCallResult:
         """Adopt `session_uid`, discard uncommitted changes, and log out."""
         return await self._cpcrud.discard_staged_session(
@@ -1947,6 +1957,8 @@ class ArodonataClient:
             server_ip=server_ip,
             auth=auth,
             force_disconnect=force_disconnect,
+            expected_session_name=expected_session_name,
+            allow_foreign=allow_foreign,
         )
 
     # ------------------------------------------------------------------
