@@ -3,6 +3,17 @@
 __version__ = "2.2.0"
 
 from arodonata.adapters.checkpoint import AMgmtClient
+from arodonata.api_reference import (
+    DEFAULT_API_VERSION,
+    ApiPayloadValidationResult,
+    ApiReferenceEngine,
+    ApiValidationIssue,
+    describe_api_command,
+    get_api_reference,
+    normalize_api_version,
+    search_api_commands,
+    validate_api_payload,
+)
 from arodonata.client import ArodonataClient
 from arodonata.core.config import ArodonataSettings, AuthMode, ServerEndpointConfig, TlsTrustMode
 from arodonata.core.context import (
@@ -141,7 +152,10 @@ __all__ = [
     "ActionResult",
     "AmbiguousLayerName",
     "AmbiguousObjectError",
+    "ApiPayloadValidationResult",
+    "ApiReferenceEngine",
     "ApiTimeoutError",
+    "ApiValidationIssue",
     "ApplyReport",
     "ArodonataASGIApp",
     "ArodonataClient",
@@ -165,6 +179,7 @@ __all__ = [
     "ClusterRelationshipManager",
     "ConfigurationError",
     "ConflictPolicy",
+    "DEFAULT_API_VERSION",
     "DirtySessionError",
     "DomainInfo",
     "DomainListRefreshTracker",
@@ -247,15 +262,20 @@ __all__ = [
     "collect_change_report",
     "create_asgi_app",
     "create_mcp_server",
+    "describe_api_command",
     "fetch_paged_rulebase",
+    "get_api_reference",
     "get_auth_context",
     "get_user_context",
     "get_write_session",
+    "normalize_api_version",
     "render_change_report",
     "rule_to_cpcrud_operation",
+    "search_api_commands",
     "to_naive_utc",
     "user_context",
     "utc_now",
+    "validate_api_payload",
     "validate_template",
     "write_session_context",
 ]

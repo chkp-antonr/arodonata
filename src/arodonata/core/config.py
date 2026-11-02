@@ -75,9 +75,15 @@ class ServerEndpointConfig(BaseModel):
     host: str
     port: int = 443
     api_key: str | None = Field(default=None, repr=False)
+    api_version: str | None = Field(default=None)
 
     def __repr__(self) -> str:
         key_state = REDACTED_PLACEHOLDER if self.api_key else None
+        if self.api_version is not None:
+            return (
+                f"ServerEndpointConfig(name={self.name!r}, host={self.host!r}, port={self.port!r}, "
+                f"api_key={key_state!r}, api_version={self.api_version!r})"
+            )
         return (
             f"ServerEndpointConfig(name={self.name!r}, host={self.host!r}, port={self.port!r}, api_key={key_state!r})"
         )
@@ -113,6 +119,10 @@ class ArodonataSettings(BaseSettings):
         default_factory=list,
         validation_alias=AliasChoices("ARODONATA_API_KEY_VARS", "API_KEY_VARS"),
     )
+    api_versions: CsvStrList = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("ARODONATA_API_VERSIONS", "MGMT_API_VERSIONS"),
+    )
 
     # Single-server convenience fields
     mgmt_name: str | None = Field(
@@ -126,6 +136,10 @@ class ArodonataSettings(BaseSettings):
     mgmt_port: int = Field(
         default=443,
         validation_alias=AliasChoices("ARODONATA_MGMT_PORT", "MGMT_PORT"),
+    )
+    api_version: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ARODONATA_API_VERSION", "MGMT_API_VERSION"),
     )
     api_key: str | None = Field(
         default=None,
@@ -274,7 +288,7 @@ class ArodonataSettings(BaseSettings):
             remapped[key] = value
         super().__init__(**remapped)
 
-    @field_validator("mgmt_names", "mgmt_servers", "api_keys", "api_key_vars", mode="before")
+    @field_validator("mgmt_names", "mgmt_servers", "api_keys", "api_key_vars", "api_versions", mode="before")
     @classmethod
     def _parse_csv_list(cls, value: Any) -> list[str]:
         return _split_csv(value)
@@ -374,7 +388,8 @@ class ArodonataSettings(BaseSettings):
         for idx, (name, raw_server) in enumerate(zip(self.mgmt_names, self.mgmt_servers)):
             host, port = _parse_host_port(raw_server, default_port=self.mgmt_port)
             key = self.api_keys[idx] if idx < len(self.api_keys) else None
-            registry[name] = ServerEndpointConfig(name=name, host=host, port=port, api_key=key)
+            ver = self.api_versions[idx] if idx < len(self.api_versions) else self.api_version
+            registry[name] = ServerEndpointConfig(name=name, host=host, port=port, api_key=key, api_version=ver)
         return registry
 
     @property
