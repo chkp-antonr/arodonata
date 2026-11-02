@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Replaced the user-facing `system_objects_filtered` `ReportWarning` in `collect_change_report()` with a structured `DEBUG`-level log entry via `arlogi` (`src/arodonata/reports/collector.py`, `openspec/specs/change-reports/spec.md`) so routine filtering of background Check Point `"System"` maintenance objects does not clutter rendered HTML/Markdown evidence reports.
 
+### Fixed
+
+- CPCRUD staged-session cross-process adoption provenance and detached `arodonata-cpcrud-adopt` helper session cleanup (`arodonata.cpcrud.executor`, `arodonata.cpcrud.service`, `arodonata.client`): `Executor._adopt_staged_session()` now inspects `show-session {}` on the fresh helper session before takeover to obtain both `initial_uid` and the authenticated administrator's `user-name`, permits adopting custom-named `WEB_API` staged sessions (such as MMP `[ant]-MMP_Rules-...`) owned by the same administrator after a process restart or across workers/CLI while still refusing human `SmartConsole` GUI sessions and other administrators' sessions by default, accepts optional `expected_session_name: str | None = None` (`403 session_name_mismatch` on mismatch) and `allow_foreign: bool = False` across `publish_staged_session()`, `stream_publish_staged_session()`, and `discard_staged_session()`, and immediately calls `discard {"uid": initial_uid}` after `take-over-session` / `switch-session` so no empty `arodonata-cpcrud-adopt` helper session remains open on Check Point.
+
 ## v2.2.0 (2026-10-31)
 
 ### Feat

@@ -1027,6 +1027,8 @@ class Executor:
         server_ip: str | None = None,
         auth: AuthContext | None = None,
         force_disconnect: bool = False,
+        expected_session_name: str | None = None,
+        allow_foreign: bool = False,
     ) -> tuple[str | None, str | None, ApiCallResult]:
         """Adopt ownership of `session_uid` via direct SID reuse or verified `take-over-session` (with fallback to `switch-session`)."""
         resolved_auth = auth or get_auth_context()
@@ -1035,6 +1037,9 @@ class Executor:
 
         candidate_sid = sid or (staged_entry.sid if staged_entry is not None else None)
         candidate_ip = server_ip or (staged_entry.server_ip if staged_entry is not None else None)
+        expected_name_clean = (
+            expected_session_name.strip().lower() if expected_session_name and expected_session_name.strip() else None
+        )
 
         # 1. If we already have the active SID for session_uid, verify via `show-session {}` and reuse directly
         if candidate_sid:
@@ -1063,6 +1068,26 @@ class Executor:
                                     error_message=f"Staged session {session_uid} is already {s_state or 'published'}.",
                                 ),
                             )
+                        if expected_name_clean is not None and not allow_foreign:
+                            v_name = (
+                                str(verify_res.data.get("name") or verify_res.data.get("session-name") or "")
+                                .strip()
+                                .lower()
+                            )
+                            if v_name != expected_name_clean:
+                                return (
+                                    None,
+                                    None,
+                                    ApiCallResult(
+                                        success=False,
+                                        status_code=403,
+                                        error_code="foreign_session_refused",
+                                        error_message=(
+                                            f"Refusing to adopt session {session_uid}: session name {v_name!r} "
+                                            f"does not match expected_session_name {expected_name_clean!r}."
+                                        ),
+                                    ),
+                                )
                         return candidate_sid, candidate_ip, verify_res
             except ServerIdentityError:
                 raise
@@ -1093,6 +1118,35 @@ class Executor:
             )
 
         known_sids = [s for s in (candidate_sid, fresh_sid) if s]
+
+        # 2b. Inspect the helper session's own UID and administrator identity via `show-session {}`
+        #     so we can verify same-creator ownership and discard `initial_uid` after takeover.
+        initial_uid: str | None = None
+        current_user: str = (
+            resolved_auth.username.strip().lower() if resolved_auth is not None and resolved_auth.username else ""
+        )
+        try:
+            self_res = await self._api.api_call(
+                mgmt_name,
+                "show-session",
+                {},
+                domain=domain or None,
+                sid=fresh_sid,
+                server_ip=fresh_ip,
+            )
+            if self_res.success and isinstance(self_res.data, dict):
+                raw_init_uid = str(self_res.data.get("uid") or "").strip()
+                if raw_init_uid:
+                    initial_uid = raw_init_uid
+                raw_self_user = str(self_res.data.get("user-name") or self_res.data.get("user") or "").strip().lower()
+                if raw_self_user:
+                    current_user = raw_self_user
+        except ServerIdentityError:
+            with suppress(Exception):
+                await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+            raise
+        except Exception:
+            pass
 
         # 3. Inspect target session metadata via `show-session {"uid": session_uid}` before takeover
         try:
@@ -1154,9 +1208,12 @@ class Executor:
             )
 
         s_name = str(s_data.get("name") or s_data.get("session-name") or "").strip().lower()
+        s_desc = str(s_data.get("description") or s_data.get("session-description") or "").strip().lower()
         s_app = str(s_data.get("application") or "").strip().lower()
-        is_arodonata_session = staged_entry is not None or s_name.startswith("arodonata") or s_app == "arodonata"
-        if not is_arodonata_session:
+        s_user = str(s_data.get("user-name") or s_data.get("user") or "").strip().lower()
+
+        name_matches_expected = expected_name_clean is not None and s_name == expected_name_clean
+        if expected_name_clean is not None and not name_matches_expected and not allow_foreign:
             with suppress(Exception):
                 await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
             return (
@@ -1167,8 +1224,39 @@ class Executor:
                     status_code=403,
                     error_code="foreign_session_refused",
                     error_message=(
-                        f"Refusing to adopt foreign or non-Arodonata session {session_uid} "
-                        f"(name={s_name!r}, application={s_app!r})."
+                        f"Refusing to adopt session {session_uid}: session name {s_name!r} "
+                        f"does not match expected_session_name {expected_name_clean!r}."
+                    ),
+                ),
+            )
+
+        is_web_api_app = s_app in ("web_api", "arodonata", "")
+        creator_mismatch = bool(current_user and s_user and current_user != s_user)
+        same_creator = bool(current_user and s_user and current_user == s_user)
+        is_arodonata_tagged = (
+            staged_entry is not None or s_name.startswith("arodonata") or s_app == "arodonata" or "arodonata" in s_desc
+        )
+        is_own_web_session = (
+            is_web_api_app
+            and not creator_mismatch
+            and (s_app in ("web_api", "arodonata") or same_creator or is_arodonata_tagged)
+        )
+        is_trusted_session = allow_foreign or (
+            is_web_api_app and (staged_entry is not None or name_matches_expected or is_own_web_session)
+        )
+        if not is_trusted_session:
+            with suppress(Exception):
+                await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+            return (
+                None,
+                None,
+                ApiCallResult(
+                    success=False,
+                    status_code=403,
+                    error_code="foreign_session_refused",
+                    error_message=(
+                        f"Refusing to adopt foreign or non-Web-API session {session_uid} "
+                        f"(name={s_name!r}, application={s_app!r}, user={s_user!r}, current_user={current_user!r})."
                     ),
                 ),
             )
@@ -1237,6 +1325,24 @@ class Executor:
                 take_res.model_copy(update={"error_message": safe_err}),
             )
 
+        # 5. Discard the now-disconnected initial helper session (`arodonata-cpcrud-adopt`) so it does not remain open
+        if initial_uid and initial_uid != session_uid:
+            try:
+                await self._api.api_call(
+                    mgmt_name,
+                    "discard",
+                    {"uid": initial_uid},
+                    domain=domain or None,
+                    sid=fresh_sid,
+                    server_ip=fresh_ip,
+                )
+            except ServerIdentityError:
+                with suppress(Exception):
+                    await self._api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+                raise
+            except Exception:
+                pass
+
         return fresh_sid, fresh_ip, take_res
 
     async def stream_publish_staged_session(
@@ -1250,6 +1356,8 @@ class Executor:
         timeout: float | None = None,
         auth: AuthContext | None = None,
         force_disconnect: bool = False,
+        expected_session_name: str | None = None,
+        allow_foreign: bool = False,
     ) -> AsyncIterator[CPCRUDEvent]:
         """Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate domain cache."""
         dom_label = f"{mgmt_name}:{domain}" if domain else mgmt_name
@@ -1269,6 +1377,8 @@ class Executor:
             server_ip=server_ip,
             auth=auth,
             force_disconnect=force_disconnect,
+            expected_session_name=expected_session_name,
+            allow_foreign=allow_foreign,
         )
         if not take_res.success or active_sid is None:
             err_msg = take_res.error_message or take_res.error_code or "take-over-session failed"
@@ -1380,6 +1490,8 @@ class Executor:
         timeout: float | None = None,
         auth: AuthContext | None = None,
         force_disconnect: bool = False,
+        expected_session_name: str | None = None,
+        allow_foreign: bool = False,
     ) -> ApiCallResult:
         """Adopt `session_uid`, publish it, log out, and invalidate the domain cache."""
         span_attrs(mgmt_name=mgmt_name, domain=domain, session_uid=session_uid)
@@ -1392,6 +1504,8 @@ class Executor:
             timeout=timeout,
             auth=auth,
             force_disconnect=force_disconnect,
+            expected_session_name=expected_session_name,
+            allow_foreign=allow_foreign,
         ):
             pass
         assert self._last_staged_publish_result is not None
@@ -1408,6 +1522,8 @@ class Executor:
         server_ip: str | None = None,
         auth: AuthContext | None = None,
         force_disconnect: bool = False,
+        expected_session_name: str | None = None,
+        allow_foreign: bool = False,
     ) -> ApiCallResult:
         """Adopt `session_uid`, discard all uncommitted changes in the session, and log out."""
         span_attrs(mgmt_name=mgmt_name, domain=domain, session_uid=session_uid)
@@ -1420,6 +1536,8 @@ class Executor:
             server_ip=server_ip,
             auth=auth,
             force_disconnect=force_disconnect,
+            expected_session_name=expected_session_name,
+            allow_foreign=allow_foreign,
         )
         if not take_res.success or active_sid is None:
             return take_res

@@ -33,6 +33,8 @@ class ExecutorFakeApi:
         self.logged_out_sids: list[str] = []
         self.overlay_snapshots: list[list[str]] = []
         self.flaky_command_failures_remaining: dict[str, int] = {}
+        self.adopt_sids: set[str] = set()
+        self.current_user: str = "admin"
 
     async def api_call(
         self,
@@ -63,13 +65,26 @@ class ExecutorFakeApi:
             )
 
         if command == "show-session":
-            target_uid = (payload or {}).get("uid") or "staged-sess-uid-777"
+            req_uid = (payload or {}).get("uid")
+            if not req_uid and sid in self.adopt_sids:
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "uid": "adopt-helper-uid-000",
+                        "name": "arodonata-cpcrud-adopt",
+                        "application": "WEB_API",
+                        "user-name": self.current_user,
+                        "state": "open",
+                    },
+                )
+            target_uid = req_uid or "staged-sess-uid-777"
             return ApiCallResult(
                 success=True,
                 data={
                     "uid": target_uid,
                     "name": "arodonata-cpcrud-staged",
                     "application": "arodonata",
+                    "user-name": self.current_user,
                     "state": "open",
                 },
             )
@@ -104,6 +119,10 @@ class ExecutorFakeApi:
         domain: str | None = None,
         **kwargs: Any,
     ) -> tuple[str, str]:
+        if kwargs.get("session_name") == "arodonata-cpcrud-adopt":
+            self.adopt_sids.add("secret-ws-sid-999")
+        else:
+            self.adopt_sids.discard("secret-ws-sid-999")
         return "secret-ws-sid-999", "10.1.0.1"
 
     async def logout_sid(
@@ -349,7 +368,8 @@ async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_
     assert pub_res.success is True
     assert invalidated == [("mds1", "Corp")]
     show_sids = [c[4] for c in api.calls if c[1] == "show-session"]
-    assert show_sids == ["expired-staged-sid-111", "secret-ws-sid-999"]
+    assert show_sids == ["expired-staged-sid-111", "secret-ws-sid-999", "secret-ws-sid-999"]
+    assert ("mds1", "discard", {"uid": "adopt-helper-uid-000"}, "Corp", "secret-ws-sid-999") in api.calls
     assert "secret-ws-sid-999" in api.logged_out_sids
 
     # 2b. Fallback to switch-session on fresh session when take-over-session is rejected
@@ -365,7 +385,15 @@ async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_
     )
     assert pub_sw_res.success is True
     assert invalidated == [("mds1", "Corp")]
-    assert [c[1] for c in api.calls] == ["show-session", "take-over-session", "switch-session", "publish"]
+    assert [c[1] for c in api.calls] == [
+        "show-session",
+        "show-session",
+        "take-over-session",
+        "switch-session",
+        "discard",
+        "publish",
+    ]
+    assert api.calls[4][2] == {"uid": "adopt-helper-uid-000"}
     assert "secret-ws-sid-999" in api.logged_out_sids
 
     # 2c. Both take-over-session and switch-session fail -> combined error message (I6) and fresh_sid logged out
@@ -393,8 +421,16 @@ async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_
         force_disconnect=True,
     )
     assert disc_res.success is True
-    assert [c[1] for c in api.calls] == ["show-session", "take-over-session", "discard"]
-    assert api.calls[1][2] == {"uid": "staged-sess-uid-999", "disconnect-active-session": True}
+    assert [c[1] for c in api.calls] == [
+        "show-session",
+        "show-session",
+        "take-over-session",
+        "discard",
+        "discard",
+    ]
+    assert api.calls[2][2] == {"uid": "staged-sess-uid-999", "disconnect-active-session": True}
+    assert api.calls[3][2] == {"uid": "adopt-helper-uid-000"}
+    assert api.calls[4][2] == {}
     assert "secret-ws-sid-999" in api.logged_out_sids
 
     # 4. Failure containment and SID redaction when publish task fails
@@ -604,3 +640,128 @@ async def test_executor_cancellation_publish_exception_prepublish_stale_and_none
     rep_retry_drift = await exec_retry_drift.apply(_make_sample_plan(), force=False, retry_remaining=1)
     assert "mds1:Corp" in rep_retry_drift.stale_domains
     assert all(r.outcome == Outcome.PLAN_STALE for r in rep_retry_drift.results)
+
+
+@pytest.mark.asyncio
+async def test_staged_session_mmp_restart_web_api_provenance_and_adopt_helper_cleanup() -> None:
+    """Verify:
+    1. After a process restart / across workers (`_staged_sessions` empty), an MMP staged session
+       with custom `name="[ant]-MMP_Rules-261102-Draft-db5ef1d0"` and `application="WEB_API"`
+       owned by the same Check Point administrator is adopted and published/discarded without
+       false `foreign_session_refused`.
+    2. A Web API session created by a different administrator (`user-name="bob"` vs `current_user="alice"`)
+       is refused by default (`foreign_session_refused`), refused when `expected_session_name` mismatches,
+       and allowed when `expected_session_name` matches or `allow_foreign=True`.
+    3. The temporary `"arodonata-cpcrud-adopt"` session (`initial_uid="adopt-helper-uid-000"`) is discarded
+       via `discard {"uid": "adopt-helper-uid-000"}` right after `take-over-session` / `switch-session`
+       so no orphaned `arodonata-cpcrud-adopt` session remains in `show-sessions`.
+    """
+    api = ExecutorFakeApi()
+    api.current_user = "alice"
+    orig_call = api.api_call
+
+    async def mmp_session_api_call(
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ApiCallResult:
+        if command == "show-session":
+            t_uid = (payload or {}).get("uid")
+            if t_uid == "mmp-own-draft-uid":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "uid": t_uid,
+                        "name": "[ant]-MMP_Rules-261102-Draft-db5ef1d0",
+                        "application": "WEB_API",
+                        "user-name": "alice",
+                        "state": "open",
+                    },
+                )
+            if t_uid == "mmp-other-admin-draft-uid":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "uid": t_uid,
+                        "name": "[bob]-MMP_Rules-261102-Draft-99999999",
+                        "application": "WEB_API",
+                        "user-name": "bob",
+                        "state": "open",
+                    },
+                )
+        return await orig_call(mgmt_name, command, payload, **kwargs)
+
+    api.api_call = mmp_session_api_call  # type: ignore[method-assign]
+    invalidated: list[tuple[str, str | None]] = []
+    # Fresh Executor with empty `_staged_sessions` simulating backend restart / CLI worker
+    executor = Executor(api=api, on_domain_invalidated=lambda m, d: invalidated.append((m, d)))
+    assert len(executor._staged_sessions) == 0
+
+    # 1. Own MMP `WEB_API` session after restart succeeds without extra args and discards `adopt-helper-uid-000`
+    pub_own = await executor.publish_staged_session("mds1", "Corp", session_uid="mmp-own-draft-uid")
+    assert pub_own.success is True
+    assert invalidated == [("mds1", "Corp")]
+    assert ("mds1", "take-over-session", {"uid": "mmp-own-draft-uid"}, "Corp", "secret-ws-sid-999") in api.calls
+    assert ("mds1", "discard", {"uid": "adopt-helper-uid-000"}, "Corp", "secret-ws-sid-999") in api.calls
+    assert ("mds1", "publish", {}, "Corp", "secret-ws-sid-999") in api.calls
+    assert "secret-ws-sid-999" in api.logged_out_sids
+
+    # 1b. Own MMP `WEB_API` session discard after restart also discards both `adopt-helper-uid-000` and the target session
+    api.calls.clear()
+    api.logged_out_sids.clear()
+    disc_own = await executor.discard_staged_session("mds1", "Corp", session_uid="mmp-own-draft-uid")
+    assert disc_own.success is True
+    discard_payloads = [c[2] for c in api.calls if c[1] == "discard"]
+    assert discard_payloads == [{"uid": "adopt-helper-uid-000"}, {}]
+    assert "secret-ws-sid-999" in api.logged_out_sids
+
+    # 2. Other administrator's `WEB_API` session (`user-name="bob"` vs `current_user="alice"`) refused by default
+    api.calls.clear()
+    api.logged_out_sids.clear()
+    foreign_admin_res = await executor.publish_staged_session(
+        "mds1",
+        "Corp",
+        session_uid="mmp-other-admin-draft-uid",
+    )
+    assert foreign_admin_res.success is False
+    assert foreign_admin_res.error_code == "foreign_session_refused"
+    assert not any(c[1] in ("take-over-session", "switch-session", "publish") for c in api.calls)
+    assert "secret-ws-sid-999" in api.logged_out_sids
+
+    # 3. Mismatched `expected_session_name` refused even on own session
+    api.calls.clear()
+    api.logged_out_sids.clear()
+    mismatch_name_res = await executor.publish_staged_session(
+        "mds1",
+        "Corp",
+        session_uid="mmp-own-draft-uid",
+        expected_session_name="[wrong]-MMP_Rules-Other",
+    )
+    assert mismatch_name_res.success is False
+    assert mismatch_name_res.error_code == "foreign_session_refused"
+    assert not any(c[1] in ("take-over-session", "switch-session", "publish") for c in api.calls)
+
+    # 4. Matching `expected_session_name` allows adopting another admin's staged MMP session
+    api.calls.clear()
+    api.logged_out_sids.clear()
+    expected_name_ok = await executor.publish_staged_session(
+        "mds1",
+        "Corp",
+        session_uid="mmp-other-admin-draft-uid",
+        expected_session_name="[bob]-MMP_Rules-261102-Draft-99999999",
+    )
+    assert expected_name_ok.success is True
+    assert ("mds1", "discard", {"uid": "adopt-helper-uid-000"}, "Corp", "secret-ws-sid-999") in api.calls
+
+    # 5. Explicit `allow_foreign=True` allows discarding another admin's session
+    api.calls.clear()
+    api.logged_out_sids.clear()
+    allow_foreign_ok = await executor.discard_staged_session(
+        "mds1",
+        "Corp",
+        session_uid="mmp-other-admin-draft-uid",
+        allow_foreign=True,
+    )
+    assert allow_foreign_ok.success is True
+    assert [c[2] for c in api.calls if c[1] == "discard"] == [{"uid": "adopt-helper-uid-000"}, {}]

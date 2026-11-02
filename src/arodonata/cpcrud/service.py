@@ -215,6 +215,8 @@ class CPCRUDService:
         timeout: float | None = None,
         auth: AuthContext | None = None,
         force_disconnect: bool = False,
+        expected_session_name: str | None = None,
+        allow_foreign: bool = False,
     ) -> ApiCallResult:
         """Adopt `session_uid`, publish it, log out, and invalidate the domain cache."""
         if self._ensure_initialized is not None:
@@ -231,6 +233,8 @@ class CPCRUDService:
             timeout=timeout,
             auth=auth,
             force_disconnect=force_disconnect,
+            expected_session_name=expected_session_name,
+            allow_foreign=allow_foreign,
         )
 
     async def stream_publish_staged_session(
@@ -244,6 +248,8 @@ class CPCRUDService:
         timeout: float | None = None,
         auth: AuthContext | None = None,
         force_disconnect: bool = False,
+        expected_session_name: str | None = None,
+        allow_foreign: bool = False,
     ) -> AsyncIterator[CPCRUDEvent]:
         """Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate the domain cache."""
         if self._ensure_initialized is not None:
@@ -260,6 +266,8 @@ class CPCRUDService:
             timeout=timeout,
             auth=auth,
             force_disconnect=force_disconnect,
+            expected_session_name=expected_session_name,
+            allow_foreign=allow_foreign,
         ):
             yield ev
 
@@ -274,6 +282,8 @@ class CPCRUDService:
         server_ip: str | None = None,
         auth: AuthContext | None = None,
         force_disconnect: bool = False,
+        expected_session_name: str | None = None,
+        allow_foreign: bool = False,
     ) -> ApiCallResult:
         """Adopt `session_uid`, discard uncommitted changes, and log out."""
         if self._ensure_initialized is not None:
@@ -289,6 +299,8 @@ class CPCRUDService:
             server_ip=server_ip,
             auth=auth,
             force_disconnect=force_disconnect,
+            expected_session_name=expected_session_name,
+            allow_foreign=allow_foreign,
         )
 
 
