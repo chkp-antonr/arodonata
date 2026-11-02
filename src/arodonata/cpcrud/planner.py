@@ -234,6 +234,22 @@ def _build_prior_object_state(obj: CPObject) -> dict[str, Any]:
             state["members"] = names if names else list(obj.members)
         else:
             state["members"] = list(obj.members)
+    elif obj.type == "application-site":
+        if obj.primary_category:
+            state["primary-category"] = obj.primary_category
+        if obj.url_list:
+            state["url-list"] = list(obj.url_list)
+        if obj.urls_defined_as_regular_expression is not None:
+            state["urls-defined-as-regular-expression"] = obj.urls_defined_as_regular_expression
+        if obj.description:
+            state["description"] = obj.description
+        if isinstance(obj.raw_data, dict):
+            raw_sig = obj.raw_data.get("application-signature") or obj.raw_data.get("application_signature")
+            if isinstance(raw_sig, str) and raw_sig.strip():
+                state["application-signature"] = raw_sig.strip()
+            raw_add_cats = obj.raw_data.get("additional-categories") or obj.raw_data.get("additional_categories")
+            if isinstance(raw_add_cats, list) and raw_add_cats:
+                state["additional-categories"] = [str(c) for c in raw_add_cats if str(c)]
     if obj.nat_settings:
         state["nat-settings"] = dict(obj.nat_settings)
     if isinstance(obj.raw_data, dict):
@@ -527,6 +543,9 @@ class Planner:
         for svc in target.get("services") or []:
             if isinstance(svc, dict):
                 s_type = str(svc.get("type") or "service-tcp").strip().lower()
+                if s_type == "application-site":
+                    steps.append(("object", dict(svc)))
+                    continue
                 if s_type not in SERVICE_ITEM_TYPES:
                     raise ValidationError(f"Unsupported CPCRUD service type: {s_type!r}")
                 if s_type == "service-group":
@@ -898,6 +917,12 @@ class Planner:
                         "mask_length4": update_payload.get("mask-length4", existing.mask_length4),
                         "ipv4_address_first": update_payload.get("ipv4-address-first", existing.ipv4_address_first),
                         "ipv4_address_last": update_payload.get("ipv4-address-last", existing.ipv4_address_last),
+                        "primary_category": update_payload.get("primary-category", existing.primary_category),
+                        "url_list": update_payload.get("url-list", existing.url_list),
+                        "urls_defined_as_regular_expression": update_payload.get(
+                            "urls-defined-as-regular-expression", existing.urls_defined_as_regular_expression
+                        ),
+                        "description": update_payload.get("description", existing.description),
                         "comments": update_payload.get("comments", existing.comments),
                         "color": update_payload.get("color", existing.color),
                         "tags": update_payload.get("tags", existing.tags),
@@ -1888,6 +1913,34 @@ def _build_add_object_payload(
     elif obj_type == "dns-domain":
         is_sub = spec.get("is_sub_domain") if "is_sub_domain" in spec else spec.get("is-sub-domain")
         payload["is-sub-domain"] = bool(is_sub) if is_sub is not None else False
+    elif obj_type == "application-site":
+        raw_urls = spec.get("url-list") if "url-list" in spec else spec.get("url_list")
+        url_list = [str(u).strip() for u in raw_urls if str(u).strip()] if isinstance(raw_urls, list) else []
+        raw_cat = spec.get("primary-category") or spec.get("primary_category")
+        if isinstance(raw_cat, str) and raw_cat.strip():
+            payload["primary-category"] = raw_cat.strip()
+        elif url_list:
+            payload["primary-category"] = "Custom_Application_Site"
+        if url_list:
+            payload["url-list"] = url_list
+        if "urls-defined-as-regular-expression" in spec or "urls_defined_as_regular_expression" in spec:
+            raw_regex = (
+                spec.get("urls-defined-as-regular-expression")
+                if "urls-defined-as-regular-expression" in spec
+                else spec.get("urls_defined_as_regular_expression")
+            )
+            if raw_regex is not None:
+                payload["urls-defined-as-regular-expression"] = bool(raw_regex)
+        if "description" in spec and spec["description"] is not None:
+            payload["description"] = str(spec["description"])
+        raw_sig = spec.get("application-signature") or spec.get("application_signature")
+        if isinstance(raw_sig, str) and raw_sig.strip():
+            payload["application-signature"] = raw_sig.strip()
+        raw_add_cats = (
+            spec.get("additional-categories") if "additional-categories" in spec else spec.get("additional_categories")
+        )
+        if isinstance(raw_add_cats, list):
+            payload["additional-categories"] = [str(c).strip() for c in raw_add_cats if str(c).strip()]
 
     if "comments" in spec and spec["comments"] is not None:
         payload["comments"] = str(spec["comments"])

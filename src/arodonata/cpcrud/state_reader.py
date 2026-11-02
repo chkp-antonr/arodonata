@@ -36,6 +36,7 @@ OBJECT_ITEM_TYPES: frozenset[str] = frozenset(
         "address-range",
         "dns-domain",
         "group",
+        "application-site",
     }
 )
 
@@ -56,6 +57,7 @@ TYPE_TO_SHOW_SINGLE_CMD: dict[str, str] = {
     "address-range": "show-address-range",
     "dns-domain": "show-dns-domain",
     "group": "show-group",
+    "application-site": "show-application-site",
     "service-tcp": "show-service-tcp",
     "service-udp": "show-service-udp",
     "service-icmp": "show-service-icmp",
@@ -70,6 +72,7 @@ TYPE_TO_SHOW_PLURAL_CMD: dict[str, str] = {
     "address-range": "show-address-ranges",
     "dns-domain": "show-dns-domains",
     "group": "show-groups",
+    "application-site": "show-application-sites",
     "service-tcp": "show-services-tcp",
     "service-udp": "show-services-udp",
     "service-icmp": "show-services-icmp",
@@ -77,6 +80,9 @@ TYPE_TO_SHOW_PLURAL_CMD: dict[str, str] = {
     "service-other": "show-services-other",
     "service-group": "show-service-groups",
 }
+
+_TYPE_TO_SHOW_SINGLE = TYPE_TO_SHOW_SINGLE_CMD
+_TYPE_TO_SHOW_PLURAL = TYPE_TO_SHOW_PLURAL_CMD
 
 
 class StateLookupError(ArodonataError):
@@ -563,6 +569,57 @@ class HybridStateReader:
                 matches.append(r)
         return matches
 
+    async def find_application_site_by_url_list(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        url_list: list[str],
+        urls_defined_as_regular_expression: bool = False,
+    ) -> list[CPObject]:
+        """Find all existing `application-site` objects matching normalized `url_list` and regex flag."""
+        target_urls = {str(u).strip() for u in url_list if str(u).strip()}
+        if not target_urls:
+            return []
+        target_regex = bool(urls_defined_as_regular_expression)
+        sites = await self.list_objects_of_type(mgmt_name, domain_name, "application-site")
+        matches: list[CPObject] = []
+        for site in sites:
+            site_urls = {str(u).strip() for u in site.url_list if str(u).strip()}
+            site_regex = bool(site.urls_defined_as_regular_expression)
+            if site_urls == target_urls and site_regex == target_regex:
+                matches.append(site)
+        return matches
+
+    async def find_objects_by_value(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        obj_type: str,
+        ip_address: str | None = None,
+        subnet4: str | None = None,
+        mask_length4: int | None = None,
+        first_ip: str | None = None,
+        last_ip: str | None = None,
+        url_list: list[str] | None = None,
+        urls_defined_as_regular_expression: bool = False,
+    ) -> list[CPObject]:
+        """Find existing objects matching type-specific values (`host`, `network`, `address-range`, `application-site`)."""
+        if obj_type == "host" and ip_address:
+            return await self.find_host_by_ip(mgmt_name, domain_name, ip_address)
+        if obj_type == "network" and subnet4 and mask_length4 is not None:
+            return await self.find_network_by_subnet(mgmt_name, domain_name, subnet4, mask_length4)
+        if obj_type == "address-range" and first_ip and last_ip:
+            return await self.find_address_range_by_bounds(mgmt_name, domain_name, first_ip, last_ip)
+        if obj_type == "application-site" and url_list:
+            return await self.find_application_site_by_url_list(
+                mgmt_name,
+                domain_name,
+                url_list,
+                urls_defined_as_regular_expression=urls_defined_as_regular_expression,
+            )
+        return []
+
     # ------------------------------------------------------------------
     # Service Lookups (service-tcp, service-udp, service-icmp, service-group, service-other)
     # ------------------------------------------------------------------
@@ -887,6 +944,10 @@ __all__ = [
     "OBJECT_ITEM_TYPES",
     "SERVICE_ITEM_TYPES",
     "StateLookupError",
+    "TYPE_TO_SHOW_PLURAL_CMD",
+    "TYPE_TO_SHOW_SINGLE_CMD",
+    "_TYPE_TO_SHOW_PLURAL",
+    "_TYPE_TO_SHOW_SINGLE",
     "is_not_found_error",
     "normalize_mask_length",
 ]

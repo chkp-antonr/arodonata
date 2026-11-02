@@ -66,6 +66,18 @@ class ReaderFakeApi:
                     "protocol": "tcp",
                 },
             )
+        if command == "show-application-site" and payload and payload.get("name") == "Site_baidu.com":
+            return ApiCallResult(
+                success=True,
+                data={
+                    "uid": "site-baidu-1",
+                    "name": "Site_baidu.com",
+                    "type": "application-site",
+                    "primary-category": "Custom_Application_Site",
+                    "url-list": [r"\/baidu\.com", r"\.baidu\.com"],
+                    "urls-defined-as-regular-expression": True,
+                },
+            )
         return ApiCallResult(
             success=False,
             status_code=404,
@@ -115,6 +127,21 @@ class ReaderFakeApi:
                         "type": "service-tcp",
                         "port": "9000",
                         "protocol": "tcp",
+                    }
+                ],
+                total=1,
+            )
+        if command == "show-application-sites":
+            return ApiQueryResult(
+                success=True,
+                objects=[
+                    {
+                        "uid": "site-baidu-1",
+                        "name": "Site_baidu.com",
+                        "type": "application-site",
+                        "primary-category": "Custom_Application_Site",
+                        "url-list": [r"\.baidu\.com", r"\/baidu\.com"],
+                        "urls-defined-as-regular-expression": True,
                     }
                 ],
                 total=1,
@@ -254,3 +281,48 @@ def test_normalize_mask_length_handles_prefix_and_dotted_quad() -> None:
     assert normalize_mask_length(None, "255.255.255.0") == 24
     assert normalize_mask_length(None, "255.255.255.252") == 30
     assert normalize_mask_length(None, "invalid-mask") is None
+
+
+@pytest.mark.asyncio
+async def test_hybrid_state_reader_application_site_lookup_and_find_objects_by_value() -> None:
+    """`HybridStateReader` looks up `application-site` by name and matches by normalized `url-list` and regex flag."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = ReaderFakeApi()
+
+    stamp = DomainStamp(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        last_session_uid="sess-pub-100",
+        readable=True,
+    )
+    reader = HybridStateReader(api=api, cache=cache, domain_stamps={stamp.key: stamp})
+
+    site = await reader.get_object_by_name("mds1", "Corp", "application-site", "Site_baidu.com")
+    assert site is not None
+    assert site.uid == "site-baidu-1"
+    assert site.primary_category == "Custom_Application_Site"
+    assert site.urls_defined_as_regular_expression is True
+    assert set(site.url_list) == {r"\/baidu\.com", r"\.baidu\.com"}
+
+    matches = await reader.find_objects_by_value(
+        "mds1",
+        "Corp",
+        obj_type="application-site",
+        url_list=[r"\/baidu\.com", r"\.baidu\.com"],
+        urls_defined_as_regular_expression=True,
+    )
+    assert [m.name for m in matches] == ["Site_baidu.com"]
+
+    # Mismatched regex flag does not match
+    no_matches = await reader.find_objects_by_value(
+        "mds1",
+        "Corp",
+        obj_type="application-site",
+        url_list=[r"\/baidu\.com", r"\.baidu\.com"],
+        urls_defined_as_regular_expression=False,
+    )
+    assert no_matches == []
+
+    await db.close()

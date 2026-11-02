@@ -164,6 +164,98 @@ def compute_object_diff(
             desired, existing.members, existing.raw_data, diffs, update_payload, name_resolutions
         )
 
+    elif obj_type == "application-site":
+        req_cat = desired.get("primary-category") or desired.get("primary_category")
+        if isinstance(req_cat, str) and req_cat.strip():
+            clean_cat = req_cat.strip()
+            exist_cat = str(
+                existing.primary_category
+                or (existing.raw_data.get("primary-category") if isinstance(existing.raw_data, dict) else None)
+                or ""
+            ).strip()
+            if clean_cat != exist_cat:
+                diffs["primary-category"] = FieldChange(
+                    field="primary-category",
+                    old_value=existing.primary_category or exist_cat or None,
+                    new_value=clean_cat,
+                )
+                update_payload["primary-category"] = clean_cat
+
+        raw_req_urls = desired.get("url-list") if "url-list" in desired else desired.get("url_list")
+        if isinstance(raw_req_urls, list):
+            req_urls = [str(u).strip() for u in raw_req_urls if str(u).strip()]
+            exist_urls = [str(u).strip() for u in existing.url_list if str(u).strip()]
+            if set(req_urls) != set(exist_urls):
+                diffs["url-list"] = FieldChange(
+                    field="url-list",
+                    old_value=list(existing.url_list),
+                    new_value=req_urls,
+                )
+                update_payload["url-list"] = req_urls
+
+        if "urls-defined-as-regular-expression" in desired or "urls_defined_as_regular_expression" in desired:
+            raw_req_regex = (
+                desired.get("urls-defined-as-regular-expression")
+                if "urls-defined-as-regular-expression" in desired
+                else desired.get("urls_defined_as_regular_expression")
+            )
+            if raw_req_regex is not None:
+                req_regex = bool(raw_req_regex)
+                exist_regex = bool(existing.urls_defined_as_regular_expression)
+                if req_regex != exist_regex:
+                    diffs["urls-defined-as-regular-expression"] = FieldChange(
+                        field="urls-defined-as-regular-expression",
+                        old_value=existing.urls_defined_as_regular_expression,
+                        new_value=req_regex,
+                    )
+                    update_payload["urls-defined-as-regular-expression"] = req_regex
+
+        if "description" in desired and desired["description"] is not None:
+            req_desc = str(desired["description"])
+            exist_desc = str(existing.description or "")
+            if req_desc != exist_desc:
+                diffs["description"] = FieldChange(
+                    field="description",
+                    old_value=existing.description,
+                    new_value=req_desc,
+                )
+                update_payload["description"] = req_desc
+
+        req_sig = desired.get("application-signature") or desired.get("application_signature")
+        if isinstance(req_sig, str) and req_sig.strip():
+            clean_sig = req_sig.strip()
+            exist_sig = str(
+                (existing.raw_data.get("application-signature") if isinstance(existing.raw_data, dict) else None) or ""
+            ).strip()
+            if clean_sig != exist_sig:
+                diffs["application-signature"] = FieldChange(
+                    field="application-signature",
+                    old_value=exist_sig or None,
+                    new_value=clean_sig,
+                )
+                update_payload["application-signature"] = clean_sig
+
+        raw_add_cats = (
+            desired.get("additional-categories")
+            if "additional-categories" in desired
+            else desired.get("additional_categories")
+        )
+        if isinstance(raw_add_cats, list):
+            req_add_cats = [str(c).strip() for c in raw_add_cats if str(c).strip()]
+            raw_exist_cats = (
+                existing.raw_data.get("additional-categories") if isinstance(existing.raw_data, dict) else None
+            )
+            exist_add_cats = (
+                [str(c).strip() for c in raw_exist_cats if str(c).strip()] if isinstance(raw_exist_cats, list) else []
+            )
+            if set(req_add_cats) != set(exist_add_cats):
+                diffs["additional-categories"] = FieldChange(
+                    field="additional-categories",
+                    old_value=exist_add_cats,
+                    new_value=req_add_cats,
+                )
+                update_payload["additional-categories"] = req_add_cats
+
     # Common optional metadata fields
     _compute_common_metadata_diff(
         desired,

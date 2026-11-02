@@ -103,7 +103,48 @@ def validate_template(
     for err in errors:
         path_str = _format_error_path(err)
         formatted.append(f"{path_str}: {err.message}")
+
+    formatted.extend(_validate_semantic_rules(parsed))
     return formatted
+
+
+def _validate_semantic_rules(parsed: dict[str, Any]) -> list[str]:
+    """Perform semantic validation on normalized operations (e.g. `application-site` required fields)."""
+    errors: list[str] = []
+
+    def _check_bucket(items: Any, path_prefix: str) -> None:
+        if not isinstance(items, list):
+            return
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type") or "").strip().lower()
+            if item_type != "application-site":
+                continue
+            action = str(item.get("action") or item.get("operation") or item.get("state") or "present").strip().lower()
+            if action in ("present", "add"):
+                raw_urls = item.get("url-list") if "url-list" in item else item.get("url_list")
+                has_urls = isinstance(raw_urls, list) and any(str(u).strip() for u in raw_urls)
+                raw_sig = item.get("application-signature") or item.get("application_signature")
+                has_sig = bool(str(raw_sig or "").strip())
+                if not has_urls and not has_sig:
+                    errors.append(
+                        f"{path_prefix}[{idx}]: 'application-site' with action {action!r} requires "
+                        "'url-list' (or 'url_list') or 'application-signature' (or 'application_signature')."
+                    )
+
+    for bucket in ("objects", "services", "operations"):
+        _check_bucket(parsed.get(bucket), bucket)
+
+    for target_key in ("targets", "domains"):
+        targets = parsed.get(target_key)
+        if isinstance(targets, list):
+            for t_idx, target in enumerate(targets):
+                if isinstance(target, dict):
+                    for bucket in ("objects", "services", "operations"):
+                        _check_bucket(target.get(bucket), f"{target_key}[{t_idx}].{bucket}")
+
+    return errors
 
 
 __all__ = [

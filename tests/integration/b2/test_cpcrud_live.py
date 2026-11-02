@@ -260,3 +260,165 @@ async def test_cpcrud_staleness_guard_and_force_override(
         ):
             await antonr_client.delete_object(mgmt_name, "host", name=host_name, domain=test_domain_a)
             await antonr_client.delete_object(mgmt_name, "host", name=concurrent_host, domain=test_domain_a)
+
+
+async def test_cpcrud_application_site_and_access_rule_negate(
+    antonr_client: ArodonataClient,
+    mgmt_name: str,
+    test_domain_a: str,
+) -> None:
+    """Verify live CPCRUD creation, idempotency, conflict error, negate access-rule, and inverse rollback for application-site."""
+    tag = uuid.uuid4().hex[:6]
+    site_name = f"Site_b2_{tag}.example.com"
+    host_name = f"it-b2-neg-host-{tag}"
+    svc_grp_name = f"it-b2-svcgrp-{tag}"
+    rule_name = f"it-b2-neg-rule-{tag}"
+
+    # Resolve a writable access layer in test_domain_a
+    layers_resp = await antonr_client.api_call(
+        mgmt_name,
+        "show-access-layers",
+        domain=test_domain_a,
+        payload={"limit": 50},
+    )
+    assert layers_resp.success, layers_resp.message
+    layers = (layers_resp.data or {}).get("access-layers") or []
+    local_layers = [lyr for lyr in layers if (lyr.get("domain") or {}).get("domain-type") != "global domain"]
+    layer_name = (local_layers[0] if local_layers else layers[0])["name"]
+
+    template: dict[str, Any] = {
+        "mgmt_name": mgmt_name,
+        "domain": test_domain_a,
+        "on_name_conflict": "error",
+        "objects": [
+            {
+                "type": "host",
+                "name": host_name,
+                "ipv4-address": "198.51.100.211",
+                "comments": "CPCRUD B2 negate host",
+            }
+        ],
+        "services": [
+            {
+                "type": "application-site",
+                "name": site_name,
+                "primary-category": "Custom_Application_Site",
+                "url-list": [f"\\/{tag}\\.example\\.com", f"\\.{tag}\\.example\\.com"],
+                "urls-defined-as-regular-expression": True,
+                "comments": "CPCRUD B2 application-site test",
+            }
+        ],
+        "groups": [
+            {
+                "type": "service-group",
+                "name": svc_grp_name,
+                "members": ["https"],
+                "comments": "CPCRUD B2 service-group test",
+            }
+        ],
+        "rules": [
+            {
+                "type": "access-rule",
+                "name": rule_name,
+                "layer": layer_name,
+                "position": "bottom",
+                "source": [host_name],
+                "source-negate": True,
+                "destination": ["Any"],
+                "destination-negate": False,
+                "service": [site_name],
+                "service-negate": True,
+                "action": "Drop",
+                "track": "Log",
+                "comments": "CPCRUD B2 negate + application-site rule",
+            }
+        ],
+    }
+
+    # 1. Validate schema
+    errors = antonr_client.cpcrud.validate(template)
+    assert errors == []
+
+    # 2. Plan -> all 4 actions should be CREATE
+    plan = await antonr_client.cpcrud.plan(template)
+    assert not plan.has_errors, [a.error for a in plan.actions if a.error]
+    assert [a.outcome for a in plan.actions] == [
+        Outcome.CREATE,
+        Outcome.CREATE,
+        Outcome.CREATE,
+        Outcome.CREATE,
+    ]
+
+    # 3. Apply and publish
+    report = await antonr_client.cpcrud.apply(
+        plan,
+        session_name=f"cpcrud-b2-appsite-{tag}",
+        session_description="CPCRUD B2 application-site + negate test",
+    )
+    assert report.success, [r.error for r in report.results if r.error]
+    assert report.created_count == 4
+
+    try:
+        # 4. Verify on server that application-site and access-rule negate flags exist
+        shown_site = await antonr_client.api_call(
+            mgmt_name,
+            "show-application-site",
+            domain=test_domain_a,
+            payload={"name": site_name},
+        )
+        assert shown_site.success, shown_site.message
+        site_data = shown_site.data or {}
+        assert set(site_data.get("url-list") or []) == {
+            f"\\/{tag}\\.example\\.com",
+            f"\\.{tag}\\.example\\.com",
+        }
+        assert site_data.get("urls-defined-as-regular-expression") is True
+
+        shown_rule = await antonr_client.api_call(
+            mgmt_name,
+            "show-access-rule",
+            domain=test_domain_a,
+            payload={"layer": layer_name, "name": rule_name, "details-level": "full"},
+        )
+        assert shown_rule.success, shown_rule.message
+        rule_data = shown_rule.data or {}
+        assert rule_data.get("source-negate") is True
+        assert rule_data.get("destination-negate") is False
+        assert rule_data.get("service-negate") is True
+
+        # 5. Re-plan same template -> all 4 actions must be UNCHANGED
+        replan = await antonr_client.cpcrud.plan(template)
+        assert [a.outcome for a in replan.actions] == [
+            Outcome.UNCHANGED,
+            Outcome.UNCHANGED,
+            Outcome.UNCHANGED,
+            Outcome.UNCHANGED,
+        ]
+
+        # 6. Conflict check: different url-list with on_name_conflict="error" -> Outcome.ERROR
+        conflict_template: dict[str, Any] = {
+            "mgmt_name": mgmt_name,
+            "domain": test_domain_a,
+            "on_name_conflict": "error",
+            "services": [
+                {
+                    "type": "application-site",
+                    "name": site_name,
+                    "primary-category": "Custom_Application_Site",
+                    "url-list": ["\\/different\\.example\\.com"],
+                    "urls-defined-as-regular-expression": True,
+                }
+            ],
+        }
+        conflict_plan = await antonr_client.cpcrud.plan(conflict_template)
+        assert conflict_plan.has_errors
+        assert conflict_plan.actions[0].outcome == Outcome.ERROR
+    finally:
+        # 7. Compensating inverse rollback
+        inv_template = antonr_client.cpcrud.inverse(plan, report)
+        inv_plan = await antonr_client.cpcrud.plan(inv_template)
+        inv_report = await antonr_client.cpcrud.apply(
+            inv_plan,
+            session_name=f"cpcrud-b2-appsite-inv-{tag}",
+        )
+        assert inv_report.success, [r.error for r in inv_report.results if r.error]

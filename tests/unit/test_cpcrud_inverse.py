@@ -314,3 +314,125 @@ def test_build_inverse_template_refuses_planned_uid_delete_when_report_present_a
     assert host_op["groups"] == ["grp-tier1", "grp-tier2"]
     assert host_op["ignore-warnings"] is True
     assert host_op["set-if-exists"] is False
+
+
+def test_build_inverse_template_application_site_create_update_delete() -> None:
+    """`build_inverse_template` generates compensating `delete`, `set`, and `add` operations for `application-site` objects ordered after dependent `access-rule` rollbacks."""
+    plan = Plan(
+        actions=[
+            PlannedAction(
+                action_id="act-create-site",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="add",
+                object_type="application-site",
+                name="Site_baidu.com",
+                resolved_name="Site_baidu.com",
+                target_uid="site-uid-1",
+                outcome=Outcome.CREATE,
+                command="add-application-site",
+                payload={
+                    "name": "Site_baidu.com",
+                    "primary-category": "Custom_Application_Site",
+                    "url-list": [r"\/baidu\.com", r"\.baidu\.com"],
+                    "urls-defined-as-regular-expression": True,
+                },
+            ),
+            PlannedAction(
+                action_id="act-update-site",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="set",
+                object_type="application-site",
+                name="Site_update.org",
+                resolved_name="Site_update.org",
+                target_uid="site-uid-2",
+                outcome=Outcome.UPDATE,
+                command="set-application-site",
+                payload={"uid": "site-uid-2", "url-list": ["new.update.org"]},
+                prior_state={
+                    "uid": "site-uid-2",
+                    "name": "Site_update.org",
+                    "type": "application-site",
+                    "primary-category": "Custom_Application_Site",
+                    "url-list": ["old.update.org"],
+                    "urls-defined-as-regular-expression": False,
+                    "description": "Original site desc",
+                    "application-signature": "http-header:X-Orig",
+                    "additional-categories": ["Low_Risk"],
+                },
+            ),
+            PlannedAction(
+                action_id="act-delete-site",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="delete",
+                object_type="application-site",
+                name="Site_deleted.net",
+                resolved_name="Site_deleted.net",
+                target_uid="site-uid-3",
+                outcome=Outcome.DELETE,
+                command="delete-application-site",
+                payload={"uid": "site-uid-3"},
+                prior_state={
+                    "uid": "site-uid-3",
+                    "name": "Site_deleted.net",
+                    "type": "application-site",
+                    "primary-category": "Custom_Application_Site",
+                    "url-list": [r"\/deleted\.net"],
+                    "urls-defined-as-regular-expression": True,
+                    "description": "Deleted site desc",
+                },
+            ),
+            PlannedAction(
+                action_id="act-create-rule-using-site",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="add",
+                object_type="access-rule",
+                name="Allow Baidu Rule",
+                target_uid="rule-uid-baidu",
+                layer="Network",
+                outcome=Outcome.CREATE,
+                command="add-access-rule",
+                payload={"layer": "Network", "name": "Allow Baidu Rule", "service": ["Site_baidu.com"]},
+            ),
+        ]
+    )
+
+    inverse = build_inverse_template(plan)
+    assert validate_template(inverse) == []
+
+    ops = inverse["operations"]
+    assert len(ops) == 4
+    # Dependent access-rule rollback comes first
+    assert ops[0]["type"] == "access-rule"
+    assert ops[0]["operation"] == "delete"
+    # Followed by application-site rollbacks in reverse order
+    assert ops[1] == {
+        "operation": "add",
+        "type": "application-site",
+        "name": "Site_deleted.net",
+        "primary-category": "Custom_Application_Site",
+        "url-list": [r"\/deleted\.net"],
+        "urls-defined-as-regular-expression": True,
+        "description": "Deleted site desc",
+    }
+    assert ops[2] == {
+        "operation": "set",
+        "type": "application-site",
+        "name": "Site_update.org",
+        "uid": "site-uid-2",
+        "primary-category": "Custom_Application_Site",
+        "url-list": ["old.update.org"],
+        "urls-defined-as-regular-expression": False,
+        "description": "Original site desc",
+        "application-signature": "http-header:X-Orig",
+        "additional-categories": ["Low_Risk"],
+    }
+    assert ops[3] == {
+        "operation": "delete",
+        "type": "application-site",
+        "name": "Site_baidu.com",
+        "uid": "site-uid-1",
+    }

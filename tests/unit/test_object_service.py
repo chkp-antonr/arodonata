@@ -188,6 +188,34 @@ async def test_object_service_default_types_and_type_scoped_replacement() -> Non
     assert len(wildcards) == 1
     assert wildcards[0].name == "wild-printer"
 
+    # 3. On-demand refresh and query of application-site objects
+    api.query_data["show-application-sites"] = [
+        {
+            "uid": "site-1",
+            "name": "Site_baidu.com",
+            "type": "application-site",
+            "primary-category": "Custom_Application_Site",
+            "url-list": [r"\/baidu\.com", r"\.baidu\.com"],
+            "urls-defined-as-regular-expression": True,
+            "description": "Baidu custom site",
+        }
+    ]
+    await obj_service.refresh_objects(mgmt_name="mds1", types=["application-site"], mode="force")
+    assert "show-application-sites" in api.query_calls
+
+    site_state = await cache.get_sync_state("mds1", "Corp", "objects", "application-site")
+    assert site_state is not None
+    assert site_state.status == "ok"
+    assert site_state.object_count == 1
+
+    sites = await obj_service.get_objects("mds1", "Corp", types=["application-site"], cache_mode="cache")
+    assert len(sites) == 1
+    assert sites[0].name == "Site_baidu.com"
+    assert sites[0].primary_category == "Custom_Application_Site"
+    assert sites[0].url_list == [r"\/baidu\.com", r"\.baidu\.com"]
+    assert sites[0].urls_defined_as_regular_expression is True
+    assert sites[0].description == "Baidu custom site"
+
     await db.close()
 
 
