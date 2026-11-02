@@ -54,29 +54,6 @@ OBJECT_TYPE_TO_SHOW_COMMAND: dict[str, str] = {
     "application-site": "show-application-sites",
 }
 
-OBJECT_TYPE_TO_SHOW_SINGLE_COMMAND: dict[str, str] = {
-    "host": "show-host",
-    "network": "show-network",
-    "address-range": "show-address-range",
-    "multicast-address-range": "show-multicast-address-range",
-    "group": "show-group",
-    "group-with-exclusion": "show-group-with-exclusion",
-    "dns-domain": "show-dns-domain",
-    "wildcard": "show-wildcard",
-    "security-zone": "show-security-zone",
-    "dynamic-object": "show-dynamic-object",
-    "time": "show-time",
-    "time-group": "show-time-group",
-    "access-role": "show-access-role",
-    "tag": "show-tag",
-    "gsn-handover-group": "show-gsn-handover-group",
-    "network-feed": "show-network-feed",
-    "application-site": "show-application-site",
-}
-
-_TYPE_TO_SHOW_PLURAL_COMMAND = OBJECT_TYPE_TO_SHOW_COMMAND
-_TYPE_TO_SHOW_SINGLE_COMMAND = OBJECT_TYPE_TO_SHOW_SINGLE_COMMAND
-
 
 def resolve_object_query_command(item_type: str) -> tuple[str, dict[str, Any]]:
     """Map an object `item_type` to `(command, extra_payload)` for `api_query`."""
@@ -618,10 +595,7 @@ class ObjectService:
 
 __all__ = [
     "OBJECT_TYPE_TO_SHOW_COMMAND",
-    "OBJECT_TYPE_TO_SHOW_SINGLE_COMMAND",
     "ObjectService",
-    "_TYPE_TO_SHOW_PLURAL_COMMAND",
-    "_TYPE_TO_SHOW_SINGLE_COMMAND",
     "extract_changes_from_show_changes",
     "resolve_object_query_command",
 ]

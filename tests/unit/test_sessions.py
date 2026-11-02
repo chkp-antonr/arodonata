@@ -902,6 +902,71 @@ async def test_explicit_server_ip_validated_against_trusted_server_and_domain_ip
     await client.close()
 
 
+async def test_cold_cache_explicit_cma_server_ip_refreshes_domains_and_accepts_known_cma_ip(tmp_path: Path) -> None:
+    """Verify R4: on a cold domain cache, passing a valid CMA `explicit_server_ip` triggers a domain discovery refresh via `endpoint.host` and accepts the CMA IP while still rejecting untrusted attacker IPs."""
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    client = _build_client(tmp_path, server, rig)
+    await client.db.initialize()
+
+    # Cold cache: no domains seeded yet in client.cache
+    assert await client.cache.get_domains("mds1") == []
+
+    # Queue system login + show-domains + show-mdss responses for refresh_domain_active_ip
+    server.handlers.append((200, {"sid": "sid_sys_disc", "uid": "sys-disc-1"}))
+    server.handlers.append(
+        (
+            200,
+            {
+                "objects": [
+                    {
+                        "uid": "dom-corp",
+                        "name": "Corp",
+                        "servers": [
+                            {
+                                "name": "corp-cma-1",
+                                "ipv4-address": "10.0.0.12",
+                                "active": True,
+                                "multi-domain-server": "mds-peer",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    server.handlers.append((200, {"objects": [{"name": "mds-peer", "ipv4-address": "10.0.0.2"}]}))
+
+    # 1. Valid CMA IP (10.0.0.12) is discovered via refresh_domain_active_ip and accepted
+    ip_cma, mds_ip, _ = await client.login_coordinator.resolve_target_ips(
+        "mds1",
+        "Corp",
+        explicit_server_ip="10.0.0.12",
+    )
+    assert ip_cma == "10.0.0.12"
+    assert mds_ip == "10.0.0.1"
+
+    # 1b. Secondary MDS IP (10.0.0.2 from show-mdss) is also accepted
+    ip_mds2, _, _ = await client.login_coordinator.resolve_target_ips(
+        "mds1",
+        "Corp",
+        explicit_server_ip="10.0.0.2",
+    )
+    assert ip_mds2 == "10.0.0.2"
+
+    # 2. Attacker IP is still rejected with ValidationError and zero extra network calls once domain is cached
+    calls_before = len(server.calls)
+    with pytest.raises(ValidationError, match="Untrusted explicit server_ip '198.51.100.99'"):
+        await client.login_coordinator.resolve_target_ips(
+            "mds1",
+            "Corp",
+            explicit_server_ip="198.51.100.99",
+        )
+    assert len(server.calls) == calls_before
+
+    await client.close()
+
+
 async def test_show_session_not_found_after_revert_evicts_sid_and_relogins(tmp_path: Path) -> None:
     """Verify that show-session (without uid) returning generic_err_object_not_found evicts SID and re-logins."""
     server = FakeCheckpointServer()

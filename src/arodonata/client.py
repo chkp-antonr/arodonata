@@ -249,6 +249,7 @@ class ArodonataClient:
             now_fn=now_fn,
         )
         self._warmup_tasks: set[asyncio.Task[Any]] = set()
+        self._api_reference: ApiReferenceEngine | None = None
 
     async def _ensure_db_initialized(self) -> None:
         if not self._db.is_initialized:
@@ -341,7 +342,9 @@ class ArodonataClient:
     @property
     def api_reference(self) -> ApiReferenceEngine:
         """Offline Check Point API Reference & Payload Validation Engine (`ApiReferenceEngine`)."""
-        return get_api_reference()
+        if self._api_reference is None:
+            self._api_reference = get_api_reference()
+        return self._api_reference
 
     @property
     def warmup_tasks(self) -> set[asyncio.Task[Any]]:
@@ -1349,9 +1352,12 @@ class ArodonataClient:
             await self._db.initialize()
 
         async def _warm_rulebase(m_name: str, d_name: str) -> Any:
+            clean_dom = (d_name or "").strip()
+            if not clean_dom or clean_dom == "System Data":
+                return None
             return await self.refresh_rulebases(
                 mgmt_name=m_name,
-                domains=[d_name] if d_name else None,
+                domains=[clean_dom],
                 mode="smart",
             )
 
@@ -1394,9 +1400,12 @@ class ArodonataClient:
             await self._db.initialize()
 
         async def _warm_rulebase(m_name: str, d_name: str) -> Any:
+            clean_dom = (d_name or "").strip()
+            if not clean_dom or clean_dom == "System Data":
+                return None
             return await self.refresh_rulebases(
                 mgmt_name=m_name,
-                domains=[d_name] if d_name else None,
+                domains=[clean_dom],
                 mode="smart",
             )
 
@@ -1746,101 +1755,188 @@ class ArodonataClient:
 
             return None
 
-        # Cross-domain lookup (eff_domain is None): strictly cache-only and includes Global
+        # Cross-domain lookup (eff_domain is None): refresh single-domain SMC when appropriate (`R2`),
+        # query indexed exact UID/name first (`R8`), and deduplicate by UID (`R3`).
+        sync_domain, eff_cross_mode = await self._search_service._resolve_implicit_domain_mode(
+            mgmt_name,
+            None,
+            cache_mode,
+        )
+
+        async def _refresh_single_domain() -> None:
+            if sync_domain is None or eff_cross_mode == "cache":
+                return
+            if not is_service_type and not is_asset_type:
+                await self._object_service.refresh_objects(
+                    mgmt_name=mgmt_name,
+                    domains=[sync_domain],
+                    types=[clean_type] if clean_type else None,
+                    include_global=False,
+                    mode=eff_cross_mode,
+                    cache_ttl=cache_ttl,
+                )
+            if is_service_type or clean_type is None:
+                await self._service_cache.refresh_services(
+                    mgmt_name=mgmt_name,
+                    domains=[sync_domain],
+                    types=[clean_type] if clean_type else None,
+                    include_global=False,
+                    mode=eff_cross_mode,
+                    cache_ttl=cache_ttl,
+                )
+            if is_asset_type or clean_type is None:
+                await self._asset_service.refresh_assets(
+                    mgmt_name=mgmt_name,
+                    domains=[sync_domain],
+                    include_global=False,
+                    mode=eff_cross_mode,
+                    cache_ttl=cache_ttl,
+                )
+
+        if eff_cross_mode == "force":
+            await _refresh_single_domain()
+
         needle_lower = clean_query.lower()
         lookup_lower = lookup_key.lower()
-        exact_matches: list[CPObject | CPService | Asset] = []
-        ci_matches: list[CPObject | CPService | Asset] = []
 
-        if not is_service_type and not is_asset_type:
-            objs = await self._object_service.get_objects(
-                mgmt_name=mgmt_name,
-                domain=None,
-                types=[clean_type] if clean_type else None,
-                names=None,
-                include_global=True,
-                cache_mode="cache",
-                cache_ttl=cache_ttl,
-            )
-            for o in objs:
-                if (
-                    o.uid in (clean_query, lookup_key)
-                    or o.name in (clean_query, lookup_key)
-                    or o.object_id == clean_query
-                    or o.id == clean_query
-                ):
-                    exact_matches.append(o)
-                elif (
-                    o.uid.lower() in (needle_lower, lookup_lower)
-                    or o.name.lower() in (needle_lower, lookup_lower)
-                    or o.object_id.lower() == needle_lower
-                    or o.id.lower() == needle_lower
-                ):
-                    ci_matches.append(o)
+        async def _scan_cross_domain_cache() -> list[CPObject | CPService | Asset]:
+            exact_matches: list[CPObject | CPService | Asset] = []
 
-        if is_service_type or clean_type is None:
-            svcs = await self._service_cache.get_services(
-                mgmt_name=mgmt_name,
-                domain=None,
-                types=[clean_type] if clean_type else None,
-                names=None,
-                include_global=True,
-                cache_mode="cache",
-                cache_ttl=cache_ttl,
-            )
-            for s in svcs:
-                if (
-                    s.uid in (clean_query, lookup_key)
-                    or s.name in (clean_query, lookup_key)
-                    or s.service_id == clean_query
-                    or s.id == clean_query
-                ):
-                    exact_matches.append(s)
-                elif (
-                    s.uid.lower() in (needle_lower, lookup_lower)
-                    or s.name.lower() in (needle_lower, lookup_lower)
-                    or s.service_id.lower() == needle_lower
-                    or s.id.lower() == needle_lower
-                ):
-                    ci_matches.append(s)
+            # Pass 1 (`R8`): Indexed exact UID / exact name queries before full-table fallback
+            if not is_service_type and not is_asset_type:
+                objs_by_uid = await self._object_service.get_objects(
+                    mgmt_name=mgmt_name,
+                    domain=None,
+                    types=[clean_type] if clean_type else None,
+                    uids=lookup_names,
+                    include_global=True,
+                    cache_mode="cache",
+                    cache_ttl=cache_ttl,
+                )
+                objs_by_name = await self._object_service.get_objects(
+                    mgmt_name=mgmt_name,
+                    domain=None,
+                    types=[clean_type] if clean_type else None,
+                    names=lookup_names,
+                    include_global=True,
+                    cache_mode="cache",
+                    cache_ttl=cache_ttl,
+                )
+                exact_matches.extend(objs_by_uid)
+                exact_matches.extend(objs_by_name)
 
-        if is_asset_type or clean_type is None:
-            assets = await self._asset_service.get_assets(
-                mgmt_name=mgmt_name,
-                domain=None,
-                types=[clean_type] if clean_type else None,
-                include_global=True,
-                cache_mode="cache",
-                cache_ttl=cache_ttl,
-            )
-            for asset in assets:
-                if (
-                    asset.uid in (clean_query, lookup_key)
-                    or asset.name in (clean_query, lookup_key)
-                    or asset.asset_id == clean_query
-                    or asset.id == clean_query
-                ):
-                    exact_matches.append(asset)
-                elif (
-                    asset.name.lower() in (needle_lower, lookup_lower)
-                    or asset.asset_id.lower() == needle_lower
-                    or asset.id.lower() == needle_lower
-                ):
-                    ci_matches.append(asset)
+            if is_service_type or clean_type is None:
+                svcs_by_uid = await self._service_cache.get_services(
+                    mgmt_name=mgmt_name,
+                    domain=None,
+                    types=[clean_type] if clean_type else None,
+                    uids=lookup_names,
+                    include_global=True,
+                    cache_mode="cache",
+                    cache_ttl=cache_ttl,
+                )
+                svcs_by_name = await self._service_cache.get_services(
+                    mgmt_name=mgmt_name,
+                    domain=None,
+                    types=[clean_type] if clean_type else None,
+                    names=lookup_names,
+                    include_global=True,
+                    cache_mode="cache",
+                    cache_ttl=cache_ttl,
+                )
+                exact_matches.extend(svcs_by_uid)
+                exact_matches.extend(svcs_by_name)
 
-        chosen_pool = exact_matches if exact_matches else ci_matches
+            if is_asset_type or clean_type is None:
+                assets = await self._asset_service.get_assets(
+                    mgmt_name=mgmt_name,
+                    domain=None,
+                    types=[clean_type] if clean_type else None,
+                    include_global=True,
+                    cache_mode="cache",
+                    cache_ttl=cache_ttl,
+                )
+                for asset in assets:
+                    if (
+                        asset.uid in (clean_query, lookup_key)
+                        or asset.name in (clean_query, lookup_key)
+                        or asset.asset_id == clean_query
+                        or asset.id == clean_query
+                    ):
+                        exact_matches.append(asset)
+
+            if exact_matches:
+                return exact_matches
+
+            # Pass 2: Case-insensitive fallback scan only when exact SQL pass found nothing
+            ci_matches: list[CPObject | CPService | Asset] = []
+            if not is_service_type and not is_asset_type:
+                objs = await self._object_service.get_objects(
+                    mgmt_name=mgmt_name,
+                    domain=None,
+                    types=[clean_type] if clean_type else None,
+                    names=None,
+                    include_global=True,
+                    cache_mode="cache",
+                    cache_ttl=cache_ttl,
+                )
+                for o in objs:
+                    if (
+                        o.uid.lower() in (needle_lower, lookup_lower)
+                        or o.name.lower() in (needle_lower, lookup_lower)
+                        or o.object_id.lower() == needle_lower
+                        or o.id.lower() == needle_lower
+                    ):
+                        ci_matches.append(o)
+
+            if is_service_type or clean_type is None:
+                svcs = await self._service_cache.get_services(
+                    mgmt_name=mgmt_name,
+                    domain=None,
+                    types=[clean_type] if clean_type else None,
+                    names=None,
+                    include_global=True,
+                    cache_mode="cache",
+                    cache_ttl=cache_ttl,
+                )
+                for s in svcs:
+                    if (
+                        s.uid.lower() in (needle_lower, lookup_lower)
+                        or s.name.lower() in (needle_lower, lookup_lower)
+                        or s.service_id.lower() == needle_lower
+                        or s.id.lower() == needle_lower
+                    ):
+                        ci_matches.append(s)
+
+            if is_asset_type or clean_type is None:
+                assets = await self._asset_service.get_assets(
+                    mgmt_name=mgmt_name,
+                    domain=None,
+                    types=[clean_type] if clean_type else None,
+                    include_global=True,
+                    cache_mode="cache",
+                    cache_ttl=cache_ttl,
+                )
+                for asset in assets:
+                    if (
+                        asset.name.lower() in (needle_lower, lookup_lower)
+                        or asset.asset_id.lower() == needle_lower
+                        or asset.id.lower() == needle_lower
+                    ):
+                        ci_matches.append(asset)
+
+            return ci_matches
+
+        chosen_pool = await _scan_cross_domain_cache()
+        if not chosen_pool and eff_cross_mode in ("smart", "smart-fast") and sync_domain is not None:
+            await _refresh_single_domain()
+            chosen_pool = await _scan_cross_domain_cache()
+
         if not chosen_pool:
             return None
 
-        deduped: list[CPObject | CPService | Asset] = []
-        seen_keys: set[tuple[str, str]] = set()
-        for item in chosen_pool:
-            key = (item.domain_name, item.uid)
-            if key not in seen_keys:
-                seen_keys.add(key)
-                deduped.append(item)
-
-        distinct_domains = {item.domain_name for item in deduped}
+        deduped = self._search_service._dedup_entities_by_uid(chosen_pool)
+        distinct_domains = {(getattr(item, "original_domain", None) or item.domain_name) for item in deduped}
         if len(distinct_domains) > 1:
             raise AmbiguousObjectError(
                 mgmt_name,
@@ -1965,13 +2061,23 @@ class ArodonataClient:
     # Offline API Reference & Payload Validation (`ApiReferenceEngine`)
     # ------------------------------------------------------------------
 
+    async def ensure_api_reference(self) -> ApiReferenceEngine:
+        """Return `self.api_reference`, loading the bundled gzipped index via `asyncio.to_thread` when needed (`R9`)."""
+        if self._api_reference is None:
+            self._api_reference = await ApiReferenceEngine.async_default()
+        return self._api_reference
+
     def _resolve_api_version(
         self,
         version: str | None = None,
         mgmt_name: str | None = None,
     ) -> str:
         """Resolve canonical Check Point API version (`v1.9`..`v2.2`) from explicit `version` or `mgmt_name` settings."""
-        latest = str(self.api_reference.meta.get("latest", DEFAULT_API_VERSION))
+        latest = (
+            str(self._api_reference.meta.get("latest", DEFAULT_API_VERSION))
+            if self._api_reference is not None
+            else DEFAULT_API_VERSION
+        )
         if version and str(version).strip():
             return normalize_api_version(version, default=latest)
         servers = self._settings.servers

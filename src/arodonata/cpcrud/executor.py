@@ -1089,7 +1089,7 @@ class Executor:
                                     ),
                                 )
                         return candidate_sid, candidate_ip, verify_res
-            except ServerIdentityError:
+            except (ServerIdentityError, ValidationError):
                 raise
             except Exception:
                 pass
@@ -1231,8 +1231,9 @@ class Executor:
             )
 
         is_web_api_app = s_app in ("web_api", "arodonata", "")
-        creator_mismatch = bool(current_user and s_user and current_user != s_user)
-        same_creator = bool(current_user and s_user and current_user == s_user)
+        has_known_identities = bool(current_user and s_user)
+        creator_mismatch = not has_known_identities or current_user != s_user
+        same_creator = has_known_identities and current_user == s_user
         is_arodonata_tagged = (
             staged_entry is not None or s_name.startswith("arodonata") or s_app == "arodonata" or "arodonata" in s_desc
         )

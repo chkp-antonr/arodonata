@@ -808,4 +808,80 @@ async def test_planner_application_site_create_unchanged_update_delete_and_error
     assert set(plan_del.actions[0].prior_state["url-list"]) == {r"\/baidu\.com", r"\.baidu\.com"}
     assert plan_del.actions[0].prior_state["urls-defined-as-regular-expression"] is True
 
+    # 5. R5: action="present" updating only description/comments on existing application-site without url-list -> Outcome.UPDATE
+    plan_meta_upd = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "on_name_conflict": "update",
+            "objects": [
+                {
+                    "type": "application-site",
+                    "name": "Site_baidu.com",
+                    "description": "Updated metadata only",
+                    "comments": "Ticket-123",
+                }
+            ],
+        }
+    )
+    assert plan_meta_upd.actions[0].outcome == Outcome.UPDATE
+    assert plan_meta_upd.actions[0].command == "set-application-site"
+    assert plan_meta_upd.actions[0].payload["description"] == "Updated metadata only"
+    assert plan_meta_upd.actions[0].payload["comments"] == "Ticket-123"
+    assert "url-list" not in plan_meta_upd.actions[0].payload
+
+    # 6. R5: action="present" for a non-existent application-site without url-list or application-signature -> Outcome.ERROR
+    plan_missing_create = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "objects": [
+                {
+                    "type": "application-site",
+                    "name": "Site_does_not_exist",
+                    "description": "Missing url-list on create",
+                }
+            ],
+        }
+    )
+    assert plan_missing_create.actions[0].outcome == Outcome.ERROR
+    assert "url-list" in (plan_missing_create.actions[0].error or "")
+
+    # 7. R5: signature-only application-site creation without primary-category defaults primary-category to "Custom_Application_Site"
+    plan_sig_create = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "objects": [
+                {
+                    "type": "application-site",
+                    "name": "Site_sig_only",
+                    "application-signature": "http-header:X-Test",
+                }
+            ],
+        }
+    )
+    assert plan_sig_create.actions[0].outcome == Outcome.CREATE
+    assert plan_sig_create.actions[0].payload["primary-category"] == "Custom_Application_Site"
+    assert plan_sig_create.actions[0].payload["application-signature"] == "http-header:X-Test"
+
+    # 8. R10: duplicate url-list under a different name is detected via find_objects_by_value
+    plan_dup_urls = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "on_ip_conflict": "reuse",
+            "objects": [
+                {
+                    "type": "application-site",
+                    "name": "Site_baidu_alias",
+                    "url-list": [r"\/baidu\.com", r"\.baidu\.com"],
+                    "urls-defined-as-regular-expression": True,
+                }
+            ],
+        }
+    )
+    assert plan_dup_urls.actions[0].outcome == Outcome.REUSE
+    assert plan_dup_urls.actions[0].resolved_name == "Site_baidu.com"
+
     await db.close()

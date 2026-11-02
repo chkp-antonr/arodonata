@@ -122,7 +122,7 @@ def _validate_semantic_rules(parsed: dict[str, Any]) -> list[str]:
             if item_type != "application-site":
                 continue
             action = str(item.get("action") or item.get("operation") or item.get("state") or "present").strip().lower()
-            if action in ("present", "add"):
+            if action == "add":
                 raw_urls = item.get("url-list") if "url-list" in item else item.get("url_list")
                 has_urls = isinstance(raw_urls, list) and any(str(u).strip() for u in raw_urls)
                 raw_sig = item.get("application-signature") or item.get("application_signature")
