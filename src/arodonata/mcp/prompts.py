@@ -59,6 +59,24 @@ def register_mcp_prompts(server: MCPServer) -> None:
             "2. Present each published session's administrator, publish timestamp, SmartConsole rule numbers, and field-level diffs."
         )
 
+    @server.prompt(
+        name="lookup_api_command",
+        description="Guide an LLM agent through two-step Check Point API command discovery, version-aware schema inspection, and offline payload validation.",
+    )
+    def lookup_api_command(
+        goal: str,
+        mgmt_name: str = "",
+        version: str = "",
+    ) -> str:
+        mgmt_part = f", mgmt_name='{mgmt_name}'" if mgmt_name else ""
+        ver_part = f", version='{version}'" if version else ""
+        return (
+            f"Find and validate the Check Point API command for: '{goal}':\n"
+            f"1. Call `api_reference(action='search', query='{goal}'{mgmt_part}{ver_part})` to list matching commands.\n"
+            f"2. Call `api_reference(action='describe', command='<command-name>'{mgmt_part}{ver_part})` to inspect version-filtered fields, `field_alternatives`, `nested_objects`, and examples.\n"
+            f"3. Before calling `api_call`, run `api_reference(action='validate', command='<command-name>', payload={{...}}{mgmt_part}{ver_part})` to verify required fields, mutually exclusive alternatives, and enum values offline."
+        )
+
 
 __all__ = [
     "register_mcp_prompts",

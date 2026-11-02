@@ -11,6 +11,8 @@ Exposes a consolidated, cache-aligned tool surface:
 - Search, group/cluster membership, and structured aggregation (`search_objects`,
   `get_group_members`, `query_objects` with `aggregate="list" | "count" | "describe"`).
 - Unified cache status and synchronization (`cache_control` with `action="status" | "refresh"`).
+- Offline Check Point API reference discovery and payload validation (`api_reference` with
+  `action="search" | "describe" | "validate"`).
 - Change report (`change_report`) and write-protected `api_call`.
 - Opt-in CPCRUD tools (`ARODONATA_MCP_CPCRUD=true`: `cpcrud_validate`, `cpcrud_plan`,
   `cpcrud_apply`, `cpcrud_inverse`, `cpcrud_staged_session`).
@@ -1861,6 +1863,102 @@ def register_mcp_tools(
                 "data": sanitize_mapping(res.data, known_sids=known_sids),
             },
             known_sids=known_sids,
+        )
+
+    @server.tool(
+        name="api_reference",
+        description=(
+            "Offline Check Point Management & Gaia API reference discovery and request payload validator "
+            "(covers Management API v1.9..v2.2 and Gaia v2.0.1). "
+            "Use action='search' to find commands by keyword/category/crud_type, "
+            "action='describe' to inspect version-filtered fields, field_alternatives, nested_objects, and examples "
+            "(accepts a single command string or list of command names), "
+            "and action='validate' to check a candidate request payload dictionary before calling api_call."
+        ),
+    )
+    @mcp_tool_guard("api_reference", client_getter)
+    async def api_reference(
+        action: Literal["search", "describe", "validate"] = "search",
+        query: str | None = None,
+        command: str | list[str] | None = None,
+        payload: dict[str, Any] | None = None,
+        category: str | None = None,
+        crud_type: str | None = None,
+        api_family: str | None = None,
+        version: str | None = None,
+        mgmt_name: str | None = None,
+        resolve_nested: bool = True,
+        include_examples: bool = True,
+        limit: int = 15,
+    ) -> CallToolResult:
+        clean_action = (action or "search").strip().lower()
+        if clean_action not in ("search", "describe", "validate"):
+            raise ToolFailure(f"Invalid action {action!r}. Expected 'search', 'describe', or 'validate'.")
+
+        client = client_getter()
+        eff_version = client._resolve_api_version(version, mgmt_name=mgmt_name)
+
+        if clean_action == "search":
+            hits = client.search_api_commands(
+                query or "",
+                category=category,
+                crud_type=crud_type,
+                api_family=api_family,
+                version=eff_version,
+                mgmt_name=mgmt_name,
+                limit=limit,
+            )
+            return json_tool_result(
+                {
+                    "action": "search",
+                    "target_version": eff_version,
+                    "total": len(hits),
+                    "commands": hits,
+                }
+            )
+
+        if clean_action == "describe":
+            if (
+                command is None
+                or (isinstance(command, str) and not command.strip())
+                or (isinstance(command, list) and not any(isinstance(c, str) and c.strip() for c in command))
+            ):
+                raise ToolFailure("Parameter 'command' (string or list of strings) is required for action='describe'.")
+            desc = client.describe_api_command(
+                command,
+                version=eff_version,
+                mgmt_name=mgmt_name,
+                resolve_nested=resolve_nested,
+                include_examples=include_examples,
+            )
+            if desc is None:
+                suggestions = client.search_api_commands(str(command), version=eff_version, limit=5)
+                raise ToolFailure(
+                    f"Command {command!r} was not found or is not supported in Check Point API version {eff_version!r}. "
+                    f"Similar commands: {[s['name'] for s in suggestions]}."
+                )
+            return json_tool_result(
+                {
+                    "action": "describe",
+                    "target_version": eff_version,
+                    **desc,
+                }
+            )
+
+        # action == "validate"
+        if not isinstance(command, str) or not command.strip():
+            raise ToolFailure("Parameter 'command' (non-empty string) is required for action='validate'.")
+        val_res = client.validate_api_payload(
+            command,
+            payload or {},
+            version=eff_version,
+            mgmt_name=mgmt_name,
+        )
+        return json_tool_result(
+            {
+                "action": "validate",
+                **val_res,
+            }
         )
 
     # ------------------------------------------------------------------

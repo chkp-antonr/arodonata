@@ -26,6 +26,12 @@ from arodonata.adapters.checkpoint.task_waiter import TaskWaiter
 from arodonata.adapters.checkpoint.tls import TrustPolicy
 from arodonata.adapters.checkpoint.transport import ApiTransport, VerifiedConnectionPool
 from arodonata.adapters.storage import DatabaseManager, SqlCacheAdapter, SqlLockAdapter
+from arodonata.api_reference import (
+    DEFAULT_API_VERSION,
+    ApiReferenceEngine,
+    get_api_reference,
+    normalize_api_version,
+)
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import (
     AuthContext,
@@ -331,6 +337,11 @@ class ArodonataClient:
     def cpcrud(self) -> CPCRUDService:
         """Declarative Check Point Policy-as-Code CRUD engine (`CPCRUDService`)."""
         return self._cpcrud
+
+    @property
+    def api_reference(self) -> ApiReferenceEngine:
+        """Offline Check Point API Reference & Payload Validation Engine (`ApiReferenceEngine`)."""
+        return get_api_reference()
 
     @property
     def warmup_tasks(self) -> set[asyncio.Task[Any]]:
@@ -1936,6 +1947,88 @@ class ArodonataClient:
             server_ip=server_ip,
             auth=auth,
             force_disconnect=force_disconnect,
+        )
+
+    # ------------------------------------------------------------------
+    # Offline API Reference & Payload Validation (`ApiReferenceEngine`)
+    # ------------------------------------------------------------------
+
+    def _resolve_api_version(
+        self,
+        version: str | None = None,
+        mgmt_name: str | None = None,
+    ) -> str:
+        """Resolve canonical Check Point API version (`v1.9`..`v2.2`) from explicit `version` or `mgmt_name` settings."""
+        latest = str(self.api_reference.meta.get("latest", DEFAULT_API_VERSION))
+        if version and str(version).strip():
+            return normalize_api_version(version, default=latest)
+        servers = self._settings.servers
+        if mgmt_name and mgmt_name.strip() in servers:
+            srv_ver = servers[mgmt_name.strip()].api_version
+            if srv_ver:
+                return normalize_api_version(srv_ver, default=latest)
+        elif not mgmt_name and len(servers) == 1:
+            sole_srv = next(iter(servers.values()))
+            if sole_srv.api_version:
+                return normalize_api_version(sole_srv.api_version, default=latest)
+        if self._settings.api_version:
+            return normalize_api_version(self._settings.api_version, default=latest)
+        return latest
+
+    def search_api_commands(
+        self,
+        query: str = "",
+        *,
+        category: str | None = None,
+        crud_type: str | None = None,
+        api_family: str | None = None,
+        version: str | None = None,
+        mgmt_name: str | None = None,
+        limit: int = 15,
+    ) -> list[dict[str, Any]]:
+        """Step 1: Search Check Point API commands offline, inferring `version` from `mgmt_name` when omitted."""
+        eff_version = self._resolve_api_version(version, mgmt_name=mgmt_name)
+        return self.api_reference.search_commands(
+            query,
+            category=category,
+            crud_type=crud_type,
+            api_family=api_family,
+            version=eff_version,
+            limit=limit,
+        )
+
+    def describe_api_command(
+        self,
+        command: str | Sequence[str],
+        *,
+        version: str | None = None,
+        mgmt_name: str | None = None,
+        resolve_nested: bool = True,
+        include_examples: bool = True,
+    ) -> dict[str, Any] | None:
+        """Step 2: Describe one or more Check Point API commands offline, inferring `version` from `mgmt_name`."""
+        eff_version = self._resolve_api_version(version, mgmt_name=mgmt_name)
+        return self.api_reference.describe_command(
+            command,
+            version=eff_version,
+            resolve_nested=resolve_nested,
+            include_examples=include_examples,
+        )
+
+    def validate_api_payload(
+        self,
+        command: str,
+        payload: dict[str, Any] | None,
+        *,
+        version: str | None = None,
+        mgmt_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Step 3: Validate a candidate request payload offline against the command's schema for `version` / `mgmt_name`."""
+        eff_version = self._resolve_api_version(version, mgmt_name=mgmt_name)
+        return self.api_reference.validate_payload(
+            command,
+            payload,
+            version=eff_version,
         )
 
 

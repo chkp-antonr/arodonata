@@ -446,7 +446,7 @@ def _get_tool_text(result: CallToolResult) -> str:
 
 @pytest.mark.asyncio
 async def test_consolidated_tool_count_and_cached_list_tools_envelopes() -> None:
-    """Verify the consolidated tool surface (13 base tools, 18 with `cpcrud=True`),
+    """Verify the consolidated tool surface (14 base tools, 19 with `cpcrud=True`),
     `list_*` envelopes (`from`, `to`, `total`, `source`, `cache_age_seconds`),
     short type alias normalization, and `list_assets(parent=...)` filtering.
     """
@@ -457,7 +457,7 @@ async def test_consolidated_tool_count_and_cached_list_tools_envelopes() -> None
         base_server = create_mcp_server(client, auth_mode="host", cpcrud=False)
         base_tools = await base_server.list_tools()
         base_tool_names = {t.name for t in base_tools}
-        assert len(base_tool_names) == 13
+        assert len(base_tool_names) == 14
         assert base_tool_names == {
             "list_domains",
             "list_objects",
@@ -472,12 +472,13 @@ async def test_consolidated_tool_count_and_cached_list_tools_envelopes() -> None
             "cache_control",
             "change_report",
             "api_call",
+            "api_reference",
         }
 
         cpcrud_server = create_mcp_server(client, auth_mode="host", cpcrud=True)
         cpcrud_tools = await cpcrud_server.list_tools()
         cpcrud_tool_names = {t.name for t in cpcrud_tools}
-        assert len(cpcrud_tool_names) == 18
+        assert len(cpcrud_tool_names) == 19
         assert cpcrud_tool_names - base_tool_names == {
             "cpcrud_validate",
             "cpcrud_plan",
