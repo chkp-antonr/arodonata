@@ -647,7 +647,15 @@ async def test_duplicate_named_objects_and_services_with_distinct_uids_and_human
         obj_email_1 = CPObject.from_cp_dict(
             "mds1",
             "General",
-            {"uid": "uid-email-1", "name": "email", "type": "application-site"},
+            {
+                "uid": "uid-email-1",
+                "name": "email",
+                "type": "application-site",
+                "primary-category": "Custom_Application_Site",
+                "url-list": [r"\/baidu\.com", r"\.baidu\.com"],
+                "urls-defined-as-regular-expression": True,
+                "description": "Custom regex site",
+            },
         )
         obj_email_2 = CPObject.from_cp_dict(
             "mds1",
@@ -665,6 +673,11 @@ async def test_duplicate_named_objects_and_services_with_distinct_uids_and_human
         assert {o.uid for o in objs} == {"uid-email-1", "uid-email-2"}
         assert {o.id for o in objs} == {"mds1:General:uid-email-1", "mds1:General:uid-email-2"}
         assert [o.object_id for o in objs] == ["mds1:General:email", "mds1:General:email"]
+        hydrated_1 = next(o for o in objs if o.uid == "uid-email-1")
+        assert hydrated_1.primary_category == "Custom_Application_Site"
+        assert hydrated_1.url_list == [r"\/baidu\.com", r"\.baidu\.com"]
+        assert hydrated_1.urls_defined_as_regular_expression is True
+        assert hydrated_1.description == "Custom regex site"
 
         # Two services sharing the exact name "email" in the same domain with distinct UIDs
         svc_email_1 = CPService.from_cp_dict(

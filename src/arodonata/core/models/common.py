@@ -39,6 +39,8 @@ OBJECT_TYPE_ALIASES: dict[str, str] = {
     "dynamic_object": "dynamic-object",
     "zone": "security-zone",
     "security_zone": "security-zone",
+    "app-site": "application-site",
+    "application_site": "application-site",
 }
 
 SERVICE_TYPE_ALIASES: dict[str, str] = {

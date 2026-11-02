@@ -24,6 +24,7 @@ from arodonata.core.events import DomainSyncProgressEvent, SyncProgressEvent
 from arodonata.core.models.common import (
     DEFAULT_OBJECT_TYPES,
     CacheMode,
+    normalize_object_type,
     to_naive_utc,
     utc_now,
 )
@@ -50,12 +51,36 @@ OBJECT_TYPE_TO_SHOW_COMMAND: dict[str, str] = {
     "tag": "show-tags",
     "gsn-handover-group": "show-gsn-handover-groups",
     "network-feed": "show-network-feeds",
+    "application-site": "show-application-sites",
 }
+
+OBJECT_TYPE_TO_SHOW_SINGLE_COMMAND: dict[str, str] = {
+    "host": "show-host",
+    "network": "show-network",
+    "address-range": "show-address-range",
+    "multicast-address-range": "show-multicast-address-range",
+    "group": "show-group",
+    "group-with-exclusion": "show-group-with-exclusion",
+    "dns-domain": "show-dns-domain",
+    "wildcard": "show-wildcard",
+    "security-zone": "show-security-zone",
+    "dynamic-object": "show-dynamic-object",
+    "time": "show-time",
+    "time-group": "show-time-group",
+    "access-role": "show-access-role",
+    "tag": "show-tag",
+    "gsn-handover-group": "show-gsn-handover-group",
+    "network-feed": "show-network-feed",
+    "application-site": "show-application-site",
+}
+
+_TYPE_TO_SHOW_PLURAL_COMMAND = OBJECT_TYPE_TO_SHOW_COMMAND
+_TYPE_TO_SHOW_SINGLE_COMMAND = OBJECT_TYPE_TO_SHOW_SINGLE_COMMAND
 
 
 def resolve_object_query_command(item_type: str) -> tuple[str, dict[str, Any]]:
     """Map an object `item_type` to `(command, extra_payload)` for `api_query`."""
-    clean = item_type.strip().lower()
+    clean = normalize_object_type(item_type)
     if clean in OBJECT_TYPE_TO_SHOW_COMMAND:
         return OBJECT_TYPE_TO_SHOW_COMMAND[clean], {}
     return "show-objects", {"type": clean}
@@ -169,7 +194,7 @@ class ObjectService:
             return list(DEFAULT_OBJECT_TYPES)
         seen: list[str] = []
         for t in types:
-            clean = str(t).strip().lower()
+            clean = normalize_object_type(str(t))
             if clean and clean not in seen:
                 seen.append(clean)
         return seen or list(DEFAULT_OBJECT_TYPES)
@@ -500,10 +525,11 @@ class ObjectService:
                 cache_ttl=cache_ttl,
             )
 
+        norm_types = self._normalize_types(types) if types is not None else None
         cached = await self._cache.get_objects(
             mgmt_name=mgmt_name,
             domain_name=domain,
-            types=types,
+            types=norm_types,
             names=names,
             uids=uids,
         )
@@ -514,7 +540,7 @@ class ObjectService:
             cached,
             mgmt_name=mgmt_name,
             domain_name=domain,
-            types=types,
+            types=norm_types,
             names=names,
             uids=uids,
         )
@@ -592,7 +618,10 @@ class ObjectService:
 
 __all__ = [
     "OBJECT_TYPE_TO_SHOW_COMMAND",
+    "OBJECT_TYPE_TO_SHOW_SINGLE_COMMAND",
     "ObjectService",
+    "_TYPE_TO_SHOW_PLURAL_COMMAND",
+    "_TYPE_TO_SHOW_SINGLE_COMMAND",
     "extract_changes_from_show_changes",
     "resolve_object_query_command",
 ]

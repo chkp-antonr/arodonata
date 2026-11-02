@@ -101,6 +101,14 @@ def _record_to_sync_state(rec: DomainSyncStateRecord) -> DomainSyncState:
 
 
 def _record_to_cp_object(rec: CPObjectRecord) -> CPObject:
+    raw = dict(rec.raw_data or {})
+    raw_url_list = raw.get("url-list") if "url-list" in raw else raw.get("url_list")
+    url_list = [str(u) for u in raw_url_list if str(u)] if isinstance(raw_url_list, list) else []
+    raw_regex = (
+        raw.get("urls-defined-as-regular-expression")
+        if "urls-defined-as-regular-expression" in raw
+        else raw.get("urls_defined_as_regular_expression")
+    )
     return CPObject(
         id=rec.id,
         object_id=rec.object_id or f"{rec.mgmt_name}:{rec.domain_name}:{rec.name}",
@@ -119,12 +127,16 @@ def _record_to_cp_object(rec: CPObjectRecord) -> CPObject:
         ipv4_address_last=rec.ipv4_address_last,
         fqdn=rec.fqdn,
         is_sub_domain=rec.is_sub_domain,
+        primary_category=raw.get("primary-category") or raw.get("primary_category"),
+        url_list=url_list,
+        urls_defined_as_regular_expression=bool(raw_regex) if raw_regex is not None else None,
+        description=str(raw.get("description") or ""),
         members=list(rec.members or []),
         comments=rec.comments,
         color=rec.color,
         tags=list(rec.tags or []),
         nat_settings=dict(rec.nat_settings or {}),
-        raw_data=dict(rec.raw_data or {}),
+        raw_data=raw,
         updated_at=_ensure_utc(rec.updated_at) or utc_now(),
     )
 

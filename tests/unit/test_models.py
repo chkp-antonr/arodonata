@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from arodonata.core.models import Asset, CPObject, CPService, GroupMembershipNode
+from arodonata.core.models import Asset, CPObject, CPService, GroupMembershipNode, normalize_object_type
 
 
 def test_cp_object_and_group_membership_node_composite_ids() -> None:
@@ -48,3 +48,31 @@ def test_cp_service_and_asset_composite_ids() -> None:
     assert member.asset_id == "mds:General:gw-node-1"
     assert member.parent_id == "mds:General:c-1"
     assert member.parent_asset_id == "mds:General:gw-cluster"
+
+
+def test_cp_object_application_site_hydration_and_aliases() -> None:
+    """Verify application-site type aliases and CPObject.from_cp_dict hydration."""
+    assert normalize_object_type("app-site") == "application-site"
+    assert normalize_object_type("application_site") == "application-site"
+    assert normalize_object_type("application-site") == "application-site"
+
+    site = CPObject.from_cp_dict(
+        "mds",
+        "General",
+        {
+            "uid": "site-1",
+            "name": "Site_baidu.com",
+            "type": "application-site",
+            "primary-category": "Custom_Application_Site",
+            "url-list": [r"\/baidu\.com", r"\.baidu\.com"],
+            "urls-defined-as-regular-expression": True,
+            "description": "Baidu regex site",
+            "comments": "Managed by automation",
+        },
+    )
+    assert site.type == "application-site"
+    assert site.primary_category == "Custom_Application_Site"
+    assert site.url_list == [r"\/baidu\.com", r"\.baidu\.com"]
+    assert site.urls_defined_as_regular_expression is True
+    assert site.description == "Baidu regex site"
+    assert site.comments == "Managed by automation"

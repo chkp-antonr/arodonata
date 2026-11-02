@@ -76,6 +76,15 @@ class CPObject(BaseModel):
     )
     fqdn: str | None = None
     is_sub_domain: bool | None = Field(default=None, validation_alias=AliasChoices("is_sub_domain", "is-sub-domain"))
+    primary_category: str | None = Field(
+        default=None, validation_alias=AliasChoices("primary_category", "primary-category")
+    )
+    url_list: list[str] = Field(default_factory=list, validation_alias=AliasChoices("url_list", "url-list"))
+    urls_defined_as_regular_expression: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices("urls_defined_as_regular_expression", "urls-defined-as-regular-expression"),
+    )
+    description: str = ""
     members: list[str] = Field(default_factory=list)
     comments: str = ""
     color: str | None = None
@@ -105,6 +114,14 @@ class CPObject(BaseModel):
         if fqdn is None and obj_type == "dns-domain" and name.startswith("."):
             fqdn = name.lstrip(".")
 
+        raw_url_list = data.get("url-list") if "url-list" in data else data.get("url_list")
+        url_list = [str(u) for u in raw_url_list if str(u)] if isinstance(raw_url_list, list) else []
+        raw_regex = (
+            data.get("urls-defined-as-regular-expression")
+            if "urls-defined-as-regular-expression" in data
+            else data.get("urls_defined_as_regular_expression")
+        )
+
         return cls(
             id=f"{mgmt_name}:{domain_name}:{uid}",
             object_id=f"{mgmt_name}:{domain_name}:{name}",
@@ -123,6 +140,10 @@ class CPObject(BaseModel):
             ipv4_address_last=data.get("ipv4-address-last") or data.get("ipv4_address_last"),
             fqdn=fqdn,
             is_sub_domain=data.get("is-sub-domain") if "is-sub-domain" in data else data.get("is_sub_domain"),
+            primary_category=data.get("primary-category") or data.get("primary_category"),
+            url_list=url_list,
+            urls_defined_as_regular_expression=bool(raw_regex) if raw_regex is not None else None,
+            description=str(data.get("description") or ""),
             members=_extract_member_uids(data.get("members")),
             comments=str(data.get("comments") or ""),
             color=data.get("color"),

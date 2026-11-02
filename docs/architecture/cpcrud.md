@@ -28,7 +28,7 @@ Before inspecting any objects or rules, `Planner` queries `show-last-published-s
 
 `HybridStateReader` then serves object and service lookups using a two-tier strategy:
 
-- **Cache Hit (Fast Path)**: If `arodonata_domain_sync_state` for `(mgmt_name, domain, scope, item_type)` matches the planner's `DomainStamp` (`last_published_at` and `last_session_uid`), lookups (`host`, `network`, `address-range`, `group`, `dns-domain`, `service-tcp`, `service-udp`, etc.) are resolved directly from `arodonata_objects` and `arodonata_services` in local SQL.
+- **Cache Hit (Fast Path)**: If `arodonata_domain_sync_state` for `(mgmt_name, domain, scope, item_type)` matches the planner's `DomainStamp` (`last_published_at` and `last_session_uid`), lookups (`host`, `network`, `address-range`, `group`, `dns-domain`, `application-site`, `service-tcp`, `service-udp`, etc.) are resolved directly from `arodonata_objects` and `arodonata_services` in local SQL.
 - **Live API Fallback**: If the domain cache is absent or older than the `DomainStamp`, `HybridStateReader` falls back transparently to live Check Point API queries.
 - **Intra-Plan Virtual State Overlay**: Each `plan()` call instantiates a fresh `HybridStateReader` whose virtual overlay tracks objects, services, and groups planned earlier in the same template so downstream groups and rules see newly planned members immediately.
 - **Fail-Closed Lookup Errors**: Transport or API errors during state lookup raise `StateLookupError` and produce `Outcome.ERROR` (plus `Outcome.SKIPPED_DEPENDENCY` on dependent groups/rules) rather than falsely assuming an object is missing and planning a duplicate `CREATE`.

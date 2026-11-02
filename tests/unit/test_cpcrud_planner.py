@@ -168,7 +168,7 @@ async def _seed_fresh_cache(
     if services:
         await cache.upsert_services(services)
 
-    for obj_type in ("host", "network", "address-range", "dns-domain", "group"):
+    for obj_type in ("host", "network", "address-range", "dns-domain", "group", "application-site"):
         await cache.upsert_sync_state(
             DomainSyncState(
                 mgmt_name="mds1",
@@ -661,5 +661,151 @@ async def test_planner_rejects_unknown_object_types_duplicate_ids_wraps_dns_dot_
     assert stamp.readable is False
     assert "sid_leak_777" not in (stamp.error or "")
     assert "***REDACTED***" in (stamp.error or "")
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_planner_application_site_create_unchanged_update_delete_and_error() -> None:
+    """`Planner` handles `application-site` in `objects:`, `services:`, and `operations:` across CREATE, UNCHANGED, UPDATE, DELETE, and ERROR outcomes."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = PlannerFakeApi()
+
+    await _seed_fresh_cache(
+        cache,
+        objects=[
+            CPObject.from_cp_dict(
+                "mds1",
+                "Corp",
+                {
+                    "uid": "site-existing-1",
+                    "name": "Site_baidu.com",
+                    "type": "application-site",
+                    "primary-category": "Custom_Application_Site",
+                    "url-list": [r"\.baidu\.com", r"\/baidu\.com"],
+                    "urls-defined-as-regular-expression": True,
+                    "description": "Baidu custom site",
+                },
+            )
+        ],
+    )
+
+    planner = Planner(api=api, cache=cache, default_mgmt_name="mds1")
+
+    # 1. CREATE new application-site (in services:) + UNCHANGED existing application-site (with reordered url-list) + access-rule referencing it
+    plan_1 = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "objects": [
+                {
+                    "type": "application-site",
+                    "name": "Site_baidu.com",
+                    "primary-category": "Custom_Application_Site",
+                    "url-list": [r"\/baidu\.com", r"\.baidu\.com"],
+                    "urls-defined-as-regular-expression": True,
+                }
+            ],
+            "services": [
+                {
+                    "type": "application-site",
+                    "name": "Site_new_regex",
+                    "primary-category": "Custom_Application_Site",
+                    "url-list": [r"\/example\.org"],
+                    "urls-defined-as-regular-expression": True,
+                    "description": "New regex site",
+                }
+            ],
+            "rules": [
+                {
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "Allow Baidu",
+                    "position": "bottom",
+                    "source": ["Any"],
+                    "destination": ["Any"],
+                    "service": ["Site_baidu.com", "Site_new_regex"],
+                    "rule_action": "Accept",
+                }
+            ],
+        }
+    )
+    by_name = {a.name: a for a in plan_1.actions}
+    assert by_name["Site_baidu.com"].outcome == Outcome.UNCHANGED
+    assert by_name["Site_new_regex"].outcome == Outcome.CREATE
+    assert by_name["Site_new_regex"].command == "add-application-site"
+    assert by_name["Site_new_regex"].payload == {
+        "name": "Site_new_regex",
+        "primary-category": "Custom_Application_Site",
+        "url-list": [r"\/example\.org"],
+        "urls-defined-as-regular-expression": True,
+        "description": "New regex site",
+    }
+    assert by_name["Allow Baidu"].outcome == Outcome.CREATE
+    assert by_name["Allow Baidu"].payload["service"] == ["Site_baidu.com", "Site_new_regex"]
+
+    # 2. Name conflict with on_name_conflict="error" -> Outcome.ERROR reporting differs on [url-list]
+    plan_err = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "on_name_conflict": "error",
+            "objects": [
+                {
+                    "type": "application-site",
+                    "name": "Site_baidu.com",
+                    "primary-category": "Custom_Application_Site",
+                    "url-list": [r"\/baidu\.com", r"\.baidu\.cn"],
+                    "urls-defined-as-regular-expression": True,
+                }
+            ],
+        }
+    )
+    assert plan_err.actions[0].outcome == Outcome.ERROR
+    assert "differs on [url-list]" in (plan_err.actions[0].error or "")
+
+    # 3. Name conflict with on_name_conflict="update" -> Outcome.UPDATE with set-application-site
+    plan_upd = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "on_name_conflict": "update",
+            "objects": [
+                {
+                    "type": "application-site",
+                    "name": "Site_baidu.com",
+                    "primary-category": "Custom_Application_Site",
+                    "url-list": [r"\/baidu\.com", r"\.baidu\.cn"],
+                    "urls-defined-as-regular-expression": True,
+                }
+            ],
+        }
+    )
+    assert plan_upd.actions[0].outcome == Outcome.UPDATE
+    assert plan_upd.actions[0].command == "set-application-site"
+    assert plan_upd.actions[0].payload["url-list"] == [r"\/baidu\.com", r"\.baidu\.cn"]
+
+    # 4. DELETE existing application-site -> Outcome.DELETE with delete-application-site and prior_state
+    plan_del = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "operations": [
+                {
+                    "operation": "delete",
+                    "type": "application-site",
+                    "name": "Site_baidu.com",
+                }
+            ],
+        }
+    )
+    assert plan_del.actions[0].outcome == Outcome.DELETE
+    assert plan_del.actions[0].command == "delete-application-site"
+    assert plan_del.actions[0].prior_state is not None
+    assert plan_del.actions[0].prior_state["primary-category"] == "Custom_Application_Site"
+    assert set(plan_del.actions[0].prior_state["url-list"]) == {r"\/baidu\.com", r"\.baidu\.com"}
+    assert plan_del.actions[0].prior_state["urls-defined-as-regular-expression"] is True
 
     await db.close()

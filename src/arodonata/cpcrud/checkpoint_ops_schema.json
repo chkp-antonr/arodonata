@@ -268,7 +268,7 @@
         },
         "type": {
           "type": "string",
-          "enum": ["host", "network", "address-range", "dns-domain", "group"]
+          "enum": ["host", "network", "address-range", "dns-domain", "group", "application-site"]
         },
         "uid": {
           "type": "string",
@@ -361,6 +361,61 @@
         },
         "is-sub-domain": {
           "type": "boolean"
+        },
+        "primary_category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "primary-category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url_list": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "url-list": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "urls_defined_as_regular_expression": {
+          "type": "boolean"
+        },
+        "urls-defined-as-regular-expression": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        },
+        "application_signature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "application-signature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "additional_categories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additional-categories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "members": {
           "oneOf": [
@@ -479,7 +534,8 @@
             "service-icmp",
             "service-icmp6",
             "service-other",
-            "service-group"
+            "service-group",
+            "application-site"
           ]
         },
         "uid": {
@@ -543,6 +599,61 @@
         },
         "match-for-any": {
           "type": "boolean"
+        },
+        "primary_category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "primary-category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url_list": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "url-list": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "urls_defined_as_regular_expression": {
+          "type": "boolean"
+        },
+        "urls-defined-as-regular-expression": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        },
+        "application_signature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "application-signature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "additional_categories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additional-categories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "members": {
           "oneOf": [

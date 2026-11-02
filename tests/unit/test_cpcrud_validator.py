@@ -164,3 +164,64 @@ def test_parse_template_input_rejects_non_dict_or_str() -> None:
     assert parsed is None
     assert len(errs) == 1
     assert "got int" in errs[0]
+
+
+def test_validate_template_application_site_in_objects_services_and_operations() -> None:
+    """`validate_template` accepts `application-site` in `objects`, `services`, and `operations` and rejects missing `url-list`/`application-signature`."""
+    valid_tpl: dict[str, Any] = {
+        "version": 1,
+        "mgmt_name": "mds1",
+        "domain": "Corp",
+        "objects": [
+            {
+                "type": "application-site",
+                "name": "Site_baidu.com",
+                "primary-category": "Custom_Application_Site",
+                "url-list": [r"\/baidu\.com", r"\.baidu\.com"],
+                "urls-defined-as-regular-expression": True,
+                "description": "Baidu regex site",
+                "additional-categories": ["Search_Engines"],
+            }
+        ],
+        "services": [
+            {
+                "type": "application-site",
+                "name": "Site_example_svc",
+                "primary_category": "Custom_Application_Site",
+                "url_list": ["example.org"],
+                "urls_defined_as_regular_expression": False,
+            }
+        ],
+        "operations": [
+            {
+                "operation": "add",
+                "type": "application-site",
+                "name": "Site_sig_custom",
+                "primary-category": "Custom_Application_Site",
+                "application-signature": "http-header:X-Custom",
+            },
+            {
+                "operation": "delete",
+                "type": "application-site",
+                "name": "Site_old",
+            },
+        ],
+    }
+    assert validate_template(valid_tpl) == []
+
+    missing_urls_tpl: dict[str, Any] = {
+        "version": 1,
+        "mgmt_name": "mds1",
+        "domain": "Corp",
+        "objects": [
+            {
+                "type": "application-site",
+                "name": "Site_empty",
+                "primary-category": "Custom_Application_Site",
+            }
+        ],
+    }
+    errs = validate_template(missing_urls_tpl)
+    assert len(errs) == 1
+    assert "objects[0]" in errs[0]
+    assert "url-list" in errs[0]
