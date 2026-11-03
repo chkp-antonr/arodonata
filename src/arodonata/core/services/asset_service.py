@@ -70,7 +70,99 @@ VSX_GENERIC_OBJECT_CLASSES: tuple[str, ...] = (
     "com.checkpoint.objects.classes.dummy.CpmiVsxClusterNetobj",
     "com.checkpoint.objects.classes.dummy.CpmiVsNetobj",
     "com.checkpoint.objects.classes.dummy.CpmiVsClusterNetobj",
+    "com.checkpoint.objects.vsx_classes.dummy.CpmiVsxSlotObj",
+    "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
 )
+
+_VS_SLOT_MERGE_KEYS: tuple[str, ...] = (
+    "interfaces",
+    "interfaces_installed",
+    "routes",
+    "routes_installed",
+    "routing_table",
+    "vsid",
+    "targetCustomer",
+    "target-customer",
+    "target_customer",
+    "vsxGateway",
+    "vsx-gateway",
+    "vsx_gateway",
+    "parent",
+    "contained-in",
+)
+
+
+def _extract_interfaces_from_generic(raw_obj: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract a list of interface dicts from `interfaces` or `interfaces_installed` on a generic/slot object."""
+    for key in ("interfaces", "interfaces_installed"):
+        val = raw_obj.get(key)
+        if isinstance(val, dict) and isinstance(val.get("objects"), list):
+            val = val["objects"]
+        if isinstance(val, list):
+            extracted: list[dict[str, Any]] = []
+            for item in val:
+                if isinstance(item, dict):
+                    owned = item.get("owned-object") or item.get("owned_object")
+                    if isinstance(owned, dict):
+                        merged_if = dict(item)
+                        merged_if.update(owned)
+                        extracted.append(merged_if)
+                    else:
+                        extracted.append(item)
+            if extracted:
+                return extracted
+    return []
+
+
+def _is_slot_object(g_obj: dict[str, Any]) -> bool:
+    """Return `True` if `g_obj` is a `CpmiVsxSlotObj` or `CpmiVsSlotObj` record."""
+    cls_or_type = f"{g_obj.get('class-name') or ''} {g_obj.get('type') or ''} {g_obj.get('objtype') or ''}"
+    if "CpmiVsxSlotObj" in cls_or_type or "CpmiVsSlotObj" in cls_or_type or "SlotObj" in cls_or_type:
+        return True
+    # Do not misclassify ordinary VS/VSX generic objects (CpmiVsNetobj, CpmiVsClusterNetobj, CpmiVsxNetobj, etc.)
+    if any(t in cls_or_type for t in (*VSX_PARENT_TYPES, *VSX_CHILD_TYPES)):
+        return False
+    return not cls_or_type.strip() and "vsid" in g_obj and ("targetCustomer" in g_obj or "vsxGateway" in g_obj)
+
+
+def _is_vsx_slot0_object(g_obj: dict[str, Any]) -> bool:
+    """Return `True` if `g_obj` represents `VS0` (`CpmiVsxSlotObj` or `vsid == 0`)."""
+    cls_or_type = f"{g_obj.get('class-name') or ''} {g_obj.get('type') or ''} {g_obj.get('objtype') or ''}"
+    if "CpmiVsxSlotObj" in cls_or_type:
+        return True
+    if not _is_slot_object(g_obj):
+        return False
+    vsid = g_obj.get("vsid")
+    if vsid is None:
+        return False
+    try:
+        return int(vsid) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _merge_vs_slot_data(asset: Asset, source_obj: dict[str, Any]) -> tuple[Asset, bool]:
+    """Merge VS generic/slot `interfaces`, `interfaces_installed`, `routes`, and `routes_installed` onto `asset`."""
+    merged_raw = dict(asset.raw_data)
+    changed = False
+
+    for key in _VS_SLOT_MERGE_KEYS:
+        if key in source_obj and source_obj[key] is not None:
+            existing_val = merged_raw.get(key)
+            if existing_val is None or existing_val == [] or existing_val == {}:
+                merged_raw[key] = source_obj[key]
+                changed = True
+
+    extracted_ifs = _extract_interfaces_from_generic(source_obj)
+    new_interfaces = list(asset.interfaces)
+    if not new_interfaces and extracted_ifs:
+        new_interfaces = extracted_ifs
+        merged_raw["interfaces"] = extracted_ifs
+        changed = True
+
+    if not changed:
+        return asset, False
+    return asset.model_copy(update={"interfaces": new_interfaces, "raw_data": merged_raw}), True
 
 
 class ClusterRelationshipManager:
@@ -259,22 +351,36 @@ class VSXRelationshipManager:
         if has_vsx_candidate:
             generic_objects = await self._fetch_vsx_generic_objects(mgmt_name, domain_name)
 
+        # Separate standard VSX/VS generic objects from VSX slot objects (CpmiVsxSlotObj / CpmiVsSlotObj)
+        non_slot_objects = [g for g in generic_objects if not _is_slot_object(g)]
+        slot_objects = [g for g in generic_objects if _is_slot_object(g)]
+
         # Merge any generic-object VSX metadata onto matching assets (or create missing virtual system assets)
-        for g_obj in generic_objects:
+        for g_obj in non_slot_objects:
             g_uid = str(g_obj.get("uid") or "")
             g_name = str(g_obj.get("name") or "")
             if not g_uid:
                 continue
-            existing = by_uid.get(g_uid)
+            existing = by_uid.get(g_uid) or (by_name.get(g_name) if g_name else None)
             if existing is not None:
                 merged_raw = dict(g_obj)
                 merged_raw.update(existing.raw_data)
                 # Keep generic-object topology keys if missing in standard show-gateways-and-servers
-                for k in ("virtual-systems", "virtual_systems", "vsx-gateway", "vsx_gateway", "parent", "contained-in"):
+                for k in (
+                    "virtual-systems",
+                    "virtual_systems",
+                    "vsx-gateway",
+                    "vsx_gateway",
+                    "vsxGateway",
+                    "parent",
+                    "contained-in",
+                    *_VS_SLOT_MERGE_KEYS,
+                ):
                     if k in g_obj and k not in merged_raw:
                         merged_raw[k] = g_obj[k]
                 updated = existing.model_copy(update={"raw_data": merged_raw})
-                by_uid[g_uid] = updated
+                updated, _ = _merge_vs_slot_data(updated, g_obj)
+                by_uid[updated.uid] = updated
                 by_name[updated.name] = updated
             elif g_name:
                 g_type = str(g_obj.get("type") or g_obj.get("class-name") or "virtual-system")
@@ -285,8 +391,128 @@ class VSXRelationshipManager:
                     domain_name,
                     {**g_obj, "type": g_type},
                 )
+                synthesized, _ = _merge_vs_slot_data(synthesized, g_obj)
                 by_uid[synthesized.uid] = synthesized
                 by_name[synthesized.name] = synthesized
+
+        # Process CpmiVsxSlotObj (vsid == 0) and CpmiVsSlotObj (vsid > 0)
+        slot0_uid_to_parent_uid: dict[str, str] = {}
+
+        def _resolve_slot_parent(slot_obj: dict[str, Any]) -> Asset | None:
+            vsx_ref = (
+                slot_obj.get("vsxGateway")
+                or slot_obj.get("vsx-gateway")
+                or slot_obj.get("vsx_gateway")
+                or slot_obj.get("parent")
+                or slot_obj.get("contained-in")
+            )
+            if isinstance(vsx_ref, str) and vsx_ref:
+                if vsx_ref in by_uid:
+                    return by_uid[vsx_ref]
+                if vsx_ref in slot0_uid_to_parent_uid:
+                    return by_uid.get(slot0_uid_to_parent_uid[vsx_ref])
+                if vsx_ref in by_name:
+                    return by_name[vsx_ref]
+            elif isinstance(vsx_ref, dict):
+                p_uid = str(vsx_ref.get("uid") or "")
+                p_name = str(vsx_ref.get("name") or "")
+                if p_uid and p_uid in by_uid:
+                    return by_uid[p_uid]
+                if p_uid and p_uid in slot0_uid_to_parent_uid:
+                    return by_uid.get(slot0_uid_to_parent_uid[p_uid])
+                if p_name and p_name in by_name:
+                    return by_name[p_name]
+            slot_name = str(slot_obj.get("name") or "")
+            if _is_vsx_slot0_object(slot_obj) and slot_name and slot_name in by_name:
+                return by_name[slot_name]
+            vsx_parents = [
+                a
+                for a in by_uid.values()
+                if a.type in VSX_PARENT_TYPES or ("vsx" in a.type.lower() and "member" not in a.type.lower())
+            ]
+            if len(vsx_parents) == 1:
+                return vsx_parents[0]
+            return None
+
+        for slot_obj in slot_objects:
+            if not _is_vsx_slot0_object(slot_obj):
+                continue
+            parent_vsx = _resolve_slot_parent(slot_obj)
+            if parent_vsx is not None:
+                s_uid = str(slot_obj.get("uid") or "")
+                if s_uid:
+                    slot0_uid_to_parent_uid[s_uid] = parent_vsx.uid
+                curr_parent = by_uid[parent_vsx.uid]
+                raw_copy = dict(curr_parent.raw_data)
+                raw_copy["vsx_slot0"] = slot_obj
+                updated_parent = curr_parent.model_copy(update={"raw_data": raw_copy})
+                by_uid[updated_parent.uid] = updated_parent
+                by_name[updated_parent.name] = updated_parent
+
+        for slot_obj in slot_objects:
+            if _is_vsx_slot0_object(slot_obj):
+                continue
+            parent_vsx = _resolve_slot_parent(slot_obj)
+            slot_name = str(slot_obj.get("name") or slot_obj.get("vsName") or slot_obj.get("vs-name") or "")
+            target_cust = (
+                slot_obj.get("targetCustomer")
+                or slot_obj.get("target-customer")
+                or slot_obj.get("target_customer")
+                or slot_obj.get("customer")
+                or slot_obj.get("domain")
+            )
+            target_domain = (
+                str(target_cust.get("name") or target_cust.get("uid") or "")
+                if isinstance(target_cust, dict)
+                else str(target_cust or "")
+            )
+
+            if parent_vsx is not None:
+                curr_parent = by_uid[parent_vsx.uid]
+                raw_copy = dict(curr_parent.raw_data)
+                existing_slots = list(raw_copy.get("vs_slots") or [])
+                slot_key = str(slot_obj.get("uid") or slot_name)
+                if not any(str(s.get("uid") or s.get("name") or "") == slot_key for s in existing_slots):
+                    existing_slots.append(slot_obj)
+                raw_copy["vs_slots"] = existing_slots
+                updated_parent = curr_parent.model_copy(update={"raw_data": raw_copy})
+                by_uid[updated_parent.uid] = updated_parent
+                by_name[updated_parent.name] = updated_parent
+
+            # If the VS belongs to the current domain, enrich it directly as well
+            if not target_domain or target_domain == domain_name:
+                vs_candidate = by_name.get(slot_name) if slot_name else None
+                if vs_candidate is None and parent_vsx is not None and slot_name.startswith(f"{parent_vsx.name}_"):
+                    short_name = slot_name[len(parent_vsx.name) + 1 :]
+                    vs_candidate = by_name.get(short_name)
+                if vs_candidate is not None and vs_candidate.uid != (parent_vsx.uid if parent_vsx else ""):
+                    merged_vs, _ = _merge_vs_slot_data(by_uid[vs_candidate.uid], slot_obj)
+                    if parent_vsx is not None:
+                        merged_vs = merged_vs.model_copy(
+                            update={
+                                "parent_uid": parent_vsx.uid,
+                                "parent_name": parent_vsx.name,
+                                "parent_id": parent_vsx.id,
+                                "parent_asset_id": parent_vsx.asset_id,
+                            }
+                        )
+                        curr_parent = by_uid[parent_vsx.uid]
+                        new_vs_uids = list(curr_parent.virtual_system_uids)
+                        new_vs_asset_ids = list(curr_parent.virtual_system_asset_ids)
+                        if merged_vs.uid not in new_vs_uids:
+                            new_vs_uids.append(merged_vs.uid)
+                        if merged_vs.asset_id not in new_vs_asset_ids:
+                            new_vs_asset_ids.append(merged_vs.asset_id)
+                        updated_parent = curr_parent.model_copy(
+                            update={
+                                "virtual_system_uids": new_vs_uids,
+                                "virtual_system_asset_ids": new_vs_asset_ids,
+                            }
+                        )
+                        by_uid[updated_parent.uid] = updated_parent
+                        by_name[updated_parent.name] = updated_parent
+                    by_uid[merged_vs.uid] = merged_vs
+                    by_name[merged_vs.name] = merged_vs
 
         # First pass: link from VSX parent (`virtual-systems` / `virtual_system_uids`) -> virtual systems
         for asset in list(by_uid.values()):
@@ -522,6 +748,7 @@ class VSXRelationshipManager:
             vsx_ref = (
                 raw.get("vsx-gateway")
                 or raw.get("vsx_gateway")
+                or raw.get("vsxGateway")
                 or raw.get("vsx-cluster")
                 or raw.get("contained-in")
                 or (raw.get("parent") if is_vs else None)
@@ -536,6 +763,77 @@ class VSXRelationshipManager:
 
             if parent_asset is not None and parent_asset.mgmt_name == asset.mgmt_name:
                 _link(parent_asset.id, asset.id)
+
+        # Pass 3: VSX slot objects (`vs_slots` from CpmiVsSlotObj) -> cross-domain VS assets via `targetCustomer`
+        for asset in list(by_id.values()):
+            vs_slots = asset.raw_data.get("vs_slots")
+            if not isinstance(vs_slots, list):
+                continue
+            for slot in vs_slots:
+                if not isinstance(slot, dict):
+                    continue
+                slot_name = str(slot.get("name") or slot.get("vsName") or slot.get("vs-name") or "")
+                target_cust = (
+                    slot.get("targetCustomer")
+                    or slot.get("target-customer")
+                    or slot.get("target_customer")
+                    or slot.get("customer")
+                    or slot.get("domain")
+                )
+                target_domain = (
+                    str(target_cust.get("name") or target_cust.get("uid") or "")
+                    if isinstance(target_cust, dict)
+                    else str(target_cust or "")
+                )
+
+                slot_vs_asset: Asset | None = None
+                candidate_names = [slot_name] if slot_name else []
+                if slot_name.startswith(f"{asset.name}_"):
+                    candidate_names.append(slot_name[len(asset.name) + 1 :])
+
+                if target_domain:
+                    for cand_name in candidate_names:
+                        comp_key = f"{asset.mgmt_name}:{target_domain}:{cand_name}"
+                        if comp_key in by_asset_id:
+                            slot_vs_asset = by_asset_id[comp_key]
+                            break
+
+                if slot_vs_asset is None:
+                    for cand_name in candidate_names:
+                        matches = [
+                            c for c in by_name.get(cand_name, []) if c.mgmt_name == asset.mgmt_name and c.id != asset.id
+                        ]
+                        if target_domain:
+                            dom_matches = [
+                                c
+                                for c in matches
+                                if c.domain_name == target_domain
+                                or (
+                                    isinstance(c.raw_data.get("domain"), dict)
+                                    and str(c.raw_data["domain"].get("uid") or "") == target_domain
+                                )
+                            ]
+                            if dom_matches:
+                                slot_vs_asset = dom_matches[0]
+                                break
+                        elif matches:
+                            vs_matches = [
+                                c
+                                for c in matches
+                                if c.type in VSX_CHILD_TYPES or "vs" in c.type.lower() or "virtual" in c.type.lower()
+                            ]
+                            slot_vs_asset = vs_matches[0] if vs_matches else matches[0]
+                            break
+
+                if slot_vs_asset is not None and slot_vs_asset.mgmt_name == asset.mgmt_name:
+                    _link(asset.id, slot_vs_asset.id)
+                    curr_vs = by_id[slot_vs_asset.id]
+                    merged_vs, changed = _merge_vs_slot_data(curr_vs, slot)
+                    if changed:
+                        by_id[merged_vs.id] = merged_vs
+                        by_uid[merged_vs.uid] = merged_vs
+                        by_asset_id[merged_vs.asset_id] = merged_vs
+                        modified_ids.add(merged_vs.id)
 
         return [by_id[mid] for mid in modified_ids]
 

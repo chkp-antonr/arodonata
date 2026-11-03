@@ -374,7 +374,36 @@ class MCPFakeApi:
                         "name": "corp-gw-01",
                         "type": "simple-gateway",
                         "ipv4-address": "10.10.0.1",
-                        "interfaces": [{"name": "eth0", "ipv4-address": "10.10.0.1"}],
+                        "policy": {"access-policy-name": "Standard"},
+                        "interfaces": [
+                            {
+                                "name": "eth0",
+                                "ipv4-address": "10.10.0.1",
+                                "ipv4-mask-length": 24,
+                                "topology": "external",
+                                "topology-settings": {"interface-leads-to-dmz": False},
+                            },
+                            {
+                                "name": "eth1",
+                                "ipv4-address": "10.10.1.1",
+                                "ipv4-mask-length": 24,
+                                "topology": "internal",
+                                "topology-settings": {
+                                    "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+                                    "interface-leads-to-dmz": False,
+                                },
+                            },
+                            {
+                                "name": "eth2",
+                                "ipv4-address": "172.16.20.1",
+                                "ipv4-mask-length": 24,
+                                "topology": "internal",
+                                "topology-settings": {
+                                    "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+                                    "interface-leads-to-dmz": True,
+                                },
+                            },
+                        ],
                         "network-security-blades": {"firewall": True},
                     },
                     {
@@ -446,7 +475,7 @@ def _get_tool_text(result: CallToolResult) -> str:
 
 @pytest.mark.asyncio
 async def test_consolidated_tool_count_and_cached_list_tools_envelopes() -> None:
-    """Verify the consolidated tool surface (14 base tools, 19 with `cpcrud=True`),
+    """Verify the consolidated tool surface (15 base tools, 20 with `cpcrud=True`),
     `list_*` envelopes (`from`, `to`, `total`, `source`, `cache_age_seconds`),
     short type alias normalization, and `list_assets(parent=...)` filtering.
     """
@@ -457,7 +486,7 @@ async def test_consolidated_tool_count_and_cached_list_tools_envelopes() -> None
         base_server = create_mcp_server(client, auth_mode="host", cpcrud=False)
         base_tools = await base_server.list_tools()
         base_tool_names = {t.name for t in base_tools}
-        assert len(base_tool_names) == 14
+        assert len(base_tool_names) == 15
         assert base_tool_names == {
             "list_domains",
             "list_objects",
@@ -466,6 +495,7 @@ async def test_consolidated_tool_count_and_cached_list_tools_envelopes() -> None
             "show_object",
             "show_rulebase",
             "locate_rules",
+            "locate_gateways",
             "search_objects",
             "get_group_members",
             "query_objects",
@@ -478,7 +508,7 @@ async def test_consolidated_tool_count_and_cached_list_tools_envelopes() -> None
         cpcrud_server = create_mcp_server(client, auth_mode="host", cpcrud=True)
         cpcrud_tools = await cpcrud_server.list_tools()
         cpcrud_tool_names = {t.name for t in cpcrud_tools}
-        assert len(cpcrud_tool_names) == 19
+        assert len(cpcrud_tool_names) == 20
         assert cpcrud_tool_names - base_tool_names == {
             "cpcrud_validate",
             "cpcrud_plan",
@@ -683,6 +713,10 @@ async def test_query_objects_describe_and_cache_control_tools() -> None:
             "cache_control",
             {"action": "refresh", "mgmt_name": "mds1", "domain": "Corp", "scope": "rulebase"},
         )
+        await server.call_tool(
+            "cache_control",
+            {"action": "refresh", "mgmt_name": "mds1", "domain": "Corp", "scope": "topology"},
+        )
 
         # 1. query_objects with aggregate="describe"
         desc_res = await server.call_tool(
@@ -746,12 +780,12 @@ async def test_query_objects_describe_and_cache_control_tools() -> None:
         assert global_data["objects"][0]["name"] == "global-dns-1"
         assert global_data["objects"][0]["original_domain"] == "Global"
 
-        # 4. cache_control(action="status") across all 5 scopes ("domains", "objects", "services", "assets", "rulebase")
+        # 4. cache_control(action="status") across all 6 scopes ("domains", "objects", "services", "assets", "rulebase", "topology")
         cs_res = await server.call_tool("cache_control", {"mgmt_name": "mds1", "action": "status"})
         assert isinstance(cs_res, CallToolResult)
         cs_data = _parse_tool_json(cs_res)
         assert cs_data["total_entries"] > 0
-        for expected_scope in ("domains", "objects", "services", "assets", "rulebase"):
+        for expected_scope in ("domains", "objects", "services", "assets", "rulebase", "topology"):
             assert expected_scope in cs_data["by_scope"]
             first_entry = cs_data["by_scope"][expected_scope][0]
             assert "item_type" in first_entry
@@ -759,6 +793,49 @@ async def test_query_objects_describe_and_cache_control_tools() -> None:
             assert "last_session_uid" in first_entry
             assert "synced_at" in first_entry
             assert isinstance(first_entry["cache_age_seconds"], float)
+
+        # 5. locate_gateways resolves affected gateways, domain, policy packages, and access layers
+        loc_res = await server.call_tool(
+            "locate_gateways",
+            {
+                "sources": ["10.10.1.5"],
+                "destinations": ["172.16.20.10"],
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "cache_mode": "cache",
+            },
+        )
+        assert isinstance(loc_res, CallToolResult)
+        assert loc_res.is_error is False
+        loc_data = _parse_tool_json(loc_res)
+        assert loc_data["total"] == 1
+        assert loc_data["source"] == "cache"
+        gw_cand = loc_data["gateways"][0]
+        assert gw_cand["gateway_name"] == "corp-gw-01"
+        assert gw_cand["domain_name"] == "Corp"
+        assert gw_cand["installed_access_policy"] == "Standard"
+        assert gw_cand["policy_packages"] == ["Standard"]
+        assert gw_cand["access_layers"] == ["Network"]
+        assert gw_cand["matched_flows"][0]["src_interface"] == "eth1"
+        assert gw_cand["matched_flows"][0]["dst_interface"] == "eth2"
+        assert gw_cand["matched_flows"][0]["match_type"] == "internal_to_internal"
+
+        # 6. locate_gateways excludes gateway when both endpoints sit behind the same interface (eth1 -> eth1)
+        loc_same = await server.call_tool(
+            "locate_gateways",
+            {
+                "sources": ["10.10.1.5"],
+                "destinations": ["10.10.1.99"],
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "cache_mode": "cache",
+            },
+        )
+        assert isinstance(loc_same, CallToolResult)
+        assert loc_same.is_error is False
+        loc_same_data = _parse_tool_json(loc_same)
+        assert loc_same_data["total"] == 0
+        assert loc_same_data["gateways"] == []
 
 
 @pytest.mark.asyncio

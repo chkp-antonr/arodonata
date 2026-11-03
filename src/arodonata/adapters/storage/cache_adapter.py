@@ -19,6 +19,7 @@ from arodonata.adapters.storage.tables import (
     CPServiceRecord,
     DomainRecord,
     DomainSyncStateRecord,
+    GatewayTopologyRecord,
     HttpsRuleRecord,
     NatRuleRecord,
     RulebaseLayerRecord,
@@ -44,6 +45,7 @@ from arodonata.core.models.rulebase import (
     ThreatRuleEntry,
 )
 from arodonata.core.models.services import CPService
+from arodonata.core.models.topology import GatewayTopologyEntry
 from arodonata.core.telemetry import span_attrs, traced
 
 
@@ -281,6 +283,56 @@ def _asset_to_record(asset: Asset) -> AssetRecord:
         color=asset.color,
         raw_data=dict(asset.raw_data),
         updated_at=_ensure_utc(asset.updated_at) or utc_now(),
+    )
+
+
+def _record_to_topology_entry(rec: GatewayTopologyRecord) -> GatewayTopologyEntry:
+    return GatewayTopologyEntry(
+        id=rec.id,
+        mgmt_name=rec.mgmt_name,
+        domain_name=rec.domain_name,
+        gateway_id=rec.gateway_id,
+        gateway_asset_id=rec.gateway_asset_id,
+        gateway_uid=rec.gateway_uid,
+        gateway_name=rec.gateway_name,
+        gateway_type=rec.gateway_type,
+        interface_name=rec.interface_name,
+        interface_ipv4=rec.interface_ipv4,
+        interface_mask_length=rec.interface_mask_length,
+        topology_zone=rec.topology_zone,  # type: ignore[arg-type]
+        leads_to_dmz=bool(rec.leads_to_dmz),
+        source_type=rec.source_type,  # type: ignore[arg-type]
+        source_ref=rec.source_ref,
+        cidr_or_range=rec.cidr_or_range,
+        ip_first_int=int(rec.ip_first_int),
+        ip_last_int=int(rec.ip_last_int),
+        prefix_len=int(rec.prefix_len),
+        updated_at=_ensure_utc(rec.updated_at) or utc_now(),
+    )
+
+
+def _topology_entry_to_record(entry: GatewayTopologyEntry) -> GatewayTopologyRecord:
+    return GatewayTopologyRecord(
+        id=entry.id,
+        mgmt_name=entry.mgmt_name,
+        domain_name=entry.domain_name,
+        gateway_id=entry.gateway_id,
+        gateway_asset_id=entry.gateway_asset_id,
+        gateway_uid=entry.gateway_uid,
+        gateway_name=entry.gateway_name,
+        gateway_type=entry.gateway_type,
+        interface_name=entry.interface_name,
+        interface_ipv4=entry.interface_ipv4,
+        interface_mask_length=entry.interface_mask_length,
+        topology_zone=entry.topology_zone,
+        leads_to_dmz=entry.leads_to_dmz,
+        source_type=entry.source_type,
+        source_ref=entry.source_ref,
+        cidr_or_range=entry.cidr_or_range,
+        ip_first_int=int(entry.ip_first_int),
+        ip_last_int=int(entry.ip_last_int),
+        prefix_len=int(entry.prefix_len),
+        updated_at=_ensure_utc(entry.updated_at) or utc_now(),
     )
 
 
@@ -971,6 +1023,100 @@ class SqlCacheAdapter:
             await self._dialect_upsert(session, AssetRecord, rows)
             await session.commit()
         return len(assets)
+
+    # ------------------------------------------------------------------
+    # Gateway Interface Topology (`arodonata_gateway_topology`)
+    # ------------------------------------------------------------------
+
+    @traced
+    async def get_gateway_topology(
+        self,
+        mgmt_name: str | None = None,
+        domain_name: str | None = None,
+        *,
+        gateway_uids: Sequence[str] | None = None,
+        gateway_names: Sequence[str] | None = None,
+        topology_zone: str | None = None,
+        source_types: Sequence[str] | None = None,
+    ) -> list[GatewayTopologyEntry]:
+        """Query cached gateway interface topology intervals from `arodonata_gateway_topology`."""
+        span_attrs(mgmt_name=mgmt_name, domain=domain_name, topology_zone=topology_zone)
+        async with self._db.session() as session:
+            stmt = select(GatewayTopologyRecord)
+            if mgmt_name is not None:
+                stmt = stmt.where(GatewayTopologyRecord.mgmt_name == mgmt_name)  # type: ignore[arg-type]
+            if domain_name is not None:
+                stmt = stmt.where(GatewayTopologyRecord.domain_name == domain_name)  # type: ignore[arg-type]
+            if gateway_uids is not None:
+                if not gateway_uids:
+                    return []
+                stmt = stmt.where(GatewayTopologyRecord.gateway_uid.in_(list(gateway_uids)))  # type: ignore[attr-defined]
+            if gateway_names is not None:
+                if not gateway_names:
+                    return []
+                stmt = stmt.where(GatewayTopologyRecord.gateway_name.in_(list(gateway_names)))  # type: ignore[attr-defined]
+            if topology_zone is not None:
+                stmt = stmt.where(GatewayTopologyRecord.topology_zone == topology_zone)  # type: ignore[arg-type]
+            if source_types is not None:
+                if not source_types:
+                    return []
+                stmt = stmt.where(GatewayTopologyRecord.source_type.in_(list(source_types)))  # type: ignore[attr-defined]
+            stmt = stmt.order_by(
+                col(GatewayTopologyRecord.mgmt_name),
+                col(GatewayTopologyRecord.domain_name),
+                col(GatewayTopologyRecord.gateway_name),
+                col(GatewayTopologyRecord.interface_name),
+                col(GatewayTopologyRecord.ip_first_int),
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [_record_to_topology_entry(r) for r in rows]
+
+    @traced
+    async def replace_domain_topology(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        entries: Sequence[GatewayTopologyEntry],
+        *,
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
+        """Atomically replace all cached gateway topology entries for `(mgmt_name, domain_name)`."""
+        span_attrs(mgmt_name=mgmt_name, domain=domain_name, count=len(entries))
+        # Deduplicate entries by primary key `id` to prevent duplicate PK errors within the same domain batch
+        deduped: dict[str, GatewayTopologyEntry] = {entry.id: entry for entry in entries}
+
+        async with self._db.session() as session:
+            await session.execute(
+                delete(GatewayTopologyRecord).where(
+                    GatewayTopologyRecord.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+                    GatewayTopologyRecord.domain_name == domain_name,  # type: ignore[arg-type]
+                )
+            )
+            for entry in deduped.values():
+                session.add(_topology_entry_to_record(entry))
+            if sync_states:
+                await self._upsert_sync_states_in_session(session, sync_states)
+            await session.commit()
+        return len(deduped)
+
+    @traced
+    async def upsert_gateway_topology(
+        self,
+        entries: Sequence[GatewayTopologyEntry],
+        *,
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
+        """Insert or update `GatewayTopologyEntry` rows in `arodonata_gateway_topology`."""
+        if not entries and not sync_states:
+            return 0
+        span_attrs(count=len(entries))
+        rows = [_topology_entry_to_record(entry).model_dump() for entry in entries]
+        async with self._db.session() as session:
+            await self._dialect_upsert(session, GatewayTopologyRecord, rows)
+            if sync_states:
+                await self._upsert_sync_states_in_session(session, sync_states)
+            await session.commit()
+        return len(entries)
 
     # ------------------------------------------------------------------
     # Rulebase Snapshot (`arodonata_rulebase_*`)

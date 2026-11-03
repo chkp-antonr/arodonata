@@ -58,12 +58,19 @@ from arodonata.core.errors import (
     ValidationError,
 )
 from arodonata.core.models import (
+    AffectedGatewayCandidate,
     Asset,
     CPObject,
     CPService,
     DomainInfo,
+    FlowMatchType,
+    GatewayInterfaceSummary,
+    GatewayTopologyEntry,
     RefreshOutcome,
     SearchResult,
+    TopologySourceType,
+    TopologyZone,
+    TrafficFlowMatch,
     to_naive_utc,
     utc_now,
 )
@@ -76,6 +83,7 @@ from arodonata.core.services import (
     ObjectService,
     SearchService,
     ServiceCacheService,
+    TopologyService,
     VSXRelationshipManager,
 )
 from arodonata.cpcrud import (
@@ -150,6 +158,7 @@ from arodonata.rulebase import (
 __all__ = [
     "AMgmtClient",
     "ActionResult",
+    "AffectedGatewayCandidate",
     "AmbiguousLayerName",
     "AmbiguousObjectError",
     "ApiPayloadValidationResult",
@@ -191,6 +200,9 @@ __all__ = [
     "FieldChange",
     "FieldDiff",
     "FilteredRulebaseResult",
+    "FlowMatchType",
+    "GatewayInterfaceSummary",
+    "GatewayTopologyEntry",
     "HybridStateReader",
     "InvalidCredentialsError",
     "IpConflictPolicy",
@@ -247,6 +259,10 @@ __all__ = [
     "TaskTimeoutError",
     "TlsTrustMode",
     "ToolFailure",
+    "TopologyService",
+    "TopologySourceType",
+    "TopologyZone",
+    "TrafficFlowMatch",
     "TransportError",
     "TrustStoreError",
     "UnknownServerCertificateError",

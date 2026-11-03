@@ -9,7 +9,7 @@ Progressive runnable scripts demonstrating `ArodonataClient` usage from basic ca
 | `01_basic_queries.py` | Discovers domains (`get_domains`) and queries cached hosts, networks, and services (`get_hosts`, `get_networks`, `get_services`) | No |
 | `02_search_and_query.py` | Multi-term object search with recursive group memberships (`search_objects`), progressive disclosure (`describe_objects`), structured cross-domain aggregation (`query_objects`), and cache freshness (`get_cache_status`) | No |
 | `03_gateway_relationships.py` | Gateway, cluster, and VSX asset topology (`get_gateways`) linking cluster members and virtual systems via `parent_uid` and `member_uids` | No |
-| `04_smart_refresh.py` | Paired streaming (`stream_refresh_*`) and batch (`refresh_*`) cache synchronization across assets, objects, services, and rulebases — **run this first to warm a persistent DB** | No |
+| `04_smart_refresh.py` | Paired streaming (`stream_refresh_*`) and batch (`refresh_*`) cache synchronization across assets, objects, services, rulebases, and gateway topology — **run this first to warm a persistent DB** | No |
 | `05_rulebase_queries.py` | Policy package discovery (`get_policy_packages`), hierarchical SmartConsole numbering (`get_package_rulebase`), reverse UID lookup (`locate_rules`), and local rule filtering (`filter_rulebase`) | No |
 | `06_session_basics.py` | Low-level session lifecycle: capture baseline (`show-last-published-session`), `create_dedicated_session`, `add-host`, `publish`, and `revert-to-revision` | Yes (auto-reverted via `_session_guard.py`) |
 | `07_context_and_overlay.py` | Dynamic `auth_context`, `user_context`, and `write_session` with `SessionOverlay` read-your-own-writes isolation (discards on exit without publishing) | No (discards uncommitted session) |
@@ -18,6 +18,7 @@ Progressive runnable scripts demonstrating `ArodonataClient` usage from basic ca
 | `10_change_report_evidence.py` | Auditable `ChangeReport` evidence: live unpublished numbering via `OwnedSession` vs published cached numbering rendered to HTML, Markdown, and JSON in `examples/_tmp/` | Yes (auto-reverted via `_session_guard.py`) |
 | `11_otel_tracing.py` | Provider-agnostic OpenTelemetry instrumentation (`arlogi.otel.setup_tracing`) with a per-span timing breakdown from exported JSONL traces | No |
 | `12_mcp_embedded.py` | Embedding Arodonata's MCP server (`create_mcp_server`, `create_asgi_app`) inside a FastAPI application with custom tools | No |
+| `13_gateway_topology_matching.py` | Gateway interface topology caching (`get_gateway_topology`, `summarize_gateway_interfaces`) and affected gateway / policy package candidate matching (`find_affected_gateways`) | No |
 | `_session_guard.py` | Crash-safe baseline snapshot/restore context manager (`guarded_session`) and standalone CLI tool for manual testing | Helper / CLI |
 
 ## Setup & Execution
@@ -39,6 +40,7 @@ uv run examples/03_gateway_relationships.py
 uv run examples/05_rulebase_queries.py
 uv run examples/07_context_and_overlay.py
 uv run examples/11_otel_tracing.py
+uv run examples/13_gateway_topology_matching.py
 
 # 5. Run mutating lab examples (automatically snapshot and revert Domain4/Domain5 baseline)
 ARODONATA_LAB=home uv run examples/06_session_basics.py
@@ -48,6 +50,28 @@ ARODONATA_LAB=home uv run examples/10_change_report_evidence.py
 
 # 6. Run the embedded FastAPI + MCP server on http://127.0.0.1:8000/mcp
 uv run examples/12_mcp_embedded.py
+```
+
+## Overriding Target Server & Domain via CLI Environment Variables
+
+Example scripts load `.env.lib` and `.env.secrets` with `override=False`, so you can point any example at another Management Server or domain directly from the command line without editing `.env.lib`:
+
+```bash
+# Query gateway topology across ALL domains on an alternate MDS (EXAMPLE_DOMAIN="" means all domains)
+MGMT_NAMES=mdsNP2.np.cparch.in \
+MGMT_SERVERS=10.192.11.140 \
+API_KEY_VARS=CPIL_API_KEY \
+EXAMPLE_DOMAIN="" \
+uv run examples/13_gateway_topology_matching.py
+
+# Query a specific domain and custom traffic flow endpoints
+MGMT_NAMES=mdsNP2.np.cparch.in \
+MGMT_SERVERS=10.192.11.140 \
+API_KEY_VARS=CPIL_API_KEY \
+EXAMPLE_DOMAIN="General" \
+EXAMPLE_FLOW_SOURCES="10.0.0.0/8" \
+EXAMPLE_FLOW_DESTINATIONS="172.16.0.0/12, 8.8.8.8" \
+uv run examples/13_gateway_topology_matching.py
 ```
 
 ## Crash-Safe Manual Testing with `_session_guard.py`

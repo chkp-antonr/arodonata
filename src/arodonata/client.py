@@ -70,6 +70,12 @@ from arodonata.core.models.rulebase import (
     ThreatRuleEntry,
 )
 from arodonata.core.models.services import CPService
+from arodonata.core.models.topology import (
+    AffectedGatewayCandidate,
+    GatewayTopologyEntry,
+    TopologySourceType,
+    TopologyZone,
+)
 from arodonata.core.ports import ApiPort, AuthProvider, CachePort, LockPort
 from arodonata.core.services import (
     AssetRefreshService,
@@ -80,6 +86,7 @@ from arodonata.core.services import (
     ObjectService,
     SearchService,
     ServiceCacheService,
+    TopologyService,
     VSXRelationshipManager,
 )
 from arodonata.core.telemetry import span_attrs, traced
@@ -226,6 +233,15 @@ class ArodonataClient:
             asset_service=self._asset_service,
             now_fn=now_fn,
         )
+        self._topology_service = TopologyService(
+            settings=self._settings,
+            api=self._api,
+            cache=self._cache,
+            coordinator=self._sync_coordinator,
+            asset_service=self._asset_service,
+            object_service=self._object_service,
+            now_fn=now_fn,
+        )
         self._rulebase_refresh = RulebaseRefreshService(
             settings=self._settings,
             api=self._api,
@@ -323,6 +339,11 @@ class ArodonataClient:
     def search_service(self) -> SearchService:
         """Core `SearchService`."""
         return self._search_service
+
+    @property
+    def topology_service(self) -> TopologyService:
+        """Core `TopologyService`."""
+        return self._topology_service
 
     @property
     def rulebase_refresh(self) -> RulebaseRefreshService:
@@ -888,6 +909,48 @@ class ArodonataClient:
         ):
             yield ev
 
+    @traced
+    async def refresh_topology(
+        self,
+        *,
+        mgmt_name: str | None = None,
+        domains: Sequence[str] | str | None = None,
+        include_global: bool = False,
+        mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> RefreshOutcome:
+        """Synchronize gateway interface topology across target domains and return `RefreshOutcome`."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._topology_service.refresh_topology(
+            mgmt_name=mgmt_name,
+            domains=domains,
+            include_global=include_global,
+            mode=mode,
+            cache_ttl=cache_ttl,
+        )
+
+    async def stream_refresh_topology(
+        self,
+        *,
+        mgmt_name: str | None = None,
+        domains: Sequence[str] | str | None = None,
+        include_global: bool = False,
+        mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> AsyncIterator[SyncProgressEvent]:
+        """Stream `SyncProgressEvent` items while synchronizing gateway interface topology."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        async for ev in self._topology_service.stream_refresh_topology(
+            mgmt_name=mgmt_name,
+            domains=domains,
+            include_global=include_global,
+            mode=mode,
+            cache_ttl=cache_ttl,
+        ):
+            yield ev
+
     # ------------------------------------------------------------------
     # Typed Read Facade
     # ------------------------------------------------------------------
@@ -933,6 +996,54 @@ class ArodonataClient:
             domain=domain,
             types=types,
             include_global=include_global,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+
+    @traced
+    async def get_gateway_topology(
+        self,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        *,
+        gateway: str | None = None,
+        topology_zone: TopologyZone | None = None,
+        source_types: Sequence[TopologySourceType | str] | None = None,
+        cache_mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> list[GatewayTopologyEntry]:
+        """Return cached `GatewayTopologyEntry` rows for policy-enforcing gateways."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._topology_service.get_gateway_topology(
+            mgmt_name=mgmt_name,
+            domain=domain,
+            gateway=gateway,
+            topology_zone=topology_zone,
+            source_types=source_types,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+
+    @traced
+    async def find_affected_gateways(
+        self,
+        sources: Sequence[str] | str,
+        destinations: Sequence[str] | str,
+        *,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        cache_mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> list[AffectedGatewayCandidate]:
+        """Locate policy-enforcing gateways where `sources` and `destinations` resolve to distinct interfaces."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._topology_service.find_affected_gateways(
+            sources,
+            destinations,
+            mgmt_name=mgmt_name,
+            domain=domain,
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
         )

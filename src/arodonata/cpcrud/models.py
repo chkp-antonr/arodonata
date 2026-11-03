@@ -37,6 +37,7 @@ class NamingPrefixes(BaseModel):
     host: str = "Host_"
     network: str = "Net_"
     address_range: str = Field(default="IPR_", validation_alias="address_range")
+    group: str = "grp"
     tcp: str = "TCP_"
     udp: str = "UDP_"
     icmp: str = "ICMP_"

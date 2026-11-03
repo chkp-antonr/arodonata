@@ -17,8 +17,8 @@ from collections import defaultdict
 
 from dotenv import load_dotenv
 
-load_dotenv(".env.lib", override=True)
-load_dotenv(".env.secrets", override=True)
+load_dotenv(".env.lib", override=False)
+load_dotenv(".env.secrets", override=False)
 
 from arodonata import ArodonataClient, ArodonataSettings, Asset  # noqa: E402
 

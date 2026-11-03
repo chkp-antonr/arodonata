@@ -69,3 +69,56 @@ async def test_client_facade_composite_identifier_resolution() -> None:
             await client.find_object("mds1", None, "host-base-1", cache_mode="smart")
         assert {c["domain_name"] for c in exc_info.value.candidates} == {"Corp", "DMZ"}
         assert len(fake_api.calls) == calls_before
+
+
+@pytest.mark.asyncio
+async def test_client_facade_topology_and_find_affected_gateways() -> None:
+    """`ArodonataClient` exposes `topology_service`, `refresh_topology`, `stream_refresh_topology`, `get_gateway_topology`, and `find_affected_gateways`."""
+    fake_api = FacadeFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=300)
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        assert client.topology_service is not None
+
+        # Seed rulebase packages/layers and synchronize topology via stream_refresh_topology
+        await client.refresh_rulebases(mgmt_name="mds1", domains=["Corp"])
+        events = [
+            ev
+            async for ev in client.stream_refresh_topology(
+                mgmt_name="mds1",
+                domains=["Corp"],
+                mode="force",
+            )
+        ]
+        assert any(ev.scope == "topology" for ev in events)
+
+        topo_rows = await client.get_gateway_topology("mds1", "Corp", gateway="corp-fw-01", cache_mode="cache")
+        assert len(topo_rows) == 3
+
+        # 1. Traffic across eth1 (10.1.1.10) -> eth2 (10.2.2.20) matches corp-fw-01
+        candidates = await client.find_affected_gateways(
+            sources=["10.1.1.10"],
+            destinations=["10.2.2.20"],
+            mgmt_name="mds1",
+            cache_mode="cache",
+        )
+        assert len(candidates) == 1
+        cand = candidates[0]
+        assert cand.gateway_name == "corp-fw-01"
+        assert cand.domain_name == "Corp"
+        assert cand.installed_access_policy == "Standard"
+        assert cand.policy_packages == ["Standard"]
+        assert cand.access_layers == ["Network"]
+        assert len(cand.matched_flows) == 1
+        assert cand.matched_flows[0].src_interface == "eth1"
+        assert cand.matched_flows[0].dst_interface == "eth2"
+        assert cand.matched_flows[0].match_type == "internal_to_internal"
+
+        # 2. Traffic behind the same interface (eth1 -> eth1) is excluded
+        same_if = await client.find_affected_gateways(
+            sources=["10.1.1.10"],
+            destinations=["10.1.1.50"],
+            mgmt_name="mds1",
+            cache_mode="cache",
+        )
+        assert same_if == []

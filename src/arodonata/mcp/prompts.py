@@ -20,14 +20,14 @@ def register_mcp_prompts(server: MCPServer) -> None:
         dom_part = f" in domain '{domain}'" if domain else ""
         return (
             f"Audit the Check Point access rulebase for package '{package}' on server '{mgmt_name}'{dom_part}:\n"
-            "1. Call `cache_control(action='status')` to check the freshness of the 'rulebase', 'objects', and 'services' scopes.\n"
+            "1. Call `cache_control(action='status')` to check the freshness of the 'rulebase', 'objects', 'services', and 'topology' scopes.\n"
             "2. Call `show_rulebase` with `rulebase_type='access'` and `format='model_friendly'` to inspect numbered rules.\n"
             "3. Highlight overly permissive rules (`Any -> Any [Any] => Accept`), disabled rules, and rules missing comments."
         )
 
     @server.prompt(
         name="investigate_ip_exposure",
-        description="Investigate all network objects, groups, and access/NAT rules matching an IP address or subnet.",
+        description="Investigate all network objects, groups, affected gateways, and access/NAT rules matching an IP address or subnet.",
     )
     def investigate_ip_exposure(
         ip_or_subnet: str,
@@ -38,8 +38,9 @@ def register_mcp_prompts(server: MCPServer) -> None:
         return (
             f"Investigate Check Point policy exposure for '{ip_or_subnet}' on server '{mgmt_name}'{dom_part}:\n"
             f"1. Call `search_objects(query='{ip_or_subnet}', include_global=True)` to find matching hosts, subnets, ranges, and parent groups.\n"
-            f"2. Call `show_rulebase(rulebase_type='access', filter='{ip_or_subnet}', format='model_friendly')` to locate matching access rules.\n"
-            f"3. Call `show_rulebase(rulebase_type='nat', filter='{ip_or_subnet}', format='model_friendly')` to locate matching NAT translations."
+            f"2. Call `locate_gateways(sources=['{ip_or_subnet}'], destinations=['0.0.0.0/0'], mgmt_name='{mgmt_name}')` to identify candidate policy-enforcing gateways, domains, policy packages, and access layers where '{ip_or_subnet}' traverses distinct interfaces.\n"
+            f"3. Call `show_rulebase(rulebase_type='access', filter='{ip_or_subnet}', format='model_friendly')` to locate matching access rules.\n"
+            f"4. Call `show_rulebase(rulebase_type='nat', filter='{ip_or_subnet}', format='model_friendly')` to locate matching NAT translations."
         )
 
     @server.prompt(
