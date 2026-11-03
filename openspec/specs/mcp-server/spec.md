@@ -126,3 +126,12 @@ The `arodonata[mcp]` server SHALL expose a single consolidated `api_reference` t
 
 - **WHEN** an MCP client calls `api_reference(action="search", query="host", crud_type="add")`, then `api_reference(action="describe", command="add-host", version="v2.2")`, and finally `api_reference(action="validate", command="add-host", payload={"name": "web-01", "ip-address": "192.0.2.10"})`
 - **THEN** `action="search"` SHALL return compact matching command summaries, `action="describe"` SHALL return the full `v2.2` field schema, `field_alternatives`, `nested_objects`, and canonical example for `add-host`, and `action="validate"` SHALL return `valid=True` with `errors=[]`
+
+### Requirement: MCP Gateway Topology Control and Affected Gateway Discovery Tool
+
+The `arodonata[mcp]` server SHALL support `scope="topology"` in `cache_control(action="status" | "refresh", ...)` and expose a `locate_gateways(sources, destinations, mgmt_name=..., domain=..., cache_mode="smart")` tool that resolves traffic flows into affected Check Point gateways, domains, policy packages, and matched interfaces.
+
+#### Scenario: MCP client locates candidate gateways and policy packages for a traffic flow
+
+- **WHEN** an MCP client invokes `locate_gateways(sources=["10.10.1.5"], destinations=["172.16.20.10"], mgmt_name="mds1")`
+- **THEN** the tool SHALL return a structured JSON envelope listing the affected gateways where source and destination reside behind distinct interfaces, along with each gateway's `domain_name`, `installed_access_policy`, `policy_packages`, `access_layers`, and per-flow `(src_interface -> dst_interface)` match details

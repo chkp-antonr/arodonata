@@ -14,6 +14,7 @@ from arodonata.adapters.storage import (
     DatabaseLockManager,
     DatabaseManager,
     DistributedLockRecord,
+    GatewayTopologyRecord,
     SchemaVersionRecord,
     SIDCacheRecord,
     SqlCacheAdapter,
@@ -29,6 +30,7 @@ from arodonata.core.models import (
     DomainInfo,
     DomainRulebaseSnapshot,
     DomainSyncState,
+    GatewayTopologyEntry,
     NatRuleEntry,
     RulebaseLayerEntry,
     RulebasePackageLayerEntry,
@@ -412,9 +414,11 @@ async def test_arodonata_assets_table_name_and_naive_utc_columns() -> None:
     from sqlmodel import SQLModel
 
     assert AssetRecord.__tablename__ == "arodonata_assets"
+    assert GatewayTopologyRecord.__tablename__ == "arodonata_gateway_topology"
     assert "arodonata_assets" in ARODONATA_TABLE_NAMES
+    assert "arodonata_gateway_topology" in ARODONATA_TABLE_NAMES
     assert "assets" not in ARODONATA_TABLE_NAMES
-    assert len(ARODONATA_TABLE_NAMES) == 15
+    assert len(ARODONATA_TABLE_NAMES) == 16
 
     for table_name in ARODONATA_TABLE_NAMES:
         assert table_name.startswith("arodonata_"), f"Table {table_name!r} must start with 'arodonata_'"
@@ -747,5 +751,126 @@ async def test_duplicate_named_objects_and_services_with_distinct_uids_and_human
         assert tenant_assets[0].asset_id == "mds1:Tenant:vs-tenant-1"
         assert tenant_assets[0].parent_id == "mds1:Infra:vsx-1"
         assert tenant_assets[0].parent_asset_id == "mds1:Infra:vsx-core"
+    finally:
+        await db.close()
+
+
+async def test_gateway_topology_persistence_and_64bit_ipv4_bounds() -> None:
+    """Verify `arodonata_gateway_topology` schema auto-migration, `BigInteger` upper-half IPv4 bounds, `replace_domain_topology`, and `upsert_gateway_topology`."""
+    from sqlalchemy import BigInteger
+    from sqlmodel import SQLModel
+
+    topo_table = SQLModel.metadata.tables["arodonata_gateway_topology"]
+    assert isinstance(topo_table.c.ip_first_int.type, BigInteger)
+    assert isinstance(topo_table.c.ip_last_int.type, BigInteger)
+
+    db = DatabaseManager(engine=None)
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+
+        # 192.168.1.0/24 -> 3232235776..3232236031 (exceeds signed 32-bit int 2147483647)
+        entry_connected = GatewayTopologyEntry(
+            mgmt_name="mds1",
+            domain_name="Domain4",
+            gateway_uid="gw-uid-1",
+            gateway_name="gw-edge-1",
+            gateway_type="simple-gateway",
+            interface_name="eth1",
+            interface_ipv4="192.168.1.1",
+            interface_mask_length=24,
+            topology_zone="internal",
+            source_type="interface_connected",
+            source_ref="connected",
+            cidr_or_range="192.168.1.0/24",
+            ip_first_int=3232235776,
+            ip_last_int=3232236031,
+            prefix_len=24,
+        )
+        # External 0.0.0.0/0 -> 0..4294967295 (255.255.255.255)
+        entry_external = GatewayTopologyEntry(
+            mgmt_name="mds1",
+            domain_name="Domain4",
+            gateway_uid="gw-uid-1",
+            gateway_name="gw-edge-1",
+            gateway_type="simple-gateway",
+            interface_name="eth0",
+            interface_ipv4="203.0.113.2",
+            interface_mask_length=29,
+            topology_zone="external",
+            source_type="external_interface",
+            source_ref="leads-to-internet",
+            cidr_or_range="0.0.0.0/0",
+            ip_first_int=0,
+            ip_last_int=4294967295,
+            prefix_len=0,
+        )
+        sync_state = DomainSyncState(
+            mgmt_name="mds1",
+            domain_name="Domain4",
+            scope="topology",
+            item_type="*",
+            status="ok",
+            object_count=2,
+            synced_at=utc_now(),
+        )
+        count = await cache.replace_domain_topology(
+            "mds1",
+            "Domain4",
+            [entry_connected, entry_external],
+            sync_states=[sync_state],
+        )
+        assert count == 2
+
+        loaded_all = await cache.get_gateway_topology("mds1", "Domain4")
+        assert len(loaded_all) == 2
+        by_if = {e.interface_name: e for e in loaded_all}
+        assert by_if["eth1"].ip_first_int == 3232235776
+        assert by_if["eth1"].ip_last_int == 3232236031
+        assert by_if["eth0"].ip_last_int == 4294967295
+        assert by_if["eth0"].topology_zone == "external"
+
+        st = await cache.get_sync_state("mds1", "Domain4", "topology", "*")
+        assert st is not None
+        assert st.status == "ok"
+        assert st.object_count == 2
+
+        # Upsert an extensible dynamic route source on eth1 alongside connected subnet
+        entry_bgp = GatewayTopologyEntry(
+            mgmt_name="mds1",
+            domain_name="Domain4",
+            gateway_uid="gw-uid-1",
+            gateway_name="gw-edge-1",
+            gateway_type="simple-gateway",
+            interface_name="eth1",
+            interface_ipv4="192.168.1.1",
+            interface_mask_length=24,
+            topology_zone="internal",
+            source_type="bgp_route",
+            source_ref="AS65001",
+            cidr_or_range="172.31.0.0/16",
+            ip_first_int=2887712768,
+            ip_last_int=2887778303,
+            prefix_len=16,
+        )
+        await cache.upsert_gateway_topology([entry_bgp])
+
+        internal_only = await cache.get_gateway_topology(
+            "mds1",
+            "Domain4",
+            gateway_names=["gw-edge-1"],
+            topology_zone="internal",
+        )
+        assert len(internal_only) == 2
+        assert {e.source_type for e in internal_only} == {"interface_connected", "bgp_route"}
+
+        bgp_only = await cache.get_gateway_topology(
+            "mds1",
+            "Domain4",
+            gateway_uids=["gw-uid-1"],
+            source_types=["bgp_route"],
+        )
+        assert len(bgp_only) == 1
+        assert bgp_only[0].cidr_or_range == "172.31.0.0/16"
     finally:
         await db.close()

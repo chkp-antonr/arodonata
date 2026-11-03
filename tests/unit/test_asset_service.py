@@ -316,3 +316,156 @@ async def test_cross_domain_vsx_reconciliation() -> None:
     assert "mds1:TenantDomain:vs-tenant-fw" in vsx_parent.virtual_system_asset_ids
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_vsx_slot_objects_cross_domain_reconciliation_and_route_merge() -> None:
+    """`CpmiVsxSlotObj` (`vsid == 0`) and `CpmiVsSlotObj` (`vsid > 0`) in a VSX domain link a `CpmiVsNetobj` in a `targetCustomer` domain and merge slot `interfaces` and `routes`."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = AssetFakeApi()
+
+    # VSX cluster + VSX cluster member in Domain1 without direct `virtual-systems` array
+    # Including `vsx-cluster-member` ensures `_resolve_slot_parent` picks the VSX parent (`vsx1`) rather than the member (T4)
+    api.gateways_by_domain = {
+        "Domain1": [
+            {
+                "uid": "vsx-mem-uid",
+                "name": "vsx1-member1",
+                "type": "vsx-cluster-member",
+                "ipv4-address": "172.16.254.20",
+            },
+            {
+                "uid": "vsx-gw-uid",
+                "name": "vsx1",
+                "type": "vsx-cluster",
+                "ipv4-address": "172.16.254.21",
+                "cluster-member-names": ["vsx1-member1"],
+            },
+        ],
+        # Tenant VS in Domain4 WITHOUT any direct `vsx-gateway` reference on the VS object itself
+        "Domain4": [
+            {
+                "uid": "vs-dom4-uid",
+                "name": "vsx1_VS2_Domain4",
+                "type": "CpmiVsNetobj",
+                "ipv4-address": "10.40.0.1",
+            }
+        ],
+    }
+    api.generic_objects_by_class = {
+        # Ordinary VS generic object (`CpmiVsNetobj`) carrying `vsid` and `vsxGateway` (T3) + malformed `vsid` (T5)
+        ("Domain1", "com.checkpoint.objects.classes.dummy.CpmiVsNetobj"): [
+            {
+                "uid": "vs-local-1",
+                "name": "vsx1_VS1_Local",
+                "class-name": "com.checkpoint.objects.classes.dummy.CpmiVsNetobj",
+                "vsid": 1,
+                "vsxGateway": "vsx-gw-uid",
+            },
+            {
+                "uid": "vs-malformed-vsid",
+                "name": "vsx1_VS_Malformed",
+                "class-name": "com.checkpoint.objects.classes.dummy.CpmiVsNetobj",
+                "vsid": "VS0",
+                "vsxGateway": "vsx-gw-uid",
+            },
+        ],
+        ("Domain1", "com.checkpoint.objects.vsx_classes.dummy.CpmiVsxSlotObj"): [
+            {
+                "uid": "slot0-uid",
+                "name": "vsx1",
+                "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsxSlotObj",
+                "vsid": 0,
+                "vsxGateway": "vsx-gw-uid",
+            }
+        ],
+        ("Domain1", "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj"): [
+            {
+                "uid": "slot2-uid",
+                "name": "vsx1_VS2_Domain4",
+                "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+                "vsid": 2,
+                "vsxGateway": "slot0-uid",
+                "targetCustomer": {"uid": "dom4-uid", "name": "Domain4"},
+                "interfaces_installed": [
+                    {
+                        "officialname": "wrp128",
+                        "ipaddr": "192.168.100.2",
+                        "netmask": "255.255.255.252",
+                    },
+                    {
+                        "officialname": "eth1.40",
+                        "ipaddr": "10.40.0.1",
+                        "netmask": "255.255.255.0",
+                    },
+                ],
+                "routes_installed": [
+                    {
+                        "dest": "172.16.80.0",
+                        "mask": "255.255.255.0",
+                        "nexthop": "10.40.0.254",
+                    },
+                    {
+                        "dest": "0.0.0.0",
+                        "mask": "0.0.0.0",
+                        "nexthop": "192.168.100.1",
+                    },
+                ],
+            }
+        ],
+    }
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=0)
+    domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    domain_service.tracker.mark_refreshed("mds1")
+    await cache.upsert_domains(
+        [
+            DomainInfo(
+                mgmt_name="mds1", uid="dom1-uid", name="Domain1", active_ip="10.1.0.1", active_mds_ip="10.0.0.1"
+            ),
+            DomainInfo(
+                mgmt_name="mds1", uid="dom4-uid", name="Domain4", active_ip="10.4.0.1", active_mds_ip="10.0.0.1"
+            ),
+        ]
+    )
+
+    coordinator = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=domain_service,
+    )
+    asset_service = AssetRefreshService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+    )
+
+    await asset_service.refresh_assets(mgmt_name="mds1", mode="force")
+
+    dom1_assets = {a.uid: a for a in await asset_service.get_assets("mds1", "Domain1", cache_mode="cache")}
+    dom4_assets = {a.uid: a for a in await asset_service.get_assets("mds1", "Domain4", cache_mode="cache")}
+
+    # Slot objects (`CpmiVsxSlotObj` / `CpmiVsSlotObj`) must not create spurious virtual-system assets in Domain1,
+    # while real `CpmiVsNetobj` generic objects (`vs-local-1`, `vs-malformed-vsid`) ARE synthesized as VS assets (T3, T5)
+    assert set(dom1_assets.keys()) == {"vsx-gw-uid", "vsx-mem-uid", "vs-local-1", "vs-malformed-vsid"}
+    vsx_gw = dom1_assets["vsx-gw-uid"]
+    assert "vs-dom4-uid" in vsx_gw.virtual_system_uids
+    assert "vs-local-1" in vsx_gw.virtual_system_uids
+    assert "mds1:Domain4:vsx1_VS2_Domain4" in vsx_gw.virtual_system_asset_ids
+
+    vs_dom4 = dom4_assets["vs-dom4-uid"]
+    assert vs_dom4.parent_uid == "vsx-gw-uid"
+    assert vs_dom4.parent_name == "vsx1"
+    assert vs_dom4.parent_id == "mds1:Domain1:vsx-gw-uid"
+    assert vs_dom4.parent_asset_id == "mds1:Domain1:vsx1"
+    assert len(vs_dom4.interfaces) == 2
+    assert {i["officialname"] for i in vs_dom4.interfaces} == {"wrp128", "eth1.40"}
+    assert len(vs_dom4.raw_data.get("routes_installed") or []) == 2
+
+    await db.close()

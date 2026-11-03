@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Column, DateTime
+from sqlalchemy import JSON, BigInteger, Column, DateTime
 from sqlmodel import Field, SQLModel
 
 from arodonata.core.errors import REDACTED_PLACEHOLDER
@@ -560,6 +560,40 @@ class ThreatRuleRecord(SQLModel, table=True):
     )
 
 
+class GatewayTopologyRecord(SQLModel, table=True):
+    """Cached pre-expanded IPv4 topology interval behind a gateway interface in `arodonata_gateway_topology`."""
+
+    __tablename__ = "arodonata_gateway_topology"
+
+    id: str = Field(primary_key=True)
+    mgmt_name: str = Field(index=True)
+    domain_name: str = Field(index=True)
+    gateway_id: str = Field(default="", index=True)
+    gateway_asset_id: str = Field(default="", index=True)
+    gateway_uid: str = Field(index=True)
+    gateway_name: str = Field(index=True)
+    gateway_type: str = Field(default="simple-gateway")
+    interface_name: str = Field(index=True)
+    interface_ipv4: str | None = Field(default=None)
+    interface_mask_length: int | None = Field(default=None)
+    topology_zone: str = Field(default="internal", index=True)
+    leads_to_dmz: bool = Field(default=False)
+    source_type: str = Field(default="interface_connected", index=True)
+    source_ref: str = Field(default="")
+    cidr_or_range: str = Field(default="")
+    ip_first_int: int = Field(
+        sa_column=Column(BigInteger, nullable=False, index=True),
+    )
+    ip_last_int: int = Field(
+        sa_column=Column(BigInteger, nullable=False, index=True),
+    )
+    prefix_len: int = Field(default=32)
+    updated_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=Column(DateTime(timezone=False), nullable=False),
+    )
+
+
 ARODONATA_TABLE_NAMES: frozenset[str] = frozenset(
     {
         SchemaVersionRecord.__tablename__,
@@ -577,5 +611,6 @@ ARODONATA_TABLE_NAMES: frozenset[str] = frozenset(
         NatRuleRecord.__tablename__,
         HttpsRuleRecord.__tablename__,
         ThreatRuleRecord.__tablename__,
+        GatewayTopologyRecord.__tablename__,
     }
 )

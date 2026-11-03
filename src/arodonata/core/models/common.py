@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from arodonata.core.errors import redact_sid, sanitize_mapping
 
 CacheMode = Literal["cache", "smart", "smart-fast", "force"]
-SyncScope = Literal["domains", "objects", "services", "assets", "rulebase"]
+SyncScope = Literal["domains", "objects", "services", "assets", "rulebase", "topology"]
 SyncStatus = Literal["idle", "syncing", "ok", "failed"]
 
 DEFAULT_OBJECT_TYPES: tuple[str, ...] = (

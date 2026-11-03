@@ -212,7 +212,44 @@ class FacadeFakeApi:
         if command == "show-gateways-and-servers":
             return ApiQueryResult(
                 success=True,
-                objects=[{"uid": "gw-1", "name": "corp-fw-01", "type": "simple-gateway", "ipv4-address": "10.1.0.254"}],
+                objects=[
+                    {
+                        "uid": "gw-1",
+                        "name": "corp-fw-01",
+                        "type": "simple-gateway",
+                        "ipv4-address": "10.1.0.254",
+                        "policy": {"access-policy-name": "Standard"},
+                        "interfaces": [
+                            {
+                                "name": "eth0",
+                                "ipv4-address": "198.51.100.1",
+                                "ipv4-mask-length": 24,
+                                "topology": "external",
+                                "topology-settings": {"interface-leads-to-dmz": False},
+                            },
+                            {
+                                "name": "eth1",
+                                "ipv4-address": "10.1.1.254",
+                                "ipv4-mask-length": 24,
+                                "topology": "internal",
+                                "topology-settings": {
+                                    "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+                                    "interface-leads-to-dmz": False,
+                                },
+                            },
+                            {
+                                "name": "eth2",
+                                "ipv4-address": "10.2.2.254",
+                                "ipv4-mask-length": 24,
+                                "topology": "internal",
+                                "topology-settings": {
+                                    "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+                                    "interface-leads-to-dmz": True,
+                                },
+                            },
+                        ],
+                    }
+                ],
                 total=1,
             )
         return ApiQueryResult(success=True, objects=[], total=0)

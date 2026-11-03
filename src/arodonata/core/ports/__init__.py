@@ -16,6 +16,7 @@ from arodonata.core.models.domains import DomainInfo, DomainSyncState, SIDCacheE
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import DomainRulebaseSnapshot
 from arodonata.core.models.services import CPService
+from arodonata.core.models.topology import GatewayTopologyEntry
 
 
 @runtime_checkable
@@ -294,6 +295,39 @@ class CachePort(Protocol):
         assets: Sequence[Asset],
     ) -> int:
         """Insert or update `Asset` rows in `arodonata_assets`."""
+        ...
+
+    async def get_gateway_topology(
+        self,
+        mgmt_name: str | None = None,
+        domain_name: str | None = None,
+        *,
+        gateway_uids: Sequence[str] | None = None,
+        gateway_names: Sequence[str] | None = None,
+        topology_zone: str | None = None,
+        source_types: Sequence[str] | None = None,
+    ) -> list[GatewayTopologyEntry]:
+        """Query cached gateway interface topology intervals from `arodonata_gateway_topology`."""
+        ...
+
+    async def replace_domain_topology(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        entries: Sequence[GatewayTopologyEntry],
+        *,
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
+        """Atomically replace all cached gateway topology entries for `(mgmt_name, domain_name)`."""
+        ...
+
+    async def upsert_gateway_topology(
+        self,
+        entries: Sequence[GatewayTopologyEntry],
+        *,
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
+        """Insert or update `GatewayTopologyEntry` rows in `arodonata_gateway_topology`."""
         ...
 
     async def replace_domain_rulebase(

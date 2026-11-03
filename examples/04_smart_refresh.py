@@ -30,30 +30,37 @@ async def main() -> None:
     t0 = time.perf_counter()
 
     async with ArodonataClient(settings=settings) as client:
-        print("[Step 1/4] Streaming asset synchronization (gateways, clusters, VSX)...", flush=True)
+        print("[Step 1/5] Streaming asset synchronization (gateways, clusters, VSX)...", flush=True)
         async for ev in client.stream_refresh_assets(domains=target_domains, mode="smart"):
             if ev.phase in ("started", "completed", "skipped", "failed"):
                 print(f"  [{ev.phase}] {ev.message or f'{ev.mgmt_name}:{ev.domain} ({ev.item_type})'}")
 
-        print("\n[Step 2/4] Streaming network object synchronization (hosts, networks, ranges, groups)...", flush=True)
+        print("\n[Step 2/5] Streaming network object synchronization (hosts, networks, ranges, groups)...", flush=True)
         async for ev in client.stream_refresh_objects(domains=target_domains, mode="smart"):
             if ev.phase in ("started", "completed", "skipped", "failed"):
                 print(f"  [{ev.phase}] {ev.message or f'{ev.mgmt_name}:{ev.domain} ({ev.item_type})'}")
                 # Example of converting a domain event to an SSE frame for web endpoints:
                 _sse_frame = to_sse_event(ev).encode()
 
-        print("\n[Step 3/4] Batch refreshing services...", flush=True)
+        print("\n[Step 3/5] Batch refreshing services...", flush=True)
         svc_outcome = await client.refresh_services(domains=target_domains, mode="smart")
         print(
             f"  Services sync: refreshed={len(svc_outcome.refreshed_domains)}, "
             f"skipped={len(svc_outcome.skipped_domains)}, items={svc_outcome.total_items}"
         )
 
-        print("\n[Step 4/4] Batch refreshing policy rulebases...", flush=True)
+        print("\n[Step 4/5] Batch refreshing policy rulebases...", flush=True)
         rb_outcome = await client.refresh_rulebases(domains=target_domains, mode="smart")
         print(
             f"  Rulebases sync: refreshed={len(rb_outcome.refreshed_domains)}, "
             f"skipped={len(rb_outcome.skipped_domains)}, items={rb_outcome.total_items}"
+        )
+
+        print("\n[Step 5/5] Batch refreshing gateway interface topology...", flush=True)
+        topo_outcome = await client.refresh_topology(domains=target_domains, mode="smart")
+        print(
+            f"  Topology sync: refreshed={len(topo_outcome.refreshed_domains)}, "
+            f"skipped={len(topo_outcome.skipped_domains)}, items={topo_outcome.total_items}"
         )
 
     print(f"\nCache warm-up completed in {time.perf_counter() - t0:.2f}s")

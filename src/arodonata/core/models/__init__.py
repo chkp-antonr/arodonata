@@ -43,10 +43,20 @@ from arodonata.core.models.rulebase import (
     ThreatRuleEntry,
 )
 from arodonata.core.models.services import CPService
+from arodonata.core.models.topology import (
+    AffectedGatewayCandidate,
+    FlowMatchType,
+    GatewayInterfaceSummary,
+    GatewayTopologyEntry,
+    TopologySourceType,
+    TopologyZone,
+    TrafficFlowMatch,
+)
 
 __all__ = [
     "ASSET_TYPE_ALIASES",
     "AccessRuleEntry",
+    "AffectedGatewayCandidate",
     "ApiCallResult",
     "ApiQueryResult",
     "Asset",
@@ -59,6 +69,9 @@ __all__ = [
     "DomainInfo",
     "DomainRulebaseSnapshot",
     "DomainSyncState",
+    "FlowMatchType",
+    "GatewayInterfaceSummary",
+    "GatewayTopologyEntry",
     "GroupMembershipNode",
     "HttpsRuleEntry",
     "NatRuleEntry",
@@ -74,6 +87,9 @@ __all__ = [
     "SyncScope",
     "SyncStatus",
     "ThreatRuleEntry",
+    "TopologySourceType",
+    "TopologyZone",
+    "TrafficFlowMatch",
     "normalize_any_type",
     "normalize_asset_type",
     "normalize_object_type",

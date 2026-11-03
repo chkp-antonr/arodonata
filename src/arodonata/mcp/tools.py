@@ -7,10 +7,12 @@ Exposes a consolidated, cache-aligned tool surface:
   `arodonata_assets`, and `arodonata_rulebase_layer` / `arodonata_rulebase_package_layer` with
   three-tier matching (exact match, strict explicit wildcard `fnmatchcase`, and paginated
   substring candidate fallback).
-- Hybrid rulebase inspection and package/layer discovery (`show_rulebase`, `locate_rules`).
+- Hybrid rulebase inspection, package/layer discovery, and affected gateway candidate matching
+  (`show_rulebase`, `locate_rules`, `locate_gateways`).
 - Search, group/cluster membership, and structured aggregation (`search_objects`,
   `get_group_members`, `query_objects` with `aggregate="list" | "count" | "describe"`).
-- Unified cache status and synchronization (`cache_control` with `action="status" | "refresh"`).
+- Unified cache status and synchronization (`cache_control` with `action="status" | "refresh"`,
+  including `scope="topology"`).
 - Offline Check Point API reference discovery and payload validation (`api_reference` with
   `action="search" | "describe" | "validate"`).
 - Change report (`change_report`) and write-protected `api_call`.
@@ -1385,7 +1387,7 @@ def register_mcp_tools(
         name="cache_control",
         description=(
             "Inspect cache freshness across scopes (action='status') or trigger scoped synchronization "
-            "(action='refresh', scope='domains'|'objects'|'services'|'assets'|'rulebase')."
+            "(action='refresh', scope='domains'|'objects'|'services'|'assets'|'rulebase'|'topology')."
         ),
     )
     @mcp_tool_guard("cache_control", client_getter)
@@ -1458,6 +1460,13 @@ def register_mcp_tools(
                 include_global=include_global,
                 mode=mode,
             )
+        elif target_scope == "topology":
+            outcome = await client.refresh_topology(
+                mgmt_name=eff_mgmt,
+                domains=target_domains,
+                include_global=include_global,
+                mode=mode,
+            )
         else:
             outcome = await client.refresh_rulebases(
                 mgmt_name=eff_mgmt,
@@ -1468,7 +1477,7 @@ def register_mcp_tools(
         return json_tool_result(outcome.model_dump(mode="json"))
 
     # ------------------------------------------------------------------
-    # 4. Hybrid Rulebase & Policy Package/Layer Catalog Tool (`show_rulebase`, `locate_rules`)
+    # 4. Hybrid Rulebase & Policy Package/Layer Catalog Tool (`show_rulebase`, `locate_rules`, `locate_gateways`)
     # ------------------------------------------------------------------
 
     @server.tool(
@@ -1727,6 +1736,67 @@ def register_mcp_tools(
             cache_mode=mode,
         )
         return json_tool_result(locations.model_dump(mode="json"))
+
+    @server.tool(
+        name="locate_gateways",
+        description=(
+            "Locate candidate policy-enforcing Check Point gateways (simple gateways, clusters, and VSX Virtual "
+            "Systems), domains, policy packages, and access layers affected by traffic between sources and "
+            "destinations (IPv4 addresses, CIDRs, ranges, or object/group names) where source and destination "
+            "reside behind distinct gateway interfaces."
+        ),
+    )
+    @mcp_tool_guard("locate_gateways", client_getter)
+    async def locate_gateways(
+        sources: list[str] | str,
+        destinations: list[str] | str,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        cache_mode: str = "smart",
+    ) -> CallToolResult:
+        client = client_getter()
+        eff_mgmt = resolve_mgmt_name(client, mgmt_name) if mgmt_name else None
+        eff_domain = (
+            await validate_domain_or_fail(client, eff_mgmt, domain)
+            if eff_mgmt and domain
+            else (domain.strip() if domain and domain.strip() else None)
+        )
+        mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
+        eff_mode: CacheMode = "force" if is_live else mode
+        candidates = await client.find_affected_gateways(
+            sources=sources,
+            destinations=destinations,
+            mgmt_name=eff_mgmt,
+            domain=eff_domain,
+            cache_mode=eff_mode,
+        )
+        target_mgmt = eff_mgmt or (client.settings.mgmt_names[0] if client.settings.mgmt_names else "default")
+        age = None if is_live else await _compute_cache_age(client, target_mgmt, eff_domain, "topology", "*")
+        serialized = [c.model_dump(mode="json") for c in candidates]
+        src_list = (
+            [s.strip() for s in sources.split(",") if s.strip()]
+            if isinstance(sources, str)
+            else [str(s).strip() for s in sources if str(s).strip()]
+        )
+        dst_list = (
+            [d.strip() for d in destinations.split(",") if d.strip()]
+            if isinstance(destinations, str)
+            else [str(d).strip() for d in destinations if str(d).strip()]
+        )
+        return json_tool_result(
+            {
+                "from": 1 if serialized else 0,
+                "to": len(serialized),
+                "total": len(serialized),
+                "source": "live" if is_live else "cache",
+                "cache_age_seconds": age,
+                "mgmt_name": eff_mgmt,
+                "domain": eff_domain,
+                "sources": src_list,
+                "destinations": dst_list,
+                "gateways": serialized,
+            }
+        )
 
     # ------------------------------------------------------------------
     # 5. Change Report & Gated `api_call`

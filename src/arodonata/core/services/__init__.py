@@ -39,6 +39,12 @@ from arodonata.core.services.sync_coordinator import (
     DomainSyncHandler,
     parse_cp_publish_timestamp,
 )
+from arodonata.core.services.topology_service import (
+    EXCLUDED_GATEWAY_TYPES,
+    POLICY_GATEWAY_TYPES,
+    TopologyService,
+    is_policy_enforcing_gateway,
+)
 
 __all__ = [
     "AssetRefreshService",
@@ -49,16 +55,20 @@ __all__ = [
     "DomainService",
     "DomainSyncCoordinator",
     "DomainSyncHandler",
+    "EXCLUDED_GATEWAY_TYPES",
     "OBJECT_TYPE_TO_SHOW_COMMAND",
     "ObjectService",
+    "POLICY_GATEWAY_TYPES",
     "SERVICE_TYPE_TO_SHOW_COMMAND",
     "SYSTEM_DOMAIN_KEY",
     "SearchService",
     "SearchTermKind",
     "ServiceCacheService",
+    "TopologyService",
     "VSXRelationshipManager",
     "classify_search_term",
     "extract_changes_from_show_changes",
+    "is_policy_enforcing_gateway",
     "matches_classified_term",
     "parse_cp_publish_timestamp",
     "parse_domain_dict",

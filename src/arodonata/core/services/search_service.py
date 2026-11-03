@@ -10,8 +10,8 @@ Provides:
   (`aggregate="count" | "list"`) over `arodonata_objects` and `arodonata_services` (distinguishing
   local vs Global objects via `original_domain`).
 - `get_cache_status`: inspects `domain_sync_state` across `"domains"`, `"objects"`, `"services"`,
-  `"assets"`, and `"rulebase"`, reporting `last_published_at`, `last_session_uid`, `synced_at`,
-  and `cache_age_seconds`.
+  `"assets"`, `"rulebase"`, and `"topology"`, reporting `last_published_at`, `last_session_uid`,
+  `synced_at`, and `cache_age_seconds`.
 """
 
 from __future__ import annotations
@@ -1020,7 +1020,7 @@ class SearchService:
         domain_name: str | None = None,
         scope: SyncScope | None = None,
     ) -> dict[str, Any]:
-        """Inspect `domain_sync_state` across scopes and return per-domain/per-type freshness and `cache_age_seconds`."""
+        """Inspect `domain_sync_state` across scopes (`"domains"`, `"objects"`, `"services"`, `"assets"`, `"rulebase"`, `"topology"`) and return per-domain/per-type freshness and `cache_age_seconds`."""
         span_attrs(mgmt_name=mgmt_name, domain=domain_name, scope=scope)
         states = await self._cache.list_sync_states(
             mgmt_name=mgmt_name,
@@ -1055,6 +1055,7 @@ class SearchService:
 
         return {
             "total_entries": len(entries),
+            "supported_scopes": ["domains", "objects", "services", "assets", "rulebase", "topology"],
             "entries": entries,
             "by_scope": dict(by_scope),
         }
