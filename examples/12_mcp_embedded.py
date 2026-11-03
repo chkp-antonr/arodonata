@@ -18,8 +18,8 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 
-load_dotenv(".env.lib", override=True)
-load_dotenv(".env.secrets", override=True)
+load_dotenv(".env.lib", override=False)
+load_dotenv(".env.secrets", override=False)
 
 import uvicorn  # noqa: E402
 from fastapi import FastAPI, Request, Response  # noqa: E402

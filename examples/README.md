@@ -52,6 +52,28 @@ ARODONATA_LAB=home uv run examples/10_change_report_evidence.py
 uv run examples/12_mcp_embedded.py
 ```
 
+## Overriding Target Server & Domain via CLI Environment Variables
+
+Example scripts load `.env.lib` and `.env.secrets` with `override=False`, so you can point any example at another Management Server or domain directly from the command line without editing `.env.lib`:
+
+```bash
+# Query gateway topology across ALL domains on an alternate MDS (EXAMPLE_DOMAIN="" means all domains)
+MGMT_NAMES=mdsNP2.np.cparch.in \
+MGMT_SERVERS=10.192.11.140 \
+API_KEY_VARS=CPIL_API_KEY \
+EXAMPLE_DOMAIN="" \
+uv run examples/13_gateway_topology_matching.py
+
+# Query a specific domain and custom traffic flow endpoints
+MGMT_NAMES=mdsNP2.np.cparch.in \
+MGMT_SERVERS=10.192.11.140 \
+API_KEY_VARS=CPIL_API_KEY \
+EXAMPLE_DOMAIN="General" \
+EXAMPLE_FLOW_SOURCES="10.0.0.0/8" \
+EXAMPLE_FLOW_DESTINATIONS="172.16.0.0/12, 8.8.8.8" \
+uv run examples/13_gateway_topology_matching.py
+```
+
 ## Crash-Safe Manual Testing with `_session_guard.py`
 
 When experimenting manually in SmartConsole or with ad-hoc scripts against a lab domain:

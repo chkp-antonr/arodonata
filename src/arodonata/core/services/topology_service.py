@@ -831,13 +831,16 @@ class TopologyService:
                         obj_by_name=obj_by_name,
                     )
                     if not expanded:
+                        spec_target = nif.specific_network_ref or nif.specific_network_uid
                         logger.warning(
-                            "Gateway interface specific topology object could not be resolved",
+                            "Gateway interface specific topology object could not be resolved: "
+                            f"{mgmt_name}:{domain_name}:{asset.name} :: {nif.interface_name} "
+                            f"(specific_network={spec_target!r})",
                             mgmt_name=mgmt_name,
                             domain_name=domain_name,
                             gateway_name=asset.name,
                             interface_name=nif.interface_name,
-                            specific_network=nif.specific_network_ref or nif.specific_network_uid,
+                            specific_network=spec_target,
                         )
                     for cidr_str, lo_int, hi_int, plen, src_ref in expanded:
                         entries.append(
@@ -888,13 +891,16 @@ class TopologyService:
                             )
                         )
                 elif nif.interface_name not in routed_if_names and nif.interface_name not in external_routed_if_names:
+                    behind_label = nif.behind_mode or "not defined"
                     logger.warning(
-                        "Gateway interface has dynamic routing or undefined topology without static routes; skipping",
+                        "Gateway interface has dynamic routing or undefined topology without static routes; skipping: "
+                        f"{mgmt_name}:{domain_name}:{asset.name} :: {nif.interface_name} "
+                        f"(behind_mode={behind_label!r})",
                         mgmt_name=mgmt_name,
                         domain_name=domain_name,
                         gateway_name=asset.name,
                         interface_name=nif.interface_name,
-                        behind_mode=nif.behind_mode or "not defined",
+                        behind_mode=behind_label,
                     )
 
             entries.extend(vs_route_entries)

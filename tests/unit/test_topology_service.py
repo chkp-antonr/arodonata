@@ -520,10 +520,11 @@ async def test_topology_extraction_group_expansion_vs_routes_and_candidate_match
 
     # Verify structured warning was emitted for bond0.99 ("network defined by routing") on dc-core-gw
     assert any(
-        kw.get("gateway_name") == "dc-core-gw"
+        "mds1:DC:dc-core-gw :: bond0.99" in msg
+        and kw.get("gateway_name") == "dc-core-gw"
         and kw.get("interface_name") == "bond0.99"
         and kw.get("behind_mode") == "network defined by routing"
-        for _, kw in warning_calls
+        for msg, kw in warning_calls
     )
 
     # Verify SearchService.get_cache_status includes "topology" scope

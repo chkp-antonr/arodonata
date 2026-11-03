@@ -23,8 +23,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-load_dotenv(".env.lib", override=True)
-load_dotenv(".env.secrets", override=True)
+load_dotenv(".env.lib", override=False)
+load_dotenv(".env.secrets", override=False)
 
 from arlogi.otel import setup_tracing, shutdown_tracing  # noqa: E402
 
