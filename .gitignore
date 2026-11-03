@@ -29,3 +29,8 @@ docs/_build_bundle/
 site/
 _tmp/
 examples/_tmp/
+
+# Local AI agent workflows, rules, and IDE skills
+.agents/
+.claude/
+CLAUDE.md
