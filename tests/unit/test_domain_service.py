@@ -367,3 +367,119 @@ async def test_domain_service_paginates_show_domains_across_multiple_pages() -> 
     domains = await service.get_domains("mds1")
     assert [d.name for d in domains] == ["DomPage1", "DomPage2"]
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_domain_service_falls_back_to_standard_details_level_on_rbac_rejection_and_preserves_cached_cma_ips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`DomainService` retries `show-domains` with `details-level='standard'` only on RBAC rejection, preserves cached CMA IPs, and does NOT fall back on 5xx errors."""
+    from arodonata.core.models.domains import DomainInfo
+    from arodonata.core.services import domain_service as dom_mod
+    from arodonata.core.services.domain_service import SYSTEM_DOMAIN_KEY
+
+    debug_logs: list[tuple[str, dict[str, Any]]] = []
+    warning_logs: list[tuple[str, dict[str, Any]]] = []
+    orig_debug = dom_mod.logger.debug
+    orig_warning = dom_mod.logger.warning
+
+    def _spy_debug(msg: str, *args: Any, **kwargs: Any) -> None:
+        debug_logs.append((msg, kwargs))
+        orig_debug(msg, *args, **kwargs)
+
+    def _spy_warning(msg: str, *args: Any, **kwargs: Any) -> None:
+        warning_logs.append((msg, kwargs))
+        orig_warning(msg, *args, **kwargs)
+
+    monkeypatch.setattr(dom_mod.logger, "debug", _spy_debug)
+    monkeypatch.setattr(dom_mod.logger, "warning", _spy_warning)
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = FakeApiPort()
+
+    # Seed an existing cached domain with known CMA active_ip ("10.10.2.50") and servers list
+    await cache.upsert_domains(
+        [
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="d-std-1",
+                name="StandardDomain",
+                active_ip="10.10.2.50",
+                active_mds_ip="10.10.0.2",
+                standby_ips=["10.10.2.51"],
+                servers=[{"name": "cma-std-1", "ipv4-address": "10.10.2.50", "active": True}],
+            )
+        ]
+    )
+
+    api.queue_response(
+        "mds1",
+        "show-domains",
+        ApiCallResult(
+            success=False,
+            status_code=403,
+            error_code="err_forbidden",
+            error_message="Permission denied for details-level full",
+        ),
+    )
+    api.queue_response(
+        "mds1",
+        "show-domains",
+        ApiCallResult(
+            success=True,
+            data={
+                "objects": [
+                    {"uid": "d-std-1", "name": "StandardDomain", "type": "domain"},
+                    {"uid": "d-std-2", "name": "NewColdDomain", "type": "domain"},
+                ],
+                "total": 2,
+            },
+        ),
+    )
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.10.0.1", api_key="secret")
+    service = DomainService(settings=settings, api=api, cache=cache)
+
+    domains = await service.refresh_domains("mds1", mode="force")
+    by_name = {d.name: d for d in domains}
+    assert set(by_name.keys()) == {"StandardDomain", "NewColdDomain"}
+    # Previously cached CMA IPs and servers MUST be preserved when standard omits `servers`!
+    assert by_name["StandardDomain"].active_ip == "10.10.2.50"
+    assert by_name["StandardDomain"].active_mds_ip == "10.10.0.2"
+    assert by_name["StandardDomain"].standby_ips == ["10.10.2.51"]
+    assert len(by_name["StandardDomain"].servers) == 1
+    # Brand-new domain with no cached servers falls back to MDS host
+    assert by_name["NewColdDomain"].active_ip == "10.10.0.1"
+
+    assert any("Discovering domains" in m and kw.get("mgmt_name") == "mds1" for m, kw in debug_logs)
+    assert any("Cached 3 domain(s)" in m and kw.get("count") == 3 for m, kw in debug_logs)
+    assert any("retrying with details-level=standard" in m and kw.get("mgmt_name") == "mds1" for m, kw in warning_logs)
+
+    # Now verify that a transient 500 error on `show-domains` (`details-level=full`) does NOT trigger
+    # the `details-level=standard` fallback, records `status="failed"`, and keeps existing cached domains intact.
+    warning_logs.clear()
+    api.calls.clear()
+    api.responses.clear()
+    api.queue_response(
+        "mds1",
+        "show-domains",
+        ApiCallResult(
+            success=False,
+            status_code=500,
+            error_code="generic_server_error",
+            error_message="Internal server error",
+        ),
+    )
+
+    domains_after_500 = await service.refresh_domains("mds1", mode="force")
+    show_domains_calls = [c for c in api.calls if c[1] == "show-domains"]
+    assert len(show_domains_calls) == 1
+    assert show_domains_calls[0][2]["details-level"] == "full"
+    assert {d.name for d in domains_after_500} == {"StandardDomain", "NewColdDomain"}
+    sync_state = await cache.get_sync_state("mds1", SYSTEM_DOMAIN_KEY, "domains", "*")
+    assert sync_state is not None and sync_state.status == "failed"
+    assert any("Domain discovery via show-domains failed" in m for m, _ in warning_logs)
+
+    await db.close()

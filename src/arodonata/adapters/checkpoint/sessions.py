@@ -26,6 +26,8 @@ from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Any
 
+import arlogi
+
 from arodonata.adapters.checkpoint.rate_limiter import LoginGate, RateLimiter
 from arodonata.adapters.checkpoint.transport import ApiTransport
 from arodonata.core.config import ArodonataSettings, ServerEndpointConfig
@@ -44,6 +46,8 @@ from arodonata.core.models.common import ApiCallResult, utc_now
 from arodonata.core.models.domains import DomainInfo, SIDCacheEntry
 from arodonata.core.ports import AuthProvider, CachePort
 from arodonata.core.telemetry import span_attrs, traced
+
+logger = arlogi.get_logger(__name__)
 
 SYSTEM_DOMAIN_SENTINEL = "System Data"
 
@@ -676,12 +680,29 @@ class LoginCoordinator:
                     failover_attempted = True
                     refreshed = await self.refresh_domain_active_ip(mgmt_name, dom_key)
                     if refreshed is not None and refreshed.active_ip and refreshed.active_ip != target_ip:
+                        logger.debug(
+                            f"Domain '{mgmt_name}:{dom_key}' active server switched after transport error: "
+                            f"{target_ip} -> {refreshed.active_ip}; retrying login.",
+                            mgmt_name=mgmt_name,
+                            domain=dom_key,
+                            old_ip=target_ip,
+                            active_ip=refreshed.active_ip,
+                            active_mds_ip=refreshed.active_mds_ip or refreshed.active_ip,
+                        )
                         target_ip = refreshed.active_ip
                         mds_ip = refreshed.active_mds_ip or target_ip
                         continue
                 # Record exponential backoff in LoginGate when login read times out (W5)
                 if isinstance(transport_exc, ApiTimeoutError) and transport_exc.phase == "read":
                     self._login_gate.record_cooldown(mds_ip, transient_delay)
+                    logger.warning(
+                        f"Login to '{mgmt_name}:{dom_key}' ({mds_ip}) timed out during read phase; "
+                        f"applying {transient_delay:.1f}s cooldown before retry.",
+                        mgmt_name=mgmt_name,
+                        domain=dom_key,
+                        mds_ip=mds_ip,
+                        cooldown_seconds=transient_delay,
+                    )
                 if self._monotonic() + transient_delay >= deadline:
                     raise AuthenticationError(
                         f"Login to {mgmt_name!r} ({dom_key!r} at {target_ip}) timed out or failed: {transport_exc}"
@@ -715,6 +736,14 @@ class LoginCoordinator:
                         f"Login to {mgmt_name!r} ({dom_key!r}) throttled and exceeded login_max_wait="
                         f"{self._settings.login_max_wait}s: {res.error_message}"
                     )
+                logger.warning(
+                    f"Login to '{mgmt_name}:{dom_key}' ({mds_ip}) throttled by server; "
+                    f"waiting {wait_sec:.0f}s before retry.",
+                    mgmt_name=mgmt_name,
+                    domain=dom_key,
+                    mds_ip=mds_ip,
+                    cooldown_seconds=wait_sec,
+                )
                 await self._sleep(wait_sec)
                 continue
 
@@ -728,6 +757,16 @@ class LoginCoordinator:
                 failover_attempted = True
                 refreshed = await self.refresh_domain_active_ip(mgmt_name, dom_key)
                 if refreshed is not None and refreshed.active_ip:
+                    if refreshed.active_ip != target_ip:
+                        logger.debug(
+                            f"Domain '{mgmt_name}:{dom_key}' active server resolved: "
+                            f"{target_ip} -> {refreshed.active_ip}; retrying login.",
+                            mgmt_name=mgmt_name,
+                            domain=dom_key,
+                            old_ip=target_ip,
+                            active_ip=refreshed.active_ip,
+                            active_mds_ip=refreshed.active_mds_ip or refreshed.active_ip,
+                        )
                     target_ip = refreshed.active_ip
                     mds_ip = refreshed.active_mds_ip or target_ip
                     continue
@@ -735,6 +774,11 @@ class LoginCoordinator:
             # 4. Max sessions refusal -> trigger SessionCleaner once if available
             if not cleaned_max_sessions and is_max_sessions_exceeded_result(res) and self._session_cleaner is not None:
                 cleaned_max_sessions = True
+                logger.debug(
+                    f"Max open sessions reached on '{mgmt_name}:{dom_key}'; running session cleanup.",
+                    mgmt_name=mgmt_name,
+                    domain=dom_key,
+                )
                 await self._session_cleaner.cleanup_server_sessions(mgmt_name, domain=dom_key, auth=auth)
                 continue
 
@@ -928,6 +972,15 @@ class LoginCoordinator:
 
         if parsed_domains:
             await self._cache.upsert_domains(parsed_domains)
+        if matched is not None:
+            logger.debug(
+                f"Resolved active server for domain '{mgmt_name}:{domain_name}': "
+                f"active_ip={matched.active_ip}, active_mds_ip={matched.active_mds_ip}.",
+                mgmt_name=mgmt_name,
+                domain=domain_name,
+                active_ip=matched.active_ip,
+                active_mds_ip=matched.active_mds_ip,
+            )
         return matched
 
     @traced
@@ -1223,6 +1276,12 @@ class SessionCleaner:
                         )
                         is_stale = is_arodonata_owned and has_no_changes_or_locks
                         if is_stale:
+                            logger.debug(
+                                f"Discarding stale session uid={target_uid} on '{mgmt_name}:{dom_key}'.",
+                                mgmt_name=mgmt_name,
+                                domain=dom_key,
+                                session_uid=target_uid,
+                            )
                             async with self._rate_limiter.slot(endpoint.host):
                                 await self._transport.execute(
                                     server_ip,

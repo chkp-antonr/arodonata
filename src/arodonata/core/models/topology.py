@@ -130,4 +130,6 @@ class AffectedGatewayCandidate(BaseModel):
     policy_packages: list[str] = Field(default_factory=list)
     access_layers: list[str] = Field(default_factory=list)
     match_types: list[str] = Field(default_factory=list)
+    matched_sources: list[str] = Field(default_factory=list)
+    matched_destinations: list[str] = Field(default_factory=list)
     matched_flows: list[TrafficFlowMatch] = Field(default_factory=list)

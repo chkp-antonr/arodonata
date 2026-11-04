@@ -16,14 +16,53 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+import arlogi
+
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.errors import ConfigurationError, DomainNotFoundError, ServerIdentityError
-from arodonata.core.models.common import CacheMode, to_naive_utc, utc_now
+from arodonata.core.models.common import ApiCallResult, CacheMode, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainInfo, DomainSyncState
 from arodonata.core.ports import ApiPort, CachePort, LockPort
 from arodonata.core.telemetry import span_attrs, traced
 
+logger = arlogi.get_logger(__name__)
+
 SYSTEM_DOMAIN_KEY = "System Data"
+
+_SINGLE_DOMAIN_UNSUPPORTED_TOKENS: tuple[str, ...] = (
+    "command_not_found",
+    "not supported on non-mds",
+    "multi-domain",
+    "unknown command",
+)
+
+_RBAC_DETAILS_LEVEL_TOKENS: tuple[str, ...] = (
+    "err_forbidden",
+    "forbidden",
+    "permission",
+    "not authorized",
+    "unauthorized",
+    "not allowed",
+    "details-level",
+    "details_level",
+    "privileges",
+)
+
+
+def _is_single_domain_unsupported(res: ApiCallResult) -> bool:
+    """Return `True` if `show-domains` failed because the server is a single-domain SmartCenter."""
+    err_lower = (res.error_message or "").lower()
+    code_lower = (res.error_code or "").lower()
+    return any(tok in err_lower or tok in code_lower for tok in _SINGLE_DOMAIN_UNSUPPORTED_TOKENS)
+
+
+def _is_rbac_or_details_level_rejected(res: ApiCallResult) -> bool:
+    """Return `True` if `show-domains` with `details-level=full` was rejected due to RBAC / permissions."""
+    if res.status_code in (401, 403):
+        return True
+    err_lower = (res.error_message or "").lower()
+    code_lower = (res.error_code or "").lower()
+    return any(tok in err_lower or tok in code_lower for tok in _RBAC_DETAILS_LEVEL_TOKENS)
 
 
 def parse_domain_dict(
@@ -347,6 +386,14 @@ class DomainService:
         endpoint = servers.get(mgmt_name)
         default_host = endpoint.host if endpoint is not None else None
         now = self._now()
+        logger.debug(
+            f"Discovering domains on '{mgmt_name}' ({default_host or mgmt_name})...",
+            mgmt_name=mgmt_name,
+            host=default_host or mgmt_name,
+        )
+
+        existing_domains = await self._cache.get_domains(mgmt_name, include_global=True)
+        existing_by_name: dict[str, DomainInfo] = {d.name: d for d in existing_domains}
 
         res = await self._api.api_call(
             mgmt_name,
@@ -354,6 +401,33 @@ class DomainService:
             {"details-level": "full", "limit": 500, "offset": 0},
             domain=None,
         )
+        details_level = "full"
+        is_single_domain = False
+        fallback_failed_res: ApiCallResult | None = None
+
+        if not res.success:
+            is_single_domain = _is_single_domain_unsupported(res)
+            if not is_single_domain and _is_rbac_or_details_level_rejected(res):
+                logger.warning(
+                    f"show-domains (details-level=full) on '{mgmt_name}' rejected "
+                    f"({res.error_code or res.status_code}: {res.error_message}); retrying with details-level=standard.",
+                    mgmt_name=mgmt_name,
+                    error_code=res.error_code or str(res.status_code),
+                    error_message=res.error_message,
+                )
+                fallback_res = await self._api.api_call(
+                    mgmt_name,
+                    "show-domains",
+                    {"details-level": "standard", "limit": 500, "offset": 0},
+                    domain=None,
+                )
+                if fallback_res.success:
+                    res = fallback_res
+                    details_level = "standard"
+                else:
+                    fallback_failed_res = fallback_res
+                    if _is_single_domain_unsupported(fallback_res):
+                        is_single_domain = True
 
         discovered: list[DomainInfo] = []
         mds_ip_by_name: dict[str, str] = {}
@@ -367,7 +441,7 @@ class DomainService:
                 page_res = await self._api.api_call(
                     mgmt_name,
                     "show-domains",
-                    {"details-level": "full", "limit": 500, "offset": page_offset},
+                    {"details-level": details_level, "limit": 500, "offset": page_offset},
                     domain=None,
                 )
                 if not page_res.success:
@@ -398,36 +472,53 @@ class DomainService:
                             mds_ip_by_name=mds_ip_by_name,
                             now_fn=self._now,
                         )
+                        # If details-level=standard returned no `servers` array, preserve previously cached
+                        # CMA active_ip, active_mds_ip, standby_ips, and servers for this domain!
+                        prev_dom = existing_by_name.get(dom.name)
+                        if not dom.servers and prev_dom is not None and (prev_dom.servers or prev_dom.active_ip):
+                            dom = dom.model_copy(
+                                update={
+                                    "active_ip": prev_dom.active_ip or dom.active_ip,
+                                    "active_mds_ip": prev_dom.active_mds_ip or dom.active_mds_ip,
+                                    "standby_ips": list(prev_dom.standby_ips)
+                                    if prev_dom.standby_ips
+                                    else dom.standby_ips,
+                                    "servers": list(prev_dom.servers) if prev_dom.servers else dom.servers,
+                                }
+                            )
                         discovered.append(dom)
 
         # If show-domains succeeded with no objects, or failed because server is single-domain SmartCenter,
         # synthesize the default single-domain entry if no user domains were returned.
-        if not discovered and not res.success:
-            err_lower = (res.error_message or "").lower()
-            code_lower = (res.error_code or "").lower()
-            is_single_domain_unsupported = any(
-                tok in err_lower or tok in code_lower
-                for tok in (
-                    "command_not_found",
-                    "not supported on non-mds",
-                    "multi-domain",
-                    "unknown command",
+        if not discovered and not res.success and not is_single_domain:
+            err_summary = res.error_message or f"HTTP {res.status_code}"
+            if fallback_failed_res is not None:
+                fb_summary = fallback_failed_res.error_message or f"HTTP {fallback_failed_res.status_code}"
+                err_summary = (
+                    f"{err_summary} (standard fallback failed: "
+                    f"{fallback_failed_res.error_code or fallback_failed_res.status_code} - {fb_summary})"
+                )
+            logger.warning(
+                f"Domain discovery via show-domains failed on '{mgmt_name}' ({default_host or mgmt_name}): "
+                f"{res.error_code or res.status_code} - {err_summary}",
+                mgmt_name=mgmt_name,
+                host=default_host or mgmt_name,
+                error_code=res.error_code or str(res.status_code),
+                error_message=err_summary,
+            )
+            # Record failure in domain_sync_state and return existing cached domains
+            await self._cache.upsert_sync_state(
+                DomainSyncState(
+                    mgmt_name=mgmt_name,
+                    domain_name=SYSTEM_DOMAIN_KEY,
+                    scope="domains",
+                    item_type="*",
+                    synced_at=now,
+                    status="failed",
+                    last_error=err_summary,
                 )
             )
-            if not is_single_domain_unsupported:
-                # Record failure in domain_sync_state and return existing cached domains
-                await self._cache.upsert_sync_state(
-                    DomainSyncState(
-                        mgmt_name=mgmt_name,
-                        domain_name=SYSTEM_DOMAIN_KEY,
-                        scope="domains",
-                        item_type="*",
-                        synced_at=now,
-                        status="failed",
-                        last_error=res.error_message or f"HTTP {res.status_code}",
-                    )
-                )
-                return await self._cache.get_domains(mgmt_name, include_global=True)
+            return existing_domains
 
         if not discovered:
             discovered.append(
@@ -471,6 +562,11 @@ class DomainService:
                 object_count=len(discovered),
                 last_error=None,
             )
+        )
+        logger.debug(
+            f"Cached {len(discovered)} domain(s) for '{mgmt_name}'.",
+            mgmt_name=mgmt_name,
+            count=len(discovered),
         )
         return discovered
 
