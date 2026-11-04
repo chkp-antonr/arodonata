@@ -46,12 +46,12 @@ The system SHALL support hybrid authentication (shared read-only credentials wit
 
 ### Requirement: Per-MDS-Member Login Gate and Throttle Recovery
 
-The system SHALL serialize and rate-limit logins per hosting MDS member (`active_mds_ip`, falling back to configured server IP) via `LoginGate`, enforcing a minimum inter-login spacing and shared throttle cooldown inside the gate, bounding local `asyncio.Lock` acquisition by `wait_timeout`, and executing CMA failover IP refreshes (`refresh_domain_active_ip`) and retry backoff sleeps outside the gate so recursive system-domain logins on the same MDS IP never deadlock.
+The system SHALL serialize and rate-limit logins per hosting MDS member (`active_mds_ip`, falling back to configured server IP) via `LoginGate`, enforcing a minimum inter-login spacing and shared throttle cooldown inside the gate, logging a `WARNING` when entering a login throttle cooldown, bounding local `asyncio.Lock` acquisition by `wait_timeout`, and executing CMA failover IP refreshes (`refresh_domain_active_ip`) and retry backoff sleeps outside the gate so recursive system-domain logins on the same MDS IP never deadlock.
 
 #### Scenario: Throttled login waits out Check Point throttle window
 
 - **WHEN** a login attempt is rejected due to Check Point login throttling or times out during the read phase
-- **THEN** `LoginGate` SHALL record the per-MDS cooldown window (`login_throttle_window`, default 70s, or exponential read-timeout backoff) so subsequent queued callers respect the cooldown before sending another `login`, and `LoginCoordinator` SHALL release the gate before sleeping and retrying within `login_max_wait` (default 900s)
+- **THEN** `LoginGate` SHALL record the per-MDS cooldown window (`login_throttle_window`, default 70s, or exponential read-timeout backoff) and log a `WARNING` message with the server IP and cooldown duration so subsequent queued callers respect the cooldown before sending another `login`, and `LoginCoordinator` SHALL release the gate before sleeping and retrying within `login_max_wait` (default 900s)
 
 #### Scenario: Cold-cache CMA failover during login does not deadlock LoginGate
 
@@ -79,7 +79,7 @@ The `RateLimiter` SHALL cap in-flight API requests per MDS member to `concurrent
 
 ### Requirement: Stale Session Cleanup and Startup Session Seed
 
-`SessionCleaner` SHALL clean up stale or abandoned Arodonata-owned API sessions on configured management servers on startup (when static credentials are available) and upon max-sessions refusal, strictly restricting `discard` to sessions created by Arodonata (`application == "arodonata"` or `arodonata` session-name prefix) that have `changes == 0` and `locks == 0`.
+`SessionCleaner` SHALL clean up stale or abandoned Arodonata-owned API sessions on configured management servers on startup (when static credentials are available) and upon max-sessions refusal, logging `DEBUG` entries when discarding stale Arodonata sessions, and strictly restricting `discard` to sessions created by Arodonata (`application == "arodonata"` or `arodonata` session-name prefix) that have `changes == 0` and `locks == 0`.
 
 #### Scenario: Startup cleanup seeds system domain SID when cache is empty
 
@@ -98,7 +98,7 @@ The `RateLimiter` SHALL cap in-flight API requests per MDS member to `concurrent
 
 ### Requirement: Multi-Domain Discovery, Failover IP Resolution, and Global Domain Support
 
-`DomainService` and `LoginCoordinator` SHALL discover and cache domains on MDS servers (`show-domains`, `show-mdss`, `show-global-domain`), track each domain's `active_ip`, `active_mds_ip`, and standby servers, and validate any caller-supplied `explicit_server_ip` against configured endpoint hosts and discovered MDS/domain server addresses for `mgmt_name`.
+`DomainService` and `LoginCoordinator` SHALL discover and cache domains on MDS servers (`show-domains`, `show-mdss`, `show-global-domain`), log `DEBUG` messages when discovering/caching domains and resolving active domain CMA/MDS IPs, track each domain's `active_ip`, `active_mds_ip`, and standby servers, and validate any caller-supplied `explicit_server_ip` against configured endpoint hosts and discovered MDS/domain server addresses for `mgmt_name`.
 
 #### Scenario: Opt-in Global domain visibility
 
@@ -108,12 +108,12 @@ The `RateLimiter` SHALL cap in-flight API requests per MDS member to `concurrent
 #### Scenario: Periodic domain list refresh via DomainListRefreshTracker
 
 - **WHEN** `get_domains` or smart cache refresh runs
-- **THEN** the domain list (`show-domains`) SHALL be re-fetched from the management server when the `domains` table is empty, when the 1-hour domain-list TTL has elapsed, or when `mode="force"` is requested
+- **THEN** the domain list (`show-domains`) SHALL be re-fetched from the management server when the `domains` table is empty, when the 1-hour domain-list TTL has elapsed, or when `mode="force"` is requested, retrying with `details-level="standard"` if `details-level="full"` is rejected by Check Point RBAC (preserving any previously cached `active_ip`, `active_mds_ip`, `standby_ips`, and `servers`), logging `DEBUG` messages at discovery start and after caching the discovered domain records, and logging a `WARNING` with the server error code and message if discovery fails
 
 #### Scenario: Cold-cache CMA IP resolution and active domain server failover re-resolution
 
 - **WHEN** a customer or `Global` domain login runs before `domains` is cached (cold cache) or when a domain's cached `active_ip` fails with a failover/unreachable error code
-- **THEN** `LoginCoordinator` SHALL query the MDS system domain (`show-domains`, `show-mdss`, and `show-global-domain`) to resolve and cache the domain's `active_ip` (CMA IP) and `active_mds_ip` in the `domains` table before authenticating against the domain
+- **THEN** `LoginCoordinator` SHALL query the MDS system domain (`show-domains`, `show-mdss`, and `show-global-domain`) to resolve and cache the domain's `active_ip` (CMA IP) and `active_mds_ip` in the `domains` table and log a `DEBUG` entry before authenticating against the domain
 
 #### Scenario: Untrusted explicit_server_ip rejected before connection or SID transmission
 

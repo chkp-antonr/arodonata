@@ -15,9 +15,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Any, TypeVar
 
+import arlogi
+
 from arodonata.core.errors import AuthenticationError, RateLimitTimeoutError
 from arodonata.core.ports import LockPort
 from arodonata.core.telemetry import span_attrs, traced
+
+logger = arlogi.get_logger(__name__)
 
 T = TypeVar("T")
 
@@ -242,9 +246,15 @@ class LoginGate:
     def record_cooldown(self, mds_ip: str, cooldown_seconds: float) -> None:
         """Record a shared throttle or backoff cooldown window for `mds_ip` (`W4`)."""
         target_ip = (mds_ip or "default").strip()
-        candidate = self._monotonic() + max(0.0, float(cooldown_seconds))
+        wait_sec = max(0.0, float(cooldown_seconds))
+        candidate = self._monotonic() + wait_sec
         if candidate > self._next_allowed_at[target_ip]:
             self._next_allowed_at[target_ip] = candidate
+            logger.warning(
+                f"LoginGate entering cooldown for MDS '{target_ip}' ({wait_sec:.1f}s).",
+                mds_ip=target_ip,
+                cooldown_seconds=wait_sec,
+            )
 
     @asynccontextmanager
     async def acquire(

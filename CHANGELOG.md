@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Per-gateway filtered `matched_sources` and `matched_destinations` on `AffectedGatewayCandidate` (`arodonata.core.models.topology`, `arodonata.core.services.topology_service`, `ArodonataClient.find_affected_gateways`, and MCP `locate_gateways`): `TopologyService.find_affected_gateways()` now populates `matched_sources: list[str]` and `matched_destinations: list[str]` on each returned `AffectedGatewayCandidate` with the deduplicated caller query strings from that gateway's cross-interface `matched_flows` (`src_interface != dst_interface` and not `external == external`), strictly preserving the caller's input order from `sources` and `destinations`.
+- Structured `arlogi` operational logging and RBAC `show-domains` fallback (`arodonata.core.services.sync_coordinator`, `arodonata.core.services.domain_service`, `arodonata.adapters.checkpoint.rate_limiter`, `arodonata.adapters.checkpoint.sessions`): `DomainSyncCoordinator` emits structured `DEBUG` logs on sync start, per-domain progress, and completion and `WARNING` logs on domain sync failure; `DomainService` emits structured `DEBUG`/`WARNING` logs during domain discovery and retries `show-domains` with `details-level="standard"` when `details-level="full"` is rejected by Check Point RBAC while preserving previously cached CMA `active_ip`, `active_mds_ip`, `standby_ips`, and `servers`; and `LoginGate`, `LoginCoordinator`, and `SessionCleaner` emit structured `WARNING` logs on login throttle/read-timeout cooldowns and `DEBUG` logs on active CMA IP failover resolution, max-sessions cleanup triggers, and stale session discards.
+
 ## v2.3.0 (2026-11-03)
 
 ### Feat

@@ -13,6 +13,7 @@ from arodonata.core.context import AuthContext
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
 from arodonata.core.models.domains import DomainInfo
+from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import (
     DomainRulebaseSnapshot,
     RulebaseLayerEntry,
@@ -621,6 +622,8 @@ async def test_topology_extraction_group_expansion_vs_routes_and_candidate_match
     assert dc_cand.policy_packages == ["Core_Pkg"]
     assert dc_cand.access_layers == ["Core_Pkg Network"]
     assert dc_cand.match_types == ["internal_to_internal"]
+    assert dc_cand.matched_sources == ["10.10.1.25"]
+    assert dc_cand.matched_destinations == ["10.20.2.50"]
     assert len(dc_cand.matched_flows) == 1
     assert dc_cand.matched_flows[0].src_interface == "bond0.10"
     assert dc_cand.matched_flows[0].dst_interface == "bond0.20"
@@ -630,6 +633,8 @@ async def test_topology_extraction_group_expansion_vs_routes_and_candidate_match
     assert corp_cand.installed_access_policy == "Perimeter_Pkg"
     assert corp_cand.policy_packages == ["Perimeter_Pkg"]
     assert corp_cand.match_types == ["internal_to_external"]
+    assert corp_cand.matched_sources == ["10.10.1.25"]
+    assert corp_cand.matched_destinations == ["10.20.2.50"]
     assert corp_cand.matched_flows[0].src_interface == "eth1"
     assert corp_cand.matched_flows[0].dst_interface == "eth0"
 
@@ -852,5 +857,352 @@ async def test_topology_cache_only_mode_never_calls_live_api_and_host_ckp_firewa
     )
     assert api_calls == []
     assert [c.gateway_name for c in candidates] == ["fw-host-ckp"]
+    assert candidates[0].matched_sources == ["10.10.1.10"]
+    assert candidates[0].matched_destinations == ["10.20.1.20"]
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_four_gateway_transit_topology_filters_matched_sources_and_destinations_in_input_order() -> None:
+    """Verify 4-gateway topology (`GW1`, `GW2`, transit `GW3` + local networks, and `GW4` behind `GW3`) filters `matched_sources` and `matched_destinations` per gateway in strict input order."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = TopologyFakeApi()
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=0)
+    domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    coordinator = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=domain_service,
+    )
+    asset_service = AssetRefreshService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+    )
+    object_service = ObjectService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+    )
+    topology_service = TopologyService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+        asset_service=asset_service,
+        object_service=object_service,
+    )
+
+    # Seed Check Point network/group objects in domain "Corp" for specific interface topologies and named endpoints:
+    # - `N_GW1_Lan`: 10.1.0.0/24 (behind GW1 eth1)
+    # - `N_GW2_Lan`: 10.2.0.0/24 (behind GW2 eth1)
+    # - `G_Upstream_Branches`: group containing `N_GW1_Lan` and `N_GW2_Lan` (behind GW3 eth1)
+    # - `N_GW3_Local`: 10.3.0.0/24 (behind GW3 eth2)
+    # - `N_GW4_Lan`: 10.4.0.0/24 (behind GW3 eth3 and GW4 eth1)
+    # - `H_GW2_Client`: host 10.2.0.20 (in GW2's LAN)
+    await cache.upsert_objects(
+        [
+            CPObject(
+                uid="obj-n-gw1",
+                name="N_GW1_Lan",
+                type="network",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                subnet4="10.1.0.0",
+                mask_length4=24,
+            ),
+            CPObject(
+                uid="obj-n-gw2",
+                name="N_GW2_Lan",
+                type="network",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                subnet4="10.2.0.0",
+                mask_length4=24,
+            ),
+            CPObject(
+                uid="obj-g-branches",
+                name="G_Upstream_Branches",
+                type="group",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                members=["obj-n-gw1", "obj-n-gw2"],
+            ),
+            CPObject(
+                uid="obj-n-gw3",
+                name="N_GW3_Local",
+                type="network",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                subnet4="10.3.0.0",
+                mask_length4=24,
+            ),
+            CPObject(
+                uid="obj-n-gw4",
+                name="N_GW4_Lan",
+                type="network",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                subnet4="10.4.0.0",
+                mask_length4=24,
+            ),
+            CPObject(
+                uid="obj-h-gw2-client",
+                name="H_GW2_Client",
+                type="host",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                ipv4_address="10.2.0.20",
+            ),
+        ],
+    )
+
+    # Seed 4 gateways in domain "Corp":
+    # - GW1: eth1 = 10.1.0.0/24 (internal connected), eth0 = external (0.0.0.0/0)
+    # - GW2: eth1 = 10.2.0.0/24 (internal connected), eth0 = external (0.0.0.0/0)
+    # - GW3 (transit + own local networks):
+    #     eth1 = specific `G_Upstream_Branches` (10.1.0.0/24, 10.2.0.0/24)
+    #     eth2 = 10.3.0.0/24 (internal connected, GW3's own local subnet)
+    #     eth3 = specific `N_GW4_Lan` (10.4.0.0/24, leading to GW4)
+    # - GW4 (behind GW3):
+    #     eth0 = external (0.0.0.0/0, pointing upstream toward GW3)
+    #     eth1 = 10.4.0.0/24 (internal connected)
+    await cache.replace_domain_assets(
+        "mds1",
+        "Corp",
+        [
+            Asset(
+                uid="uid-gw1",
+                name="GW1",
+                type="simple-gateway",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                interfaces=[
+                    {
+                        "name": "eth0",
+                        "ipv4-address": "172.31.1.1",
+                        "ipv4-mask-length": 30,
+                        "topology": "external",
+                    },
+                    {
+                        "name": "eth1",
+                        "ipv4-address": "10.1.0.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "internal",
+                        "topology-settings": {
+                            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+                        },
+                    },
+                ],
+            ),
+            Asset(
+                uid="uid-gw2",
+                name="GW2",
+                type="simple-gateway",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                interfaces=[
+                    {
+                        "name": "eth0",
+                        "ipv4-address": "172.31.2.1",
+                        "ipv4-mask-length": 30,
+                        "topology": "external",
+                    },
+                    {
+                        "name": "eth1",
+                        "ipv4-address": "10.2.0.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "internal",
+                        "topology-settings": {
+                            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+                        },
+                    },
+                ],
+            ),
+            Asset(
+                uid="uid-gw3",
+                name="GW3",
+                type="simple-gateway",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                interfaces=[
+                    {
+                        "name": "eth1",
+                        "ipv4-address": "172.31.0.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "internal",
+                        "topology-settings": {
+                            "ip-address-behind-this-interface": "specific",
+                            "specific-network": "G_Upstream_Branches",
+                        },
+                    },
+                    {
+                        "name": "eth2",
+                        "ipv4-address": "10.3.0.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "internal",
+                        "topology-settings": {
+                            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+                        },
+                    },
+                    {
+                        "name": "eth3",
+                        "ipv4-address": "172.31.34.1",
+                        "ipv4-mask-length": 30,
+                        "topology": "internal",
+                        "topology-settings": {
+                            "ip-address-behind-this-interface": "specific",
+                            "specific-network": "N_GW4_Lan",
+                        },
+                    },
+                ],
+            ),
+            Asset(
+                uid="uid-gw4",
+                name="GW4",
+                type="simple-gateway",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                interfaces=[
+                    {
+                        "name": "eth0",
+                        "ipv4-address": "172.31.34.2",
+                        "ipv4-mask-length": 30,
+                        "topology": "external",
+                    },
+                    {
+                        "name": "eth1",
+                        "ipv4-address": "10.4.0.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "internal",
+                        "topology-settings": {
+                            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+                        },
+                    },
+                ],
+            ),
+        ],
+    )
+
+    # Case A: Multi-branch & transit flow with all 4 gateways affected, testing per-gateway filtering and input order:
+    # Sources (in deliberate order, plus duplicate to verify deduplication):
+    #   ["10.3.0.30", "H_GW2_Client", "10.1.0.10", "10.3.0.30"]
+    #   - "10.3.0.30" is in GW3's own local subnet (10.3.0.0/24 on GW3 eth2)
+    #   - "H_GW2_Client" (10.2.0.20) is in GW2's subnet (10.2.0.0/24 on GW2 eth1, GW3 eth1)
+    #   - "10.1.0.10" is in GW1's subnet (10.1.0.0/24 on GW1 eth1, GW3 eth1)
+    # Destinations (in deliberate order):
+    #   ["10.4.0.40", "10.3.0.99", "10.1.0.99"]
+    #   - "10.4.0.40" is behind GW4 eth1 (and GW3 eth3)
+    #   - "10.3.0.99" is behind GW3 eth2 (same subnet as source "10.3.0.30"!)
+    #   - "10.1.0.99" is behind GW1 eth1 (same subnet as source "10.1.0.10"!)
+    #
+    # Expected per gateway:
+    # - GW1:
+    #   - "10.1.0.10" (eth1) -> "10.4.0.40" (eth0) and "10.3.0.99" (eth0) [internal_to_external]
+    #   - "10.3.0.30" (eth0) -> "10.1.0.99" (eth1) and "H_GW2_Client" (eth0) -> "10.1.0.99" (eth1) [external_to_internal]
+    #   - "10.1.0.10" -> "10.1.0.99" is same-interface (eth1 == eth1) -> excluded!
+    #   - All 3 unique sources and all 3 destinations participate in cross-interface flows on GW1.
+    # - GW2:
+    #   - Only "H_GW2_Client" is on eth1 (internal); "10.3.0.30" and "10.1.0.10" are on eth0 (external).
+    #   - All 3 destinations ("10.4.0.40", "10.3.0.99", "10.1.0.99") are on eth0 (external).
+    #   - Therefore ONLY "H_GW2_Client" (eth1) -> ("10.4.0.40", "10.3.0.99", "10.1.0.99") (eth0) crosses GW2!
+    #   - `matched_sources` on GW2 MUST be `["H_GW2_Client"]` (excluding "10.3.0.30" and "10.1.0.10").
+    #   - `matched_destinations` on GW2 MUST be `["10.4.0.40", "10.3.0.99", "10.1.0.99"]`.
+    # - GW3 (transit + local):
+    #   - "10.3.0.30" is on eth2; "H_GW2_Client" and "10.1.0.10" are on eth1.
+    #   - "10.4.0.40" is on eth3; "10.3.0.99" is on eth2; "10.1.0.99" is on eth1.
+    #   - "10.3.0.30" (eth2) -> "10.4.0.40" (eth3) and "10.1.0.99" (eth1) [eth2 -> eth2 for 10.3.0.99 excluded].
+    #   - "H_GW2_Client" (eth1) -> "10.4.0.40" (eth3) and "10.3.0.99" (eth2) [eth1 -> eth1 for 10.1.0.99 excluded].
+    #   - "10.1.0.10" (eth1) -> "10.4.0.40" (eth3) and "10.3.0.99" (eth2) [eth1 -> eth1 for 10.1.0.99 excluded].
+    #   - `matched_sources` on GW3 MUST be `["10.3.0.30", "H_GW2_Client", "10.1.0.10"]` (in exact input order).
+    #   - `matched_destinations` on GW3 MUST be `["10.4.0.40", "10.3.0.99", "10.1.0.99"]` (in exact input order).
+    # - GW4:
+    #   - All 3 sources are on eth0 (external).
+    #   - Only "10.4.0.40" is on eth1 (internal); "10.3.0.99" and "10.1.0.99" are on eth0 (external).
+    #   - `matched_sources` on GW4 MUST be `["10.3.0.30", "H_GW2_Client", "10.1.0.10"]`.
+    #   - `matched_destinations` on GW4 MUST be `["10.4.0.40"]` (excluding "10.3.0.99" and "10.1.0.99").
+    candidates_all = await topology_service.find_affected_gateways(
+        sources=["10.3.0.30", "H_GW2_Client", "10.1.0.10", "10.3.0.30"],
+        destinations=["10.4.0.40", "10.3.0.99", "10.1.0.99"],
+        mgmt_name="mds1",
+        domain="Corp",
+        cache_mode="cache",
+    )
+    by_gw_all = {c.gateway_name: c for c in candidates_all}
+    assert set(by_gw_all.keys()) == {"GW1", "GW2", "GW3", "GW4"}
+
+    assert by_gw_all["GW1"].matched_sources == ["10.3.0.30", "H_GW2_Client", "10.1.0.10"]
+    assert by_gw_all["GW1"].matched_destinations == ["10.4.0.40", "10.3.0.99", "10.1.0.99"]
+
+    assert by_gw_all["GW2"].matched_sources == ["H_GW2_Client"]
+    assert by_gw_all["GW2"].matched_destinations == ["10.4.0.40", "10.3.0.99", "10.1.0.99"]
+
+    assert by_gw_all["GW3"].matched_sources == ["10.3.0.30", "H_GW2_Client", "10.1.0.10"]
+    assert by_gw_all["GW3"].matched_destinations == ["10.4.0.40", "10.3.0.99", "10.1.0.99"]
+    assert by_gw_all["GW3"].match_types == ["internal_to_internal"]
+
+    assert by_gw_all["GW4"].matched_sources == ["10.3.0.30", "H_GW2_Client", "10.1.0.10"]
+    assert by_gw_all["GW4"].matched_destinations == ["10.4.0.40"]
+
+    # Case B: Subset of gateways affected (GW2 is NOT affected at all; GW1 only matches 1 source;
+    # GW4 only matches 1 destination; GW3 transits both sources to their respective cross-interface destinations,
+    # and destination ordering in `matched_destinations` strictly preserves input order even when the first
+    # source only matches the second destination):
+    # Sources: ["10.3.0.30", "10.1.0.10"]
+    #   - "10.3.0.30" (GW3 eth2)
+    #   - "10.1.0.10" (GW1 eth1, GW3 eth1)
+    # Destinations: ["10.3.0.99", "10.4.0.40"]
+    #   - "10.3.0.99" (GW3 eth2) -> Note: for first source "10.3.0.30", "10.3.0.99" is on the SAME interface (eth2 == eth2),
+    #     so "10.3.0.30" only matches the SECOND destination "10.4.0.40" (eth3), whereas second source "10.1.0.10" (eth1)
+    #     matches BOTH "10.3.0.99" (eth2) and "10.4.0.40" (eth3).
+    #     `matched_destinations` on GW3 MUST still be `["10.3.0.99", "10.4.0.40"]` (input order, NOT flow-discovery order!).
+    #   - On GW2: both sources and both destinations fall back to eth0 (external == external) -> GW2 is EXCLUDED!
+    #   - On GW1: only "10.1.0.10" is on eth1; both destinations are on eth0 -> `matched_sources=["10.1.0.10"]`, `matched_destinations=["10.3.0.99", "10.4.0.40"]`.
+    #   - On GW4: both sources are on eth0; only "10.4.0.40" is on eth1 ("10.3.0.99" is on eth0) -> `matched_sources=["10.3.0.30", "10.1.0.10"]`, `matched_destinations=["10.4.0.40"]`.
+    candidates_sub = await topology_service.find_affected_gateways(
+        sources=["10.3.0.30", "10.1.0.10"],
+        destinations=["10.3.0.99", "10.4.0.40"],
+        mgmt_name="mds1",
+        domain="Corp",
+        cache_mode="cache",
+    )
+    by_gw_sub = {c.gateway_name: c for c in candidates_sub}
+    assert set(by_gw_sub.keys()) == {"GW1", "GW3", "GW4"}
+    assert "GW2" not in by_gw_sub
+
+    assert by_gw_sub["GW1"].matched_sources == ["10.1.0.10"]
+    assert by_gw_sub["GW1"].matched_destinations == ["10.3.0.99", "10.4.0.40"]
+
+    assert by_gw_sub["GW3"].matched_sources == ["10.3.0.30", "10.1.0.10"]
+    assert by_gw_sub["GW3"].matched_destinations == ["10.3.0.99", "10.4.0.40"]
+
+    assert by_gw_sub["GW4"].matched_sources == ["10.3.0.30", "10.1.0.10"]
+    assert by_gw_sub["GW4"].matched_destinations == ["10.4.0.40"]
+
+    # Case C: Traffic between GW1 ("10.1.0.10") and GW2 ("H_GW2_Client"):
+    # - On GW1: "10.1.0.10" (eth1) -> "H_GW2_Client" (eth0) -> AFFECTED
+    # - On GW2: "10.1.0.10" (eth0) -> "H_GW2_Client" (eth1) -> AFFECTED
+    # - On GW3: both "10.1.0.10" and "H_GW2_Client" sit behind eth1 (`G_Upstream_Branches`, `src_interface == dst_interface == "eth1"`) -> EXCLUDED!
+    # - On GW4: both sit behind eth0 (`external == external`) -> EXCLUDED!
+    candidates_branch_to_branch = await topology_service.find_affected_gateways(
+        sources=["10.1.0.10"],
+        destinations=["H_GW2_Client"],
+        mgmt_name="mds1",
+        domain="Corp",
+        cache_mode="cache",
+    )
+    assert {c.gateway_name for c in candidates_branch_to_branch} == {"GW1", "GW2"}
+    for cand in candidates_branch_to_branch:
+        assert cand.matched_sources == ["10.1.0.10"]
+        assert cand.matched_destinations == ["H_GW2_Client"]
 
     await db.close()

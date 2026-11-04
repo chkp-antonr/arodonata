@@ -1549,6 +1549,11 @@ class TopologyService:
             if not matched_flows:
                 continue
 
+            matched_src_set = {f.source_query for f in matched_flows}
+            matched_dst_set = {f.destination_query for f in matched_flows}
+            matched_sources = [s for s in dict.fromkeys(src_list) if s in matched_src_set]
+            matched_destinations = [d for d in dict.fromkeys(dst_list) if d in matched_dst_set]
+
             gw_asset = assets_by_id.get(gw_id)
             installed_pol, pkg_names, layer_names = await self._resolve_gateway_policy_metadata(
                 gw_mgmt,
@@ -1574,6 +1579,8 @@ class TopologyService:
                     policy_packages=pkg_names,
                     access_layers=layer_names,
                     match_types=match_types_seen,
+                    matched_sources=matched_sources,
+                    matched_destinations=matched_destinations,
                     matched_flows=matched_flows,
                 )
             )

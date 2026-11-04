@@ -24,6 +24,8 @@ from contextlib import suppress as _suppress
 from datetime import UTC, datetime
 from typing import Any
 
+import arlogi
+
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.errors import (
     DirtySessionError,
@@ -46,6 +48,8 @@ from arodonata.core.models.domains import DomainInfo, DomainSyncState, RefreshOu
 from arodonata.core.ports import ApiPort, CachePort, LockPort
 from arodonata.core.services.domain_service import DomainService
 from arodonata.core.telemetry import span_attrs, traced
+
+logger = arlogi.get_logger(__name__)
 
 
 def parse_cp_publish_timestamp(raw_time: Any) -> datetime | None:
@@ -478,19 +482,36 @@ class DomainSyncCoordinator:
         )
         type_list = list(item_types)
 
+        started_msg = f"Starting {scope} sync (mode={mode}) across {len(target_domains)} domain(s)."
+        logger.debug(
+            started_msg,
+            scope=scope,
+            mgmt_name=mgmt_name,
+            mode=mode,
+            domain_count=len(target_domains),
+        )
         yield SyncStartedEvent(
             scope=scope,
             mgmt_name=mgmt_name,
-            message=f"Starting {scope} sync (mode={mode}) across {len(target_domains)} domain(s).",
+            message=started_msg,
             total=len(target_domains),
             details={"mode": mode, "item_types": type_list, "domain_count": len(target_domains)},
         )
 
         if not target_domains:
+            empty_msg = f"Completed {scope} sync: 0 domains targeted."
+            logger.debug(
+                empty_msg,
+                scope=scope,
+                mgmt_name=mgmt_name,
+                refreshed=0,
+                skipped=0,
+                failed=0,
+            )
             yield SyncCompletedEvent(
                 scope=scope,
                 mgmt_name=mgmt_name,
-                message=f"Completed {scope} sync: 0 domains targeted.",
+                message=empty_msg,
                 processed=0,
                 total=0,
                 details={"refreshed_domains": [], "skipped_domains": [], "failed_domains": {}, "total_items": 0},
@@ -515,6 +536,23 @@ class DomainSyncCoordinator:
         state_lock = asyncio.Lock()
 
         async def _emit(ev: SyncProgressEvent) -> None:
+            ev_mgmt = getattr(ev, "mgmt_name", mgmt_name)
+            ev_dom = getattr(ev, "domain", None)
+            if isinstance(ev, DomainSyncFailedEvent):
+                logger.warning(
+                    ev.message,
+                    scope=scope,
+                    mgmt_name=ev_mgmt,
+                    domain=ev_dom,
+                    error=ev.error,
+                )
+            else:
+                logger.debug(
+                    ev.message,
+                    scope=scope,
+                    mgmt_name=ev_mgmt,
+                    domain=ev_dom,
+                )
             await queue.put(ev)
 
         async def _process_domain(dom: DomainInfo, sem: asyncio.Semaphore) -> None:
@@ -678,15 +716,26 @@ class DomainSyncCoordinator:
                 with _suppress(asyncio.CancelledError, Exception):
                     await runner_task
 
+        completed_msg = (
+            f"Completed {scope} sync: {len(refreshed_domains)} refreshed, "
+            f"{len(skipped_domains)} skipped, {len(failed_domains)} failed."
+        )
+        logger.debug(
+            completed_msg,
+            scope=scope,
+            mgmt_name=mgmt_name,
+            refreshed=len(refreshed_domains),
+            skipped=len(skipped_domains),
+            failed=len(failed_domains),
+            total_items=total_items,
+        )
+
         yield SyncCompletedEvent(
             scope=scope,
             mgmt_name=mgmt_name,
             processed=total_items,
             total=total_items,
-            message=(
-                f"Completed {scope} sync: {len(refreshed_domains)} refreshed, "
-                f"{len(skipped_domains)} skipped, {len(failed_domains)} failed."
-            ),
+            message=completed_msg,
             details={
                 "refreshed_domains": list(refreshed_domains),
                 "skipped_domains": list(skipped_domains),
