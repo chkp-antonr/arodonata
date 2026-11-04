@@ -408,9 +408,20 @@ class DomainSyncCoordinator:
 
         for item_type in type_list:
             st = existing_states.get(item_type)
-            if st is None or st.status != "ok":
+            if st is None:
                 stale_types.append(item_type)
                 continue
+            if st.status != "ok":
+                # If a previous probe failed transiently (not a dirty session) after a valid sync,
+                # allow recovery to 'ok' when the published session timestamp/UID still matches.
+                can_recover_failed = (
+                    st.last_published_at is not None
+                    and st.object_count > 0
+                    and "dirty" not in (st.last_error or "").lower()
+                )
+                if not can_recover_failed:
+                    stale_types.append(item_type)
+                    continue
 
             if remote_pub_at is not None:
                 if st.last_published_at is None or st.last_published_at != remote_pub_at:
@@ -442,6 +453,8 @@ class DomainSyncCoordinator:
                     st.model_copy(
                         update={
                             "synced_at": verified_at,
+                            "status": "ok",
+                            "last_error": None,
                             "last_published_at": remote_pub_at if remote_pub_at is not None else st.last_published_at,
                             "last_session_uid": remote_uid if remote_uid is not None else st.last_session_uid,
                         }

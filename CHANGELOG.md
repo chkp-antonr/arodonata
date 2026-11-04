@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Evicted cached read-only session SIDs (`arodonata_sid_cache`) immediately upon `ApiTimeoutError` or `TransportError` in `AMgmtClient.api_call()`, and allowed `DomainSyncCoordinator.probe_domain_staleness()` to recover transiently failed sync state rows (`status="failed"` with matching `last_published_at` / `last_session_uid` and `object_count > 0`) back to `status="ok"` without forcing a full domain re-download (`src/arodonata/adapters/checkpoint/client.py`, `src/arodonata/core/services/sync_coordinator.py`).
+
 ## v2.4.0 (2026-11-04)
 
 ### Feat
