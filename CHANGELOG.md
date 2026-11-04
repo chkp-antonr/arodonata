@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## v2.4.0 (2026-11-04)
+
+### Feat
+
+- **topology,sync**: add matched endpoints on gateway candidates and structured sync/session logging (#68)
+
 ### Added
 
 - Per-gateway filtered `matched_sources` and `matched_destinations` on `AffectedGatewayCandidate` (`arodonata.core.models.topology`, `arodonata.core.services.topology_service`, `ArodonataClient.find_affected_gateways`, and MCP `locate_gateways`): `TopologyService.find_affected_gateways()` now populates `matched_sources: list[str]` and `matched_destinations: list[str]` on each returned `AffectedGatewayCandidate` with the deduplicated caller query strings from that gateway's cross-interface `matched_flows` (`src_interface != dst_interface` and not `external == external`), strictly preserving the caller's input order from `sources` and `destinations`.
