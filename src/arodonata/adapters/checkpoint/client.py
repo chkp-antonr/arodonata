@@ -465,8 +465,12 @@ class AMgmtClient:
                         )
                     res = await _execute_once(active_sid, target_ip, mds_ip)
                 else:
+                    if using_cached_sid:
+                        await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=active_auth_identity)
                     raise
             else:
+                if using_cached_sid:
+                    await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=active_auth_identity)
                 raise
 
         # Handle session expiration on cached read-only session -> evict SID, re-login, and retry once
