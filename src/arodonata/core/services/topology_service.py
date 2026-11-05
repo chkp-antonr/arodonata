@@ -151,6 +151,7 @@ class _NormalizedInterface:
     behind_mode: str
     specific_network_ref: str | None
     specific_network_uid: str | None
+    specific_inline_cidr: str | None
     has_explicit_topology: bool
 
 
@@ -222,7 +223,31 @@ def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -
     behind_mode = ""
     specific_ref: str | None = None
     specific_uid: str | None = None
+    specific_inline_cidr: str | None = None
     has_explicit_topology = False
+
+    def _extract_inline_cidr(spec_dict: dict[str, Any]) -> str | None:
+        sub4 = spec_dict.get("subnet4") or spec_dict.get("subnet")
+        if sub4 and str(sub4).strip():
+            plen = _mask_to_prefix_len(
+                spec_dict.get("mask-length4")
+                or spec_dict.get("mask_length4")
+                or spec_dict.get("mask-length")
+                or spec_dict.get("subnet-mask")
+                or spec_dict.get("netmask")
+            )
+            if plen is not None:
+                try:
+                    return str(ipaddress.IPv4Network(f"{str(sub4).strip()}/{plen}", strict=False))
+                except ValueError:
+                    pass
+        ip4 = spec_dict.get("ipv4-address") or spec_dict.get("ipv4_address") or spec_dict.get("ipaddr")
+        if ip4 and str(ip4).strip():
+            try:
+                return f"{ipaddress.IPv4Address(str(ip4).strip())}/32"
+            except ValueError:
+                pass
+        return None
 
     topo_field = raw_if.get("topology")
     topo_settings = (
@@ -246,14 +271,24 @@ def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -
             or ""
         ).strip()
         spec_val = (
-            topo_field.get("specific-network") or topo_field.get("specific_network") or topo_field.get("specificGroup")
+            topo_field.get("leads-to-specific-network")
+            or topo_field.get("leads_to_specific_network")
+            or topo_field.get("specific-network")
+            or topo_field.get("specific_network")
+            or topo_field.get("specificGroup")
         )
         if isinstance(spec_val, dict):
             specific_uid = str(spec_val.get("uid") or "") or None
             specific_ref = str(spec_val.get("name") or spec_val.get("uid") or "") or None
+            specific_inline_cidr = _extract_inline_cidr(spec_val)
         elif isinstance(spec_val, str) and spec_val.strip():
             specific_ref = spec_val.strip()
-        spec_uid_val = topo_field.get("specific-network-uid") or topo_field.get("specific_network_uid")
+        spec_uid_val = (
+            topo_field.get("leads-to-specific-network-uid")
+            or topo_field.get("leads_to_specific_network_uid")
+            or topo_field.get("specific-network-uid")
+            or topo_field.get("specific_network_uid")
+        )
         if isinstance(spec_uid_val, str) and spec_uid_val.strip():
             specific_uid = spec_uid_val.strip()
     elif isinstance(topo_field, str) and topo_field.strip():
@@ -288,16 +323,24 @@ def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -
                 or ""
             ).strip()
         spec_val2 = (
-            topo_settings.get("specific-network")
+            topo_settings.get("leads-to-specific-network")
+            or topo_settings.get("leads_to_specific_network")
+            or topo_settings.get("specific-network")
             or topo_settings.get("specific_network")
             or topo_settings.get("specificGroup")
         )
         if isinstance(spec_val2, dict):
             specific_uid = specific_uid or str(spec_val2.get("uid") or "") or None
             specific_ref = specific_ref or str(spec_val2.get("name") or spec_val2.get("uid") or "") or None
+            specific_inline_cidr = specific_inline_cidr or _extract_inline_cidr(spec_val2)
         elif isinstance(spec_val2, str) and spec_val2.strip() and not specific_ref:
             specific_ref = spec_val2.strip()
-        spec_uid2 = topo_settings.get("specific-network-uid") or topo_settings.get("specific_network_uid")
+        spec_uid2 = (
+            topo_settings.get("leads-to-specific-network-uid")
+            or topo_settings.get("leads_to_specific_network_uid")
+            or topo_settings.get("specific-network-uid")
+            or topo_settings.get("specific_network_uid")
+        )
         if isinstance(spec_uid2, str) and spec_uid2.strip() and not specific_uid:
             specific_uid = spec_uid2.strip()
 
@@ -321,6 +364,7 @@ def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -
         behind_mode=behind_mode,
         specific_network_ref=specific_ref,
         specific_network_uid=specific_uid,
+        specific_inline_cidr=specific_inline_cidr,
         has_explicit_topology=has_explicit_topology,
     )
 
@@ -361,6 +405,25 @@ def _parse_route_destination(route: dict[str, Any]) -> ipaddress.IPv4Network | N
             return ipaddress.IPv4Network("0.0.0.0/0")
         return None
 
+    mask_from_dest: Any = None
+    if isinstance(dest_raw, dict):
+        mask_from_dest = (
+            dest_raw.get("netmask")
+            or dest_raw.get("mask")
+            or dest_raw.get("subnet-mask")
+            or dest_raw.get("mask-length")
+            or dest_raw.get("mask_length")
+            or dest_raw.get("prefix-length")
+        )
+        dest_raw = (
+            dest_raw.get("ipaddr")
+            or dest_raw.get("ipv4-address")
+            or dest_raw.get("address")
+            or dest_raw.get("subnet")
+            or dest_raw.get("network")
+            or ""
+        )
+
     dest_str = str(dest_raw).strip()
     if not dest_str or dest_str.lower() == "default" or dest_str == "0.0.0.0/0":
         return ipaddress.IPv4Network("0.0.0.0/0")
@@ -372,7 +435,8 @@ def _parse_route_destination(route: dict[str, Any]) -> ipaddress.IPv4Network | N
             return None
 
     mask_val = (
-        route.get("mask")
+        mask_from_dest
+        or route.get("mask")
         or route.get("netmask")
         or route.get("subnet-mask")
         or route.get("mask-length")
@@ -396,6 +460,7 @@ def _parse_route_nexthop_and_interface(route: dict[str, Any]) -> tuple[ipaddress
     if_raw = (
         route.get("interface")
         or route.get("ifname")
+        or route.get("interfaceName")
         or route.get("interface-name")
         or route.get("interface_name")
         or route.get("dev")
@@ -408,6 +473,7 @@ def _parse_route_nexthop_and_interface(route: dict[str, Any]) -> tuple[ipaddress
 
     nh_raw = (
         route.get("nexthop")
+        or route.get("nextHop")
         or route.get("next-hop")
         or route.get("next_hop")
         or route.get("gateway")
@@ -444,6 +510,90 @@ def _parse_route_nexthop_and_interface(route: dict[str, Any]) -> tuple[ipaddress
     return nh_ip, explicit_if
 
 
+def _extract_timestamp_posix(val: Any) -> int:
+    """Extract a comparable POSIX timestamp integer from a Check Point date dict, int, or ISO-8601 string."""
+    if isinstance(val, (int, float)):
+        return int(val)
+    if isinstance(val, dict):
+        posix = val.get("posix")
+        if isinstance(posix, (int, float)):
+            return int(posix)
+        if isinstance(posix, str) and posix.strip().isdigit():
+            return int(posix.strip())
+        iso_str = val.get("iso-8601") or val.get("iso_8601")
+        if isinstance(iso_str, str) and iso_str.strip():
+            try:
+                return int(datetime.fromisoformat(iso_str.strip()).timestamp() * 1000)
+            except ValueError:
+                pass
+    if isinstance(val, str) and val.strip():
+        clean = val.strip()
+        if clean.isdigit():
+            return int(clean)
+        try:
+            return int(datetime.fromisoformat(clean).timestamp() * 1000)
+        except ValueError:
+            pass
+    return 0
+
+
+def _extract_policy_candidates_from_raw(
+    raw_data: dict[str, Any],
+    *,
+    priority: int = 1,
+) -> list[tuple[int, int, str]]:
+    """Extract `(timestamp_posix, priority, policy_name)` candidates from a Check Point gateway/cluster `raw_data` dict."""
+    candidates: list[tuple[int, int, str]] = []
+    raw_pol = raw_data.get("policy")
+    if isinstance(raw_pol, dict):
+        pol_name = raw_pol.get("access-policy-name") or raw_pol.get("access_policy_name")
+        if isinstance(pol_name, str) and pol_name.strip():
+            install_ts = _extract_timestamp_posix(
+                raw_pol.get("access-policy-installation-date")
+                or raw_pol.get("access_policy_installation_date")
+                or (
+                    raw_pol.get("access-policy-revision", {}).get("publish-time")
+                    if isinstance(raw_pol.get("access-policy-revision"), dict)
+                    else None
+                )
+            )
+            candidates.append((install_ts, priority, pol_name.strip()))
+
+        member_revs = raw_pol.get("cluster-members-access-policy-revision") or raw_pol.get(
+            "cluster_members_access_policy_revision"
+        )
+        if isinstance(member_revs, list):
+            for rev_item in member_revs:
+                if not isinstance(rev_item, dict):
+                    continue
+                m_pol = (
+                    rev_item.get("policy-name")
+                    or rev_item.get("policy_name")
+                    or rev_item.get("access-policy-name")
+                    or rev_item.get("access_policy_name")
+                )
+                if isinstance(m_pol, str) and m_pol.strip():
+                    rev_dict = rev_item.get("revision")
+                    m_ts = _extract_timestamp_posix(
+                        rev_item.get("access-policy-installation-date")
+                        or rev_item.get("access_policy_installation_date")
+                        or rev_item.get("installation-date")
+                        or (rev_dict.get("publish-time") if isinstance(rev_dict, dict) else None)
+                    )
+                    candidates.append((m_ts, priority - 1, m_pol.strip()))
+    elif isinstance(raw_pol, str) and raw_pol.strip():
+        candidates.append((0, priority, raw_pol.strip()))
+
+    alt_pol = raw_data.get("access-policy-name") or raw_data.get("access_policy_name")
+    if isinstance(alt_pol, str) and alt_pol.strip():
+        alt_ts = _extract_timestamp_posix(
+            raw_data.get("access-policy-installation-date") or raw_data.get("access_policy_installation_date")
+        )
+        candidates.append((alt_ts, priority, alt_pol.strip()))
+
+    return candidates
+
+
 class TopologyService:
     """Extracts, caches, and matches gateway interface topology across domains."""
 
@@ -477,21 +627,24 @@ class TopologyService:
     ) -> AsyncIterator[SyncProgressEvent]:
         """Stream `SyncProgressEvent` items while refreshing gateway topology across domains."""
         if mode != "cache":
-            await self._asset_service.refresh_assets(
+            async for event in self._asset_service.stream_refresh_assets(
                 mgmt_name=mgmt_name,
                 domains=domains,
                 include_global=include_global,
                 mode=mode,
                 cache_ttl=cache_ttl,
-            )
-            await self._object_service.refresh_objects(
+            ):
+                yield event
+
+            async for event in self._object_service.stream_refresh_objects(
                 mgmt_name=mgmt_name,
                 domains=domains,
                 types=list(DEFAULT_OBJECT_TYPES),
                 include_global=True,
                 mode=mode,
                 cache_ttl=cache_ttl,
-            )
+            ):
+                yield event
 
         async for event in self._coordinator.stream_ensure(
             scope="topology",
@@ -576,6 +729,7 @@ class TopologyService:
             domain_name=dom_name,
             assets=domain_assets,
             objects=all_objects,
+            emit=emit,
         )
         if updated_assets:
             await self._cache.upsert_assets(updated_assets)
@@ -666,6 +820,7 @@ class TopologyService:
         assets: Sequence[Asset],
         objects: Sequence[CPObject],
         allow_live_detail: bool = True,
+        emit: Callable[[SyncProgressEvent], Awaitable[None]] | None = None,
     ) -> tuple[list[GatewayTopologyEntry], list[Asset]]:
         """Extract `GatewayTopologyEntry` rows for all policy-enforcing gateways in `(mgmt_name, domain_name)`."""
         obj_by_uid, obj_by_name = self._index_objects(objects, domain_name=domain_name)
@@ -673,10 +828,11 @@ class TopologyService:
         updated_assets: list[Asset] = []
         now = self._now()
 
-        for asset in assets:
-            if not is_policy_enforcing_gateway(asset):
-                continue
+        policy_gateways = [a for a in assets if is_policy_enforcing_gateway(a)]
+        total_gateways = len(policy_gateways)
 
+        for gw_idx, asset in enumerate(policy_gateways, start=1):
+            gw_entries: list[GatewayTopologyEntry] = []
             is_vs = asset.type in VSX_CHILD_TYPES or "virtual-system" in asset.type.lower()
             raw_ifs = list(asset.interfaces) or _extract_interfaces_from_generic(asset.raw_data)
             raw_routes = _extract_raw_routes(asset.raw_data)
@@ -700,6 +856,15 @@ class TopologyService:
                     updated_assets.append(asset)
                     raw_ifs = list(asset.interfaces) or _extract_interfaces_from_generic(asset.raw_data)
                     raw_routes = _extract_raw_routes(asset.raw_data)
+
+            installed_pol, pkg_names, _ = await self._resolve_gateway_policy_metadata(
+                mgmt_name,
+                domain_name,
+                asset,
+                asset.uid,
+                asset.name,
+                all_assets=assets,
+            )
 
             norm_ifs: list[_NormalizedInterface] = []
             for raw_if in raw_ifs:
@@ -771,6 +936,8 @@ class TopologyService:
                                 ip_first_int=0,
                                 ip_last_int=MAX_IPV4_INT,
                                 prefix_len=0,
+                                installed_access_policy=installed_pol,
+                                policy_packages=list(pkg_names),
                                 updated_at=now,
                             )
                         )
@@ -793,13 +960,15 @@ class TopologyService:
                                 ip_first_int=int(dest_net.network_address),
                                 ip_last_int=int(dest_net.broadcast_address),
                                 prefix_len=dest_net.prefixlen,
+                                installed_access_policy=installed_pol,
+                                policy_packages=list(pkg_names),
                                 updated_at=now,
                             )
                         )
 
             for nif in norm_ifs:
                 if nif.is_external:
-                    entries.append(
+                    gw_entries.append(
                         GatewayTopologyEntry(
                             mgmt_name=mgmt_name,
                             domain_name=domain_name,
@@ -817,6 +986,8 @@ class TopologyService:
                             ip_first_int=0,
                             ip_last_int=MAX_IPV4_INT,
                             prefix_len=0,
+                            installed_access_policy=installed_pol,
+                            policy_packages=list(pkg_names),
                             updated_at=now,
                         )
                     )
@@ -830,6 +1001,21 @@ class TopologyService:
                         obj_by_uid=obj_by_uid,
                         obj_by_name=obj_by_name,
                     )
+                    if not expanded and nif.specific_inline_cidr:
+                        try:
+                            inline_net = ipaddress.IPv4Network(nif.specific_inline_cidr, strict=False)
+                            inline_ref = nif.specific_network_ref or nif.specific_network_uid or str(inline_net)
+                            expanded = [
+                                (
+                                    str(inline_net),
+                                    int(inline_net.network_address),
+                                    int(inline_net.broadcast_address),
+                                    inline_net.prefixlen,
+                                    inline_ref,
+                                )
+                            ]
+                        except ValueError:
+                            pass
                     if not expanded:
                         spec_target = nif.specific_network_ref or nif.specific_network_uid
                         logger.warning(
@@ -843,7 +1029,7 @@ class TopologyService:
                             specific_network=spec_target,
                         )
                     for cidr_str, lo_int, hi_int, plen, src_ref in expanded:
-                        entries.append(
+                        gw_entries.append(
                             GatewayTopologyEntry(
                                 mgmt_name=mgmt_name,
                                 domain_name=domain_name,
@@ -861,6 +1047,8 @@ class TopologyService:
                                 ip_first_int=lo_int,
                                 ip_last_int=hi_int,
                                 prefix_len=plen,
+                                installed_access_policy=installed_pol,
+                                policy_packages=list(pkg_names),
                                 updated_at=now,
                             )
                         )
@@ -869,7 +1057,7 @@ class TopologyService:
                     # still record its connected subnet unless it is purely an external warp link.
                     if nif.interface_name in connected_by_if:
                         _, c_net = connected_by_if[nif.interface_name]
-                        entries.append(
+                        gw_entries.append(
                             GatewayTopologyEntry(
                                 mgmt_name=mgmt_name,
                                 domain_name=domain_name,
@@ -887,6 +1075,8 @@ class TopologyService:
                                 ip_first_int=int(c_net.network_address),
                                 ip_last_int=int(c_net.broadcast_address),
                                 prefix_len=c_net.prefixlen,
+                                installed_access_policy=installed_pol,
+                                policy_packages=list(pkg_names),
                                 updated_at=now,
                             )
                         )
@@ -903,7 +1093,29 @@ class TopologyService:
                         behind_mode=behind_label,
                     )
 
-            entries.extend(vs_route_entries)
+            gw_entries.extend(vs_route_entries)
+            entries.extend(gw_entries)
+
+            if emit is not None:
+                pol_suffix = f" [policy: {installed_pol}]" if installed_pol else ""
+                await emit(
+                    DomainSyncProgressEvent(
+                        scope="topology",
+                        mgmt_name=mgmt_name,
+                        domain=domain_name,
+                        item_type="gateway-topology",
+                        processed=gw_idx,
+                        total=total_gateways,
+                        message=f"Processed gateway {asset.name} in {domain_name} ({gw_idx}/{total_gateways}){pol_suffix}",
+                        details={
+                            "gateway_uid": asset.uid,
+                            "gateway_name": asset.name,
+                            "gateway_type": asset.type,
+                            "installed_access_policy": installed_pol,
+                            "interval_count": len(gw_entries),
+                        },
+                    )
+                )
 
         return entries, updated_assets
 
@@ -1067,7 +1279,40 @@ class TopologyService:
                     e.gateway_asset_id.lower(),
                 )
             ]
-        return entries
+        if not entries:
+            return []
+
+        all_assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=domain)
+        assets_by_id: dict[str, Asset] = {a.id: a for a in all_assets}
+        assets_by_dom: dict[tuple[str, str], list[Asset]] = defaultdict(list)
+        for a in all_assets:
+            assets_by_dom[(a.mgmt_name, a.domain_name)].append(a)
+
+        policy_by_gw_id: dict[str, tuple[str | None, list[str]]] = {}
+        enriched_entries: list[GatewayTopologyEntry] = []
+        for entry in entries:
+            if entry.gateway_id not in policy_by_gw_id:
+                gw_asset = assets_by_id.get(entry.gateway_id)
+                dom_assets = assets_by_dom.get((entry.mgmt_name, entry.domain_name), [])
+                inst_pol, pkg_names, _ = await self._resolve_gateway_policy_metadata(
+                    entry.mgmt_name,
+                    entry.domain_name,
+                    gw_asset,
+                    entry.gateway_uid,
+                    entry.gateway_name,
+                    all_assets=dom_assets,
+                )
+                policy_by_gw_id[entry.gateway_id] = (inst_pol, pkg_names)
+            inst_pol, pkg_names = policy_by_gw_id[entry.gateway_id]
+            enriched_entries.append(
+                entry.model_copy(
+                    update={
+                        "installed_access_policy": inst_pol,
+                        "policy_packages": list(pkg_names),
+                    }
+                )
+            )
+        return enriched_entries
 
     @staticmethod
     def summarize_gateway_interfaces(
@@ -1296,66 +1541,86 @@ class TopologyService:
         asset: Asset | None,
         gateway_uid: str,
         gateway_name: str,
+        all_assets: Sequence[Asset] | None = None,
     ) -> tuple[str | None, list[str], list[str]]:
-        """Resolve `(installed_access_policy, policy_packages, access_layers)` for a candidate gateway."""
-        installed_policy: str | None = None
+        """Resolve `(installed_access_policy, policy_packages, access_layers)` for a single gateway/cluster."""
+        candidates: list[tuple[int, int, str]] = []
         if asset is not None:
-            raw_pol = asset.raw_data.get("policy")
-            if isinstance(raw_pol, dict):
-                pol_name = raw_pol.get("access-policy-name") or raw_pol.get("access_policy_name")
-                if isinstance(pol_name, str) and pol_name.strip():
-                    installed_policy = pol_name.strip()
-            elif isinstance(raw_pol, str) and raw_pol.strip():
-                installed_policy = raw_pol.strip()
-            if not installed_policy:
-                alt_pol = asset.raw_data.get("access-policy-name") or asset.raw_data.get("access_policy_name")
-                if isinstance(alt_pol, str) and alt_pol.strip():
-                    installed_policy = alt_pol.strip()
+            candidates.extend(_extract_policy_candidates_from_raw(asset.raw_data, priority=2))
+            if all_assets:
+                member_uid_set = set(asset.member_uids)
+                member_asset_id_set = set(asset.member_asset_ids)
+                for other in all_assets:
+                    if other.uid == asset.uid:
+                        continue
+                    if (
+                        other.uid in member_uid_set
+                        or other.asset_id in member_asset_id_set
+                        or other.parent_uid == asset.uid
+                        or other.parent_id == asset.id
+                        or other.parent_asset_id == asset.asset_id
+                    ):
+                        candidates.extend(_extract_policy_candidates_from_raw(other.raw_data, priority=1))
 
-        policy_packages: list[str] = []
-        access_layers: list[str] = []
-        if installed_policy:
-            policy_packages.append(installed_policy)
+        installed_policy: str | None = None
+        if candidates:
+            best = max(candidates, key=lambda item: (item[0], item[1]))
+            installed_policy = best[2]
 
         snapshot = await self._cache.get_domain_rulebase(mgmt_name, domain_name)
-        if snapshot.package_layers or snapshot.nat_rules:
-            packages = extract_policy_packages(snapshot)
+        packages = extract_policy_packages(snapshot) if (snapshot.package_layers or snapshot.nat_rules) else []
+
+        # Fallback when gateway/cluster asset does not report an installed policy:
+        # match ONLY explicit non-"all" gateway installation-targets (or a single-package domain).
+        if not installed_policy and packages:
             gw_tokens = {gateway_uid.lower(), gateway_name.lower()}
             if asset is not None:
                 gw_tokens.add(asset.id.lower())
                 gw_tokens.add(asset.asset_id.lower())
 
-            matched_pkgs = []
+            explicit_matches = []
             for pkg in packages:
-                if installed_policy and pkg.name.lower() == installed_policy.lower():
-                    matched_pkgs.append(pkg)
-                    continue
                 targets = pkg.raw_data.get("installation-targets") or pkg.raw_data.get("installation_targets")
-                if isinstance(targets, str) and targets.strip().lower() == "all":
-                    matched_pkgs.append(pkg)
-                elif isinstance(targets, list):
+                if isinstance(targets, list):
                     for t in targets:
                         if isinstance(t, str) and t.strip().lower() in gw_tokens:
-                            matched_pkgs.append(pkg)
+                            explicit_matches.append(pkg)
                             break
                         if isinstance(t, dict):
                             t_uid = str(t.get("uid") or "").lower()
                             t_name = str(t.get("name") or "").lower()
                             if (t_uid and t_uid in gw_tokens) or (t_name and t_name in gw_tokens):
-                                matched_pkgs.append(pkg)
+                                explicit_matches.append(pkg)
                                 break
 
-            if not matched_pkgs and len(packages) == 1:
-                matched_pkgs = [packages[0]]
+            if explicit_matches:
+                best_pkg = max(
+                    explicit_matches,
+                    key=lambda p: (
+                        _extract_timestamp_posix(
+                            p.raw_data.get("meta-info", {}).get("last-modify-time")
+                            if isinstance(p.raw_data.get("meta-info"), dict)
+                            else None
+                        ),
+                        p.updated_at,
+                    ),
+                )
+                installed_policy = best_pkg.name
+            elif len(packages) == 1:
+                installed_policy = packages[0].name
 
-            for pkg in matched_pkgs:
-                if pkg.name not in policy_packages:
-                    policy_packages.append(pkg.name)
-                if installed_policy is None:
+        policy_packages: list[str] = [installed_policy] if installed_policy else []
+        access_layers: list[str] = []
+
+        if installed_policy and packages:
+            for pkg in packages:
+                if pkg.name.lower() == installed_policy.lower():
                     installed_policy = pkg.name
-                for layer_entry in pkg.access_layers:
-                    if layer_entry.layer_name not in access_layers:
-                        access_layers.append(layer_entry.layer_name)
+                    policy_packages = [pkg.name]
+                    for layer_entry in pkg.access_layers:
+                        if layer_entry.layer_name not in access_layers:
+                            access_layers.append(layer_entry.layer_name)
+                    break
 
         return installed_policy, policy_packages, access_layers
 
@@ -1435,6 +1700,9 @@ class TopologyService:
             return []
 
         assets_by_id: dict[str, Asset] = {a.id: a for a in all_assets}
+        assets_by_dom: dict[tuple[str, str], list[Asset]] = defaultdict(list)
+        for a in all_assets:
+            assets_by_dom[(a.mgmt_name, a.domain_name)].append(a)
         entries_by_gw_id: dict[str, list[GatewayTopologyEntry]] = defaultdict(list)
         for entry in topo_entries:
             entries_by_gw_id[entry.gateway_id].append(entry)
@@ -1561,6 +1829,7 @@ class TopologyService:
                 gw_asset,
                 first_entry.gateway_uid,
                 first_entry.gateway_name,
+                all_assets=assets_by_dom.get((gw_mgmt, gw_dom), []),
             )
 
             candidates.append(

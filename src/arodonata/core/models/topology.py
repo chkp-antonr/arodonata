@@ -53,6 +53,8 @@ class GatewayTopologyEntry(BaseModel):
     ip_first_int: int
     ip_last_int: int
     prefix_len: int = 32
+    installed_access_policy: str | None = None
+    policy_packages: list[str] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=utc_now)
 
     def model_post_init(self, __context: Any) -> None:
