@@ -1206,3 +1206,352 @@ async def test_four_gateway_transit_topology_filters_matched_sources_and_destina
         assert cand.matched_destinations == ["H_GW2_Client"]
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_multi_package_domain_resolves_only_single_last_installed_gateway_policy() -> None:
+    """Verify multi-package domains resolve only the single last-installed policy per gateway/cluster (ignoring `installation-targets: 'all'`) and enrich `get_gateway_topology` entries."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = TopologyFakeApi()
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=0)
+    domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    coordinator = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=domain_service,
+    )
+    asset_service = AssetRefreshService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+    )
+    object_service = ObjectService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+    )
+    topology_service = TopologyService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+        asset_service=asset_service,
+        object_service=object_service,
+    )
+
+    # Seed 3 policy packages in domain "AME-BR" all having installation-targets="all"
+    await cache.replace_domain_rulebase(
+        DomainRulebaseSnapshot(
+            mgmt_name="mds1",
+            domain_name="AME-BR",
+            package_layers=[
+                RulebasePackageLayerEntry(
+                    mgmt_name="mds1",
+                    domain_name="AME-BR",
+                    package_uid="pkg-bre-ext",
+                    package_name="BR-BRE-EXT",
+                    rulebase_type="access",
+                    layer_uid="layer-bre-ext",
+                    layer_name="BR-BRE-EXT Network",
+                    position=1,
+                    raw_data={"installation-targets": "all"},
+                ),
+                RulebasePackageLayerEntry(
+                    mgmt_name="mds1",
+                    domain_name="AME-BR",
+                    package_uid="pkg-bre-vpn",
+                    package_name="BR-BRE-VPN",
+                    rulebase_type="access",
+                    layer_uid="layer-bre-vpn",
+                    layer_name="BR-BRE-VPN Network",
+                    position=1,
+                    raw_data={"installation-targets": "all"},
+                ),
+                RulebasePackageLayerEntry(
+                    mgmt_name="mds1",
+                    domain_name="AME-BR",
+                    package_uid="pkg-spo-ext",
+                    package_name="BR-SPO-EXT",
+                    rulebase_type="access",
+                    layer_uid="layer-spo-ext",
+                    layer_name="BR-SPO-EXT Network",
+                    position=1,
+                    raw_data={"installation-targets": "all"},
+                ),
+            ],
+        )
+    )
+
+    # Seed 2 clusters in "AME-BR":
+    # 1. `BR-BRE-EXT-FW-CL-01`: has top-level `policy.access-policy-name = "BR-BRE-EXT"`
+    # 2. `BR-BRE-VPN-FW-CL-01`: has no top-level `access-policy-name`, but has 2 cluster members with
+    #    different installation timestamps (member B installed `BR-BRE-VPN` more recently than member A's `BR-SPO-EXT`)
+    await cache.replace_domain_assets(
+        "mds1",
+        "AME-BR",
+        [
+            Asset(
+                uid="cl-bre-ext",
+                name="BR-BRE-EXT-FW-CL-01",
+                type="CpmiGatewayCluster",
+                mgmt_name="mds1",
+                domain_name="AME-BR",
+                raw_data={
+                    "policy": {
+                        "access-policy-installed": True,
+                        "access-policy-name": "BR-BRE-EXT",
+                        "access-policy-installation-date": {"posix": 1739446673991},
+                    }
+                },
+                interfaces=[
+                    {
+                        "name": "eth0",
+                        "ipv4-address": "198.51.100.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "external",
+                    },
+                    {
+                        "name": "eth1",
+                        "ipv4-address": "10.60.1.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "internal",
+                        "topology-settings": {
+                            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+                        },
+                    },
+                ],
+            ),
+            Asset(
+                uid="cl-bre-vpn",
+                name="BR-BRE-VPN-FW-CL-01",
+                type="CpmiGatewayCluster",
+                mgmt_name="mds1",
+                domain_name="AME-BR",
+                member_uids=["cm-vpn-a", "cm-vpn-b"],
+                raw_data={},
+                interfaces=[
+                    {
+                        "name": "eth0",
+                        "ipv4-address": "198.51.100.2",
+                        "ipv4-mask-length": 24,
+                        "topology": "external",
+                    },
+                    {
+                        "name": "eth1",
+                        "ipv4-address": "10.60.2.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "internal",
+                        "topology-settings": {
+                            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+                        },
+                    },
+                ],
+            ),
+            Asset(
+                uid="cm-vpn-a",
+                name="BR-BRE-VPN-FW-01A",
+                type="cluster-member",
+                mgmt_name="mds1",
+                domain_name="AME-BR",
+                parent_uid="cl-bre-vpn",
+                raw_data={
+                    "policy": {
+                        "access-policy-installed": True,
+                        "access-policy-name": "BR-SPO-EXT",
+                        "access-policy-installation-date": {"posix": 1700000000000},
+                    }
+                },
+            ),
+            Asset(
+                uid="cm-vpn-b",
+                name="BR-BRE-VPN-FW-01B",
+                type="cluster-member",
+                mgmt_name="mds1",
+                domain_name="AME-BR",
+                parent_uid="cl-bre-vpn",
+                raw_data={
+                    "policy": {
+                        "access-policy-installed": True,
+                        "access-policy-name": "BR-BRE-VPN",
+                        "access-policy-installation-date": {"posix": 1750000000000},
+                    }
+                },
+            ),
+        ],
+    )
+
+    candidates = await topology_service.find_affected_gateways(
+        sources=["10.60.1.10", "10.60.2.10"],
+        destinations=["8.8.8.8"],
+        mgmt_name="mds1",
+        domain="AME-BR",
+        cache_mode="cache",
+    )
+    by_gw = {c.gateway_name: c for c in candidates}
+    assert set(by_gw.keys()) == {"BR-BRE-EXT-FW-CL-01", "BR-BRE-VPN-FW-CL-01"}
+
+    # Each cluster must have ONLY its own single last-installed policy package, NOT all 3 domain packages!
+    assert by_gw["BR-BRE-EXT-FW-CL-01"].installed_access_policy == "BR-BRE-EXT"
+    assert by_gw["BR-BRE-EXT-FW-CL-01"].policy_packages == ["BR-BRE-EXT"]
+    assert by_gw["BR-BRE-EXT-FW-CL-01"].access_layers == ["BR-BRE-EXT Network"]
+
+    assert by_gw["BR-BRE-VPN-FW-CL-01"].installed_access_policy == "BR-BRE-VPN"
+    assert by_gw["BR-BRE-VPN-FW-CL-01"].policy_packages == ["BR-BRE-VPN"]
+    assert by_gw["BR-BRE-VPN-FW-CL-01"].access_layers == ["BR-BRE-VPN Network"]
+
+    # Also store topology entries and verify `get_gateway_topology` enriches `installed_access_policy` and `policy_packages`
+    dom_assets = await cache.get_assets(mgmt_name="mds1", domain_name="AME-BR")
+    extracted_entries, _ = await topology_service._extract_domain_topology_entries(
+        mgmt_name="mds1",
+        domain_name="AME-BR",
+        assets=dom_assets,
+        objects=[],
+        allow_live_detail=False,
+    )
+    await cache.replace_domain_topology("mds1", "AME-BR", extracted_entries)
+
+    topo_rows = await topology_service.get_gateway_topology(
+        mgmt_name="mds1",
+        domain="AME-BR",
+        cache_mode="cache",
+    )
+    assert len(topo_rows) == 4
+    rows_by_gw: dict[str, list[Any]] = {}
+    for row in topo_rows:
+        rows_by_gw.setdefault(row.gateway_name, []).append(row)
+
+    for row in rows_by_gw["BR-BRE-EXT-FW-CL-01"]:
+        assert row.installed_access_policy == "BR-BRE-EXT"
+        assert row.policy_packages == ["BR-BRE-EXT"]
+
+    for row in rows_by_gw["BR-BRE-VPN-FW-CL-01"]:
+        assert row.installed_access_policy == "BR-BRE-VPN"
+        assert row.policy_packages == ["BR-BRE-VPN"]
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_stream_refresh_topology_emits_assets_objects_and_per_gateway_progress_events() -> None:
+    """Verify `stream_refresh_topology` yields `assets`, `objects`, and per-gateway `topology` progress events."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = TopologyFakeApi()
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=0)
+    domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    domain_service.tracker.mark_refreshed("mds1")
+    await cache.upsert_domains(
+        [
+            DomainInfo(mgmt_name="mds1", uid="d-global", name="Global", active_ip="10.0.0.1", is_global=True),
+            DomainInfo(mgmt_name="mds1", uid="d-corp", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1"),
+            DomainInfo(mgmt_name="mds1", uid="d-dc", name="DC", active_ip="10.2.0.1", active_mds_ip="10.0.0.1"),
+        ]
+    )
+
+    coordinator = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=domain_service,
+    )
+    asset_service = AssetRefreshService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+    )
+    object_service = ObjectService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+    )
+    topology_service = TopologyService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+        asset_service=asset_service,
+        object_service=object_service,
+    )
+
+    events = [
+        ev
+        async for ev in topology_service.stream_refresh_topology(
+            mgmt_name="mds1",
+            domains=["Corp", "DC"],
+            mode="force",
+        )
+    ]
+
+    scopes = {ev.scope for ev in events}
+    assert scopes == {"assets", "objects", "topology"}
+
+    gw_progress_events = [
+        ev
+        for ev in events
+        if ev.scope == "topology" and ev.event_type == "domain_sync_progress" and ev.details.get("gateway_name")
+    ]
+    gw_names_seen = {ev.details["gateway_name"] for ev in gw_progress_events}
+    assert gw_names_seen == {"corp-perimeter-cluster", "branch-gw-01", "dc-core-gw"}
+
+    by_gw_ev = {ev.details["gateway_name"]: ev for ev in gw_progress_events}
+    assert by_gw_ev["corp-perimeter-cluster"].details["installed_access_policy"] == "Perimeter_Pkg"
+    assert by_gw_ev["branch-gw-01"].details["installed_access_policy"] == "Branch_Pkg"
+    assert by_gw_ev["dc-core-gw"].details["installed_access_policy"] == "Core_Pkg"
+
+    await db.close()
+
+
+def test_normalize_interface_leads_to_specific_network_and_cpmi_routes() -> None:
+    """Verify `leads-to-specific-network` dict and CPMI `destination`/`nextHop` route formats are parsed."""
+    from arodonata.core.services.topology_service import (
+        _normalize_interface,
+        _parse_route_destination,
+        _parse_route_nexthop_and_interface,
+    )
+
+    nif = _normalize_interface(
+        {
+            "name": "eth2.14",
+            "ipv4-address": "",
+            "topology": {
+                "leads-to-internet": False,
+                "ip-address-behind-this-interface": "specific",
+                "leads-to-specific-network": {
+                    "uid": "b8c03a85-a092-485f-83c4-7601a5da1e1e",
+                    "name": "n192.168",
+                    "type": "network",
+                    "subnet4": "192.168.0.0",
+                    "mask-length4": 16,
+                },
+            },
+        }
+    )
+    assert nif is not None
+    assert nif.specific_network_uid == "b8c03a85-a092-485f-83c4-7601a5da1e1e"
+    assert nif.specific_network_ref == "n192.168"
+    assert nif.specific_inline_cidr == "192.168.0.0/16"
+
+    route_dict = {
+        "destination": {"ipaddr": "10.192.11.142", "netmask": "255.255.255.255"},
+        "nextHop": "10.192.13.4",
+        "interfaceName": "eth0",
+    }
+    dest_net = _parse_route_destination(route_dict)
+    assert str(dest_net) == "10.192.11.142/32"
+    nh_ip, explicit_if = _parse_route_nexthop_and_interface(route_dict)
+    assert str(nh_ip) == "10.192.13.4"
+    assert explicit_if == "eth0"
