@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## v2.4.1 (2026-11-05)
 
 ### Added
 
@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolved each gateway's single active policy package (`installed_access_policy` and single-element `policy_packages`) in `TopologyService._resolve_gateway_installed_policy()` by explicit `policy.access-policy-name` (when `access-policy-installed` is truthy), latest installation timestamp across `installation-targets-revision` / `access-policy-installation-date`, single-package `installation-targets` membership, or single-package domain fallback rather than assigning all domain packages to every gateway in multi-package domains (`src/arodonata/core/services/topology_service.py`, `src/arodonata/core/models/topology.py`).
 - Parsed Check Point `"leads-to-specific-network"` interface topology dictionaries (with inline `subnet4`/`mask-length4` fallback) in `_normalize_interface()` and CPMI `destination`/`nextHop`/`interfaceName` static route objects in `_parse_route_destination()` / `_parse_route_nexthop_and_interface()` (`src/arodonata/core/services/topology_service.py`).
 - Evicted cached read-only session SIDs (`arodonata_sid_cache`) immediately upon `ApiTimeoutError` or `TransportError` in `AMgmtClient.api_call()`, and allowed `DomainSyncCoordinator.probe_domain_staleness()` to recover transiently failed sync state rows (`status="failed"` with matching `last_published_at` / `last_session_uid` and `object_count > 0`) back to `status="ok"` without forcing a full domain re-download (`src/arodonata/adapters/checkpoint/client.py`, `src/arodonata/core/services/sync_coordinator.py`).
+
+### Fix
+
+- **topology**: resolve single installed gateway policy, stream refresh progress, and parse leads-to-specific-network (#71)
+- **sync,sessions**: evict cached SID on transport/read timeout and recover transient failed sync states (#70)
 
 ## v2.4.0 (2026-11-04)
 
