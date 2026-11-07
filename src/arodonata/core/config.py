@@ -89,6 +89,35 @@ class ServerEndpointConfig(BaseModel):
         )
 
 
+class TopologyConfidenceWeights(BaseModel):
+    """Configurable signed evidence deltas for gateway topology and route confidence calculation."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    # Positive evidence deltas
+    route_connected: float = 0.65
+    route_static: float = 0.55
+    route_dynamic: float = 0.50
+    topology_connected: float = 0.50
+    topology_specific_prevent: float = 0.40
+    topology_specific_detect: float = 0.15
+    topology_external_fallback: float = 0.30
+    admin_confirmed: float = 0.50
+    admin_manual: float = 0.60
+    admin_standby_dynamic: float = 0.35
+
+    # Extensible future source hooks (Stages 2–4)
+    policy_rule_match: float = 0.25
+    vpn_domain_match: float = 0.35
+    bridge_arp_mac_match: float = 0.40
+
+    # Negative conflict / anomaly deltas
+    conflict_missing_in_live_routes: float = -0.35
+    conflict_routed_to_other_interface_static: float = -0.50
+    conflict_routed_to_other_interface_route: float = -0.10
+    conflict_cluster_member_drift: float = -0.20
+
+
 class ArodonataSettings(BaseSettings):
     """Type-safe configuration for Arodonata resolved from kwargs and `os.environ`.
 
@@ -269,6 +298,12 @@ class ArodonataSettings(BaseSettings):
     trace_modules: str = Field(
         default="",
         validation_alias=AliasChoices("ARODONATA_TRACE_MODULES"),
+    )
+
+    # Topology & route evidence delta confidence weights
+    topology_confidence_weights: TopologyConfidenceWeights = Field(
+        default_factory=TopologyConfidenceWeights,
+        validation_alias=AliasChoices("ARODONATA_TOPOLOGY_CONFIDENCE_WEIGHTS"),
     )
 
     def __init__(self, **data: Any) -> None:

@@ -1387,7 +1387,8 @@ def register_mcp_tools(
         name="cache_control",
         description=(
             "Inspect cache freshness across scopes (action='status') or trigger scoped synchronization "
-            "(action='refresh', scope='domains'|'objects'|'services'|'assets'|'rulebase'|'topology')."
+            "(action='refresh', scope='domains'|'objects'|'services'|'assets'|'rulebase'|'topology', "
+            "with optional gateways and collect_routes for scope='topology')."
         ),
     )
     @mcp_tool_guard("cache_control", client_getter)
@@ -1398,6 +1399,8 @@ def register_mcp_tools(
         domains: list[str] | None = None,
         scope: SyncScope | None = None,
         types: list[str] | None = None,
+        gateways: list[str] | str | None = None,
+        collect_routes: bool = False,
         include_global: bool = False,
         mode: Literal["cache", "smart", "smart-fast", "force"] = "smart",
     ) -> CallToolResult:
@@ -1464,6 +1467,8 @@ def register_mcp_tools(
             outcome = await client.refresh_topology(
                 mgmt_name=eff_mgmt,
                 domains=target_domains,
+                gateways=gateways,
+                collect_routes=collect_routes,
                 include_global=include_global,
                 mode=mode,
             )
@@ -1743,7 +1748,8 @@ def register_mcp_tools(
             "Locate candidate policy-enforcing Check Point gateways (simple gateways, clusters, and VSX Virtual "
             "Systems), domains, policy packages, and access layers affected by traffic between sources and "
             "destinations (IPv4 addresses, CIDRs, ranges, or object/group names) where source and destination "
-            "reside behind distinct gateway interfaces."
+            "reside behind distinct gateway interfaces, including confidence scores, standby indicators, and "
+            "topology warnings."
         ),
     )
     @mcp_tool_guard("locate_gateways", client_getter)
@@ -1752,6 +1758,8 @@ def register_mcp_tools(
         destinations: list[str] | str,
         mgmt_name: str | None = None,
         domain: str | None = None,
+        min_confidence: float = 0.0,
+        include_standby: bool = True,
         cache_mode: str = "smart",
     ) -> CallToolResult:
         client = client_getter()
@@ -1768,11 +1776,19 @@ def register_mcp_tools(
             destinations=destinations,
             mgmt_name=eff_mgmt,
             domain=eff_domain,
+            min_confidence=min_confidence,
+            include_standby=include_standby,
             cache_mode=eff_mode,
         )
         target_mgmt = eff_mgmt or (client.settings.mgmt_names[0] if client.settings.mgmt_names else "default")
         age = None if is_live else await _compute_cache_age(client, target_mgmt, eff_domain, "topology", "*")
         serialized = [c.model_dump(mode="json") for c in candidates]
+        topology_warnings: list[str] = []
+        for c in candidates:
+            for w in c.warnings:
+                entry_warn = f"[{c.gateway_name}] {w}"
+                if entry_warn not in topology_warnings:
+                    topology_warnings.append(entry_warn)
         src_list = (
             [s.strip() for s in sources.split(",") if s.strip()]
             if isinstance(sources, str)
@@ -1794,6 +1810,9 @@ def register_mcp_tools(
                 "domain": eff_domain,
                 "sources": src_list,
                 "destinations": dst_list,
+                "min_confidence": min_confidence,
+                "include_standby": include_standby,
+                "topology_warnings": topology_warnings,
                 "gateways": serialized,
             }
         )

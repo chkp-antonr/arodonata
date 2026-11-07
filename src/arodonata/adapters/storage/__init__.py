@@ -25,6 +25,7 @@ from arodonata.adapters.storage.tables import (
     SchemaVersionRecord,
     SIDCacheRecord,
     ThreatRuleRecord,
+    TopologyAnnotationRecord,
 )
 
 __all__ = [
@@ -50,5 +51,6 @@ __all__ = [
     "SqlCacheAdapter",
     "SqlLockAdapter",
     "ThreatRuleRecord",
+    "TopologyAnnotationRecord",
     "compute_schema_hash",
 ]

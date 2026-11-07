@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Gateway Topology Diagnostics, Live Route Collection via SSH Dependency Injection & `cprid` Fallback, Static-vs-Route Reconciliation, Persistent Administrator Annotations, IPAM Prefix Export, and Evidence Delta Confidence Scoring (`arodonata.core.models.topology`, `arodonata.core.services.route_collector`, `arodonata.core.services.topology_service`, `arodonata.adapters.storage`, `ArodonataClient`, `arodonata.mcp.tools`):
+  - **Static Topology Health Diagnostics (`get_topology_diagnostics()`)**: Detects incomplete or untrustworthy SmartConsole interface topology settings (`not_defined`, `routing_defined_without_routes`, `anti_spoofing_detect_or_off`, `unresolved_specific`, `empty_specific`, `missing_ip_mask`, `no_interfaces`) while treating internal-only segmentation gateways as valid (zero warnings) and classifying single-interface or external-only service-graph gateways (e.g., Cisco ACI) as `one_arm_topology` (`severity="info"`).
+  - **Live OS/Clish Route Collection (`collect_gateway_routes()`, `GatewayCliPort`, `GatewayCliCallable`)**: Collects live IPv4 routing tables (`connected_route`, `gaia_static_route`, `clish_route`, `bgp_route`, `ospf_route`, and `0.0.0.0/0` default routes) across simple gateways, cluster members (detecting cross-member route drift), and VSX Virtual Systems (via `vsenv` context switching on the physical VSX parent, `$FWDIR` `CTX%05d` verification, and dynamic `vsx stat -l` VSID lookup), invoking an injected SSH bash callback first and falling back to Check Point Management API `run-script` (`cprid` via `TaskWaiter`).
+  - **Targeted Per-Gateway Refresh**: `refresh_topology(..., gateways=..., collect_routes=...)`, `stream_refresh_topology(..., gateways=..., collect_routes=...)`, and `CachePort.replace_domain_topology(..., gateway_uids=..., source_types=..., active_gateway_uids=...)` refresh and replace cached topology/route rows for specific gateways without re-downloading or deleting other gateways in the domain while pruning orphaned live routes on full domain refresh.
+  - **Static vs. Live Route Reconciliation (`reconcile_gateway_topology()`)**: Compares SmartConsole static topology intervals against live CLI-collected routing intervals and across cluster members to report `TopologyReconciliationReport` discrepancies (`stale_in_topology`, `missing_in_topology`, `interface_mismatch`, `default_route_mismatch`, `cluster_member_drift`, `resolved_by_routing`).
+  - **Persistent Administrator Annotations & IPAM Export (`arodonata_topology_annotations`, `upsert_topology_annotations()`, `get_topology_annotations()`, `delete_topology_annotations()`, `export_topology_prefixes()`)**: Persists administrator dispositions (`confirmed`, `standby_dynamic`, `ignore`, `manual`), `trust_static_topology` overrides, and IPAM metadata (`zone`, `site`, `comment`, `custom_metadata`) across topology resyncs and exports consolidated prefix inventories.
+  - **Evidence Delta Confidence Scoring (`TopologyConfidenceWeights`, `ConfidenceDelta`)**: Computes endpoint and flow `confidence` (`0.0..1.0`), `is_standby_path`, and `confidence_factors` on `TrafficFlowMatch` and `AffectedGatewayCandidate` (with `min_confidence` and `include_standby` filters on `find_affected_gateways()` and MCP `locate_gateways`).
+
 ## v2.4.1 (2026-11-05)
 
 ### Added

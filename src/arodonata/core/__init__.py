@@ -1,6 +1,12 @@
 """Arodonata v2 pure domain core (`config`, `context`, `errors`, `events`, `models`, `ports`, `telemetry`)."""
 
-from arodonata.core.config import ArodonataSettings, AuthMode, ServerEndpointConfig, TlsTrustMode
+from arodonata.core.config import (
+    ArodonataSettings,
+    AuthMode,
+    ServerEndpointConfig,
+    TlsTrustMode,
+    TopologyConfidenceWeights,
+)
 from arodonata.core.context import (
     AuthContext,
     SessionOverlay,
@@ -105,6 +111,7 @@ __all__ = [
     "TaskPollError",
     "TaskTimeoutError",
     "TlsTrustMode",
+    "TopologyConfidenceWeights",
     "TransportError",
     "TrustStoreError",
     "UnknownServerCertificateError",

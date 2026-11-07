@@ -22,6 +22,7 @@ Provides:
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -31,29 +32,58 @@ from typing import Any
 
 import arlogi
 
-from arodonata.core.config import ArodonataSettings
+from arodonata.core.config import ArodonataSettings, TopologyConfidenceWeights
 from arodonata.core.errors import ServerIdentityError, ValidationError
-from arodonata.core.events import DomainSyncProgressEvent, SyncProgressEvent
+from arodonata.core.events import (
+    DomainSyncCompletedEvent,
+    DomainSyncFailedEvent,
+    DomainSyncProgressEvent,
+    DomainSyncStartedEvent,
+    SyncCompletedEvent,
+    SyncProgressEvent,
+    SyncStartedEvent,
+)
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import DEFAULT_OBJECT_TYPES, CacheMode, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainSyncState, RefreshOutcome
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.topology import (
+    LIVE_ROUTE_SOURCES,
+    STATIC_TOPOLOGY_SOURCES,
     AffectedGatewayCandidate,
+    AntiSpoofingMode,
+    ConfidenceDelta,
+    ExportedTopologyPrefix,
     FlowMatchType,
     GatewayInterfaceSummary,
+    GatewayRouteCollectionStatus,
     GatewayTopologyEntry,
+    RouteCollectionOutcome,
+    TopologyAnnotation,
+    TopologyDiagnostic,
+    TopologyDiagnosticCode,
+    TopologyDiagnosticSeverity,
+    TopologyDiscrepancy,
+    TopologyReconciliationReport,
     TopologySourceType,
     TopologyZone,
     TrafficFlowMatch,
 )
-from arodonata.core.ports import ApiPort, CachePort
+from arodonata.core.ports import ApiPort, CachePort, GatewayCliCallable, GatewayCliPort
 from arodonata.core.services.asset_service import (
     VSX_CHILD_TYPES,
     AssetRefreshService,
     _extract_interfaces_from_generic,
 )
 from arodonata.core.services.object_service import ObjectService
+from arodonata.core.services.route_collector import (
+    ParsedCliRoute,
+    build_route_collection_script,
+    execute_gateway_cli,
+    parse_combined_cli_routes,
+    resolve_gateway_cli_targets,
+    routes_to_topology_entries,
+)
 from arodonata.core.services.search_service import classify_search_term
 from arodonata.core.services.sync_coordinator import DomainProbeResult, DomainSyncCoordinator
 from arodonata.core.telemetry import span_attrs, traced
@@ -153,6 +183,7 @@ class _NormalizedInterface:
     specific_network_uid: str | None
     specific_inline_cidr: str | None
     has_explicit_topology: bool
+    anti_spoofing_mode: AntiSpoofingMode = "unknown"
 
 
 @dataclass(frozen=True)
@@ -174,6 +205,80 @@ class _InterfaceMatch:
     matched_cidr: str
     source_type: str
     source_ref: str
+    confidence: float = 1.0
+    is_standby_path: bool = False
+    confidence_factors: tuple[ConfidenceDelta, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+def _extract_anti_spoofing_mode(raw_if: dict[str, Any], *extra_dicts: dict[str, Any] | None) -> AntiSpoofingMode:
+    """Extract normalized `AntiSpoofingMode` (`'prevent' | 'detect' | 'off' | 'unknown'`) from interface dictionaries."""
+    containers: list[dict[str, Any]] = [raw_if]
+    for d in extra_dicts:
+        if isinstance(d, dict):
+            containers.append(d)
+    for key in (
+        "anti-spoofing",
+        "anti_spoofing",
+        "antiSpoofing",
+        "anti-spoofing-settings",
+        "anti_spoofing_settings",
+        "antiSpoofingSettings",
+        "topology-settings",
+        "topology_settings",
+        "topology",
+    ):
+        sub = raw_if.get(key)
+        if isinstance(sub, dict) and sub not in containers:
+            containers.append(sub)
+            for nested_key in ("anti-spoofing", "anti_spoofing", "anti-spoofing-settings", "anti_spoofing_settings"):
+                nested_sub = sub.get(nested_key)
+                if isinstance(nested_sub, dict) and nested_sub not in containers:
+                    containers.append(nested_sub)
+
+    perform_val: bool | None = None
+    if isinstance(raw_if.get("anti-spoofing"), bool):
+        perform_val = raw_if["anti-spoofing"]
+    elif isinstance(raw_if.get("anti_spoofing"), bool):
+        perform_val = raw_if["anti_spoofing"]
+    action_str = ""
+
+    for c in containers:
+        for p_key in (
+            "perform-anti-spoofing",
+            "perform_anti_spoofing",
+            "performAntiSpoofing",
+            "anti-spoofing-enabled",
+            "anti_spoofing_enabled",
+            "enabled",
+        ):
+            if p_key in c and isinstance(c[p_key], bool):
+                # Do not treat interface-level `enabled` as anti-spoofing enabled unless inside an anti-spoofing dict
+                if p_key == "enabled" and c is raw_if:
+                    continue
+                perform_val = c[p_key]
+                break
+
+        for a_key in (
+            "action",
+            "anti-spoofing-action",
+            "anti_spoofing_action",
+            "antiSpoofingAction",
+        ):
+            val = c.get(a_key)
+            if isinstance(val, str) and val.strip():
+                action_str = val.strip().lower()
+                break
+
+    if perform_val is False or action_str in ("off", "none", "disabled", "false", "inactive"):
+        return "off"
+    if "detect" in action_str:
+        return "detect"
+    if "prevent" in action_str:
+        return "prevent"
+    if perform_val is True:
+        return "prevent"
+    return "unknown"
 
 
 def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -> _NormalizedInterface | None:
@@ -355,6 +460,12 @@ def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -
     ):
         behind_mode = "network defined by the interface ip and net mask"
 
+    anti_spoof = _extract_anti_spoofing_mode(
+        raw_if,
+        topo_field if isinstance(topo_field, dict) else None,
+        topo_settings if isinstance(topo_settings, dict) else None,
+    )
+
     return _NormalizedInterface(
         interface_name=if_name,
         ipv4_address=ipv4_address,
@@ -366,6 +477,7 @@ def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -
         specific_network_uid=specific_uid,
         specific_inline_cidr=specific_inline_cidr,
         has_explicit_topology=has_explicit_topology,
+        anti_spoofing_mode=anti_spoof,
     )
 
 
@@ -595,7 +707,7 @@ def _extract_policy_candidates_from_raw(
 
 
 class TopologyService:
-    """Extracts, caches, and matches gateway interface topology across domains."""
+    """Extracts, caches, reconciles, and matches gateway interface topology and live routes across domains."""
 
     def __init__(
         self,
@@ -606,6 +718,7 @@ class TopologyService:
         coordinator: DomainSyncCoordinator,
         asset_service: AssetRefreshService,
         object_service: ObjectService,
+        gateway_cli: GatewayCliPort | GatewayCliCallable | None = None,
         now_fn: Callable[[], datetime] = utc_now,
     ) -> None:
         self._settings = settings
@@ -614,18 +727,67 @@ class TopologyService:
         self._coordinator = coordinator
         self._asset_service = asset_service
         self._object_service = object_service
+        self._gateway_cli = gateway_cli
         self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
+
+    @property
+    def gateway_cli(self) -> GatewayCliPort | GatewayCliCallable | None:
+        """Configured `GatewayCliPort` or async callable for executing CLI commands on gateways."""
+        return self._gateway_cli
+
+    def set_gateway_cli(self, gateway_cli: GatewayCliPort | GatewayCliCallable | None) -> None:
+        """Set or replace the runtime `GatewayCliPort` or async callable."""
+        self._gateway_cli = gateway_cli
+
+    @staticmethod
+    def _normalize_gateway_filter_tokens(gateways: Sequence[str] | str | None) -> list[str]:
+        if gateways is None:
+            return []
+        if isinstance(gateways, str):
+            return [g.strip().lower() for g in gateways.split(",") if g.strip()]
+        return [str(g).strip().lower() for g in gateways if str(g).strip()]
+
+    @staticmethod
+    def _matches_gateway_filter(asset: Asset, tokens: set[str]) -> bool:
+        if not tokens:
+            return True
+        return bool(
+            tokens.intersection(
+                {
+                    asset.uid.lower(),
+                    asset.name.lower(),
+                    asset.id.lower(),
+                    asset.asset_id.lower(),
+                }
+            )
+        )
 
     async def stream_refresh_topology(
         self,
         *,
         mgmt_name: str | None = None,
         domains: Sequence[str] | str | None = None,
+        gateways: Sequence[str] | str | None = None,
+        collect_routes: bool = False,
         include_global: bool = False,
         mode: CacheMode = "smart",
         cache_ttl: float | None = None,
     ) -> AsyncIterator[SyncProgressEvent]:
-        """Stream `SyncProgressEvent` items while refreshing gateway topology across domains."""
+        """Stream `SyncProgressEvent` items while refreshing gateway topology across domains (or targeted `gateways`)."""
+        gw_tokens = self._normalize_gateway_filter_tokens(gateways)
+        if gw_tokens:
+            async for event in self._stream_targeted_gateway_refresh(
+                mgmt_name=mgmt_name,
+                domains=domains,
+                gw_tokens=set(gw_tokens),
+                collect_routes=collect_routes,
+                include_global=include_global,
+                mode=mode,
+                cache_ttl=cache_ttl,
+            ):
+                yield event
+            return
+
         if mode != "cache":
             async for event in self._asset_service.stream_refresh_assets(
                 mgmt_name=mgmt_name,
@@ -658,18 +820,55 @@ class TopologyService:
         ):
             yield event
 
+        if collect_routes and mode != "cache":
+            await self.collect_gateway_routes(
+                mgmt_name=mgmt_name,
+                domains=domains,
+                include_global=include_global,
+            )
+
     @traced
     async def refresh_topology(
         self,
         *,
         mgmt_name: str | None = None,
         domains: Sequence[str] | str | None = None,
+        gateways: Sequence[str] | str | None = None,
+        collect_routes: bool = False,
         include_global: bool = False,
         mode: CacheMode = "smart",
         cache_ttl: float | None = None,
     ) -> RefreshOutcome:
-        """Refresh gateway topology across domains and return `RefreshOutcome`."""
-        span_attrs(mgmt_name=mgmt_name, mode=mode, include_global=include_global)
+        """Refresh gateway topology across domains (or targeted `gateways`) and return `RefreshOutcome`."""
+        span_attrs(mgmt_name=mgmt_name, mode=mode, include_global=include_global, collect_routes=collect_routes)
+        gw_tokens = self._normalize_gateway_filter_tokens(gateways)
+        if gw_tokens:
+            refreshed_domains: list[str] = []
+            skipped_domains: list[str] = []
+            failed_domains: dict[str, str] = {}
+            total_items = 0
+            async for event in self._stream_targeted_gateway_refresh(
+                mgmt_name=mgmt_name,
+                domains=domains,
+                gw_tokens=set(gw_tokens),
+                collect_routes=collect_routes,
+                include_global=include_global,
+                mode=mode,
+                cache_ttl=cache_ttl,
+            ):
+                if isinstance(event, SyncCompletedEvent):
+                    refreshed_domains = list(event.details.get("refreshed_domains") or [])
+                    skipped_domains = list(event.details.get("skipped_domains") or [])
+                    failed_domains = dict(event.details.get("failed_domains") or {})
+                    total_items = int(event.details.get("total_items") or 0)
+            return RefreshOutcome(
+                scope="topology",
+                refreshed_domains=refreshed_domains,
+                skipped_domains=skipped_domains,
+                failed_domains=failed_domains,
+                total_items=total_items,
+            )
+
         if mode != "cache":
             await self._asset_service.refresh_assets(
                 mgmt_name=mgmt_name,
@@ -687,7 +886,7 @@ class TopologyService:
                 cache_ttl=cache_ttl,
             )
 
-        return await self._coordinator.ensure(
+        outcome = await self._coordinator.ensure(
             scope="topology",
             item_types=["*"],
             handler=self._sync_domain_topology,
@@ -696,6 +895,172 @@ class TopologyService:
             include_global=include_global,
             mode=mode,
             cache_ttl=cache_ttl,
+        )
+        if collect_routes and mode != "cache":
+            await self.collect_gateway_routes(
+                mgmt_name=mgmt_name,
+                domains=domains,
+                include_global=include_global,
+            )
+        return outcome
+
+    async def _stream_targeted_gateway_refresh(
+        self,
+        *,
+        mgmt_name: str | None,
+        domains: Sequence[str] | str | None,
+        gw_tokens: set[str],
+        collect_routes: bool,
+        include_global: bool,
+        mode: CacheMode,
+        cache_ttl: float | None,
+    ) -> AsyncIterator[SyncProgressEvent]:
+        """Refresh static topology (and optionally live routes) ONLY for the specified `gw_tokens` without rewriting other gateways."""
+        target_domains = await self._coordinator.resolve_target_domains(
+            mgmt_name=mgmt_name,
+            domains=domains,
+            include_global=include_global,
+            mode=mode,
+        )
+        yield SyncStartedEvent(
+            scope="topology",
+            mgmt_name=mgmt_name,
+            message=f"Starting targeted gateway topology refresh across {len(target_domains)} domain(s).",
+            total=len(target_domains),
+            details={"mode": mode, "gateways": sorted(gw_tokens)},
+        )
+
+        refreshed_domains: list[str] = []
+        skipped_domains: list[str] = []
+        failed_domains: dict[str, str] = {}
+        total_items = 0
+
+        for dom in target_domains:
+            dom_label = f"{dom.mgmt_name}:{dom.name}"
+            try:
+                domain_assets = await self._cache.get_assets(mgmt_name=dom.mgmt_name, domain_name=dom.name)
+                if not domain_assets and mode != "cache":
+                    domain_assets = await self._asset_service.get_assets(
+                        mgmt_name=dom.mgmt_name,
+                        domain=dom.name,
+                        cache_mode=mode,
+                        cache_ttl=cache_ttl,
+                    )
+
+                matched_gateways = [
+                    a
+                    for a in domain_assets
+                    if is_policy_enforcing_gateway(a) and self._matches_gateway_filter(a, gw_tokens)
+                ]
+                if not matched_gateways:
+                    skipped_domains.append(dom_label)
+                    continue
+
+                yield DomainSyncStartedEvent(
+                    scope="topology",
+                    mgmt_name=dom.mgmt_name,
+                    domain=dom.name,
+                    item_type="gateway-topology",
+                    message=f"Refreshing {len(matched_gateways)} targeted gateway(s) in {dom_label}.",
+                )
+
+                if mode != "cache":
+                    # Refresh objects with smart caching so newly added group members are picked up if domain was published
+                    await self._object_service.refresh_objects(
+                        mgmt_name=dom.mgmt_name,
+                        domains=[dom.name],
+                        types=list(DEFAULT_OBJECT_TYPES),
+                        include_global=True,
+                        mode="smart" if mode == "force" else mode,
+                        cache_ttl=cache_ttl,
+                    )
+                    # Force on-demand detail fetch for each targeted gateway so modified interface definitions are pulled
+                    refreshed_gw_map: dict[str, Asset] = {}
+                    for gw_asset in matched_gateways:
+                        enriched = await self._fetch_asset_detail_on_demand(dom.mgmt_name, dom.name, gw_asset)
+                        if enriched is not None:
+                            refreshed_gw_map[enriched.uid] = enriched
+                    if refreshed_gw_map:
+                        await self._cache.upsert_assets(list(refreshed_gw_map.values()))
+                        domain_assets = [refreshed_gw_map.get(a.uid, a) for a in domain_assets]
+
+                domain_objects = await self._cache.get_objects(mgmt_name=dom.mgmt_name, domain_name=dom.name)
+                global_objects = (
+                    await self._cache.get_objects(mgmt_name=dom.mgmt_name, domain_name="Global")
+                    if dom.name != "Global"
+                    else []
+                )
+                all_objects = ObjectService.apply_context_overlay(
+                    [*domain_objects, *global_objects],
+                    mgmt_name=dom.mgmt_name,
+                    domain_name=dom.name,
+                )
+
+                target_gw_uids = [g.uid for g in matched_gateways]
+                entries, updated_assets = await self._extract_domain_topology_entries(
+                    mgmt_name=dom.mgmt_name,
+                    domain_name=dom.name,
+                    assets=domain_assets,
+                    objects=all_objects,
+                    target_gateway_uids=set(target_gw_uids),
+                    allow_live_detail=mode != "cache",
+                )
+                if updated_assets:
+                    await self._cache.upsert_assets(updated_assets)
+
+                count = await self._cache.replace_domain_topology(
+                    dom.mgmt_name,
+                    dom.name,
+                    entries,
+                    gateway_uids=target_gw_uids,
+                    source_types=list(STATIC_TOPOLOGY_SOURCES),
+                )
+                if collect_routes and mode != "cache":
+                    route_outcome = await self.collect_gateway_routes(
+                        mgmt_name=dom.mgmt_name,
+                        domain=dom.name,
+                        gateways=target_gw_uids,
+                    )
+                    count += route_outcome.total_routes
+
+                refreshed_domains.append(dom_label)
+                total_items += count
+                yield DomainSyncCompletedEvent(
+                    scope="topology",
+                    mgmt_name=dom.mgmt_name,
+                    domain=dom.name,
+                    item_type="gateway-topology",
+                    processed=count,
+                    total=count,
+                    message=f"Refreshed {count} topology interval(s) for {len(target_gw_uids)} gateway(s) in {dom_label}.",
+                )
+            except Exception as exc:
+                err_str = str(exc)
+                failed_domains[dom_label] = err_str
+                yield DomainSyncFailedEvent(
+                    scope="topology",
+                    mgmt_name=dom.mgmt_name,
+                    domain=dom.name,
+                    item_type="gateway-topology",
+                    error=err_str,
+                    message=f"Targeted gateway topology refresh failed in {dom_label}: {err_str}",
+                )
+
+        yield SyncCompletedEvent(
+            scope="topology",
+            mgmt_name=mgmt_name,
+            processed=total_items,
+            total=total_items,
+            message=(
+                f"Completed targeted topology refresh: {len(refreshed_domains)} refreshed, "
+                f"{len(skipped_domains)} skipped, {len(failed_domains)} failed."
+            ),
+            details={
+                "refreshed_domains": refreshed_domains,
+                "skipped_domains": skipped_domains,
+                "failed_domains": failed_domains,
+                "total_items": total_items,
+            },
         )
 
     async def _sync_domain_topology(
@@ -759,10 +1124,13 @@ class TopologyService:
             object_count=len(entries),
             last_error=None,
         )
+        active_gw_uids = [a.uid for a in domain_assets if is_policy_enforcing_gateway(a)]
         return await self._cache.replace_domain_topology(
             mgmt_name,
             dom_name,
             entries,
+            source_types=list(STATIC_TOPOLOGY_SOURCES),
+            active_gateway_uids=active_gw_uids,
             sync_states=[sync_state],
         )
 
@@ -819,6 +1187,7 @@ class TopologyService:
         domain_name: str,
         assets: Sequence[Asset],
         objects: Sequence[CPObject],
+        target_gateway_uids: set[str] | None = None,
         allow_live_detail: bool = True,
         emit: Callable[[SyncProgressEvent], Awaitable[None]] | None = None,
     ) -> tuple[list[GatewayTopologyEntry], list[Asset]]:
@@ -828,7 +1197,11 @@ class TopologyService:
         updated_assets: list[Asset] = []
         now = self._now()
 
-        policy_gateways = [a for a in assets if is_policy_enforcing_gateway(a)]
+        policy_gateways = [
+            a
+            for a in assets
+            if is_policy_enforcing_gateway(a) and (target_gateway_uids is None or a.uid in target_gateway_uids)
+        ]
         total_gateways = len(policy_gateways)
 
         for gw_idx, asset in enumerate(policy_gateways, start=1):
@@ -930,6 +1303,7 @@ class TopologyService:
                                 interface_mask_length=target_nif.mask_length if target_nif else None,
                                 topology_zone="external",
                                 leads_to_dmz=target_nif.leads_to_dmz if target_nif else False,
+                                anti_spoofing_mode=target_nif.anti_spoofing_mode if target_nif else "unknown",
                                 source_type="vs_static_route",
                                 source_ref=nh_ref,
                                 cidr_or_range="0.0.0.0/0",
@@ -954,6 +1328,7 @@ class TopologyService:
                                 interface_mask_length=target_nif.mask_length if target_nif else None,
                                 topology_zone="internal",
                                 leads_to_dmz=target_nif.leads_to_dmz if target_nif else False,
+                                anti_spoofing_mode=target_nif.anti_spoofing_mode if target_nif else "unknown",
                                 source_type="vs_static_route",
                                 source_ref=nh_ref,
                                 cidr_or_range=str(dest_net),
@@ -980,6 +1355,7 @@ class TopologyService:
                             interface_mask_length=nif.mask_length,
                             topology_zone="external",
                             leads_to_dmz=nif.leads_to_dmz,
+                            anti_spoofing_mode=nif.anti_spoofing_mode,
                             source_type="external_interface",
                             source_ref="leads-to-internet",
                             cidr_or_range="0.0.0.0/0",
@@ -1041,6 +1417,7 @@ class TopologyService:
                                 interface_mask_length=nif.mask_length,
                                 topology_zone="internal",
                                 leads_to_dmz=nif.leads_to_dmz,
+                                anti_spoofing_mode=nif.anti_spoofing_mode,
                                 source_type="interface_specific",
                                 source_ref=src_ref,
                                 cidr_or_range=cidr_str,
@@ -1069,6 +1446,7 @@ class TopologyService:
                                 interface_mask_length=nif.mask_length,
                                 topology_zone="internal",
                                 leads_to_dmz=nif.leads_to_dmz,
+                                anti_spoofing_mode=nif.anti_spoofing_mode,
                                 source_type="interface_connected",
                                 source_ref="connected",
                                 cidr_or_range=str(c_net),
@@ -1350,11 +1728,1407 @@ class TopologyService:
                     interface_mask_length=first.interface_mask_length,
                     topology_zone=zone,
                     leads_to_dmz=any(e.leads_to_dmz for e in group_entries),
+                    anti_spoofing_mode=next(
+                        (e.anti_spoofing_mode for e in group_entries if e.anti_spoofing_mode != "unknown"),
+                        first.anti_spoofing_mode,
+                    ),
                     source_types=src_types,
                     cidrs_and_ranges=cidrs,
                 )
             )
         return summaries
+
+    @staticmethod
+    def _parse_cidr_or_range_bounds(cidr_or_range: str) -> tuple[int, int, int] | None:
+        """Parse a CIDR (`10.0.0.0/24`), single IPv4 (`10.0.0.1`), or range (`10.0.0.1-10.0.0.10`) into `(lo, hi, prefix_len)`."""
+        clean = cidr_or_range.strip()
+        if not clean or clean == "*":
+            return None
+        if clean.lower() == "default" or clean == "0.0.0.0/0":
+            return 0, MAX_IPV4_INT, 0
+        if "-" in clean and "/" not in clean:
+            parts = clean.split("-", 1)
+            try:
+                ip1 = ipaddress.IPv4Address(parts[0].strip())
+                ip2 = ipaddress.IPv4Address(parts[1].strip())
+                lo = min(int(ip1), int(ip2))
+                hi = max(int(ip1), int(ip2))
+                return lo, hi, _effective_range_prefix_len(lo, hi)
+            except ValueError:
+                return None
+        try:
+            net = ipaddress.IPv4Network(clean, strict=False) if "/" in clean else ipaddress.IPv4Network(f"{clean}/32")
+            return int(net.network_address), int(net.broadcast_address), net.prefixlen
+        except ValueError:
+            return None
+
+    # ------------------------------------------------------------------
+    # Static Topology Health Diagnostics (`get_topology_diagnostics`)
+    # ------------------------------------------------------------------
+
+    @traced
+    async def get_topology_diagnostics(
+        self,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        *,
+        gateways: Sequence[str] | str | None = None,
+        gateway: str | None = None,
+        min_severity: TopologyDiagnosticSeverity = "info",
+        cache_mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> list[TopologyDiagnostic]:
+        """Inspect gateway and interface definitions and return `TopologyDiagnostic` items."""
+        eff_gateways = gateways if gateways is not None else gateway
+        span_attrs(mgmt_name=mgmt_name, domain=domain, min_severity=min_severity, cache_mode=cache_mode)
+        if cache_mode != "cache":
+            await self.refresh_topology(
+                mgmt_name=mgmt_name,
+                domains=[domain] if domain else None,
+                gateways=eff_gateways if cache_mode == "force" else None,
+                include_global=domain == "Global",
+                mode=cache_mode,
+                cache_ttl=cache_ttl,
+            )
+
+        all_assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=domain)
+        all_objects = await self._cache.get_objects(mgmt_name=mgmt_name)
+        all_objects = ObjectService.apply_context_overlay(all_objects, mgmt_name=mgmt_name, domain_name=domain)
+        topo_entries = await self._cache.get_gateway_topology(mgmt_name=mgmt_name, domain_name=domain)
+
+        gw_tokens = set(self._normalize_gateway_filter_tokens(eff_gateways))
+        policy_gateways = [
+            a for a in all_assets if is_policy_enforcing_gateway(a) and self._matches_gateway_filter(a, gw_tokens)
+        ]
+
+        objs_by_dom: dict[tuple[str, str], list[CPObject]] = defaultdict(list)
+        for obj in all_objects:
+            objs_by_dom[(obj.mgmt_name, obj.domain_name)].append(obj)
+
+        indexed_objs_by_dom: dict[tuple[str, str], tuple[dict[str, CPObject], dict[str, CPObject]]] = {}
+
+        entries_by_gw_if: dict[tuple[str, str, str, str], list[GatewayTopologyEntry]] = defaultdict(list)
+        for entry in topo_entries:
+            entries_by_gw_if[(entry.mgmt_name, entry.domain_name, entry.gateway_uid, entry.interface_name)].append(
+                entry
+            )
+
+        def _make_diag(
+            gw: Asset,
+            *,
+            if_name: str | None,
+            code: TopologyDiagnosticCode,
+            severity: TopologyDiagnosticSeverity,
+            message: str,
+            behind_mode: str = "",
+            anti_spoofing_mode: AntiSpoofingMode = "unknown",
+            specific_network_ref: str | None = None,
+        ) -> TopologyDiagnostic:
+            return TopologyDiagnostic(
+                mgmt_name=gw.mgmt_name,
+                domain_name=gw.domain_name,
+                gateway_id=gw.id,
+                gateway_asset_id=gw.asset_id,
+                gateway_uid=gw.uid,
+                gateway_name=gw.name,
+                gateway_type=gw.type,
+                interface_name=if_name,
+                code=code,
+                severity=severity,
+                behind_mode=behind_mode,
+                anti_spoofing_mode=anti_spoofing_mode,
+                specific_network_ref=specific_network_ref,
+                message=message,
+            )
+
+        diagnostics: list[TopologyDiagnostic] = []
+        for asset in sorted(policy_gateways, key=lambda a: (a.mgmt_name, a.domain_name, a.name)):
+            is_vs = asset.type in VSX_CHILD_TYPES or "virtual-system" in asset.type.lower()
+            raw_ifs = list(asset.interfaces) or _extract_interfaces_from_generic(asset.raw_data)
+            norm_ifs: list[_NormalizedInterface] = []
+            for raw_if in raw_ifs:
+                if isinstance(raw_if, dict):
+                    norm = _normalize_interface(raw_if, is_vs_asset=is_vs)
+                    if norm is not None:
+                        norm_ifs.append(norm)
+
+            if not norm_ifs:
+                diagnostics.append(
+                    _make_diag(
+                        asset,
+                        if_name=None,
+                        code="no_interfaces",
+                        severity="warning",
+                        message=f"Gateway {asset.name!r} has no network interfaces defined in SmartConsole.",
+                    )
+                )
+                continue
+
+            # One-arm informational classification (single interface or external-only, e.g. Cisco ACI service graph).
+            # Internal-only gateways (multiple internal interfaces, no external interface) are normal and emit zero warnings.
+            has_internal_if = any(not nif.is_external for nif in norm_ifs)
+            if len(norm_ifs) == 1 or not has_internal_if:
+                diagnostics.append(
+                    _make_diag(
+                        asset,
+                        if_name=norm_ifs[0].interface_name if len(norm_ifs) == 1 else None,
+                        code="one_arm_topology",
+                        severity="info",
+                        message=(
+                            f"Gateway {asset.name!r} has a one-arm / external-only interface layout "
+                            f"({len(norm_ifs)} interface(s)); traffic paths depend on external fabric/PBR redirection."
+                        ),
+                    )
+                )
+
+            dom_key = (asset.mgmt_name, asset.domain_name)
+            if dom_key not in indexed_objs_by_dom:
+                scoped_objs = [
+                    *objs_by_dom.get((asset.mgmt_name, "Global"), []),
+                    *(objs_by_dom.get(dom_key, []) if asset.domain_name != "Global" else []),
+                ]
+                indexed_objs_by_dom[dom_key] = self._index_objects(scoped_objs, domain_name=asset.domain_name)
+            obj_by_uid, obj_by_name = indexed_objs_by_dom[dom_key]
+
+            for nif in norm_ifs:
+                if_entries = entries_by_gw_if.get(
+                    (asset.mgmt_name, asset.domain_name, asset.uid, nif.interface_name),
+                    [],
+                )
+                non_connected_route_entries = [
+                    e
+                    for e in if_entries
+                    if (e.source_type in LIVE_ROUTE_SOURCES and e.source_type != "connected_route")
+                    or e.source_type == "vs_static_route"
+                ]
+                mode_lower = nif.behind_mode.lower()
+
+                if not nif.is_external and nif.anti_spoofing_mode in ("detect", "off"):
+                    diagnostics.append(
+                        _make_diag(
+                            asset,
+                            if_name=nif.interface_name,
+                            code="anti_spoofing_detect_or_off",
+                            severity="warning",
+                            behind_mode=nif.behind_mode,
+                            anti_spoofing_mode=nif.anti_spoofing_mode,
+                            specific_network_ref=nif.specific_network_ref,
+                            message=(
+                                f"Interface {nif.interface_name!r} on {asset.name!r} has Anti-Spoofing in "
+                                f"{nif.anti_spoofing_mode!r} mode; static topology may be stale or unverified."
+                            ),
+                        )
+                    )
+
+                if nif.is_external:
+                    continue
+
+                if "specific" in mode_lower:
+                    ref_uid = nif.specific_network_uid
+                    ref_name = nif.specific_network_ref
+                    root_obj = (
+                        (obj_by_uid.get(ref_uid) if ref_uid else None)
+                        or (obj_by_name.get(ref_name) if ref_name else None)
+                        or (obj_by_name.get(ref_uid) if ref_uid else None)
+                    )
+                    expanded = self._expand_specific_reference(
+                        ref_uid=ref_uid,
+                        ref_name=ref_name,
+                        obj_by_uid=obj_by_uid,
+                        obj_by_name=obj_by_name,
+                    )
+                    if not expanded and not nif.specific_inline_cidr:
+                        if root_obj is None:
+                            diagnostics.append(
+                                _make_diag(
+                                    asset,
+                                    if_name=nif.interface_name,
+                                    code="unresolved_specific",
+                                    severity="warning",
+                                    behind_mode=nif.behind_mode,
+                                    anti_spoofing_mode=nif.anti_spoofing_mode,
+                                    specific_network_ref=ref_name or ref_uid,
+                                    message=(
+                                        f"Interface {nif.interface_name!r} on {asset.name!r} references specific "
+                                        f"object {ref_name or ref_uid!r} which could not be found."
+                                    ),
+                                )
+                            )
+                        else:
+                            diagnostics.append(
+                                _make_diag(
+                                    asset,
+                                    if_name=nif.interface_name,
+                                    code="empty_specific",
+                                    severity="warning",
+                                    behind_mode=nif.behind_mode,
+                                    anti_spoofing_mode=nif.anti_spoofing_mode,
+                                    specific_network_ref=root_obj.name,
+                                    message=(
+                                        f"Interface {nif.interface_name!r} on {asset.name!r} references group "
+                                        f"{root_obj.name!r} which expands to zero IPv4 addresses or subnets."
+                                    ),
+                                )
+                            )
+                elif "interface ip and net mask" in mode_lower or mode_lower == "connected":
+                    if nif.ipv4_address is None or nif.mask_length is None:
+                        diagnostics.append(
+                            _make_diag(
+                                asset,
+                                if_name=nif.interface_name,
+                                code="missing_ip_mask",
+                                severity="warning",
+                                behind_mode=nif.behind_mode,
+                                anti_spoofing_mode=nif.anti_spoofing_mode,
+                                message=(
+                                    f"Interface {nif.interface_name!r} on {asset.name!r} uses connected IP/netmask "
+                                    "topology but is missing a valid IPv4 address or mask length."
+                                ),
+                            )
+                        )
+                elif "routing" in mode_lower:
+                    if not non_connected_route_entries:
+                        diagnostics.append(
+                            _make_diag(
+                                asset,
+                                if_name=nif.interface_name,
+                                code="routing_defined_without_routes",
+                                severity="warning",
+                                behind_mode=nif.behind_mode,
+                                anti_spoofing_mode=nif.anti_spoofing_mode,
+                                message=(
+                                    f"Interface {nif.interface_name!r} on {asset.name!r} has topology "
+                                    f"{nif.behind_mode!r} without collected static or dynamic routes."
+                                ),
+                            )
+                        )
+                else:
+                    if not non_connected_route_entries:
+                        diagnostics.append(
+                            _make_diag(
+                                asset,
+                                if_name=nif.interface_name,
+                                code="not_defined",
+                                severity="warning",
+                                behind_mode=nif.behind_mode or "not defined",
+                                anti_spoofing_mode=nif.anti_spoofing_mode,
+                                message=(
+                                    f"Interface {nif.interface_name!r} on {asset.name!r} has undefined topology "
+                                    f"({nif.behind_mode or 'not defined'!r})."
+                                ),
+                            )
+                        )
+
+        if min_severity == "warning":
+            return [d for d in diagnostics if d.severity == "warning"]
+        return diagnostics
+
+    # ------------------------------------------------------------------
+    # Live Gateway Route Collection (`collect_gateway_routes`)
+    # ------------------------------------------------------------------
+
+    @traced
+    async def collect_gateway_routes(
+        self,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        *,
+        domains: Sequence[str] | str | None = None,
+        gateways: Sequence[str] | str | None = None,
+        include_global: bool = True,
+        gateway_cli: GatewayCliPort | GatewayCliCallable | None = None,
+        fallback_to_cprid: bool = True,
+        timeout: float = 30.0,
+        concurrency: int = 8,
+    ) -> RouteCollectionOutcome:
+        """Collect live IPv4 routing tables (`ip -4 route show` and `clish -c "show route"`) from gateways via SSH DI or `cprid` `run-script`."""
+        span_attrs(mgmt_name=mgmt_name, domain=domain, fallback_to_cprid=fallback_to_cprid, concurrency=concurrency)
+        eff_cli = gateway_cli if gateway_cli is not None else self._gateway_cli
+
+        domain_set: set[str] | None = None
+        if domains is not None:
+            if isinstance(domains, str):
+                domain_set = {d.strip() for d in domains.split(",") if d.strip()}
+            else:
+                domain_set = {str(d).strip() for d in domains if str(d).strip()}
+        elif domain is not None and domain.strip():
+            domain_set = {domain.strip()}
+
+        # Load all assets across the management server so VSX parents in other domains and cluster members are visible
+        all_mgmt_assets = await self._cache.get_assets(mgmt_name=mgmt_name)
+        if not all_mgmt_assets:
+            all_mgmt_assets = await self._asset_service.get_assets(
+                mgmt_name=mgmt_name,
+                domain=domain,
+                cache_mode="smart",
+            )
+
+        gw_tokens = set(self._normalize_gateway_filter_tokens(gateways))
+        target_gateways = [
+            a
+            for a in all_mgmt_assets
+            if is_policy_enforcing_gateway(a)
+            and (domain_set is None or a.domain_name in domain_set)
+            and (include_global or domain_set is not None or a.domain_name != "Global")
+            and self._matches_gateway_filter(a, gw_tokens)
+        ]
+
+        now = self._now()
+        sem = asyncio.Semaphore(max(1, concurrency))
+        sorted_gateways = sorted(target_gateways, key=lambda a: (a.mgmt_name, a.domain_name, a.name))
+
+        dom_assets_by_key: dict[tuple[str, str], list[Asset]] = defaultdict(list)
+        for a in all_mgmt_assets:
+            dom_assets_by_key[(a.mgmt_name, a.domain_name)].append(a)
+
+        async def _run_target(target: Any) -> tuple[Any, Any]:
+            async with sem:
+                script = build_route_collection_script(vsid=target.vsid, vs_name=target.vs_name)
+                res = await execute_gateway_cli(
+                    target,
+                    script,
+                    api=self._api,
+                    gateway_cli=eff_cli,
+                    fallback_to_cprid=fallback_to_cprid,
+                    timeout=timeout,
+                )
+                return target, res
+
+        async def _collect_for_gateway(gw_asset: Asset) -> tuple[GatewayRouteCollectionStatus, int]:
+            cli_targets = resolve_gateway_cli_targets(gw_asset, all_mgmt_assets)
+            target_results = await asyncio.gather(*(_run_target(t) for t in cli_targets))
+
+            parsed_by_node: dict[str, list[ParsedCliRoute]] = {}
+            node_errors: list[str] = []
+            executors_used: list[str] = []
+
+            for target, cli_res in target_results:
+                if cli_res.executor and cli_res.executor not in executors_used:
+                    executors_used.append(cli_res.executor)
+                if not cli_res.success:
+                    node_errors.append(
+                        f"{target.node_name}: {cli_res.error_message or cli_res.stderr or 'CLI command failed'}"
+                    )
+                    continue
+                parsed_by_node[target.node_name] = parse_combined_cli_routes(cli_res.stdout)
+
+            if not parsed_by_node:
+                return (
+                    GatewayRouteCollectionStatus(
+                        mgmt_name=gw_asset.mgmt_name,
+                        domain_name=gw_asset.domain_name,
+                        gateway_id=gw_asset.id,
+                        gateway_asset_id=gw_asset.asset_id,
+                        gateway_uid=gw_asset.uid,
+                        gateway_name=gw_asset.name,
+                        gateway_type=gw_asset.type,
+                        success=False,
+                        executor=",".join(executors_used) if executors_used else "cprid",
+                        routes_collected=0,
+                        error="; ".join(node_errors) if node_errors else "No routes returned",
+                    ),
+                    0,
+                )
+
+            is_vs = gw_asset.type in VSX_CHILD_TYPES or "virtual-system" in gw_asset.type.lower()
+            raw_ifs = list(gw_asset.interfaces) or _extract_interfaces_from_generic(gw_asset.raw_data)
+            if_meta: dict[str, tuple[str | None, int | None, bool, str, bool]] = {}
+            for raw_if in raw_ifs:
+                if isinstance(raw_if, dict):
+                    norm = _normalize_interface(raw_if, is_vs_asset=is_vs)
+                    if norm is not None:
+                        if_meta[norm.interface_name] = (
+                            norm.ipv4_address,
+                            norm.mask_length,
+                            norm.leads_to_dmz,
+                            norm.anti_spoofing_mode,
+                            norm.is_external,
+                        )
+
+            dom_assets = dom_assets_by_key.get((gw_asset.mgmt_name, gw_asset.domain_name), [])
+            inst_pol, pkg_names, _ = await self._resolve_gateway_policy_metadata(
+                gw_asset.mgmt_name,
+                gw_asset.domain_name,
+                gw_asset,
+                gw_asset.uid,
+                gw_asset.name,
+                all_assets=dom_assets,
+            )
+
+            route_entries, drift_detected, drift_map = routes_to_topology_entries(
+                gateway_asset=gw_asset,
+                parsed_routes_by_node=parsed_by_node,
+                interface_meta=if_meta,
+                installed_access_policy=inst_pol,
+                policy_packages=pkg_names,
+                now=now,
+            )
+
+            route_sync_state = DomainSyncState(
+                mgmt_name=gw_asset.mgmt_name,
+                domain_name=gw_asset.domain_name,
+                scope="topology",
+                item_type="routes",
+                synced_at=now,
+                status="ok",
+                object_count=len(route_entries),
+                last_error=None,
+            )
+            await self._cache.replace_domain_topology(
+                gw_asset.mgmt_name,
+                gw_asset.domain_name,
+                route_entries,
+                gateway_uids=[gw_asset.uid],
+                source_types=list(LIVE_ROUTE_SOURCES),
+                sync_states=[route_sync_state],
+            )
+
+            gw_warnings: list[str] = []
+            if drift_detected:
+                for (d_if, d_cidr), present_nodes in sorted(drift_map.items()):
+                    gw_warnings.append(
+                        f"Cluster member route drift on {gw_asset.name} :: {d_if} ({d_cidr}): "
+                        f"present only on {', '.join(present_nodes)}"
+                    )
+            if node_errors:
+                gw_warnings.extend(node_errors)
+
+            return (
+                GatewayRouteCollectionStatus(
+                    mgmt_name=gw_asset.mgmt_name,
+                    domain_name=gw_asset.domain_name,
+                    gateway_id=gw_asset.id,
+                    gateway_asset_id=gw_asset.asset_id,
+                    gateway_uid=gw_asset.uid,
+                    gateway_name=gw_asset.name,
+                    gateway_type=gw_asset.type,
+                    success=True,
+                    executor=",".join(executors_used) if executors_used else "ssh",
+                    routes_collected=len(route_entries),
+                    member_drift_detected=drift_detected,
+                    warnings=gw_warnings,
+                    error=None,
+                ),
+                len(route_entries),
+            )
+
+        results = await asyncio.gather(*(_collect_for_gateway(gw) for gw in sorted_gateways))
+        statuses = [st for st, _ in results]
+        succeeded_count = sum(1 for st in statuses if st.success)
+        failed_count = len(statuses) - succeeded_count
+        total_routes_count = sum(cnt for _, cnt in results)
+
+        return RouteCollectionOutcome(
+            total_gateways=len(target_gateways),
+            succeeded_gateways=succeeded_count,
+            failed_gateways=failed_count,
+            total_routes=total_routes_count,
+            gateways=statuses,
+        )
+
+    # ------------------------------------------------------------------
+    # Persistent Annotations, Reconciliation, and IPAM Export
+    # ------------------------------------------------------------------
+
+    @traced
+    async def get_topology_annotations(
+        self,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        *,
+        gateway: str | None = None,
+        interface_name: str | None = None,
+    ) -> list[TopologyAnnotation]:
+        """Return persistent `TopologyAnnotation` records from `arodonata_topology_annotations`."""
+        annotations = await self._cache.get_topology_annotations(
+            mgmt_name=mgmt_name,
+            domain_name=domain,
+            interface_name=interface_name,
+        )
+        if gateway and gateway.strip():
+            gw_clean = gateway.strip().lower()
+            annotations = [a for a in annotations if gw_clean in (a.gateway_uid.lower(), a.gateway_name.lower())]
+        return annotations
+
+    @traced
+    async def upsert_topology_annotations(
+        self,
+        annotations: Sequence[TopologyAnnotation | dict[str, Any]] | TopologyAnnotation | dict[str, Any],
+    ) -> list[TopologyAnnotation]:
+        """Insert or update persistent `TopologyAnnotation` records and return the normalized models."""
+        items: Sequence[TopologyAnnotation | dict[str, Any]] = (
+            [annotations] if isinstance(annotations, (TopologyAnnotation, dict)) else annotations
+        )
+        normalized: list[TopologyAnnotation] = [
+            a if isinstance(a, TopologyAnnotation) else TopologyAnnotation.model_validate(a) for a in items
+        ]
+        await self._cache.upsert_topology_annotations(normalized)
+        return normalized
+
+    @traced
+    async def delete_topology_annotations(
+        self,
+        annotation_ids: Sequence[str] | str | None = None,
+        *,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        gateway_uid: str | None = None,
+    ) -> int:
+        """Delete persistent `TopologyAnnotation` records by ID or filter."""
+        if annotation_ids is not None:
+            ids = [annotation_ids] if isinstance(annotation_ids, str) else list(annotation_ids)
+            return await self._cache.delete_topology_annotations(ids)
+        matching = await self._cache.get_topology_annotations(
+            mgmt_name=mgmt_name,
+            domain_name=domain,
+            gateway_uids=[gateway_uid] if gateway_uid else None,
+        )
+        if not matching:
+            return 0
+        return await self._cache.delete_topology_annotations([a.id for a in matching])
+
+    @staticmethod
+    def _index_annotations_for_gateway(
+        annotations: Sequence[TopologyAnnotation],
+    ) -> tuple[
+        bool | None,
+        dict[str, bool],
+        dict[tuple[str, str], TopologyAnnotation],
+        dict[str, TopologyAnnotation],
+    ]:
+        """Index a gateway's annotations into `(gw_trust_static, if_trust_static, by_if_cidr, by_if_wildcard)`."""
+        gw_trust_static: bool | None = None
+        if_trust_static: dict[str, bool] = {}
+        by_if_cidr: dict[tuple[str, str], TopologyAnnotation] = {}
+        by_if_wildcard: dict[str, TopologyAnnotation] = {}
+
+        for ann in annotations:
+            if ann.interface_name == "*" and ann.cidr_or_range == "*":
+                if ann.trust_static_topology is not None:
+                    gw_trust_static = ann.trust_static_topology
+            elif ann.interface_name != "*" and ann.cidr_or_range == "*":
+                by_if_wildcard[ann.interface_name] = ann
+                if ann.trust_static_topology is not None:
+                    if_trust_static[ann.interface_name] = ann.trust_static_topology
+            elif ann.cidr_or_range != "*":
+                by_if_cidr[(ann.interface_name, ann.cidr_or_range)] = ann
+                if ann.trust_static_topology is not None and ann.interface_name != "*":
+                    if_trust_static[ann.interface_name] = ann.trust_static_topology
+
+        return gw_trust_static, if_trust_static, by_if_cidr, by_if_wildcard
+
+    @classmethod
+    def _is_cidr_covered_by_entries(
+        cls,
+        lo: int,
+        hi: int,
+        entries: Sequence[GatewayTopologyEntry],
+    ) -> bool:
+        """Return `True` if `[lo, hi]` is covered by any single entry or the union of `entries`."""
+        for e in entries:
+            if e.ip_first_int <= lo and hi <= e.ip_last_int:
+                return True
+        return cls._is_range_covered_by_intervals(lo, hi, [(e.ip_first_int, e.ip_last_int) for e in entries])
+
+    @traced
+    async def reconcile_gateway_topology(
+        self,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        *,
+        gateways: Sequence[str] | str | None = None,
+        collect_routes: bool = False,
+        collect_live_routes: bool = False,
+        gateway_cli: GatewayCliPort | GatewayCliCallable | None = None,
+        fallback_to_cprid: bool = True,
+        cache_mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> TopologyReconciliationReport:
+        """Compare SmartConsole static topology against live gateway routing tables and return `TopologyReconciliationReport`."""
+        eff_collect = collect_routes or collect_live_routes
+        span_attrs(mgmt_name=mgmt_name, domain=domain, collect_routes=eff_collect, cache_mode=cache_mode)
+        if cache_mode != "cache":
+            await self.refresh_topology(
+                mgmt_name=mgmt_name,
+                domains=[domain] if domain else None,
+                gateways=gateways if cache_mode == "force" else None,
+                collect_routes=False,
+                include_global=domain == "Global",
+                mode=cache_mode,
+                cache_ttl=cache_ttl,
+            )
+
+        if eff_collect:
+            await self.collect_gateway_routes(
+                mgmt_name=mgmt_name,
+                domain=domain,
+                gateways=gateways,
+                gateway_cli=gateway_cli,
+                fallback_to_cprid=fallback_to_cprid,
+            )
+
+        diagnostics = await self.get_topology_diagnostics(
+            mgmt_name=mgmt_name,
+            domain=domain,
+            gateways=gateways,
+            cache_mode="cache",
+        )
+
+        topo_entries = await self._cache.get_gateway_topology(mgmt_name=mgmt_name, domain_name=domain)
+        all_assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=domain)
+        annotations = await self._cache.get_topology_annotations(mgmt_name=mgmt_name, domain_name=domain)
+
+        gw_tokens = set(self._normalize_gateway_filter_tokens(gateways))
+        policy_gateways = [
+            a for a in all_assets if is_policy_enforcing_gateway(a) and self._matches_gateway_filter(a, gw_tokens)
+        ]
+
+        entries_by_gw_uid: dict[tuple[str, str, str], list[GatewayTopologyEntry]] = defaultdict(list)
+        for entry in topo_entries:
+            entries_by_gw_uid[(entry.mgmt_name, entry.domain_name, entry.gateway_uid)].append(entry)
+
+        anns_by_gw_uid: dict[tuple[str, str, str], list[TopologyAnnotation]] = defaultdict(list)
+        for ann in annotations:
+            anns_by_gw_uid[(ann.mgmt_name, ann.domain_name, ann.gateway_uid)].append(ann)
+
+        weights = self._settings.topology_confidence_weights
+        discrepancies: list[TopologyDiscrepancy] = []
+
+        for gw_asset in sorted(policy_gateways, key=lambda a: (a.mgmt_name, a.domain_name, a.name)):
+            gw_key = (gw_asset.mgmt_name, gw_asset.domain_name, gw_asset.uid)
+            gw_entries = entries_by_gw_uid.get(gw_key, [])
+            gw_anns = anns_by_gw_uid.get(gw_key, [])
+            gw_trust_static, if_trust_static, ann_by_if_cidr, _ = self._index_annotations_for_gateway(gw_anns)
+
+            static_entries = [e for e in gw_entries if e.source_type in STATIC_TOPOLOGY_SOURCES]
+            route_entries = [e for e in gw_entries if e.source_type in LIVE_ROUTE_SOURCES]
+            if not route_entries:
+                continue
+
+            is_vs = gw_asset.type in VSX_CHILD_TYPES or "virtual-system" in gw_asset.type.lower()
+            raw_ifs = list(gw_asset.interfaces) or _extract_interfaces_from_generic(gw_asset.raw_data)
+            norm_ifs_by_name: dict[str, _NormalizedInterface] = {}
+            for raw_if in raw_ifs:
+                if isinstance(raw_if, dict):
+                    norm = _normalize_interface(raw_if, is_vs_asset=is_vs)
+                    if norm is not None:
+                        norm_ifs_by_name[norm.interface_name] = norm
+
+            static_internal = [e for e in static_entries if e.topology_zone == "internal"]
+            route_internal = [e for e in route_entries if e.topology_zone == "internal"]
+            static_external = [e for e in static_entries if e.topology_zone == "external"]
+            default_routes = [
+                e for e in route_entries if e.prefix_len == 0 and e.ip_first_int == 0 and e.ip_last_int == MAX_IPV4_INT
+            ]
+
+            static_by_if: dict[str, list[GatewayTopologyEntry]] = defaultdict(list)
+            for se in static_internal:
+                static_by_if[se.interface_name].append(se)
+
+            route_by_if: dict[str, list[GatewayTopologyEntry]] = defaultdict(list)
+            for re_entry in route_internal:
+                route_by_if[re_entry.interface_name].append(re_entry)
+
+            # 1. Default route (`0.0.0.0/0`) vs static external interface check
+            if static_external and default_routes:
+                static_ext_ifs = {e.interface_name for e in static_external}
+                route_ext_ifs = {e.interface_name for e in default_routes}
+                if not static_ext_ifs.intersection(route_ext_ifs):
+                    s_if = sorted(static_ext_ifs)[0]
+                    r_if = sorted(route_ext_ifs)[0]
+                    ann_match = ann_by_if_cidr.get((s_if, "0.0.0.0/0")) or ann_by_if_cidr.get(("*", "0.0.0.0/0"))
+                    disp = ann_match.disposition if ann_match else None
+                    if_untrusted = if_trust_static.get(s_if, gw_trust_static) is False
+                    suppressed = disp in ("confirmed", "standby_dynamic", "ignore") or if_untrusted
+                    discrepancies.append(
+                        TopologyDiscrepancy(
+                            mgmt_name=gw_asset.mgmt_name,
+                            domain_name=gw_asset.domain_name,
+                            gateway_id=gw_asset.id,
+                            gateway_asset_id=gw_asset.asset_id,
+                            gateway_uid=gw_asset.uid,
+                            gateway_name=gw_asset.name,
+                            gateway_type=gw_asset.type,
+                            discrepancy_type="default_route_mismatch",
+                            severity="info" if suppressed else "warning",
+                            interface_name=s_if,
+                            routed_interface_name=r_if,
+                            cidr_or_range="0.0.0.0/0",
+                            static_sources=sorted({e.source_type for e in static_external}),
+                            route_sources=sorted({e.source_type for e in default_routes}),
+                            annotation_disposition=disp,
+                            suppressed_by_annotation=suppressed,
+                            confidence_delta=weights.conflict_routed_to_other_interface_static,
+                            message=(
+                                f"SmartConsole marks {s_if!r} as External on {gw_asset.name!r}, "
+                                f"but live default route 0.0.0.0/0 egresses via {r_if!r}."
+                            ),
+                        )
+                    )
+
+            # 2. Check each static internal interval against live route intervals
+            seen_static_pairs: set[tuple[str, str]] = set()
+            mismatched_routed_if_cidrs: set[tuple[str, str]] = set()
+            for se in static_internal:
+                pair_key = (se.interface_name, se.cidr_or_range)
+                if pair_key in seen_static_pairs:
+                    continue
+                seen_static_pairs.add(pair_key)
+
+                same_if_routes = route_by_if.get(se.interface_name, [])
+                if self._is_cidr_covered_by_entries(se.ip_first_int, se.ip_last_int, same_if_routes):
+                    continue
+
+                # Check if routed on a different interface
+                other_if_matches: list[GatewayTopologyEntry] = []
+                for other_if, r_list in route_by_if.items():
+                    if other_if == se.interface_name:
+                        continue
+                    for r_entry in r_list:
+                        if r_entry.ip_first_int <= se.ip_first_int and se.ip_last_int <= r_entry.ip_last_int:
+                            other_if_matches.append(r_entry)
+
+                ann_match = ann_by_if_cidr.get((se.interface_name, se.cidr_or_range)) or ann_by_if_cidr.get(
+                    ("*", se.cidr_or_range)
+                )
+                disp = ann_match.disposition if ann_match else None
+                if_untrusted = if_trust_static.get(se.interface_name, gw_trust_static) is False
+                suppressed = disp in ("confirmed", "standby_dynamic", "ignore") or if_untrusted
+
+                if other_if_matches:
+                    routed_if = other_if_matches[0].interface_name
+                    mismatched_routed_if_cidrs.add((routed_if, se.cidr_or_range))
+                    discrepancies.append(
+                        TopologyDiscrepancy(
+                            mgmt_name=gw_asset.mgmt_name,
+                            domain_name=gw_asset.domain_name,
+                            gateway_id=gw_asset.id,
+                            gateway_asset_id=gw_asset.asset_id,
+                            gateway_uid=gw_asset.uid,
+                            gateway_name=gw_asset.name,
+                            gateway_type=gw_asset.type,
+                            discrepancy_type="interface_mismatch",
+                            severity="info" if suppressed else "warning",
+                            interface_name=se.interface_name,
+                            routed_interface_name=routed_if,
+                            cidr_or_range=se.cidr_or_range,
+                            static_sources=[se.source_type],
+                            route_sources=sorted({m.source_type for m in other_if_matches}),
+                            annotation_disposition=disp,
+                            suppressed_by_annotation=suppressed,
+                            confidence_delta=weights.conflict_routed_to_other_interface_static,
+                            message=(
+                                f"Prefix {se.cidr_or_range} is listed in static topology on {se.interface_name!r} "
+                                f"of {gw_asset.name!r}, but live routing directs it to {routed_if!r}."
+                            ),
+                        )
+                    )
+                else:
+                    discrepancies.append(
+                        TopologyDiscrepancy(
+                            mgmt_name=gw_asset.mgmt_name,
+                            domain_name=gw_asset.domain_name,
+                            gateway_id=gw_asset.id,
+                            gateway_asset_id=gw_asset.asset_id,
+                            gateway_uid=gw_asset.uid,
+                            gateway_name=gw_asset.name,
+                            gateway_type=gw_asset.type,
+                            discrepancy_type="stale_in_topology",
+                            severity="info" if suppressed else "warning",
+                            interface_name=se.interface_name,
+                            routed_interface_name=None,
+                            cidr_or_range=se.cidr_or_range,
+                            static_sources=[se.source_type],
+                            route_sources=[],
+                            annotation_disposition=disp,
+                            suppressed_by_annotation=suppressed,
+                            confidence_delta=(
+                                weights.admin_standby_dynamic
+                                if disp == "standby_dynamic"
+                                else weights.conflict_missing_in_live_routes
+                            ),
+                            message=(
+                                f"Prefix {se.cidr_or_range} is configured in static topology on {se.interface_name!r} "
+                                f"of {gw_asset.name!r}, but is absent from live routing tables."
+                            ),
+                        )
+                    )
+
+            # 3. Check each live route interval against static topology and cluster member drift
+            seen_route_pairs: set[tuple[str, str]] = set()
+            for re_entry in route_entries:
+                r_pair = (re_entry.interface_name, re_entry.cidr_or_range)
+                if r_pair in seen_route_pairs:
+                    continue
+                seen_route_pairs.add(r_pair)
+
+                # Check cluster member drift encoded in `source_ref` (`;members:node1;drift:1/2`)
+                if ";drift:" in re_entry.source_ref:
+                    present_members: list[str] = []
+                    for part in re_entry.source_ref.split(";"):
+                        if part.startswith("members:"):
+                            present_members = [m for m in part.removeprefix("members:").split(",") if m]
+                    discrepancies.append(
+                        TopologyDiscrepancy(
+                            mgmt_name=gw_asset.mgmt_name,
+                            domain_name=gw_asset.domain_name,
+                            gateway_id=gw_asset.id,
+                            gateway_asset_id=gw_asset.asset_id,
+                            gateway_uid=gw_asset.uid,
+                            gateway_name=gw_asset.name,
+                            gateway_type=gw_asset.type,
+                            discrepancy_type="cluster_member_drift",
+                            severity="warning",
+                            interface_name=re_entry.interface_name,
+                            cidr_or_range=re_entry.cidr_or_range,
+                            static_sources=[],
+                            route_sources=[re_entry.source_type],
+                            confidence_delta=weights.conflict_cluster_member_drift,
+                            member_details={"present_on_members": present_members},
+                            message=(
+                                f"Route {re_entry.cidr_or_range} on {re_entry.interface_name!r} of cluster "
+                                f"{gw_asset.name!r} is present only on member(s): {', '.join(present_members)}."
+                            ),
+                        )
+                    )
+
+                if re_entry.topology_zone == "external":
+                    continue
+
+                same_if_static = static_by_if.get(re_entry.interface_name, [])
+                if self._is_cidr_covered_by_entries(re_entry.ip_first_int, re_entry.ip_last_int, same_if_static):
+                    continue
+
+                # If already reported as `interface_mismatch` from the static side, skip duplicate in O(1)
+                if (re_entry.interface_name, re_entry.cidr_or_range) in mismatched_routed_if_cidrs:
+                    continue
+
+                nif = norm_ifs_by_name.get(re_entry.interface_name)
+                mode_lower = (nif.behind_mode if nif else "").lower()
+                ann_match = ann_by_if_cidr.get((re_entry.interface_name, re_entry.cidr_or_range)) or ann_by_if_cidr.get(
+                    ("*", re_entry.cidr_or_range)
+                )
+                disp = ann_match.disposition if ann_match else None
+                suppressed = disp in ("confirmed", "standby_dynamic", "ignore")
+
+                if "routing" in mode_lower or not mode_lower or "not defined" in mode_lower:
+                    discrepancies.append(
+                        TopologyDiscrepancy(
+                            mgmt_name=gw_asset.mgmt_name,
+                            domain_name=gw_asset.domain_name,
+                            gateway_id=gw_asset.id,
+                            gateway_asset_id=gw_asset.asset_id,
+                            gateway_uid=gw_asset.uid,
+                            gateway_name=gw_asset.name,
+                            gateway_type=gw_asset.type,
+                            discrepancy_type="resolved_by_routing",
+                            severity="info",
+                            interface_name=re_entry.interface_name,
+                            cidr_or_range=re_entry.cidr_or_range,
+                            static_sources=[],
+                            route_sources=[re_entry.source_type],
+                            annotation_disposition=disp,
+                            suppressed_by_annotation=suppressed,
+                            confidence_delta=(
+                                weights.route_connected
+                                if re_entry.source_type == "connected_route"
+                                else (
+                                    weights.route_static
+                                    if re_entry.source_type in ("gaia_static_route", "clish_route")
+                                    else weights.route_dynamic
+                                )
+                            ),
+                            message=(
+                                f"Prefix {re_entry.cidr_or_range} on {re_entry.interface_name!r} of {gw_asset.name!r} "
+                                f"was resolved via live routing ({re_entry.source_type})."
+                            ),
+                        )
+                    )
+                else:
+                    discrepancies.append(
+                        TopologyDiscrepancy(
+                            mgmt_name=gw_asset.mgmt_name,
+                            domain_name=gw_asset.domain_name,
+                            gateway_id=gw_asset.id,
+                            gateway_asset_id=gw_asset.asset_id,
+                            gateway_uid=gw_asset.uid,
+                            gateway_name=gw_asset.name,
+                            gateway_type=gw_asset.type,
+                            discrepancy_type="missing_in_topology",
+                            severity="info" if suppressed else "warning",
+                            interface_name=re_entry.interface_name,
+                            cidr_or_range=re_entry.cidr_or_range,
+                            static_sources=[s.source_type for s in same_if_static[:1]],
+                            route_sources=[re_entry.source_type],
+                            annotation_disposition=disp,
+                            suppressed_by_annotation=suppressed,
+                            confidence_delta=0.0,
+                            message=(
+                                f"Live route {re_entry.cidr_or_range} ({re_entry.source_type}) egresses via "
+                                f"{re_entry.interface_name!r} on {gw_asset.name!r}, but is missing from "
+                                "SmartConsole static topology."
+                            ),
+                        )
+                    )
+
+        return TopologyReconciliationReport(
+            mgmt_name=mgmt_name,
+            domain_name=domain,
+            gateway_count=len(policy_gateways),
+            diagnostics=diagnostics,
+            discrepancies=discrepancies,
+        )
+
+    # ------------------------------------------------------------------
+    # Evidence Delta Confidence Scoring & IPAM Export
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _build_effective_gateway_entries(
+        cls,
+        gw_entries: Sequence[GatewayTopologyEntry],
+        gw_annotations: Sequence[TopologyAnnotation],
+        *,
+        gateway_asset: Asset | None = None,
+    ) -> tuple[
+        list[GatewayTopologyEntry],
+        bool,
+        dict[tuple[str, str], TopologyAnnotation],
+        dict[str, TopologyAnnotation],
+        bool | None,
+        dict[str, bool],
+    ]:
+        """Filter and augment `gw_entries` using persistent `TopologyAnnotation` records.
+
+        Returns `(effective_entries, has_live_routes, ann_by_if_cidr, ann_by_if_wildcard, gw_trust_static, if_trust_static)`:
+        - `disposition="ignore"` drops matching entries completely.
+        - `disposition="manual"` synthesizes a `source_type="manual"` `GatewayTopologyEntry` if not already present.
+        - `trust_static_topology=False` is preserved in `(gw_trust_static, if_trust_static)` so `_score_interface_group`
+          skips positive `topology_specific_*` deltas and suppresses the `-0.10` static-conflict penalty on live routes
+          without discarding connected-subnet evidence.
+        """
+        has_live_routes = any(e.source_type in LIVE_ROUTE_SOURCES for e in gw_entries)
+        gw_trust_static, if_trust_static, ann_by_if_cidr, ann_by_if_wildcard = cls._index_annotations_for_gateway(
+            gw_annotations
+        )
+
+        first = gw_entries[0] if gw_entries else None
+        filtered: list[GatewayTopologyEntry] = []
+
+        for entry in gw_entries:
+            ann = ann_by_if_cidr.get((entry.interface_name, entry.cidr_or_range)) or ann_by_if_cidr.get(
+                ("*", entry.cidr_or_range)
+            )
+            if ann is not None and ann.disposition == "ignore":
+                continue
+
+            filtered.append(entry)
+
+        # Synthesize manual entries from annotations with `disposition="manual"`
+        if first is not None or gateway_asset is not None:
+            mgmt_val = first.mgmt_name if first is not None else gateway_asset.mgmt_name  # type: ignore[union-attr]
+            dom_val = first.domain_name if first is not None else gateway_asset.domain_name  # type: ignore[union-attr]
+            gw_id_val = first.gateway_id if first is not None else gateway_asset.id  # type: ignore[union-attr]
+            gw_aid_val = first.gateway_asset_id if first is not None else gateway_asset.asset_id  # type: ignore[union-attr]
+            gw_uid_val = first.gateway_uid if first is not None else gateway_asset.uid  # type: ignore[union-attr]
+            gw_name_val = first.gateway_name if first is not None else gateway_asset.name  # type: ignore[union-attr]
+            gw_type_val = first.gateway_type if first is not None else gateway_asset.type  # type: ignore[union-attr]
+            inst_pol_val = first.installed_access_policy if first is not None else None
+            pkgs_val = list(first.policy_packages) if first is not None else []
+            existing_if_cidrs = {(e.interface_name, e.cidr_or_range) for e in filtered}
+            for (if_name, cidr_str), ann in sorted(ann_by_if_cidr.items()):
+                if ann.disposition != "manual" or if_name == "*" or cidr_str == "*":
+                    continue
+                if (if_name, cidr_str) in existing_if_cidrs:
+                    continue
+                bounds = cls._parse_cidr_or_range_bounds(cidr_str)
+                if bounds is None:
+                    continue
+                lo_int, hi_int, plen = bounds
+                zone: TopologyZone = ann.topology_zone or ("external" if plen == 0 and lo_int == 0 else "internal")
+                filtered.append(
+                    GatewayTopologyEntry(
+                        mgmt_name=mgmt_val,
+                        domain_name=dom_val,
+                        gateway_id=gw_id_val,
+                        gateway_asset_id=gw_aid_val,
+                        gateway_uid=gw_uid_val,
+                        gateway_name=gw_name_val,
+                        gateway_type=gw_type_val,
+                        interface_name=if_name,
+                        topology_zone=zone,
+                        anti_spoofing_mode="unknown",
+                        source_type="manual",
+                        source_ref=ann.comment or "manual_annotation",
+                        cidr_or_range=cidr_str,
+                        ip_first_int=lo_int,
+                        ip_last_int=hi_int,
+                        prefix_len=plen,
+                        installed_access_policy=inst_pol_val,
+                        policy_packages=pkgs_val,
+                        updated_at=ann.updated_at,
+                    )
+                )
+                existing_if_cidrs.add((if_name, cidr_str))
+
+        return filtered, has_live_routes, ann_by_if_cidr, ann_by_if_wildcard, gw_trust_static, if_trust_static
+
+    @classmethod
+    def _score_interface_group(
+        cls,
+        *,
+        if_name: str,
+        matching_entries: Sequence[GatewayTopologyEntry],
+        all_gw_entries: Sequence[GatewayTopologyEntry],
+        has_live_routes: bool,
+        ann_by_if_cidr: dict[tuple[str, str], TopologyAnnotation],
+        weights: TopologyConfidenceWeights,
+        gw_trust_static: bool | None = None,
+        if_trust_static: dict[str, bool] | None = None,
+        internal_live_entries: Sequence[GatewayTopologyEntry] | None = None,
+        internal_static_entries: Sequence[GatewayTopologyEntry] | None = None,
+    ) -> tuple[GatewayTopologyEntry, float, bool, list[ConfidenceDelta], list[str]]:
+        """Compute the cumulative clamped `[0.0, 1.0]` confidence score and deltas for `matching_entries` on `if_name`."""
+        eff_if_trust_map = if_trust_static or {}
+        if_trust = eff_if_trust_map.get(if_name, gw_trust_static)
+
+        # Pick the primary representative entry (prefer live routes or manual over static, then smallest span)
+        best_entry = min(
+            matching_entries,
+            key=lambda e: (
+                0 if e.source_type in (*LIVE_ROUTE_SOURCES, "manual") else 1,
+                (e.ip_last_int - e.ip_first_int),
+                -e.prefix_len,
+                e.cidr_or_range,
+            ),
+        )
+        src_types = {e.source_type for e in matching_entries}
+        deltas: list[ConfidenceDelta] = []
+        warnings: list[str] = []
+        is_standby = False
+
+        # Find any matching prefix annotation across the matched entries
+        matched_ann: TopologyAnnotation | None = None
+        for e in matching_entries:
+            cand_ann = ann_by_if_cidr.get((if_name, e.cidr_or_range)) or ann_by_if_cidr.get(("*", e.cidr_or_range))
+            if cand_ann is not None:
+                matched_ann = cand_ann
+                break
+
+        # 1. Live Route Evidence Deltas (highest single route delta on this interface)
+        if "connected_route" in src_types:
+            deltas.append(
+                ConfidenceDelta(
+                    code="route_connected",
+                    delta=weights.route_connected,
+                    detail=f"Direct kernel connected route on {if_name}",
+                )
+            )
+        elif "gaia_static_route" in src_types or "clish_route" in src_types or "vs_static_route" in src_types:
+            deltas.append(
+                ConfidenceDelta(
+                    code="route_static",
+                    delta=weights.route_static,
+                    detail=f"Static route on {if_name}",
+                )
+            )
+        elif "bgp_route" in src_types or "ospf_route" in src_types:
+            proto = "bgp_route" if "bgp_route" in src_types else "ospf_route"
+            deltas.append(
+                ConfidenceDelta(
+                    code="route_dynamic",
+                    delta=weights.route_dynamic,
+                    detail=f"Dynamic route ({proto}) on {if_name}",
+                )
+            )
+
+        # 2. Static SmartConsole Topology Evidence Deltas
+        if "interface_connected" in src_types:
+            deltas.append(
+                ConfidenceDelta(
+                    code="topology_connected",
+                    delta=weights.topology_connected,
+                    detail=f"SmartConsole connected subnet on {if_name}",
+                )
+            )
+        elif "interface_specific" in src_types:
+            if if_trust is False:
+                warnings.append(
+                    f"Interface {if_name!r} static topology is marked untrusted (trust_static_topology=False)."
+                )
+            else:
+                spoof_modes = {e.anti_spoofing_mode for e in matching_entries if e.source_type == "interface_specific"}
+                if "detect" in spoof_modes or "off" in spoof_modes:
+                    mode_label = "detect" if "detect" in spoof_modes else "off"
+                    deltas.append(
+                        ConfidenceDelta(
+                            code="topology_specific_detect",
+                            delta=weights.topology_specific_detect,
+                            detail=f"SmartConsole specific group on {if_name} (anti-spoofing={mode_label})",
+                        )
+                    )
+                    warnings.append(f"Interface {if_name!r} uses specific topology with Anti-Spoofing={mode_label!r}.")
+                else:
+                    deltas.append(
+                        ConfidenceDelta(
+                            code="topology_specific_prevent",
+                            delta=weights.topology_specific_prevent,
+                            detail=f"SmartConsole specific group on {if_name} (anti-spoofing=prevent)",
+                        )
+                    )
+
+        # 3. Administrator Annotation Evidence Deltas
+        if "manual" in src_types or (matched_ann is not None and matched_ann.disposition == "manual"):
+            deltas.append(
+                ConfidenceDelta(
+                    code="admin_manual",
+                    delta=weights.admin_manual,
+                    detail=f"Manual administrator topology override on {if_name}",
+                )
+            )
+        elif matched_ann is not None and matched_ann.disposition == "confirmed":
+            deltas.append(
+                ConfidenceDelta(
+                    code="admin_confirmed",
+                    delta=weights.admin_confirmed,
+                    detail=f"Administrator confirmed prefix on {if_name}",
+                )
+            )
+        elif matched_ann is not None and matched_ann.disposition == "standby_dynamic":
+            is_standby = True
+            deltas.append(
+                ConfidenceDelta(
+                    code="admin_standby_dynamic",
+                    delta=weights.admin_standby_dynamic,
+                    detail=f"Administrator marked standby/asymmetric dynamic path on {if_name}",
+                )
+            )
+
+        # 4. Negative Conflict / Anomaly Deltas when live routes exist on this gateway
+        has_live_on_this_if = bool(src_types.intersection(LIVE_ROUTE_SOURCES))
+        if has_live_routes and not is_standby and (matched_ann is None or matched_ann.disposition != "confirmed"):
+            q_lo = best_entry.ip_first_int
+            q_hi = best_entry.ip_last_int
+            live_pool = (
+                internal_live_entries
+                if internal_live_entries is not None
+                else [
+                    e for e in all_gw_entries if e.source_type in LIVE_ROUTE_SOURCES and e.topology_zone == "internal"
+                ]
+            )
+            other_live_routes = [
+                e for e in live_pool if e.interface_name != if_name and e.ip_first_int <= q_lo and q_hi <= e.ip_last_int
+            ]
+            if not has_live_on_this_if and "manual" not in src_types:
+                if other_live_routes:
+                    other_if = other_live_routes[0].interface_name
+                    deltas.append(
+                        ConfidenceDelta(
+                            code="conflict_routed_to_other_interface_static",
+                            delta=weights.conflict_routed_to_other_interface_static,
+                            detail=f"Static topology says {if_name}, but live route points to {other_if}",
+                        )
+                    )
+                    warnings.append(
+                        f"Static topology on {if_name!r} ({best_entry.cidr_or_range}) conflicts with live route on {other_if!r}."
+                    )
+                else:
+                    deltas.append(
+                        ConfidenceDelta(
+                            code="conflict_missing_in_live_routes",
+                            delta=weights.conflict_missing_in_live_routes,
+                            detail=f"Prefix {best_entry.cidr_or_range} on {if_name} is absent from live routes",
+                        )
+                    )
+                    warnings.append(
+                        f"Prefix {best_entry.cidr_or_range} on {if_name!r} is in static topology but missing from live routing table."
+                    )
+            elif has_live_on_this_if:
+                static_pool = (
+                    internal_static_entries
+                    if internal_static_entries is not None
+                    else [
+                        e
+                        for e in all_gw_entries
+                        if e.source_type in ("interface_connected", "interface_specific")
+                        and e.topology_zone == "internal"
+                    ]
+                )
+                other_static_entries = [
+                    e
+                    for e in static_pool
+                    if e.interface_name != if_name
+                    and eff_if_trust_map.get(e.interface_name, gw_trust_static) is not False
+                    and e.ip_first_int <= q_lo
+                    and q_hi <= e.ip_last_int
+                ]
+                if other_static_entries:
+                    static_if = other_static_entries[0].interface_name
+                    deltas.append(
+                        ConfidenceDelta(
+                            code="conflict_routed_to_other_interface_route",
+                            delta=weights.conflict_routed_to_other_interface_route,
+                            detail=f"Live route on {if_name} differs from static topology on {static_if}",
+                        )
+                    )
+                    warnings.append(
+                        f"Live route on {if_name!r} ({best_entry.cidr_or_range}) differs from static topology on {static_if!r}."
+                    )
+
+        # 5. Cluster Member Drift Penalty
+        if any(";drift:" in e.source_ref for e in matching_entries):
+            deltas.append(
+                ConfidenceDelta(
+                    code="conflict_cluster_member_drift",
+                    delta=weights.conflict_cluster_member_drift,
+                    detail=f"Route {best_entry.cidr_or_range} on {if_name} is missing on one or more cluster members",
+                )
+            )
+            warnings.append(f"Cluster member route drift detected on {if_name!r} ({best_entry.cidr_or_range}).")
+
+        raw_score = sum(d.delta for d in deltas)
+        clamped = round(max(0.0, min(1.0, raw_score)), 4)
+        return best_entry, clamped, is_standby, deltas, warnings
+
+    @traced
+    async def export_topology_prefixes(
+        self,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        *,
+        gateways: Sequence[str] | str | None = None,
+        gateway: str | None = None,
+        include_external: bool = False,
+        include_ignored: bool = False,
+        cache_mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> list[ExportedTopologyPrefix]:
+        """Export deduplicated gateway/interface prefixes with confidence scores and IPAM annotations."""
+        eff_gateways = gateways if gateways is not None else gateway
+        span_attrs(mgmt_name=mgmt_name, domain=domain, include_external=include_external, cache_mode=cache_mode)
+        if cache_mode != "cache":
+            await self.refresh_topology(
+                mgmt_name=mgmt_name,
+                domains=[domain] if domain else None,
+                gateways=eff_gateways if cache_mode == "force" else None,
+                include_global=domain == "Global",
+                mode=cache_mode,
+                cache_ttl=cache_ttl,
+            )
+
+        topo_entries = await self._cache.get_gateway_topology(mgmt_name=mgmt_name, domain_name=domain)
+        annotations = await self._cache.get_topology_annotations(mgmt_name=mgmt_name, domain_name=domain)
+        gw_tokens = set(self._normalize_gateway_filter_tokens(eff_gateways))
+
+        entries_by_gw: dict[tuple[str, str, str], list[GatewayTopologyEntry]] = defaultdict(list)
+        for e in topo_entries:
+            if gw_tokens and not (
+                {
+                    e.gateway_uid.lower(),
+                    e.gateway_name.lower(),
+                    e.gateway_id.lower(),
+                    e.gateway_asset_id.lower(),
+                }
+                & gw_tokens
+            ):
+                continue
+            entries_by_gw[(e.mgmt_name, e.domain_name, e.gateway_uid)].append(e)
+
+        anns_by_gw: dict[tuple[str, str, str], list[TopologyAnnotation]] = defaultdict(list)
+        for ann in annotations:
+            anns_by_gw[(ann.mgmt_name, ann.domain_name, ann.gateway_uid)].append(ann)
+
+        weights = self._settings.topology_confidence_weights
+        exported: list[ExportedTopologyPrefix] = []
+
+        for gw_key, raw_gw_entries in sorted(entries_by_gw.items()):
+            gw_anns = anns_by_gw.get(gw_key, [])
+            (
+                eff_entries,
+                has_live,
+                ann_by_if_cidr,
+                ann_by_if_wild,
+                gw_trust_static,
+                if_trust_static,
+            ) = self._build_effective_gateway_entries(
+                raw_gw_entries,
+                gw_anns,
+            )
+            internal_live = [
+                e for e in eff_entries if e.source_type in LIVE_ROUTE_SOURCES and e.topology_zone == "internal"
+            ]
+            internal_static = [
+                e
+                for e in eff_entries
+                if e.source_type in ("interface_connected", "interface_specific") and e.topology_zone == "internal"
+            ]
+            source_pool = raw_gw_entries if include_ignored else eff_entries
+            grouped: dict[tuple[str, str], list[GatewayTopologyEntry]] = defaultdict(list)
+            for e in source_pool:
+                if not include_external and e.topology_zone == "external":
+                    continue
+                grouped[(e.interface_name, e.cidr_or_range)].append(e)
+
+            for (if_name, cidr_str), group in sorted(grouped.items()):
+                best_e, conf, is_standby, deltas, _ = self._score_interface_group(
+                    if_name=if_name,
+                    matching_entries=group,
+                    all_gw_entries=eff_entries,
+                    has_live_routes=has_live,
+                    ann_by_if_cidr=ann_by_if_cidr,
+                    weights=weights,
+                    gw_trust_static=gw_trust_static,
+                    if_trust_static=if_trust_static,
+                    internal_live_entries=internal_live,
+                    internal_static_entries=internal_static,
+                )
+                matched_ann: TopologyAnnotation | None = (
+                    ann_by_if_cidr.get((if_name, cidr_str))
+                    or ann_by_if_cidr.get(("*", cidr_str))
+                    or ann_by_if_wild.get(if_name)
+                )
+                src_types: list[str] = []
+                src_refs: list[str] = []
+                for item in group:
+                    if item.source_type not in src_types:
+                        src_types.append(item.source_type)
+                    if item.source_ref and item.source_ref not in src_refs:
+                        src_refs.append(item.source_ref)
+
+                exported.append(
+                    ExportedTopologyPrefix(
+                        mgmt_name=best_e.mgmt_name,
+                        domain_name=best_e.domain_name,
+                        gateway_id=best_e.gateway_id,
+                        gateway_asset_id=best_e.gateway_asset_id,
+                        gateway_uid=best_e.gateway_uid,
+                        gateway_name=best_e.gateway_name,
+                        gateway_type=best_e.gateway_type,
+                        interface_name=if_name,
+                        interface_ipv4=best_e.interface_ipv4,
+                        interface_mask_length=best_e.interface_mask_length,
+                        cidr_or_range=cidr_str,
+                        prefix_len=best_e.prefix_len,
+                        topology_zone=best_e.topology_zone,
+                        leads_to_dmz=any(x.leads_to_dmz for x in group),
+                        source_types=src_types,
+                        source_refs=src_refs,
+                        anti_spoofing_mode=next(
+                            (x.anti_spoofing_mode for x in group if x.anti_spoofing_mode != "unknown"),
+                            best_e.anti_spoofing_mode,
+                        ),
+                        disposition=matched_ann.disposition if matched_ann else None,
+                        is_standby_path=is_standby,
+                        confidence=conf,
+                        confidence_factors=deltas,
+                        zone=matched_ann.zone if matched_ann else "",
+                        site=matched_ann.site if matched_ann else "",
+                        comment=matched_ann.comment if matched_ann else "",
+                        custom_metadata=dict(matched_ann.custom_metadata) if matched_ann else {},
+                    )
+                )
+
+        return exported
 
     def _resolve_endpoint_intervals(
         self,
@@ -1447,10 +3221,21 @@ class TopologyService:
         endpoint: _ResolvedEndpointInterval,
         gw_entries: Sequence[GatewayTopologyEntry],
         external_if_names: set[str],
+        *,
+        has_live_routes: bool = False,
+        ann_by_if_cidr: dict[tuple[str, str], TopologyAnnotation] | None = None,
+        weights: TopologyConfidenceWeights | None = None,
+        gw_trust_static: bool | None = None,
+        if_trust_static: dict[str, bool] | None = None,
+        internal_live_entries: Sequence[GatewayTopologyEntry] | None = None,
+        internal_static_entries: Sequence[GatewayTopologyEntry] | None = None,
     ) -> list[_InterfaceMatch]:
-        """Resolve `endpoint` to all matching gateway interfaces (longest-prefix internal match when contained, or all overlapping internal + external fallback when partially covered)."""
+        """Resolve `endpoint` to matching gateway interfaces with Evidence Delta Confidence Scoring."""
         q_lo = endpoint.ip_first_int
         q_hi = endpoint.ip_last_int
+        eff_anns = ann_by_if_cidr or {}
+        eff_weights = weights or TopologyConfidenceWeights()
+        eff_if_trust_map = if_trust_static or {}
 
         overlapping_internal: list[GatewayTopologyEntry] = []
         containing_internal: list[GatewayTopologyEntry] = []
@@ -1463,44 +3248,77 @@ class TopologyService:
                     containing_internal.append(entry)
 
         # Case 1: The query interval is completely contained inside at least one internal subnet/range.
-        # Select the single most specific (longest-prefix / smallest-span) containing internal entry.
         if containing_internal:
-            best = min(
-                containing_internal,
-                key=lambda e: (
-                    1 if e.interface_name in external_if_names else 0,
-                    (e.ip_last_int - e.ip_first_int),
-                    -e.prefix_len,
-                    e.interface_name,
-                    e.cidr_or_range,
-                ),
-            )
-            return [
-                _InterfaceMatch(
-                    interface_name=best.interface_name,
-                    topology_zone="internal",
-                    matched_cidr=best.cidr_or_range,
-                    source_type=best.source_type,
-                    source_ref=best.source_ref,
+            by_if_containing: dict[str, list[GatewayTopologyEntry]] = defaultdict(list)
+            for entry in containing_internal:
+                by_if_containing[entry.interface_name].append(entry)
+
+            scored_candidates: list[tuple[tuple[int, int, int, int, float, str, str], _InterfaceMatch]] = []
+            for if_name, if_entries in by_if_containing.items():
+                best_e, conf, is_standby, deltas, warns = cls._score_interface_group(
+                    if_name=if_name,
+                    matching_entries=if_entries,
+                    all_gw_entries=gw_entries,
+                    has_live_routes=has_live_routes,
+                    ann_by_if_cidr=eff_anns,
+                    weights=eff_weights,
+                    gw_trust_static=gw_trust_static,
+                    if_trust_static=eff_if_trust_map,
+                    internal_live_entries=internal_live_entries,
+                    internal_static_entries=internal_static_entries,
                 )
-            ]
+                best_span = best_e.ip_last_int - best_e.ip_first_int
+                best_plen = best_e.prefix_len
+                has_live_or_manual = best_e.source_type in (*LIVE_ROUTE_SOURCES, "manual")
+                # Longest-Prefix Match (best_span, -best_plen) takes precedence over confidence (-conf)
+                # within the same source tier so a wider /8 summary never overrides a more specific /16 or /24 route.
+                sort_key = (
+                    0 if has_live_or_manual else 1,
+                    1 if if_name in external_if_names else 0,
+                    best_span,
+                    -best_plen,
+                    -conf,
+                    if_name,
+                    best_e.cidr_or_range,
+                )
+                scored_candidates.append(
+                    (
+                        sort_key,
+                        _InterfaceMatch(
+                            interface_name=if_name,
+                            topology_zone="internal",
+                            matched_cidr=best_e.cidr_or_range,
+                            source_type=best_e.source_type,
+                            source_ref=best_e.source_ref,
+                            confidence=conf,
+                            is_standby_path=is_standby,
+                            confidence_factors=tuple(deltas),
+                            warnings=tuple(warns),
+                        ),
+                    )
+                )
+
+            scored_candidates.sort(key=lambda item: item[0])
+            return [scored_candidates[0][1]]
 
         # Case 2: The query interval is broader than any single internal entry (e.g. `10.0.0.0/8` or `0.0.0.0/0`).
-        # Collect the best overlapping entry per internal interface, and also include the external fallback
-        # if the union of overlapping internal intervals does not completely cover `[q_lo, q_hi]`.
         matches: list[_InterfaceMatch] = []
         if overlapping_internal:
             by_if: dict[str, list[GatewayTopologyEntry]] = defaultdict(list)
             for entry in overlapping_internal:
                 by_if[entry.interface_name].append(entry)
             for if_name in sorted(by_if):
-                best_if_entry = min(
-                    by_if[if_name],
-                    key=lambda e: (
-                        (e.ip_last_int - e.ip_first_int),
-                        -e.prefix_len,
-                        e.cidr_or_range,
-                    ),
+                best_if_entry, conf, is_standby, deltas, warns = cls._score_interface_group(
+                    if_name=if_name,
+                    matching_entries=by_if[if_name],
+                    all_gw_entries=gw_entries,
+                    has_live_routes=has_live_routes,
+                    ann_by_if_cidr=eff_anns,
+                    weights=eff_weights,
+                    gw_trust_static=gw_trust_static,
+                    if_trust_static=eff_if_trust_map,
+                    internal_live_entries=internal_live_entries,
+                    internal_static_entries=internal_static_entries,
                 )
                 matches.append(
                     _InterfaceMatch(
@@ -1509,6 +3327,10 @@ class TopologyService:
                         matched_cidr=best_if_entry.cidr_or_range,
                         source_type=best_if_entry.source_type,
                         source_ref=best_if_entry.source_ref,
+                        confidence=conf,
+                        is_standby_path=is_standby,
+                        confidence_factors=tuple(deltas),
+                        warnings=tuple(warns),
                     )
                 )
 
@@ -1520,15 +3342,55 @@ class TopologyService:
         if not fully_covered_internally:
             external_entries = [e for e in gw_entries if e.topology_zone == "external"]
             if external_entries:
-                ext = external_entries[0]
+                # Prefer live default route (`0.0.0.0/0`) over static external interface if both exist
+                default_live_ext = [
+                    e
+                    for e in external_entries
+                    if e.source_type in LIVE_ROUTE_SOURCES and e.prefix_len == 0 and e.ip_first_int == 0
+                ]
+                static_ext = [e for e in external_entries if e.source_type in STATIC_TOPOLOGY_SOURCES]
+                ext = (
+                    default_live_ext[0] if default_live_ext else (static_ext[0] if static_ext else external_entries[0])
+                )
                 if not any(m.interface_name == ext.interface_name for m in matches):
+                    ext_deltas: list[ConfidenceDelta] = []
+                    ext_warns: list[str] = []
+                    if any(e.interface_name == ext.interface_name for e in default_live_ext):
+                        ext_deltas.append(
+                            ConfidenceDelta(
+                                code="route_static",
+                                delta=eff_weights.route_static,
+                                detail=f"Live default route 0.0.0.0/0 on {ext.interface_name}",
+                            )
+                        )
+                    if any(e.interface_name == ext.interface_name for e in static_ext):
+                        ext_deltas.append(
+                            ConfidenceDelta(
+                                code="topology_external_fallback",
+                                delta=eff_weights.topology_external_fallback,
+                                detail=f"External topology fallback on {ext.interface_name}",
+                            )
+                        )
+                    if not ext_deltas:
+                        ext_deltas.append(
+                            ConfidenceDelta(
+                                code="topology_external_fallback",
+                                delta=eff_weights.topology_external_fallback,
+                                detail=f"External fallback on {ext.interface_name}",
+                            )
+                        )
+                    ext_conf = round(max(0.0, min(1.0, sum(d.delta for d in ext_deltas))), 4)
                     matches.append(
                         _InterfaceMatch(
                             interface_name=ext.interface_name,
                             topology_zone="external",
-                            matched_cidr=ext.cidr_or_range or "0.0.0.0/0",
+                            matched_cidr="0.0.0.0/0",
                             source_type="external_fallback",
                             source_ref=ext.source_ref or ext.source_type,
+                            confidence=ext_conf,
+                            is_standby_path=False,
+                            confidence_factors=tuple(ext_deltas),
+                            warnings=tuple(ext_warns),
                         )
                     )
 
@@ -1632,6 +3494,8 @@ class TopologyService:
         *,
         mgmt_name: str | None = None,
         domain: str | None = None,
+        min_confidence: float = 0.0,
+        include_standby: bool = True,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
     ) -> list[AffectedGatewayCandidate]:
@@ -1656,6 +3520,8 @@ class TopologyService:
             domain=domain,
             source_count=len(src_list),
             destination_count=len(dst_list),
+            min_confidence=min_confidence,
+            include_standby=include_standby,
             cache_mode=cache_mode,
         )
 
@@ -1669,6 +3535,10 @@ class TopologyService:
             )
 
         topo_entries = await self._cache.get_gateway_topology(
+            mgmt_name=mgmt_name,
+            domain_name=domain,
+        )
+        annotations = await self._cache.get_topology_annotations(
             mgmt_name=mgmt_name,
             domain_name=domain,
         )
@@ -1696,16 +3566,28 @@ class TopologyService:
                 computed.extend(dom_entries)
             topo_entries = computed
 
-        if not topo_entries:
+        if not topo_entries and not annotations:
             return []
 
         assets_by_id: dict[str, Asset] = {a.id: a for a in all_assets}
+        assets_by_uid: dict[tuple[str, str, str], Asset] = {(a.mgmt_name, a.domain_name, a.uid): a for a in all_assets}
         assets_by_dom: dict[tuple[str, str], list[Asset]] = defaultdict(list)
         for a in all_assets:
             assets_by_dom[(a.mgmt_name, a.domain_name)].append(a)
         entries_by_gw_id: dict[str, list[GatewayTopologyEntry]] = defaultdict(list)
         for entry in topo_entries:
             entries_by_gw_id[entry.gateway_id].append(entry)
+
+        anns_by_gw_id: dict[str, list[TopologyAnnotation]] = defaultdict(list)
+        for ann in annotations:
+            ann_gw_id = f"{ann.mgmt_name}:{ann.domain_name}:{ann.gateway_uid}"
+            matched_asset = assets_by_uid.get((ann.mgmt_name, ann.domain_name, ann.gateway_uid))
+            if matched_asset is not None:
+                ann_gw_id = matched_asset.id
+            anns_by_gw_id[ann_gw_id].append(ann)
+
+        # Include gateways that have manual annotations even if they had no static/live topology rows
+        all_gw_ids = list(dict.fromkeys([*entries_by_gw_id.keys(), *anns_by_gw_id.keys()]))
 
         # Pre-group objects by (mgmt_name, domain_name) and cache resolved endpoint intervals per domain
         objs_by_mgmt_dom: dict[tuple[str, str], list[CPObject]] = defaultdict(list)
@@ -1717,9 +3599,37 @@ class TopologyService:
             tuple[list[_ResolvedEndpointInterval], list[_ResolvedEndpointInterval]],
         ] = {}
 
+        weights = self._settings.topology_confidence_weights
         candidates: list[AffectedGatewayCandidate] = []
 
-        for gw_id, gw_entries in entries_by_gw_id.items():
+        for gw_id in all_gw_ids:
+            raw_gw_entries = entries_by_gw_id.get(gw_id, [])
+            gw_anns = anns_by_gw_id.get(gw_id, [])
+            gw_asset = assets_by_id.get(gw_id)
+            (
+                gw_entries,
+                has_live_routes,
+                ann_by_if_cidr,
+                _,
+                gw_trust_static,
+                if_trust_static,
+            ) = self._build_effective_gateway_entries(
+                raw_gw_entries,
+                gw_anns,
+                gateway_asset=gw_asset,
+            )
+            if not gw_entries:
+                continue
+
+            internal_live = [
+                e for e in gw_entries if e.source_type in LIVE_ROUTE_SOURCES and e.topology_zone == "internal"
+            ]
+            internal_static = [
+                e
+                for e in gw_entries
+                if e.source_type in ("interface_connected", "interface_specific") and e.topology_zone == "internal"
+            ]
+
             first_entry = gw_entries[0]
             gw_mgmt = first_entry.mgmt_name
             gw_dom = first_entry.domain_name
@@ -1754,11 +3664,33 @@ class TopologyService:
             match_types_seen: list[str] = []
 
             for src_ep in src_intervals:
-                src_matches = self._locate_intervals_on_gateway(src_ep, gw_entries, external_if_names)
+                src_matches = self._locate_intervals_on_gateway(
+                    src_ep,
+                    gw_entries,
+                    external_if_names,
+                    has_live_routes=has_live_routes,
+                    ann_by_if_cidr=ann_by_if_cidr,
+                    weights=weights,
+                    gw_trust_static=gw_trust_static,
+                    if_trust_static=if_trust_static,
+                    internal_live_entries=internal_live,
+                    internal_static_entries=internal_static,
+                )
                 if not src_matches:
                     continue
                 for dst_ep in dst_intervals:
-                    dst_matches = self._locate_intervals_on_gateway(dst_ep, gw_entries, external_if_names)
+                    dst_matches = self._locate_intervals_on_gateway(
+                        dst_ep,
+                        gw_entries,
+                        external_if_names,
+                        has_live_routes=has_live_routes,
+                        ann_by_if_cidr=ann_by_if_cidr,
+                        weights=weights,
+                        gw_trust_static=gw_trust_static,
+                        if_trust_static=if_trust_static,
+                        internal_live_entries=internal_live,
+                        internal_static_entries=internal_static,
+                    )
                     if not dst_matches:
                         continue
 
@@ -1770,6 +3702,13 @@ class TopologyService:
                             if src_match.interface_name == dst_match.interface_name:
                                 continue
                             if src_match.topology_zone == "external" and dst_match.topology_zone == "external":
+                                continue
+
+                            flow_conf = round(min(src_match.confidence, dst_match.confidence), 4)
+                            flow_standby = src_match.is_standby_path or dst_match.is_standby_path
+                            if not include_standby and flow_standby:
+                                continue
+                            if flow_conf < min_confidence:
                                 continue
 
                             if src_match.topology_zone == "internal" and dst_match.topology_zone == "internal":
@@ -1794,6 +3733,13 @@ class TopologyService:
                             if m_type not in match_types_seen:
                                 match_types_seen.append(m_type)
 
+                            flow_factors: list[ConfidenceDelta] = []
+                            for f_delta in (*src_match.confidence_factors, *dst_match.confidence_factors):
+                                if f_delta not in flow_factors:
+                                    flow_factors.append(f_delta)
+
+                            flow_warns = list(dict.fromkeys([*src_match.warnings, *dst_match.warnings]))
+
                             matched_flows.append(
                                 TrafficFlowMatch(
                                     source_query=src_ep.query_raw,
@@ -1811,6 +3757,12 @@ class TopologyService:
                                     src_source_ref=src_match.source_ref,
                                     dst_source_ref=dst_match.source_ref,
                                     match_type=m_type,
+                                    src_confidence=src_match.confidence,
+                                    dst_confidence=dst_match.confidence,
+                                    confidence=flow_conf,
+                                    is_standby_path=flow_standby,
+                                    confidence_factors=flow_factors,
+                                    warnings=flow_warns,
                                 )
                             )
 
@@ -1822,7 +3774,18 @@ class TopologyService:
             matched_sources = [s for s in dict.fromkeys(src_list) if s in matched_src_set]
             matched_destinations = [d for d in dict.fromkeys(dst_list) if d in matched_dst_set]
 
-            gw_asset = assets_by_id.get(gw_id)
+            gw_conf = round(max(f.confidence for f in matched_flows), 4)
+            gw_standby = all(f.is_standby_path for f in matched_flows)
+            gw_factors: list[ConfidenceDelta] = []
+            gw_warns: list[str] = []
+            for f in matched_flows:
+                for fd in f.confidence_factors:
+                    if fd not in gw_factors:
+                        gw_factors.append(fd)
+                for fw in f.warnings:
+                    if fw not in gw_warns:
+                        gw_warns.append(fw)
+
             installed_pol, pkg_names, layer_names = await self._resolve_gateway_policy_metadata(
                 gw_mgmt,
                 gw_dom,
@@ -1851,12 +3814,18 @@ class TopologyService:
                     matched_sources=matched_sources,
                     matched_destinations=matched_destinations,
                     matched_flows=matched_flows,
+                    confidence=gw_conf,
+                    is_standby_path=gw_standby,
+                    confidence_factors=gw_factors,
+                    warnings=gw_warns,
                 )
             )
 
         candidates.sort(
             key=lambda c: (
                 0 if "internal_to_internal" in c.match_types else 1,
+                1 if c.is_standby_path else 0,
+                -c.confidence,
                 -len(c.matched_flows),
                 c.mgmt_name,
                 c.domain_name,

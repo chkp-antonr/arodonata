@@ -578,6 +578,7 @@ class GatewayTopologyRecord(SQLModel, table=True):
     interface_mask_length: int | None = Field(default=None)
     topology_zone: str = Field(default="internal", index=True)
     leads_to_dmz: bool = Field(default=False)
+    anti_spoofing_mode: str = Field(default="unknown")
     source_type: str = Field(default="interface_connected", index=True)
     source_ref: str = Field(default="")
     cidr_or_range: str = Field(default="")
@@ -588,6 +589,34 @@ class GatewayTopologyRecord(SQLModel, table=True):
         sa_column=Column(BigInteger, nullable=False, index=True),
     )
     prefix_len: int = Field(default=32)
+    updated_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=Column(DateTime(timezone=False), nullable=False),
+    )
+
+
+class TopologyAnnotationRecord(SQLModel, table=True):
+    """Persistent administrator override, standby route marker, or IPAM metadata in `arodonata_topology_annotations`."""
+
+    __tablename__ = "arodonata_topology_annotations"
+
+    id: str = Field(primary_key=True)
+    mgmt_name: str = Field(index=True)
+    domain_name: str = Field(index=True)
+    gateway_uid: str = Field(index=True)
+    gateway_name: str = Field(default="", index=True)
+    interface_name: str = Field(default="*", index=True)
+    cidr_or_range: str = Field(default="*", index=True)
+    trust_static_topology: bool | None = Field(default=None)
+    disposition: str | None = Field(default=None, index=True)
+    topology_zone: str | None = Field(default=None)
+    zone: str = Field(default="")
+    site: str = Field(default="")
+    comment: str = Field(default="")
+    custom_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSON, nullable=False),
+    )
     updated_at: datetime = Field(
         default_factory=utc_now,
         sa_column=Column(DateTime(timezone=False), nullable=False),
@@ -612,5 +641,6 @@ ARODONATA_TABLE_NAMES: frozenset[str] = frozenset(
         HttpsRuleRecord.__tablename__,
         ThreatRuleRecord.__tablename__,
         GatewayTopologyRecord.__tablename__,
+        TopologyAnnotationRecord.__tablename__,
     }
 )

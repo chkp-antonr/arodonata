@@ -1,11 +1,11 @@
-"""Hexagonal architectural ports (`ApiPort`, `CachePort`, `LockPort`, `AuthProvider`).
+"""Hexagonal architectural ports (`ApiPort`, `CachePort`, `LockPort`, `AuthProvider`, `GatewayCliPort`).
 
 Pure typing protocols with zero transport or ORM dependencies.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol, runtime_checkable
 
@@ -16,7 +16,12 @@ from arodonata.core.models.domains import DomainInfo, DomainSyncState, SIDCacheE
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import DomainRulebaseSnapshot
 from arodonata.core.models.services import CPService
-from arodonata.core.models.topology import GatewayTopologyEntry
+from arodonata.core.models.topology import (
+    GatewayCliResult,
+    GatewayCliTarget,
+    GatewayTopologyEntry,
+    TopologyAnnotation,
+)
 
 
 @runtime_checkable
@@ -41,6 +46,24 @@ class AuthProvider(Protocol):
     ) -> None:
         """Notify provider that `auth` was rejected with `InvalidCredentialsError`."""
         ...
+
+
+@runtime_checkable
+class GatewayCliPort(Protocol):
+    """Protocol for executing CLI scripts/commands on Check Point gateways (e.g., via SSH in bash/expert mode)."""
+
+    async def execute_command(
+        self,
+        target: GatewayCliTarget,
+        command: str,
+        *,
+        timeout: float = 30.0,
+    ) -> GatewayCliResult | str:
+        """Execute `command` on `target` and return `GatewayCliResult` or raw stdout string."""
+        ...
+
+
+GatewayCliCallable = Callable[[GatewayCliTarget, str], Awaitable[GatewayCliResult | str]]
 
 
 @runtime_checkable
@@ -316,9 +339,12 @@ class CachePort(Protocol):
         domain_name: str,
         entries: Sequence[GatewayTopologyEntry],
         *,
+        gateway_uids: Sequence[str] | None = None,
+        source_types: Sequence[str] | None = None,
+        active_gateway_uids: Sequence[str] | None = None,
         sync_states: Sequence[DomainSyncState] | None = None,
     ) -> int:
-        """Atomically replace all cached gateway topology entries for `(mgmt_name, domain_name)`."""
+        """Atomically replace cached gateway topology entries for `(mgmt_name, domain_name)` (optionally scoped by `gateway_uids` and `source_types`)."""
         ...
 
     async def upsert_gateway_topology(
@@ -328,6 +354,31 @@ class CachePort(Protocol):
         sync_states: Sequence[DomainSyncState] | None = None,
     ) -> int:
         """Insert or update `GatewayTopologyEntry` rows in `arodonata_gateway_topology`."""
+        ...
+
+    async def get_topology_annotations(
+        self,
+        mgmt_name: str | None = None,
+        domain_name: str | None = None,
+        *,
+        gateway_uids: Sequence[str] | None = None,
+        interface_name: str | None = None,
+    ) -> list[TopologyAnnotation]:
+        """Query persistent administrator topology annotations from `arodonata_topology_annotations`."""
+        ...
+
+    async def upsert_topology_annotations(
+        self,
+        annotations: Sequence[TopologyAnnotation],
+    ) -> int:
+        """Insert or update `TopologyAnnotation` rows in `arodonata_topology_annotations`."""
+        ...
+
+    async def delete_topology_annotations(
+        self,
+        annotation_ids: Sequence[str],
+    ) -> int:
+        """Delete `TopologyAnnotation` rows matching `annotation_ids`."""
         ...
 
     async def replace_domain_rulebase(
@@ -413,5 +464,7 @@ __all__ = [
     "ApiPort",
     "AuthProvider",
     "CachePort",
+    "GatewayCliCallable",
+    "GatewayCliPort",
     "LockPort",
 ]
