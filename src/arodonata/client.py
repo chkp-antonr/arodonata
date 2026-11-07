@@ -72,11 +72,17 @@ from arodonata.core.models.rulebase import (
 from arodonata.core.models.services import CPService
 from arodonata.core.models.topology import (
     AffectedGatewayCandidate,
+    ExportedTopologyPrefix,
     GatewayTopologyEntry,
+    RouteCollectionOutcome,
+    TopologyAnnotation,
+    TopologyDiagnostic,
+    TopologyDiagnosticSeverity,
+    TopologyReconciliationReport,
     TopologySourceType,
     TopologyZone,
 )
-from arodonata.core.ports import ApiPort, AuthProvider, CachePort, LockPort
+from arodonata.core.ports import ApiPort, AuthProvider, CachePort, GatewayCliCallable, GatewayCliPort, LockPort
 from arodonata.core.services import (
     AssetRefreshService,
     ClusterRelationshipManager,
@@ -141,6 +147,7 @@ class ArodonataClient:
         domain_tracker: DomainListRefreshTracker | None = None,
         cluster_manager: ClusterRelationshipManager | None = None,
         vsx_manager: VSXRelationshipManager | None = None,
+        gateway_cli: GatewayCliPort | GatewayCliCallable | None = None,
         monotonic_fn: Callable[[], float] = time.monotonic,
         now_fn: Callable[[], datetime] = utc_now,
         sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -240,6 +247,7 @@ class ArodonataClient:
             coordinator=self._sync_coordinator,
             asset_service=self._asset_service,
             object_service=self._object_service,
+            gateway_cli=gateway_cli,
             now_fn=now_fn,
         )
         self._rulebase_refresh = RulebaseRefreshService(
@@ -344,6 +352,10 @@ class ArodonataClient:
     def topology_service(self) -> TopologyService:
         """Core `TopologyService`."""
         return self._topology_service
+
+    def set_gateway_cli(self, gateway_cli: GatewayCliPort | GatewayCliCallable | None) -> None:
+        """Register or replace the optional SSH/CLI callback or `GatewayCliPort` adapter."""
+        self._topology_service.set_gateway_cli(gateway_cli)
 
     @property
     def rulebase_refresh(self) -> RulebaseRefreshService:
@@ -915,16 +927,20 @@ class ArodonataClient:
         *,
         mgmt_name: str | None = None,
         domains: Sequence[str] | str | None = None,
+        gateways: Sequence[str] | str | None = None,
+        collect_routes: bool = False,
         include_global: bool = False,
         mode: CacheMode = "smart",
         cache_ttl: float | None = None,
     ) -> RefreshOutcome:
-        """Synchronize gateway interface topology across target domains and return `RefreshOutcome`."""
+        """Synchronize gateway interface topology across target domains (or specific `gateways`) and return `RefreshOutcome`."""
         if not self._db.is_initialized:
             await self._db.initialize()
         return await self._topology_service.refresh_topology(
             mgmt_name=mgmt_name,
             domains=domains,
+            gateways=gateways,
+            collect_routes=collect_routes,
             include_global=include_global,
             mode=mode,
             cache_ttl=cache_ttl,
@@ -935,6 +951,8 @@ class ArodonataClient:
         *,
         mgmt_name: str | None = None,
         domains: Sequence[str] | str | None = None,
+        gateways: Sequence[str] | str | None = None,
+        collect_routes: bool = False,
         include_global: bool = False,
         mode: CacheMode = "smart",
         cache_ttl: float | None = None,
@@ -945,6 +963,8 @@ class ArodonataClient:
         async for ev in self._topology_service.stream_refresh_topology(
             mgmt_name=mgmt_name,
             domains=domains,
+            gateways=gateways,
+            collect_routes=collect_routes,
             include_global=include_global,
             mode=mode,
             cache_ttl=cache_ttl,
@@ -1033,6 +1053,8 @@ class ArodonataClient:
         *,
         mgmt_name: str | None = None,
         domain: str | None = None,
+        min_confidence: float = 0.0,
+        include_standby: bool = True,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
     ) -> list[AffectedGatewayCandidate]:
@@ -1044,6 +1066,166 @@ class ArodonataClient:
             destinations,
             mgmt_name=mgmt_name,
             domain=domain,
+            min_confidence=min_confidence,
+            include_standby=include_standby,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+
+    @traced
+    async def collect_gateway_routes(
+        self,
+        *,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        domains: Sequence[str] | str | None = None,
+        include_global: bool = False,
+        gateways: Sequence[str] | str | None = None,
+        gateway_cli: GatewayCliPort | GatewayCliCallable | None = None,
+        fallback_to_cprid: bool = True,
+        timeout: float = 45.0,
+        concurrency: int = 8,
+    ) -> RouteCollectionOutcome:
+        """Collect live OS/Clish routing tables from gateways via SSH (`GatewayCliPort`) or `cprid` `run-script` fallback."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._topology_service.collect_gateway_routes(
+            mgmt_name=mgmt_name,
+            domain=domain,
+            domains=domains,
+            include_global=include_global,
+            gateways=gateways,
+            gateway_cli=gateway_cli,
+            fallback_to_cprid=fallback_to_cprid,
+            timeout=timeout,
+            concurrency=concurrency,
+        )
+
+    @traced
+    async def get_topology_diagnostics(
+        self,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        *,
+        gateways: Sequence[str] | str | None = None,
+        gateway: str | None = None,
+        min_severity: TopologyDiagnosticSeverity = "info",
+        cache_mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> list[TopologyDiagnostic]:
+        """Return static topology health diagnostics (`TopologyDiagnostic`) across policy-enforcing gateways."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._topology_service.get_topology_diagnostics(
+            mgmt_name=mgmt_name,
+            domain=domain,
+            gateways=gateways,
+            gateway=gateway,
+            min_severity=min_severity,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+
+    @traced
+    async def reconcile_gateway_topology(
+        self,
+        *,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        gateways: Sequence[str] | str | None = None,
+        collect_routes: bool = False,
+        collect_live_routes: bool = False,
+        gateway_cli: GatewayCliPort | GatewayCliCallable | None = None,
+        fallback_to_cprid: bool = True,
+        cache_mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> TopologyReconciliationReport:
+        """Reconcile SmartConsole static topology against cached/collected live routes and administrator annotations."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._topology_service.reconcile_gateway_topology(
+            mgmt_name=mgmt_name,
+            domain=domain,
+            gateways=gateways,
+            collect_routes=collect_routes,
+            collect_live_routes=collect_live_routes,
+            gateway_cli=gateway_cli,
+            fallback_to_cprid=fallback_to_cprid,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+
+    @traced
+    async def get_topology_annotations(
+        self,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        *,
+        gateway: str | None = None,
+        interface_name: str | None = None,
+    ) -> list[TopologyAnnotation]:
+        """Return persistent administrator `TopologyAnnotation` records."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._topology_service.get_topology_annotations(
+            mgmt_name=mgmt_name,
+            domain=domain,
+            gateway=gateway,
+            interface_name=interface_name,
+        )
+
+    @traced
+    async def upsert_topology_annotations(
+        self,
+        annotations: Sequence[TopologyAnnotation | dict[str, Any]] | TopologyAnnotation | dict[str, Any],
+    ) -> list[TopologyAnnotation]:
+        """Persist one or more administrator `TopologyAnnotation` overrides and IPAM metadata records."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._topology_service.upsert_topology_annotations(annotations)
+
+    @traced
+    async def delete_topology_annotations(
+        self,
+        annotation_ids: Sequence[str] | str | None = None,
+        *,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        gateway_uid: str | None = None,
+    ) -> int:
+        """Delete persistent administrator `TopologyAnnotation` rows matching the supplied filters."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._topology_service.delete_topology_annotations(
+            annotation_ids=annotation_ids,
+            mgmt_name=mgmt_name,
+            domain=domain,
+            gateway_uid=gateway_uid,
+        )
+
+    @traced
+    async def export_topology_prefixes(
+        self,
+        *,
+        mgmt_name: str | None = None,
+        domain: str | None = None,
+        gateways: Sequence[str] | str | None = None,
+        gateway: str | None = None,
+        include_external: bool = False,
+        include_ignored: bool = False,
+        cache_mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> list[ExportedTopologyPrefix]:
+        """Export consolidated `ExportedTopologyPrefix` records for IPAM comparison."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._topology_service.export_topology_prefixes(
+            mgmt_name=mgmt_name,
+            domain=domain,
+            gateways=gateways,
+            gateway=gateway,
+            include_external=include_external,
+            include_ignored=include_ignored,
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
         )

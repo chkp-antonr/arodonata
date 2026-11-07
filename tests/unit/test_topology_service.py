@@ -1555,3 +1555,949 @@ def test_normalize_interface_leads_to_specific_network_and_cpmi_routes() -> None
     nh_ip, explicit_if = _parse_route_nexthop_and_interface(route_dict)
     assert str(nh_ip) == "10.192.13.4"
     assert explicit_if == "eth0"
+
+
+def test_topology_confidence_weights_and_cli_route_parsers() -> None:
+    """Verify `TopologyConfidenceWeights` overrides, `vsenv` bash script generation, Base64 `cprid` decoding, and `ip route` / `clish` parsers."""
+    import base64
+
+    from arodonata.core.config import TopologyConfidenceWeights
+    from arodonata.core.services.route_collector import (
+        build_route_collection_script,
+        decode_cprid_task_output,
+        parse_combined_cli_routes,
+    )
+
+    weights = TopologyConfidenceWeights(route_connected=0.8, conflict_missing_in_live_routes=-0.4)
+    settings = ArodonataSettings(
+        mgmt_name="mds1",
+        mgmt_ip="10.0.0.1",
+        api_key="secret",
+        topology_confidence_weights=weights,
+    )
+    assert settings.topology_confidence_weights.route_connected == 0.8
+    assert settings.topology_confidence_weights.conflict_missing_in_live_routes == -0.4
+
+    # 1. Non-VSX and VSX script generation
+    non_vs_script = build_route_collection_script(vsid=None)
+    assert "vsenv" not in non_vs_script
+    assert "ip -4 route show" in non_vs_script
+
+    vs_script = build_route_collection_script(vsid=3)
+    assert "vsid=3" in vs_script
+    assert 'vsenv "$vsid" >/dev/null 2>&1 </dev/null' in vs_script
+    assert "CTX%05d" in vs_script
+    assert "_vs_error=context not switched" in vs_script
+
+    # 2. Base64 cprid `run-script` response decoding
+    raw_stdout = (
+        "===ARODONATA_IP_ROUTE_START===\n"
+        "default via 203.0.113.1 dev eth0 proto static\n"
+        "10.10.1.0/24 dev eth1 proto kernel scope link src 10.10.1.1\n"
+        "10.88.0.0/16 via 10.10.1.254 dev eth1 proto bgp metric 20\n"
+        "10.89.0.0/16 via 10.10.1.253 dev eth1 proto ospf\n"
+        "===ARODONATA_IP_ROUTE_END===\n"
+        "===ARODONATA_CLISH_ROUTE_START===\n"
+        "C 10.10.1.0/24 is directly connected, eth1\n"
+        "S 10.77.0.0/16 via 10.10.1.254, eth1, cost 0, age 100\n"
+        "B 10.88.0.0/16 via 10.10.1.254, eth1, cost 20, age 50\n"
+        "O 10.90.0.0/16 via 10.10.1.252, eth1, cost 10, age 30\n"
+        "===ARODONATA_CLISH_ROUTE_END===\n"
+    )
+    b64_msg = base64.b64encode(raw_stdout.encode("utf-8")).decode("ascii")
+    ok, decoded, err = decode_cprid_task_output(
+        {
+            "tasks": [
+                {
+                    "status": "succeeded",
+                    "task-details": [{"statusDescription": " succeeded", "responseMessage": b64_msg}],
+                }
+            ]
+        }
+    )
+    assert ok is True
+    assert err == ""
+    assert decoded.strip() == raw_stdout.strip()
+
+    parsed = parse_combined_cli_routes(decoded)
+    by_cidr = {(r.interface_name, str(r.destination)): r.source_type for r in parsed}
+    assert by_cidr[("eth0", "0.0.0.0/0")] == "gaia_static_route"
+    assert by_cidr[("eth1", "10.10.1.0/24")] == "connected_route"
+    assert by_cidr[("eth1", "10.88.0.0/16")] == "bgp_route"
+    assert by_cidr[("eth1", "10.89.0.0/16")] == "ospf_route"
+    assert by_cidr[("eth1", "10.77.0.0/16")] == "gaia_static_route"
+    assert by_cidr[("eth1", "10.90.0.0/16")] == "ospf_route"
+
+
+@pytest.mark.asyncio
+async def test_topology_diagnostics_internal_only_and_one_arm_and_targeted_gateway_refresh() -> None:
+    """Verify `get_topology_diagnostics` (internal-only = 0 warnings, one-arm = info, detect/not_defined/routing/unresolved/empty/missing_ip_mask = warning) and targeted per-gateway refresh."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = TopologyFakeApi()
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=0)
+    domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    domain_service.tracker.mark_refreshed("mds1")
+    await cache.upsert_domains(
+        [
+            DomainInfo(mgmt_name="mds1", uid="d-corp", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1"),
+        ]
+    )
+    coordinator = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=domain_service,
+    )
+    asset_service = AssetRefreshService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+    object_service = ObjectService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+    topology_service = TopologyService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+        asset_service=asset_service,
+        object_service=object_service,
+    )
+
+    await cache.upsert_objects(
+        [
+            CPObject(
+                uid="grp-empty",
+                name="G_Empty_Group",
+                type="group",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                members=[],
+            ),
+            CPObject(
+                uid="net-valid",
+                name="N_Valid_10_55",
+                type="network",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                subnet4="10.55.0.0",
+                mask_length4=24,
+            ),
+        ]
+    )
+
+    await cache.replace_domain_assets(
+        "mds1",
+        "Corp",
+        [
+            # 1. Pure internal segmentation gateway (NO external interface, well-defined Prevent interfaces) -> ZERO warnings!
+            Asset(
+                uid="gw-internal-clean",
+                name="internal-seg-gw",
+                type="simple-gateway",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                interfaces=[
+                    {
+                        "name": "eth1",
+                        "ipv4-address": "10.1.1.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "internal",
+                        "topology-settings": {
+                            "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+                        },
+                        "anti-spoofing": True,
+                        "anti-spoofing-settings": {"action": "prevent"},
+                    },
+                    {
+                        "name": "eth2",
+                        "ipv4-address": "10.1.2.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "internal",
+                        "topology-settings": {
+                            "ip-address-behind-this-interface": "specific",
+                            "specific-network": "N_Valid_10_55",
+                        },
+                        "anti-spoofing": True,
+                        "anti-spoofing-settings": {"action": "prevent"},
+                    },
+                ],
+            ),
+            # 2. One-arm gateway (single external interface, e.g. Cisco ACI service graph) -> `one_arm_topology` (`info`)
+            Asset(
+                uid="gw-one-arm",
+                name="aci-one-arm-gw",
+                type="simple-gateway",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                interfaces=[
+                    {
+                        "name": "eth0",
+                        "ipv4-address": "172.20.0.10",
+                        "ipv4-mask-length": 24,
+                        "topology": "external",
+                    }
+                ],
+            ),
+            # 3. Gateway with multiple static topology issues
+            Asset(
+                uid="gw-issues",
+                name="issues-gw",
+                type="simple-gateway",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                interfaces=[
+                    {
+                        "name": "eth0",
+                        "ipv4-address": "",
+                        "topology": "internal",
+                        "topology-settings": {
+                            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+                        },
+                    },
+                    {
+                        "name": "eth1",
+                        "ipv4-address": "10.10.1.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "internal",
+                        "topology-settings": {"ip-address-behind-this-interface": "not defined"},
+                    },
+                    {
+                        "name": "eth2",
+                        "ipv4-address": "10.10.2.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "internal",
+                        "topology-settings": {"ip-address-behind-this-interface": "network defined by routing"},
+                    },
+                    {
+                        "name": "eth3",
+                        "ipv4-address": "10.10.3.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "internal",
+                        "topology-settings": {
+                            "ip-address-behind-this-interface": "specific",
+                            "specific-network": "G_Missing_Object",
+                        },
+                    },
+                    {
+                        "name": "eth4",
+                        "ipv4-address": "10.10.4.1",
+                        "ipv4-mask-length": 24,
+                        "topology": "internal",
+                        "topology-settings": {
+                            "ip-address-behind-this-interface": "specific",
+                            "specific-network": "G_Empty_Group",
+                        },
+                        "anti-spoofing": True,
+                        "anti-spoofing-settings": {"action": "detect"},
+                    },
+                ],
+            ),
+            # 4. Gateway with zero interfaces
+            Asset(
+                uid="gw-no-ifs",
+                name="empty-gw",
+                type="simple-gateway",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                interfaces=[],
+            ),
+        ],
+    )
+
+    all_diags = await topology_service.get_topology_diagnostics(
+        mgmt_name="mds1",
+        domain="Corp",
+        cache_mode="cache",
+    )
+    by_gw_codes: dict[str, set[tuple[str | None, str, str]]] = {}
+    for d in all_diags:
+        by_gw_codes.setdefault(d.gateway_name, set()).add((d.interface_name, d.code, d.severity))
+
+    # Internal-only gateway must NOT appear in diagnostics at all
+    assert "internal-seg-gw" not in by_gw_codes
+    # One-arm gateway must have only `one_arm_topology` (`info`)
+    assert by_gw_codes["aci-one-arm-gw"] == {("eth0", "one_arm_topology", "info")}
+    # Empty gateway must have `no_interfaces` (`warning`)
+    assert by_gw_codes["empty-gw"] == {(None, "no_interfaces", "warning")}
+    # `issues-gw` must report all expected interface warnings
+    assert by_gw_codes["issues-gw"] == {
+        ("eth0", "missing_ip_mask", "warning"),
+        ("eth1", "not_defined", "warning"),
+        ("eth2", "routing_defined_without_routes", "warning"),
+        ("eth3", "unresolved_specific", "warning"),
+        ("eth4", "empty_specific", "warning"),
+        ("eth4", "anti_spoofing_detect_or_off", "warning"),
+    }
+
+    # `min_severity="warning"` filters out `one_arm_topology` (`info`)
+    warn_only = await topology_service.get_topology_diagnostics(
+        mgmt_name="mds1",
+        domain="Corp",
+        min_severity="warning",
+        cache_mode="cache",
+    )
+    assert all(d.severity == "warning" for d in warn_only)
+    assert all(d.code != "one_arm_topology" for d in warn_only)
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_live_route_collection_reconciliation_annotations_and_confidence_scoring() -> None:
+    """Verify SSH DI + `cprid` fallback route collection, cluster drift, reconciliation, annotations, IPAM export, and delta confidence scoring via `ArodonataClient`."""
+    import base64
+
+    from arodonata.client import ArodonataClient
+    from arodonata.core.models.topology import (
+        GatewayCliResult,
+        GatewayCliTarget,
+        TopologyAnnotation,
+    )
+
+    api = TopologyFakeApi()
+    # Configure `run-script` fallback on `api` for `branch-gw-01`
+    branch_cli_out = (
+        "__ARODONATA_IP_ROUTE_START__\n"
+        "default via 198.51.100.1 dev eth0 proto static\n"
+        "192.168.50.0/24 dev eth1 proto kernel scope link src 192.168.50.1\n"
+        "192.168.60.0/24 via 192.168.50.254 dev eth1 proto static\n"
+        "__ARODONATA_IP_ROUTE_END__\n"
+    )
+    orig_api_call = api.api_call
+
+    async def _custom_api_call(
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ApiCallResult:
+        if command == "run-script":
+            b64 = base64.b64encode(branch_cli_out.encode("utf-8")).decode("ascii")
+            return ApiCallResult(
+                success=True,
+                data={
+                    "tasks": [
+                        {
+                            "status": "succeeded",
+                            "task-details": [{"statusDescription": "succeeded", "responseMessage": b64}],
+                        }
+                    ]
+                },
+            )
+        return await orig_api_call(mgmt_name, command, payload, **kwargs)
+
+    api.api_call = _custom_api_call  # type: ignore[method-assign]
+
+    # Add a second cluster member to `Corp` so we can test cluster member drift on `corp-perimeter-cluster`
+    api.gateways_by_domain["Corp"].append(
+        {
+            "uid": "cm-corp-1b",
+            "name": "corp-perimeter-1b",
+            "type": "cluster-member",
+            "ipv4-address": "10.10.0.3",
+        }
+    )
+    api.gateways_by_domain["Corp"][0]["cluster-member-names"] = ["corp-perimeter-1a", "corp-perimeter-1b"]
+    # Add a second network to `G_Global_DMZ` (`172.16.20.0/24`) that is NOT in live routes (to test `stale_in_topology` + `standby_dynamic`)
+    # and a network `172.16.30.0/24` that is in `G_Global_DMZ` on `eth2` in static topology, but routed via `eth1` in live routes (`interface_mismatch`)
+    api.objects_by_domain_and_cmd[("Global", "show-networks")].extend(
+        [
+            {
+                "uid": "g-net-dmz-stale",
+                "name": "N_Global_DMZ_Stale",
+                "type": "network",
+                "subnet4": "172.16.20.0",
+                "mask-length4": 24,
+            },
+            {
+                "uid": "g-net-dmz-moved",
+                "name": "N_Global_DMZ_Moved",
+                "type": "network",
+                "subnet4": "172.16.30.0",
+                "mask-length4": 24,
+            },
+        ]
+    )
+    api.objects_by_domain_and_cmd[("Global", "show-groups")][0]["members"] = [
+        "g-net-dmz",
+        "g-net-dmz-stale",
+        "g-net-dmz-moved",
+    ]
+
+    # SSH callback: handles `corp-perimeter-1a`, `corp-perimeter-1b`, `dc-core-gw`, and VSX parent `dc-vsx-chassis` (for `vsx1_VS_Tenant`),
+    # while returning `success=False` for `branch-gw-01` to trigger `cprid` `run-script` fallback!
+    ssh_calls: list[tuple[str, int | None]] = []
+
+    async def _ssh_callback(target: GatewayCliTarget, script: str, timeout: float = 30.0) -> GatewayCliResult:
+        ssh_calls.append((target.node_name, target.vsid))
+        if target.node_name == "branch-gw-01":
+            return GatewayCliResult(
+                success=False,
+                exit_code=255,
+                stderr="SSH connection refused",
+                executor="ssh",
+                error_message="SSH connection refused",
+            )
+        if target.node_name == "corp-perimeter-1a":
+            return GatewayCliResult(
+                success=True,
+                stdout=(
+                    "__ARODONATA_IP_ROUTE_START__\n"
+                    "default via 203.0.113.1 dev eth0 proto static\n"
+                    "10.10.1.0/24 dev eth1 proto kernel scope link src 10.10.1.1\n"
+                    "172.16.10.0/24 via 172.16.1.254 dev eth2 proto static\n"
+                    "172.16.30.0/24 via 10.10.1.254 dev eth1 proto ospf\n"
+                    "10.200.0.0/24 via 10.10.1.250 dev eth1 proto bgp\n"
+                    "__ARODONATA_IP_ROUTE_END__\n"
+                ),
+                executor="ssh",
+            )
+        if target.node_name == "corp-perimeter-1b":
+            # Member 1b is missing `10.200.0.0/24` -> triggers `cluster_member_drift`!
+            return GatewayCliResult(
+                success=True,
+                stdout=(
+                    "__ARODONATA_IP_ROUTE_START__\n"
+                    "default via 203.0.113.1 dev eth0 proto static\n"
+                    "10.10.1.0/24 dev eth1 proto kernel scope link src 10.10.1.1\n"
+                    "172.16.10.0/24 via 172.16.1.254 dev eth2 proto static\n"
+                    "172.16.30.0/24 via 10.10.1.254 dev eth1 proto ospf\n"
+                    "__ARODONATA_IP_ROUTE_END__\n"
+                ),
+                executor="ssh",
+            )
+        if target.node_name == "dc-core-gw":
+            return GatewayCliResult(
+                success=True,
+                stdout=(
+                    "__ARODONATA_IP_ROUTE_START__\n"
+                    "10.10.1.0/24 dev bond0.10 proto kernel scope link src 10.10.1.254\n"
+                    "10.20.1.5/32 via 10.20.0.254 dev bond0.20 proto static\n"
+                    "10.20.2.0/24 via 10.20.0.254 dev bond0.20 proto static\n"
+                    "10.99.50.0/24 via 10.99.0.2 dev bond0.99 proto bgp\n"
+                    "__ARODONATA_IP_ROUTE_END__\n"
+                ),
+                executor="ssh",
+            )
+        if target.node_name == "dc-vsx-chassis" and target.vsid == 1:
+            assert "CTX%05d" in script
+            return GatewayCliResult(
+                success=True,
+                stdout=(
+                    "===ARODONATA_IP_ROUTE_START===\n"
+                    "default via 192.168.100.1 dev wrp128 proto static\n"
+                    "10.50.0.0/24 dev eth1.50 proto kernel scope link src 10.50.0.1\n"
+                    "172.16.80.0/24 via 10.50.0.254 dev eth1.50 proto static\n"
+                    "===ARODONATA_IP_ROUTE_END===\n"
+                ),
+                executor="ssh",
+            )
+        return GatewayCliResult(success=True, stdout="", executor="ssh")
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=0)
+    client = ArodonataClient(settings=settings, api=api, gateway_cli=_ssh_callback)
+    await client.initialize(run_startup_cleanup=False)
+    client.domain_service.tracker.mark_refreshed("mds1")
+    await client.cache.upsert_domains(
+        [
+            DomainInfo(mgmt_name="mds1", uid="d-global", name="Global", active_ip="10.0.0.1", is_global=True),
+            DomainInfo(mgmt_name="mds1", uid="d-corp", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1"),
+            DomainInfo(mgmt_name="mds1", uid="d-dc", name="DC", active_ip="10.2.0.1", active_mds_ip="10.0.0.1"),
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="d-tenant",
+                name="TenantVS",
+                active_ip="10.3.0.1",
+                active_mds_ip="10.0.0.1",
+            ),
+        ]
+    )
+
+    # 1. Refresh static topology across all domains and collect live routes
+    await client.refresh_topology(mgmt_name="mds1", mode="force")
+    route_outcome = await client.collect_gateway_routes(mgmt_name="mds1", fallback_to_cprid=True)
+    assert route_outcome.total_gateways == 4
+    assert route_outcome.succeeded_gateways == 4
+    assert route_outcome.failed_gateways == 0
+
+    status_by_gw = {s.gateway_name: s for s in route_outcome.gateways}
+    # `branch-gw-01` failed over from SSH to `cprid`
+    assert "cprid" in status_by_gw["branch-gw-01"].executor
+    # `corp-perimeter-cluster` detected member route drift (`10.200.0.0/24` only on `corp-perimeter-1a`)
+    assert status_by_gw["corp-perimeter-cluster"].member_drift_detected is True
+    # `vsx1_VS_Tenant` executed on physical VSX parent `dc-vsx-chassis` with `vsid=1`
+    assert ("dc-vsx-chassis", 1) in ssh_calls
+
+    # 2. Verify static refresh preserves live routes (`source_types=STATIC_TOPOLOGY_SOURCES`)
+    await client.refresh_topology(mgmt_name="mds1", domains=["Corp"], gateways=["branch-gw-01"], mode="force")
+    branch_entries = await client.get_gateway_topology(
+        mgmt_name="mds1",
+        domain="Corp",
+        gateway="branch-gw-01",
+        cache_mode="cache",
+    )
+    branch_sources = {e.source_type for e in branch_entries}
+    assert "interface_connected" in branch_sources
+    assert "gaia_static_route" in branch_sources
+
+    # 3. Reconcile gateway topology in `Corp` and `DC`
+    corp_report = await client.reconcile_gateway_topology(
+        mgmt_name="mds1",
+        domain="Corp",
+        cache_mode="cache",
+    )
+    disc_by_type_cidr = {(d.discrepancy_type, d.cidr_or_range): d for d in corp_report.discrepancies}
+    # `172.16.20.0/24` is in `G_Global_DMZ` on `eth2` but absent from live routes -> `stale_in_topology`
+    assert ("stale_in_topology", "172.16.20.0/24") in disc_by_type_cidr
+    assert disc_by_type_cidr[("stale_in_topology", "172.16.20.0/24")].confidence_delta < 0
+    # `172.16.30.0/24` is in `G_Global_DMZ` on `eth2`, but routed via `eth1` in OSPF -> `interface_mismatch`
+    assert ("interface_mismatch", "172.16.30.0/24") in disc_by_type_cidr
+    assert disc_by_type_cidr[("interface_mismatch", "172.16.30.0/24")].interface_name == "eth2"
+    assert disc_by_type_cidr[("interface_mismatch", "172.16.30.0/24")].routed_interface_name == "eth1"
+    # `10.200.0.0/24` is in BGP on `eth1` (missing in static topology + drifted across cluster members)
+    assert ("missing_in_topology", "10.200.0.0/24") in disc_by_type_cidr
+    assert ("cluster_member_drift", "10.200.0.0/24") in disc_by_type_cidr
+
+    dc_report = await client.reconcile_gateway_topology(
+        mgmt_name="mds1",
+        domain="DC",
+        cache_mode="cache",
+    )
+    dc_disc_by_type_cidr = {(d.discrepancy_type, d.cidr_or_range): d for d in dc_report.discrepancies}
+    # `bond0.99` on `dc-core-gw` was `"network defined by routing"` and now has `10.99.50.0/24` via BGP -> `resolved_by_routing`
+    assert ("resolved_by_routing", "10.99.50.0/24") in dc_disc_by_type_cidr
+    assert dc_disc_by_type_cidr[("resolved_by_routing", "10.99.50.0/24")].severity == "info"
+
+    # 4. Test Evidence Delta Confidence Scoring before annotations:
+    # Query `10.10.1.25 -> 172.16.30.10` on `corp-perimeter-cluster`:
+    # - Static topology says `172.16.30.0/24` is on `eth2` (`+0.40` prevent - `0.50` conflict = `0.0`),
+    #   whereas live OSPF route says `172.16.30.0/24` is on `eth1` (`+0.50` dynamic - `0.10` conflict = `0.40`).
+    # - Because `10.10.1.25` is ALSO on `eth1`, live routing places both source and destination on `eth1` (`eth1 == eth1`),
+    #   so `corp-perimeter-cluster` does NOT route between distinct interfaces for `10.10.1.25 -> 172.16.30.10`!
+    mismatch_cands = await client.find_affected_gateways(
+        sources=["10.10.1.25"],
+        destinations=["172.16.30.10"],
+        mgmt_name="mds1",
+        domain="Corp",
+        cache_mode="cache",
+    )
+    assert [c.gateway_name for c in mismatch_cands] == []
+
+    # Query `10.10.1.25 -> 172.16.20.10` (`stale_in_topology` on `eth2`):
+    # - `eth1` (`10.10.1.0/24`) has connected route (`+0.65`) + connected topology (`+0.50`) -> clamped `1.0`.
+    # - `eth2` (`172.16.20.0/24`) has specific prevent (`+0.40`) + missing in live routes (`-0.35`) -> `0.05`.
+    stale_cands = await client.find_affected_gateways(
+        sources=["10.10.1.25"],
+        destinations=["172.16.20.10"],
+        mgmt_name="mds1",
+        domain="Corp",
+        cache_mode="cache",
+    )
+    assert len(stale_cands) == 1
+    assert stale_cands[0].gateway_name == "corp-perimeter-cluster"
+    assert stale_cands[0].confidence == pytest.approx(0.05)
+    assert stale_cands[0].warnings
+
+    # Filtering with `min_confidence=0.5` drops the low-confidence stale path
+    high_conf_cands = await client.find_affected_gateways(
+        sources=["10.10.1.25"],
+        destinations=["172.16.20.10"],
+        mgmt_name="mds1",
+        domain="Corp",
+        min_confidence=0.5,
+        cache_mode="cache",
+    )
+    assert high_conf_cands == []
+
+    # 5. Upsert persistent `TopologyAnnotation` records:
+    # - Mark `172.16.20.0/24` on `eth2` as `standby_dynamic` (BGP failover prefix) with IPAM zone/site metadata
+    # - Add a `manual` prefix `10.250.0.0/24` on `eth2`
+    saved_anns = await client.upsert_topology_annotations(
+        [
+            TopologyAnnotation(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                gateway_uid="cl-corp-1",
+                gateway_name="corp-perimeter-cluster",
+                interface_name="eth2",
+                cidr_or_range="172.16.20.0/24",
+                disposition="standby_dynamic",
+                zone="DMZ-DR",
+                site="FRA-DC2",
+                comment="BGP standby range active during secondary ISP failover",
+            ),
+            TopologyAnnotation(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                gateway_uid="cl-corp-1",
+                gateway_name="corp-perimeter-cluster",
+                interface_name="eth2",
+                cidr_or_range="10.250.0.0/24",
+                disposition="manual",
+                zone="Partner-Extranet",
+                site="FRA-DC1",
+                comment="Manual static NAT behind partner router",
+            ),
+        ]
+    )
+    assert len(saved_anns) == 2
+
+    # Now `10.10.1.25 -> 172.16.20.10` is marked `is_standby_path=True` with boosted confidence (`0.40 + 0.35 = 0.75`)
+    standby_cands = await client.find_affected_gateways(
+        sources=["10.10.1.25"],
+        destinations=["172.16.20.10"],
+        mgmt_name="mds1",
+        domain="Corp",
+        cache_mode="cache",
+    )
+    assert len(standby_cands) == 1
+    assert standby_cands[0].is_standby_path is True
+    assert standby_cands[0].confidence == pytest.approx(0.75)
+
+    # Excluding standby paths (`include_standby=False`) filters it out
+    active_only_cands = await client.find_affected_gateways(
+        sources=["10.10.1.25"],
+        destinations=["172.16.20.10"],
+        mgmt_name="mds1",
+        domain="Corp",
+        include_standby=False,
+        cache_mode="cache",
+    )
+    assert active_only_cands == []
+
+    # Manual prefix `10.250.0.0/24` on `eth2` is matched with `admin_manual` delta (`0.60`)
+    manual_cands = await client.find_affected_gateways(
+        sources=["10.10.1.25"],
+        destinations=["10.250.0.55"],
+        mgmt_name="mds1",
+        domain="Corp",
+        cache_mode="cache",
+    )
+    assert len(manual_cands) == 1
+    assert manual_cands[0].matched_flows[0].dst_interface == "eth2"
+    assert manual_cands[0].matched_flows[0].dst_source_type == "manual"
+    assert manual_cands[0].confidence == pytest.approx(0.60)
+
+    # 6. Export prefixes for IPAM comparison and verify annotations survive topology resync
+    await client.refresh_topology(mgmt_name="mds1", domains=["Corp"], mode="force")
+    exported = await client.export_topology_prefixes(
+        mgmt_name="mds1",
+        domain="Corp",
+        gateway="corp-perimeter-cluster",
+        cache_mode="cache",
+    )
+    exp_by_if_cidr = {(p.interface_name, p.cidr_or_range): p for p in exported}
+    assert ("eth2", "172.16.20.0/24") in exp_by_if_cidr
+    assert exp_by_if_cidr[("eth2", "172.16.20.0/24")].zone == "DMZ-DR"
+    assert exp_by_if_cidr[("eth2", "172.16.20.0/24")].site == "FRA-DC2"
+    assert exp_by_if_cidr[("eth2", "172.16.20.0/24")].is_standby_path is True
+    assert ("eth2", "10.250.0.0/24") in exp_by_if_cidr
+    assert exp_by_if_cidr[("eth2", "10.250.0.0/24")].disposition == "manual"
+
+    deleted_count = await client.delete_topology_annotations(
+        mgmt_name="mds1",
+        domain="Corp",
+        gateway_uid="cl-corp-1",
+    )
+    assert deleted_count == 2
+    assert await client.get_topology_annotations(mgmt_name="mds1", domain="Corp") == []
+
+    # 7. Verify MCP tools (`locate_gateways` and `cache_control(scope="topology")`)
+    import json
+
+    from arodonata.mcp import ArodonataMCPSettings, create_mcp_server
+
+    mcp_server = create_mcp_server(client, mcp_settings=ArodonataMCPSettings())
+    locate_res = await mcp_server.call_tool(
+        "locate_gateways",
+        {
+            "sources": ["10.10.1.25"],
+            "destinations": ["172.16.20.10"],
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "min_confidence": 0.0,
+            "include_standby": True,
+            "cache_mode": "cache",
+        },
+    )
+    locate_payload = json.loads(locate_res.content[0].text)  # type: ignore[union-attr]
+    assert locate_payload["total"] == 1
+    assert locate_payload["min_confidence"] == 0.0
+    assert locate_payload["include_standby"] is True
+    assert locate_payload["topology_warnings"]
+    assert locate_payload["gateways"][0]["gateway_name"] == "corp-perimeter-cluster"
+
+    cc_res = await mcp_server.call_tool(
+        "cache_control",
+        {
+            "action": "refresh",
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "scope": "topology",
+            "gateways": ["branch-gw-01"],
+            "collect_routes": True,
+            "mode": "force",
+        },
+    )
+    cc_payload = json.loads(cc_res.content[0].text)  # type: ignore[union-attr]
+    assert cc_payload["scope"] == "topology"
+    assert "mds1:Corp" in cc_payload["refreshed_domains"]
+
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_claude_review_regression_fixes() -> None:
+    """Verify all fixes from `/claude-review` (longest-prefix match, anti-spoofing spoof-tracking, orphan route pruning, external interface routes, dynamic vsid resolution, and `trust_static_topology=False`)."""
+    from arodonata.client import ArodonataClient
+    from arodonata.core.models.topology import (
+        GatewayCliResult,
+        GatewayCliTarget,
+        TopologyAnnotation,
+    )
+    from arodonata.core.services.route_collector import (
+        build_route_collection_script,
+        parse_combined_cli_routes,
+        resolve_gateway_cli_targets,
+    )
+    from arodonata.core.services.topology_service import _extract_anti_spoofing_mode
+
+    # 1. Anti-Spoofing extraction must ignore `spoof-tracking: none` when `action: prevent`
+    assert (
+        _extract_anti_spoofing_mode(
+            {
+                "anti-spoofing": True,
+                "anti-spoofing-settings": {"action": "prevent", "spoof-tracking": "none"},
+            }
+        )
+        == "prevent"
+    )
+    assert (
+        _extract_anti_spoofing_mode(
+            {
+                "anti-spoofing": True,
+                "anti-spoofing-settings": {"action": "detect", "spoof-tracking": "log"},
+            }
+        )
+        == "detect"
+    )
+
+    # 2. `proto routed` and Clish IS-IS `I` route code parsing
+    cli_sample = (
+        "===ARODONATA_IP_ROUTE_START===\n"
+        "10.70.0.0/16 via 10.10.1.254 dev eth1 proto routed\n"
+        "===ARODONATA_IP_ROUTE_END===\n"
+        "===ARODONATA_CLISH_ROUTE_START===\n"
+        "I 10.71.0.0/16 via 10.10.1.253, eth1, cost 10, age 20\n"
+        "===ARODONATA_CLISH_ROUTE_END===\n"
+    )
+    parsed_routes = parse_combined_cli_routes(cli_sample)
+    by_dest = {str(r.destination): r.source_type for r in parsed_routes}
+    assert by_dest["10.70.0.0/16"] == "clish_route"
+    assert by_dest["10.71.0.0/16"] == "clish_route"
+
+    # 3. Dynamic `vsx stat -l` VSID resolution without silent `vsid=1` fallback
+    vs_no_vsid = Asset(
+        uid="vs-custom-name",
+        name="Tenant_Finance_VS",
+        type="CpmiVsNetobj",
+        mgmt_name="mds1",
+        domain_name="TenantVS",
+        parent_uid="vsx-dc-1",
+        raw_data={"name": "Tenant_Finance_VS"},
+    )
+    vsx_parent = Asset(
+        uid="vsx-dc-1",
+        name="dc-vsx-chassis",
+        type="vsx-gateway",
+        mgmt_name="mds1",
+        domain_name="DC",
+        ipv4_address="10.20.0.10",
+    )
+    targets = resolve_gateway_cli_targets(vs_no_vsid, [vs_no_vsid, vsx_parent])
+    assert len(targets) == 1
+    assert targets[0].vsid is None
+    assert targets[0].vs_name == "Tenant_Finance_VS"
+    dyn_script = build_route_collection_script(vsid=targets[0].vsid, vs_name=targets[0].vs_name)
+    assert "vsx stat -l" in dyn_script
+    assert "ARODONATA_VSID_RESOLVED" in dyn_script
+
+    # 4. Longest-Prefix Match before confidence + external interface connected routes + orphan pruning + trust_static_topology=False
+    api = TopologyFakeApi()
+    api.objects_by_domain_and_cmd.setdefault(("Corp", "show-networks"), []).append(
+        {
+            "uid": "net-10-super",
+            "name": "N_10_Supernet",
+            "type": "network",
+            "subnet4": "10.0.0.0",
+            "mask-length4": 8,
+        }
+    )
+    api.gateways_by_domain["Corp"] = [
+        {
+            "uid": "gw-lpm",
+            "name": "lpm-core-gw",
+            "type": "simple-gateway",
+            "ipv4-address": "10.10.0.10",
+            "policy": {"access-policy-installed": True, "access-policy-name": "Perimeter_Pkg"},
+            "interfaces": [
+                {
+                    "name": "eth0",
+                    "ipv4-address": "203.0.113.10",
+                    "ipv4-mask-length": 24,
+                    "topology": "external",
+                },
+                {
+                    "name": "eth1",
+                    "ipv4-address": "10.1.1.1",
+                    "ipv4-mask-length": 24,
+                    "topology": "internal",
+                    "topology-settings": {
+                        "ip-address-behind-this-interface": "specific",
+                        "specific-network": "N_10_Supernet",
+                    },
+                    "anti-spoofing": True,
+                    "anti-spoofing-settings": {"action": "prevent", "spoof-tracking": "none"},
+                },
+                {
+                    "name": "eth2",
+                    "ipv4-address": "10.2.1.1",
+                    "ipv4-mask-length": 24,
+                    "topology": "internal",
+                    "topology-settings": {
+                        "ip-address-behind-this-interface": "network defined by routing",
+                    },
+                },
+            ],
+        },
+        {
+            "uid": "gw-decommissioned",
+            "name": "old-branch-gw",
+            "type": "simple-gateway",
+            "ipv4-address": "10.10.0.99",
+            "policy": {"access-policy-installed": True, "access-policy-name": "Branch_Pkg"},
+            "interfaces": [
+                {
+                    "name": "eth0",
+                    "ipv4-address": "198.51.100.99",
+                    "ipv4-mask-length": 24,
+                    "topology": "external",
+                },
+                {
+                    "name": "eth1",
+                    "ipv4-address": "10.99.99.1",
+                    "ipv4-mask-length": 24,
+                    "topology": "internal",
+                    "topology-settings": {
+                        "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+                    },
+                },
+            ],
+        },
+    ]
+
+    async def _ssh_cb(target: GatewayCliTarget, script: str, timeout: float = 30.0) -> GatewayCliResult:
+        if target.node_name == "lpm-core-gw":
+            # `eth0` has both default route and connected WAN subnet `203.0.113.0/24`
+            # `eth1` has summary route `10.0.0.0/8` (matches Prevent static `N_10_Supernet` -> conf 0.95)
+            # `eth2` has more specific BGP route `10.50.0.0/16` (routing-defined interface -> conf 0.40 with conflict penalty)
+            return GatewayCliResult(
+                success=True,
+                stdout=(
+                    "===ARODONATA_IP_ROUTE_START===\n"
+                    "default via 203.0.113.1 dev eth0 proto static\n"
+                    "203.0.113.0/24 dev eth0 proto kernel scope link src 203.0.113.10\n"
+                    "10.1.1.0/24 dev eth1 proto kernel scope link src 10.1.1.1\n"
+                    "10.0.0.0/8 via 10.1.1.254 dev eth1 proto static\n"
+                    "10.2.1.0/24 dev eth2 proto kernel scope link src 10.2.1.1\n"
+                    "10.50.0.0/16 via 10.2.1.254 dev eth2 proto bgp\n"
+                    "===ARODONATA_IP_ROUTE_END===\n"
+                ),
+                executor="ssh",
+            )
+        return GatewayCliResult(
+            success=True,
+            stdout=(
+                "===ARODONATA_IP_ROUTE_START===\n"
+                "default via 198.51.100.1 dev eth0 proto static\n"
+                "10.99.99.0/24 dev eth1 proto kernel scope link src 10.99.99.1\n"
+                "===ARODONATA_IP_ROUTE_END===\n"
+            ),
+            executor="ssh",
+        )
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=300)
+    client = ArodonataClient(settings=settings, api=api, gateway_cli=_ssh_cb)
+    await client.initialize(run_startup_cleanup=False)
+    client.domain_service.tracker.mark_refreshed("mds1")
+    await client.cache.upsert_domains(
+        [
+            DomainInfo(mgmt_name="mds1", uid="d-global", name="Global", active_ip="10.0.0.1", is_global=True),
+            DomainInfo(mgmt_name="mds1", uid="d-corp", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1"),
+        ]
+    )
+
+    # Multi-domain `refresh_topology(..., collect_routes=True)`
+    await client.refresh_topology(mgmt_name="mds1", domains=["Corp"], collect_routes=True, mode="force")
+
+    # Verify `DomainSyncState(scope="topology", item_type="routes")` was persisted
+    route_sync_state = await client.cache.get_sync_state("mds1", "Corp", "topology", "routes")
+    assert route_sync_state is not None
+    assert route_sync_state.status == "ok"
+    assert route_sync_state.object_count == 2
+
+    # Verify WAN connected route `203.0.113.0/24` on external `eth0` did NOT trigger `missing_in_topology`
+    rec = await client.reconcile_gateway_topology(mgmt_name="mds1", domain="Corp", cache_mode="cache")
+    disc_cidrs = {(d.discrepancy_type, d.cidr_or_range) for d in rec.discrepancies if d.gateway_name == "lpm-core-gw"}
+    assert ("missing_in_topology", "203.0.113.0/24") not in disc_cidrs
+
+    # Verify Longest-Prefix Match: traffic from `10.1.1.10` (`eth1` `/24`) to `10.50.1.10` MUST resolve
+    # destination to `eth2` (`10.50.0.0/16`, conf=0.40) and NOT `eth1` (`10.0.0.0/8`, conf=0.95)!
+    cands = await client.find_affected_gateways(
+        sources=["10.1.1.10"],
+        destinations=["10.50.1.10"],
+        mgmt_name="mds1",
+        domain="Corp",
+        cache_mode="cache",
+    )
+    assert len(cands) == 1
+    assert cands[0].gateway_name == "lpm-core-gw"
+    assert cands[0].matched_flows[0].src_interface == "eth1"
+    assert cands[0].matched_flows[0].dst_interface == "eth2"
+    assert cands[0].matched_flows[0].dst_matched_cidr == "10.50.0.0/16"
+    # Before `trust_static_topology=False`, `eth2` has `0.50 (bgp) - 0.10 (conflict with N_10_Supernet on eth1) = 0.40`
+    assert cands[0].confidence == pytest.approx(0.40)
+
+    # Now set `trust_static_topology=False` on `eth1`:
+    # - The `-0.10` conflict penalty on `eth2` is suppressed, raising `eth2` confidence to `0.50`!
+    await client.upsert_topology_annotations(
+        TopologyAnnotation(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            gateway_uid="gw-lpm",
+            gateway_name="lpm-core-gw",
+            interface_name="eth1",
+            cidr_or_range="*",
+            trust_static_topology=False,
+        )
+    )
+    cands_untrusted = await client.find_affected_gateways(
+        sources=["10.1.1.10"],
+        destinations=["10.50.1.10"],
+        mgmt_name="mds1",
+        domain="Corp",
+        cache_mode="cache",
+    )
+    assert len(cands_untrusted) == 1
+    assert cands_untrusted[0].confidence == pytest.approx(0.50)
+
+    # Verify orphan `LIVE_ROUTE_SOURCES` pruning when `old-branch-gw` is removed from `Corp`
+    api.gateways_by_domain["Corp"] = [api.gateways_by_domain["Corp"][0]]
+    await client.refresh_topology(mgmt_name="mds1", domains=["Corp"], mode="force")
+    remaining_entries = await client.get_gateway_topology(mgmt_name="mds1", domain="Corp", cache_mode="cache")
+    assert all(e.gateway_uid != "gw-decommissioned" for e in remaining_entries)
+    # While `lpm-core-gw` still retains its live routes!
+    assert any(e.gateway_uid == "gw-lpm" and e.source_type == "bgp_route" for e in remaining_entries)
+
+    await client.close()

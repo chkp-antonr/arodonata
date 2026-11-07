@@ -417,8 +417,9 @@ async def test_arodonata_assets_table_name_and_naive_utc_columns() -> None:
     assert GatewayTopologyRecord.__tablename__ == "arodonata_gateway_topology"
     assert "arodonata_assets" in ARODONATA_TABLE_NAMES
     assert "arodonata_gateway_topology" in ARODONATA_TABLE_NAMES
+    assert "arodonata_topology_annotations" in ARODONATA_TABLE_NAMES
     assert "assets" not in ARODONATA_TABLE_NAMES
-    assert len(ARODONATA_TABLE_NAMES) == 16
+    assert len(ARODONATA_TABLE_NAMES) == 17
 
     for table_name in ARODONATA_TABLE_NAMES:
         assert table_name.startswith("arodonata_"), f"Table {table_name!r} must start with 'arodonata_'"
