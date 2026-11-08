@@ -652,6 +652,8 @@ class LoginCoordinator:
         transient_delay = 2.0
         cleaned_max_sessions = False
         failover_attempted = False
+        transport_retries = 0
+        max_transport_retries = 1
 
         while True:
             rem_wait = max(0.1, deadline - self._monotonic())
@@ -691,6 +693,8 @@ class LoginCoordinator:
                         )
                         target_ip = refreshed.active_ip
                         mds_ip = refreshed.active_mds_ip or target_ip
+                        transport_retries = 0
+                        transient_delay = 2.0
                         continue
                 # Record exponential backoff in LoginGate when login read times out (W5)
                 if isinstance(transport_exc, ApiTimeoutError) and transport_exc.phase == "read":
@@ -703,10 +707,25 @@ class LoginCoordinator:
                         mds_ip=mds_ip,
                         cooldown_seconds=transient_delay,
                     )
-                if self._monotonic() + transient_delay >= deadline:
+                if transport_retries >= max_transport_retries or self._monotonic() + transient_delay >= deadline:
+                    logger.warning(
+                        f"Login to '{mgmt_name}:{dom_key}' ({target_ip}) failed: {transport_exc}",
+                        mgmt_name=mgmt_name,
+                        domain=dom_key,
+                        target_ip=target_ip,
+                    )
                     raise AuthenticationError(
                         f"Login to {mgmt_name!r} ({dom_key!r} at {target_ip}) timed out or failed: {transport_exc}"
                     ) from transport_exc
+                transport_retries += 1
+                if not (isinstance(transport_exc, ApiTimeoutError) and transport_exc.phase == "read"):
+                    logger.warning(
+                        f"Login to '{mgmt_name}:{dom_key}' ({target_ip}) failed ({transport_exc}); "
+                        f"retrying in {transient_delay:.1f}s.",
+                        mgmt_name=mgmt_name,
+                        domain=dom_key,
+                        target_ip=target_ip,
+                    )
                 await self._sleep(transient_delay)
                 transient_delay = min(15.0, transient_delay * 2.0)
                 continue
@@ -1180,7 +1199,18 @@ class SessionCleaner:
                 continue
             task = asyncio.create_task(self.cleanup_server_sessions(mgmt_name, seed_system_sid=True))
             self._startup_tasks.add(task)
-            task.add_done_callback(self._startup_tasks.discard)
+
+            def _on_startup_done(t: asyncio.Task[bool], server: str = mgmt_name) -> None:
+                self._startup_tasks.discard(t)
+                if not t.cancelled():
+                    exc = t.exception()
+                    if exc is not None:
+                        logger.warning(
+                            f"Startup session cleanup failed for '{server}': {exc}",
+                            mgmt_name=server,
+                        )
+
+            task.add_done_callback(_on_startup_done)
             tasks.append(task)
         return tasks
 
@@ -1240,12 +1270,20 @@ class SessionCleaner:
         )
 
         # Open a dedicated session to inspect/discard stale sessions
-        sid, server_ip, session_uid = await self._login_coordinator.create_dedicated_session(
-            mgmt_name,
-            domain,
-            auth=auth,
-            session_name="arodonata-session-cleaner",
-        )
+        try:
+            sid, server_ip, session_uid = await self._login_coordinator.create_dedicated_session(
+                mgmt_name,
+                domain,
+                auth=auth,
+                session_name="arodonata-session-cleaner",
+            )
+        except (AuthenticationError, TransportError, ApiTimeoutError, ServerIdentityError) as exc:
+            logger.warning(
+                f"Session cleanup skipped for '{mgmt_name}:{dom_key}': {exc}",
+                mgmt_name=mgmt_name,
+                domain=dom_key,
+            )
+            return False
 
         retain_in_cache = False
         try:
