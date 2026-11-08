@@ -24,6 +24,7 @@ from arodonata.core.errors import (
     ServerIdentityError,
     SessionError,
     SessionStateError,
+    TransportError,
     ValidationError,
 )
 from arodonata.core.models.domains import DomainInfo, SIDCacheEntry
@@ -996,3 +997,49 @@ async def test_show_session_not_found_after_revert_evicts_sid_and_relogins(tmp_p
     assert res2.data["uid"] == "u-reverted"
 
     await client.close()
+
+
+async def test_unreachable_server_fails_fast_and_startup_cleanup_handles_error_cleanly(
+    tmp_path: Path,
+) -> None:
+    """Verify:
+    - TransportError during login retries at most once (2s) instead of looping for login_max_wait (900s).
+    - SessionCleaner.cleanup_server_sessions and schedule_startup_cleanup return False cleanly without
+      raising or leaking unretrieved asyncio task exceptions when a server is unreachable.
+    """
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    client = _build_client(tmp_path, server, rig)
+    await client.db.initialize()
+
+    def raise_connect_refused(_record: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        raise TransportError(
+            "Failed to connect to 10.0.0.1:443 for 'login': Connect call failed",
+            phase="pre-send",
+            request_sent=False,
+        )
+
+    # 1. Login fails after 1 retry (2 attempts total, 2.0s sleep, NOT 900s)
+    server.handlers.extend([raise_connect_refused, raise_connect_refused])
+    with pytest.raises(AuthenticationError, match="Failed to connect"):
+        await client.api_call("mds1", "show-domains")
+
+    assert len(server.calls) == 2
+    assert rig.sleeps == [2.0]
+
+    # 2. Startup session cleanup against an unreachable server returns False cleanly
+    server.calls.clear()
+    rig.sleeps.clear()
+    server.handlers.extend([raise_connect_refused, raise_connect_refused])
+    outcomes = await client.session_cleaner.run_startup_cleanup()
+    assert outcomes == {"mds1": False}
+
+    # 3. Scheduled background startup cleanup completes without unretrieved task exceptions
+    server.handlers.extend([raise_connect_refused, raise_connect_refused])
+    tasks = client.session_cleaner.schedule_startup_cleanup()
+    assert len(tasks) == 1
+    results = await tasks[0]
+    assert results is False
+
+    await client.close()
+
