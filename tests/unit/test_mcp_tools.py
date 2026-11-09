@@ -810,6 +810,7 @@ async def test_query_objects_describe_and_cache_control_tools() -> None:
         loc_data = _parse_tool_json(loc_res)
         assert loc_data["total"] == 1
         assert loc_data["source"] == "cache"
+        assert loc_data["include_policy_inferred"] is True
         gw_cand = loc_data["gateways"][0]
         assert gw_cand["gateway_name"] == "corp-gw-01"
         assert gw_cand["domain_name"] == "Corp"
@@ -828,6 +829,7 @@ async def test_query_objects_describe_and_cache_control_tools() -> None:
                 "destinations": ["10.10.1.99"],
                 "mgmt_name": "mds1",
                 "domain": "Corp",
+                "include_policy_inferred": False,
                 "cache_mode": "cache",
             },
         )
@@ -835,6 +837,7 @@ async def test_query_objects_describe_and_cache_control_tools() -> None:
         assert loc_same.is_error is False
         loc_same_data = _parse_tool_json(loc_same)
         assert loc_same_data["total"] == 0
+        assert loc_same_data["include_policy_inferred"] is False
         assert loc_same_data["gateways"] == []
 
 

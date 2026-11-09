@@ -35,6 +35,12 @@ from arodonata import (
     TopologyAnnotation,
 )
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
+from arodonata.core.models.rulebase import (
+    AccessRuleEntry,
+    DomainRulebaseSnapshot,
+    RulebaseLayerEntry,
+    RulebasePackageLayerEntry,
+)
 
 
 class EnterpriseScaleFakeApi:
@@ -329,6 +335,20 @@ class EnterpriseScaleFakeApi:
                     "name": "N_Stale_Decommissioned_188",
                     "type": "network",
                     "subnet4": "10.188.0.0",
+                    "mask-length4": 24,
+                },
+                {
+                    "uid": "net-aci-epg-web-160-10",
+                    "name": "N_ACI_EPG_Web_160_10",
+                    "type": "network",
+                    "subnet4": "10.160.10.0",
+                    "mask-length4": 24,
+                },
+                {
+                    "uid": "net-aci-epg-app-160-20",
+                    "name": "N_ACI_EPG_App_160_20",
+                    "type": "network",
+                    "subnet4": "10.160.20.0",
                     "mask-length4": 24,
                 },
             ]
@@ -933,5 +953,102 @@ async def test_enterprise_scale_260_gateways_multi_hop_transit_reconciliation_an
         cache_mode="cache",
     )
     assert [c.gateway_name for c in b142_cands] == ["branch-gw-142"]
+
+    # 9. Verify One-Arm Cisco ACI Service-Graph Policy Inference (`corp-aci-onearm-03`):
+    #    Seed `ACI_ServiceGraph_Pkg` in `Corp` with an explicit Access rule between two EPG subnets
+    #    (`N_ACI_EPG_Web_160_10` `10.160.10.0/24` -> `N_ACI_EPG_App_160_20` `10.160.20.0/24`)
+    #    installed specifically on `corp-aci-onearm-03` (`install_on=["corp-aci-onearm-03"]`),
+    #    plus a generic `Any -> Any` cleanup rule on `Policy Targets`.
+    await client.cache.replace_domain_rulebase(
+        DomainRulebaseSnapshot(
+            mgmt_name="mds-ent",
+            domain_name="Corp",
+            package_layers=[
+                RulebasePackageLayerEntry(
+                    mgmt_name="mds-ent",
+                    domain_name="Corp",
+                    package_uid="pkg-aci-sg",
+                    package_name="ACI_ServiceGraph_Pkg",
+                    rulebase_type="access",
+                    layer_uid="layer-aci-sg",
+                    layer_name="ACI_ServiceGraph_Layer",
+                    position=1,
+                ),
+            ],
+            layers=[
+                RulebaseLayerEntry(
+                    mgmt_name="mds-ent",
+                    domain_name="Corp",
+                    uid="layer-aci-sg",
+                    name="ACI_ServiceGraph_Layer",
+                    rulebase_type="access",
+                ),
+            ],
+            access_rules=[
+                AccessRuleEntry(
+                    mgmt_name="mds-ent",
+                    domain_name="Corp",
+                    layer_uid="layer-aci-sg",
+                    layer_name="ACI_ServiceGraph_Layer",
+                    uid="rule-aci-epg-03",
+                    name="ACI_EPG_Web_to_App_Contract",
+                    position=1,
+                    rule_number="1",
+                    enabled=True,
+                    action="Accept",
+                    source=["N_ACI_EPG_Web_160_10"],
+                    destination=["N_ACI_EPG_App_160_20"],
+                    install_on=["corp-aci-onearm-03"],
+                ),
+                AccessRuleEntry(
+                    mgmt_name="mds-ent",
+                    domain_name="Corp",
+                    layer_uid="layer-aci-sg",
+                    layer_name="ACI_ServiceGraph_Layer",
+                    uid="rule-aci-cleanup",
+                    name="ACI_Cleanup_Any",
+                    position=2,
+                    rule_number="2",
+                    enabled=True,
+                    action="Accept",
+                    source=["Any"],
+                    destination=["Any"],
+                    install_on=["Policy Targets"],
+                ),
+            ],
+        ),
+    )
+
+    aci_inferred_cands = await client.find_affected_gateways(
+        sources=["10.160.10.15"],
+        destinations=["10.160.20.25"],
+        mgmt_name="mds-ent",
+        domain="Corp",
+        include_policy_inferred=True,
+        cache_mode="cache",
+    )
+    # Only `corp-aci-onearm-03` must be discovered; the other 9 one-arm ACI gateways (`01..02`, `04..10`) are excluded!
+    assert [c.gateway_name for c in aci_inferred_cands] == ["corp-aci-onearm-03"]
+    aci_03 = aci_inferred_cands[0]
+    assert aci_03.match_types == ["policy_inferred"]
+    assert aci_03.installed_access_policy == "ACI_ServiceGraph_Pkg"
+    assert aci_03.matched_flows[0].match_type == "policy_inferred"
+    assert aci_03.matched_flows[0].src_interface == "bond0.400"
+    assert aci_03.matched_flows[0].dst_interface == "bond0.400"
+    assert aci_03.matched_flows[0].src_matched_cidr == "10.160.10.0/24"
+    assert aci_03.matched_flows[0].dst_matched_cidr == "10.160.20.0/24"
+    assert any(d.code == "policy_rule_evidence" for d in aci_03.confidence_factors)
+    assert aci_03.confidence == pytest.approx(0.55)
+
+    # With `include_policy_inferred=False`, `corp-aci-onearm-03` is not returned
+    aci_disabled_cands = await client.find_affected_gateways(
+        sources=["10.160.10.15"],
+        destinations=["10.160.20.25"],
+        mgmt_name="mds-ent",
+        domain="Corp",
+        include_policy_inferred=False,
+        cache_mode="cache",
+    )
+    assert aci_disabled_cands == []
 
     await client.close()

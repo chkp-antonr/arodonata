@@ -15,7 +15,9 @@ from arodonata.core.models.common import ApiCallResult, ApiQueryResult
 from arodonata.core.models.domains import DomainInfo
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import (
+    AccessRuleEntry,
     DomainRulebaseSnapshot,
+    NatRuleEntry,
     RulebaseLayerEntry,
     RulebasePackageLayerEntry,
 )
@@ -2499,5 +2501,487 @@ async def test_claude_review_regression_fixes() -> None:
     assert all(e.gateway_uid != "gw-decommissioned" for e in remaining_entries)
     # While `lpm-core-gw` still retains its live routes!
     assert any(e.gateway_uid == "gw-lpm" and e.source_type == "bgp_route" for e in remaining_entries)
+
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_stage2_vpn_domain_policy_rule_evidence_one_arm_aci_inference_and_policy_reconciliation() -> None:
+    """Verify Stage 2 capabilities:
+    1. `vpn-domain` (`encryption-domain`) extraction (`source_type="vpn_domain"`) and `vpn_encryption_domain` (`+0.45`) scoring.
+    2. `policy_rule_evidence` (`+0.25`) bonus on cross-interface L3 gateways from cached Access Control and NAT rules.
+    3. `include_policy_inferred` (`match_type="policy_inferred"`) for one-arm Cisco ACI service-graph gateways and incomplete-topology gateways.
+    4. `reconcile_gateway_topology(..., check_policy=True)` reporting `policy_topology_mismatch` for gateway-targeted rules (`install_on`).
+    """
+    from arodonata.client import ArodonataClient
+    from arodonata.core.config import TopologyConfidenceWeights
+
+    # Verify Stage 2 weight defaults and backward-compatible alias synchronization
+    default_weights = TopologyConfidenceWeights()
+    assert default_weights.policy_rule_evidence == pytest.approx(0.25)
+    assert default_weights.vpn_encryption_domain == pytest.approx(0.45)
+    custom_weights = TopologyConfidenceWeights(policy_rule_match=0.33, vpn_domain_match=0.48)
+    assert custom_weights.policy_rule_evidence == pytest.approx(0.33)
+    assert custom_weights.vpn_encryption_domain == pytest.approx(0.48)
+
+    api = TopologyFakeApi()
+    api.objects_by_domain_and_cmd[("Corp", "show-networks")] = [
+        {
+            "uid": "net-vpn-1",
+            "name": "N_VPN_Inside_10_77",
+            "type": "network",
+            "subnet4": "10.77.0.0",
+            "mask-length4": 16,
+        },
+        {
+            "uid": "net-aci-epg-web",
+            "name": "N_ACI_EPG_Web",
+            "type": "network",
+            "subnet4": "10.160.10.0",
+            "mask-length4": 24,
+        },
+        {
+            "uid": "net-aci-epg-app",
+            "name": "N_ACI_EPG_App",
+            "type": "network",
+            "subnet4": "10.160.20.0",
+            "mask-length4": 24,
+        },
+        {
+            "uid": "net-nat-pool",
+            "name": "N_NAT_DMZ_Server",
+            "type": "network",
+            "subnet4": "172.16.80.0",
+            "mask-length4": 24,
+        },
+        {
+            "uid": "net-orphan-branch",
+            "name": "N_Orphan_Branch_99",
+            "type": "network",
+            "subnet4": "10.199.250.0",
+            "mask-length4": 24,
+        },
+    ]
+    api.objects_by_domain_and_cmd[("Corp", "show-groups")] = [
+        {
+            "uid": "grp-vpn-dom",
+            "name": "G_Corp_VPN_Domain",
+            "type": "group",
+            "members": ["net-vpn-1"],
+        }
+    ]
+    api.gateways_by_domain["Corp"] = [
+        # 1. L3 gateway with `vpn-domain` group on `eth1` (specific + vpn_domain) and NAT/Access rules
+        {
+            "uid": "gw-vpn-l3",
+            "name": "corp-vpn-gw",
+            "type": "simple-gateway",
+            "ipv4-address": "10.77.0.1",
+            "vpn-domain": {"uid": "grp-vpn-dom", "name": "G_Corp_VPN_Domain"},
+            "policy": {"access-policy-installed": True, "access-policy-name": "VPN_Pkg"},
+            "interfaces": [
+                {
+                    "name": "eth0",
+                    "ipv4-address": "198.51.100.5",
+                    "ipv4-mask-length": 24,
+                    "topology": "external",
+                },
+                {
+                    "name": "eth1",
+                    "ipv4-address": "10.77.1.1",
+                    "ipv4-mask-length": 24,
+                    "topology": "internal",
+                    "topology-settings": {
+                        "ip-address-behind-this-interface": "specific",
+                        "specific-network": "G_Corp_VPN_Domain",
+                    },
+                    "anti-spoofing": True,
+                    "anti-spoofing-settings": {"action": "detect"},
+                },
+                {
+                    "name": "eth2",
+                    "ipv4-address": "172.16.80.1",
+                    "ipv4-mask-length": 24,
+                    "topology": "internal",
+                    "topology-settings": {
+                        "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+                    },
+                },
+            ],
+        },
+        # 2. One-arm Cisco ACI service-graph gateway (single external interface `eth1`)
+        {
+            "uid": "gw-aci-onearm",
+            "name": "corp-aci-service-gw",
+            "type": "simple-gateway",
+            "ipv4-address": "10.160.0.10",
+            "policy": {"access-policy-installed": True, "access-policy-name": "ACI_PBR_Pkg"},
+            "interfaces": [
+                {
+                    "name": "eth1",
+                    "ipv4-address": "10.160.0.10",
+                    "ipv4-mask-length": 24,
+                    "topology": "external",
+                }
+            ],
+        },
+        # 3. Incomplete-topology gateway (interfaces all `network defined by routing` without collected routes)
+        {
+            "uid": "gw-incomplete-routing",
+            "name": "corp-uncollected-routing-gw",
+            "type": "simple-gateway",
+            "ipv4-address": "10.170.0.1",
+            "policy": {"access-policy-installed": True, "access-policy-name": "ACI_PBR_Pkg"},
+            "interfaces": [
+                {
+                    "name": "eth0",
+                    "ipv4-address": "10.170.1.1",
+                    "ipv4-mask-length": 24,
+                    "topology": "internal",
+                    "topology-settings": {
+                        "ip-address-behind-this-interface": "network defined by routing",
+                    },
+                },
+                {
+                    "name": "eth1",
+                    "ipv4-address": "10.170.2.1",
+                    "ipv4-mask-length": 24,
+                    "topology": "internal",
+                    "topology-settings": {
+                        "ip-address-behind-this-interface": "not defined",
+                    },
+                },
+            ],
+        },
+    ]
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=300)
+    client = ArodonataClient(settings=settings, api=api)
+    await client.initialize(run_startup_cleanup=False)
+    client.domain_service.tracker.mark_refreshed("mds1")
+    await client.cache.upsert_domains(
+        [
+            DomainInfo(mgmt_name="mds1", uid="d-global", name="Global", active_ip="10.0.0.1", is_global=True),
+            DomainInfo(mgmt_name="mds1", uid="d-corp", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1"),
+        ]
+    )
+
+    # Seed rulebase snapshot for `Corp`:
+    # - `VPN_Pkg`:
+    #   - Access rule #1: `N_VPN_Inside_10_77` -> `N_NAT_DMZ_Server` (install_on=["Policy Targets"])
+    #   - NAT rule #1: original `N_VPN_Inside_10_77` -> `198.51.100.200`, translated `Original` -> `N_NAT_DMZ_Server`
+    #   - Mismatched Access rule #2: `N_Orphan_Branch_99` -> `N_ACI_EPG_Web` explicitly installed on `corp-vpn-gw` (`install_on=["gw-vpn-l3"]`)
+    # - `ACI_PBR_Pkg`:
+    #   - Access rule #1: `N_ACI_EPG_Web` -> `N_ACI_EPG_App` (install_on=["corp-aci-service-gw", "corp-uncollected-routing-gw"])
+    #   - Generic Cleanup rule #2: `Any` -> `Any` (must be ignored by policy inference!)
+    await client.cache.replace_domain_rulebase(
+        DomainRulebaseSnapshot(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            package_layers=[
+                RulebasePackageLayerEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    package_uid="pkg-vpn",
+                    package_name="VPN_Pkg",
+                    rulebase_type="access",
+                    layer_uid="layer-vpn-net",
+                    layer_name="VPN_Network",
+                    position=1,
+                ),
+                RulebasePackageLayerEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    package_uid="pkg-aci",
+                    package_name="ACI_PBR_Pkg",
+                    rulebase_type="access",
+                    layer_uid="layer-aci-net",
+                    layer_name="ACI_Network",
+                    position=1,
+                ),
+            ],
+            layers=[
+                RulebaseLayerEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    uid="layer-vpn-net",
+                    name="VPN_Network",
+                    rulebase_type="access",
+                ),
+                RulebaseLayerEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    uid="layer-aci-net",
+                    name="ACI_Network",
+                    rulebase_type="access",
+                ),
+            ],
+            access_rules=[
+                AccessRuleEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    layer_uid="layer-vpn-net",
+                    layer_name="VPN_Network",
+                    uid="rule-vpn-dmz",
+                    name="Allow_VPN_to_DMZ",
+                    position=1,
+                    rule_number="1",
+                    enabled=True,
+                    action="Accept",
+                    source=["N_VPN_Inside_10_77"],
+                    destination=["N_NAT_DMZ_Server"],
+                    install_on=["Policy Targets"],
+                ),
+                AccessRuleEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    layer_uid="layer-vpn-net",
+                    layer_name="VPN_Network",
+                    uid="rule-vpn-orphan",
+                    name="Stale_Orphan_Rule",
+                    position=2,
+                    rule_number="2",
+                    enabled=True,
+                    action="Accept",
+                    source=["N_Orphan_Branch_99"],
+                    destination=["N_ACI_EPG_Web"],
+                    install_on=["gw-vpn-l3"],
+                ),
+                AccessRuleEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    layer_uid="layer-vpn-net",
+                    layer_name="VPN_Network",
+                    uid="rule-vpn-one-side-orphan",
+                    name="Stale_OneSide_Drop_Rule",
+                    position=3,
+                    rule_number="3",
+                    enabled=True,
+                    action="Drop",
+                    source=["N_Orphan_Branch_99"],
+                    destination=["Any"],
+                    install_on=["gw-vpn-l3"],
+                ),
+                AccessRuleEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    layer_uid="layer-aci-net",
+                    layer_name="ACI_Network",
+                    uid="rule-aci-epg",
+                    name="Allow_EPG_Web_to_App",
+                    position=1,
+                    rule_number="1",
+                    enabled=True,
+                    action="Accept",
+                    source=["N_ACI_EPG_Web"],
+                    destination=["N_ACI_EPG_App"],
+                    install_on=["corp-aci-service-gw", "corp-uncollected-routing-gw"],
+                ),
+                AccessRuleEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    layer_uid="layer-aci-net",
+                    layer_name="ACI_Network",
+                    uid="rule-aci-any",
+                    name="Cleanup_Any",
+                    position=2,
+                    rule_number="2",
+                    enabled=True,
+                    action="Accept",
+                    source=["Any"],
+                    destination=["Any"],
+                    install_on=["Policy Targets"],
+                ),
+            ],
+            nat_rules=[
+                NatRuleEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    package_uid="pkg-vpn",
+                    package_name="VPN_Pkg",
+                    uid="nat-vpn-dmz-vip",
+                    name="NAT_DMZ_VIP",
+                    position=1,
+                    rule_number="1",
+                    enabled=True,
+                    original_source="N_VPN_Inside_10_77",
+                    original_destination="198.51.100.200",
+                    translated_source="Original",
+                    translated_destination="N_NAT_DMZ_Server",
+                    install_on=["Policy Targets"],
+                ),
+                NatRuleEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    package_uid="pkg-vpn",
+                    package_name="VPN_Pkg",
+                    uid="nat-inbound-dnat-gw",
+                    name="Inbound_DNAT_To_DMZ",
+                    position=2,
+                    rule_number="2",
+                    enabled=True,
+                    original_source="N_ACI_EPG_Web",
+                    original_destination="198.51.100.200",
+                    translated_source="Original",
+                    translated_destination="N_NAT_DMZ_Server",
+                    install_on=["gw-vpn-l3"],
+                ),
+            ],
+        ),
+    )
+
+    await client.refresh_topology(mgmt_name="mds1", domains=["Corp"], mode="force")
+
+    # 1. Verify `vpn_domain` entry was extracted and persisted on `corp-vpn-gw` `eth1`
+    vpn_entries = await client.get_gateway_topology(
+        mgmt_name="mds1",
+        domain="Corp",
+        gateway="corp-vpn-gw",
+        source_types=["vpn_domain"],
+        cache_mode="cache",
+    )
+    assert len(vpn_entries) == 1
+    assert vpn_entries[0].interface_name == "eth1"
+    assert vpn_entries[0].cidr_or_range == "10.77.0.0/16"
+    assert vpn_entries[0].source_ref == "G_Corp_VPN_Domain"
+
+    # 2. Verify L3 candidate `corp-vpn-gw` receives both `vpn_encryption_domain` (+0.45) and `policy_rule_evidence` (+0.25)
+    #    On `eth1`: `topology_specific_detect` (0.15) + `vpn_encryption_domain` (0.45) = 0.60
+    #    On `eth2`: `topology_connected` (0.50)
+    #    Base flow confidence = min(0.60, 0.50) = 0.50
+    #    Plus `policy_rule_evidence` (+0.25) from `Allow_VPN_to_DMZ` -> 0.75!
+    l3_cands = await client.find_affected_gateways(
+        sources=["10.77.5.10"],
+        destinations=["172.16.80.25"],
+        mgmt_name="mds1",
+        domain="Corp",
+        cache_mode="cache",
+    )
+    assert [c.gateway_name for c in l3_cands] == ["corp-vpn-gw"]
+    l3_cand = l3_cands[0]
+    factor_codes = {d.code for d in l3_cand.confidence_factors}
+    assert "vpn_encryption_domain" in factor_codes
+    assert "policy_rule_evidence" in factor_codes
+    assert l3_cand.confidence == pytest.approx(0.75)
+
+    # Verify NAT rule `original_destination` (`198.51.100.200`) also grants `policy_rule_evidence` (+0.25)
+    nat_cands = await client.find_affected_gateways(
+        sources=["10.77.5.10"],
+        destinations=["198.51.100.200"],
+        mgmt_name="mds1",
+        domain="Corp",
+        cache_mode="cache",
+    )
+    assert [c.gateway_name for c in nat_cands] == ["corp-vpn-gw"]
+    assert any(d.code == "policy_rule_evidence" for d in nat_cands[0].confidence_factors)
+    # eth1 (0.60) -> eth0 external fallback (0.30) + policy_rule_evidence (0.25) = 0.55
+    assert nat_cands[0].confidence == pytest.approx(0.55)
+
+    # 3. Verify one-arm Cisco ACI gateway (`corp-aci-service-gw`) and incomplete-topology gateway (`corp-uncollected-routing-gw`)
+    #    are discovered with `match_type="policy_inferred"` when querying `N_ACI_EPG_Web` (`10.160.10.15`) -> `N_ACI_EPG_App` (`10.160.20.25`)
+    aci_cands = await client.find_affected_gateways(
+        sources=["10.160.10.15"],
+        destinations=["10.160.20.25"],
+        mgmt_name="mds1",
+        domain="Corp",
+        include_policy_inferred=True,
+        cache_mode="cache",
+    )
+    assert {c.gateway_name for c in aci_cands} == {"corp-aci-service-gw", "corp-uncollected-routing-gw"}
+    aci_gw = next(c for c in aci_cands if c.gateway_name == "corp-aci-service-gw")
+    assert aci_gw.match_types == ["policy_inferred"]
+    assert aci_gw.matched_flows[0].match_type == "policy_inferred"
+    assert aci_gw.matched_flows[0].src_matched_cidr == "10.160.10.0/24"
+    assert aci_gw.matched_flows[0].dst_matched_cidr == "10.160.20.0/24"
+    assert any(d.code == "policy_rule_evidence" for d in aci_gw.confidence_factors)
+    # One-arm external `eth1` (0.30) + `policy_rule_evidence` (0.25) = 0.55
+    assert aci_gw.confidence == pytest.approx(0.55)
+
+    # When `include_policy_inferred=False`, neither one-arm nor incomplete-topology gateway is returned
+    aci_disabled = await client.find_affected_gateways(
+        sources=["10.160.10.15"],
+        destinations=["10.160.20.25"],
+        mgmt_name="mds1",
+        domain="Corp",
+        include_policy_inferred=False,
+        cache_mode="cache",
+    )
+    assert aci_disabled == []
+
+    # Unrelated traffic (`10.160.99.1 -> 10.160.99.2`) covered only by `Cleanup_Any` (`Any -> Any`) MUST NOT match!
+    any_only = await client.find_affected_gateways(
+        sources=["10.160.99.1"],
+        destinations=["10.160.99.2"],
+        mgmt_name="mds1",
+        domain="Corp",
+        include_policy_inferred=True,
+        cache_mode="cache",
+    )
+    assert any_only == []
+
+    # 4. Verify `reconcile_gateway_topology(..., check_policy=True)` reports `policy_topology_mismatch`
+    #    for `Stale_Orphan_Rule` explicitly targeting `corp-vpn-gw` (`gw-vpn-l3`)
+    rec_no_pol = await client.reconcile_gateway_topology(
+        mgmt_name="mds1",
+        domain="Corp",
+        check_policy=False,
+        cache_mode="cache",
+    )
+    assert [d for d in rec_no_pol.discrepancies if d.discrepancy_type == "policy_topology_mismatch"] == []
+
+    rec_with_pol = await client.reconcile_gateway_topology(
+        mgmt_name="mds1",
+        domain="Corp",
+        check_policy=True,
+        cache_mode="cache",
+    )
+    pol_mismatches = [d for d in rec_with_pol.discrepancies if d.discrepancy_type == "policy_topology_mismatch"]
+    # `Stale_Orphan_Rule` and `Stale_OneSide_Drop_Rule` are reported, while `Inbound_DNAT_To_DMZ` is NOT flagged
+    # because its translated destination `N_NAT_DMZ_Server` (`172.16.80.25/32`) overlaps `eth2` (`172.16.80.0/24`).
+    assert len(pol_mismatches) == 2
+    by_cidr = {d.cidr_or_range: d for d in pol_mismatches}
+    assert set(by_cidr.keys()) == {
+        "10.199.250.0/24 -> 10.160.10.0/24",
+        "10.199.250.0/24 -> Any",
+    }
+    assert by_cidr["10.199.250.0/24 -> 10.160.10.0/24"].gateway_name == "corp-vpn-gw"
+    assert by_cidr["10.199.250.0/24 -> 10.160.10.0/24"].interface_name == "policy"
+    assert "Stale_Orphan_Rule" in by_cidr["10.199.250.0/24 -> 10.160.10.0/24"].message
+    assert "Stale_OneSide_Drop_Rule" in by_cidr["10.199.250.0/24 -> Any"].message
+    assert all("Inbound_DNAT_To_DMZ" not in d.message for d in pol_mismatches)
+
+    # Verify wildcard annotation `interface_name="policy", cidr_or_range="*"` suppresses `policy_topology_mismatch`
+    await client.upsert_topology_annotations(
+        {
+            "mgmt_name": "mds1",
+            "domain_name": "Corp",
+            "gateway_uid": "gw-vpn-l3",
+            "interface_name": "policy",
+            "cidr_or_range": "*",
+            "disposition": "ignore",
+            "comment": "Accepted policy exceptions on corp-vpn-gw",
+        }
+    )
+    rec_suppressed = await client.reconcile_gateway_topology(
+        mgmt_name="mds1",
+        domain="Corp",
+        check_policy=True,
+        cache_mode="cache",
+    )
+    pol_suppressed = [d for d in rec_suppressed.discrepancies if d.discrepancy_type == "policy_topology_mismatch"]
+    assert len(pol_suppressed) == 2
+    assert all(d.suppressed_by_annotation is True and d.severity == "info" for d in pol_suppressed)
+
+    # Verify `_extract_vpn_domain_refs` ignores stale `vpn-domain` when `vpn-domain-type` is `addresses_behind_gw`
+    from arodonata.core.services.topology_service import _extract_vpn_domain_refs
+
+    assert _extract_vpn_domain_refs(
+        {
+            "vpn-settings": {
+                "vpn-domain-type": "addresses_behind_gw",
+                "vpn-domain": {"uid": "grp-vpn-dom", "name": "G_Corp_VPN_Domain"},
+            }
+        }
+    ) == (None, None)
 
     await client.close()
