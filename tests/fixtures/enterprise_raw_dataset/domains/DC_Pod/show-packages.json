@@ -1,0 +1,313 @@
+{
+  "packages": [
+    {
+      "uid": "uid-pkg-dc_pod",
+      "name": "DC_Pod_Tier_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-dc-vs-tier1-web",
+          "name": "dc-vs-tier1-web",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-tier2-app",
+          "name": "dc-vs-tier2-app",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-21",
+          "name": "dc-vs-pod-21",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-22",
+          "name": "dc-vs-pod-22",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-23",
+          "name": "dc-vs-pod-23",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-24",
+          "name": "dc-vs-pod-24",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-25",
+          "name": "dc-vs-pod-25",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-26",
+          "name": "dc-vs-pod-26",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-27",
+          "name": "dc-vs-pod-27",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-28",
+          "name": "dc-vs-pod-28",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-29",
+          "name": "dc-vs-pod-29",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-30",
+          "name": "dc-vs-pod-30",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-31",
+          "name": "dc-vs-pod-31",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-32",
+          "name": "dc-vs-pod-32",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-33",
+          "name": "dc-vs-pod-33",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-34",
+          "name": "dc-vs-pod-34",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-35",
+          "name": "dc-vs-pod-35",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-36",
+          "name": "dc-vs-pod-36",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-37",
+          "name": "dc-vs-pod-37",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-38",
+          "name": "dc-vs-pod-38",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-39",
+          "name": "dc-vs-pod-39",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-40",
+          "name": "dc-vs-pod-40",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-41",
+          "name": "dc-vs-pod-41",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-42",
+          "name": "dc-vs-pod-42",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-43",
+          "name": "dc-vs-pod-43",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-44",
+          "name": "dc-vs-pod-44",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-45",
+          "name": "dc-vs-pod-45",
+          "type": "CpmiVsNetobj"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-dc_pod-security",
+          "name": "DC_Pod_Tier_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "uid": "uid-pkg-dc_pod",
+      "name": "DC_Pod_Tier_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-dc-vs-tier1-web",
+          "name": "dc-vs-tier1-web",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-tier2-app",
+          "name": "dc-vs-tier2-app",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-21",
+          "name": "dc-vs-pod-21",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-22",
+          "name": "dc-vs-pod-22",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-23",
+          "name": "dc-vs-pod-23",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-24",
+          "name": "dc-vs-pod-24",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-25",
+          "name": "dc-vs-pod-25",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-26",
+          "name": "dc-vs-pod-26",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-27",
+          "name": "dc-vs-pod-27",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-28",
+          "name": "dc-vs-pod-28",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-29",
+          "name": "dc-vs-pod-29",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-30",
+          "name": "dc-vs-pod-30",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-31",
+          "name": "dc-vs-pod-31",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-32",
+          "name": "dc-vs-pod-32",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-33",
+          "name": "dc-vs-pod-33",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-34",
+          "name": "dc-vs-pod-34",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-35",
+          "name": "dc-vs-pod-35",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-36",
+          "name": "dc-vs-pod-36",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-37",
+          "name": "dc-vs-pod-37",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-38",
+          "name": "dc-vs-pod-38",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-39",
+          "name": "dc-vs-pod-39",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-40",
+          "name": "dc-vs-pod-40",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-41",
+          "name": "dc-vs-pod-41",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-42",
+          "name": "dc-vs-pod-42",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-43",
+          "name": "dc-vs-pod-43",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-44",
+          "name": "dc-vs-pod-44",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vs-pod-45",
+          "name": "dc-vs-pod-45",
+          "type": "CpmiVsNetobj"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-dc_pod-security",
+          "name": "DC_Pod_Tier_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

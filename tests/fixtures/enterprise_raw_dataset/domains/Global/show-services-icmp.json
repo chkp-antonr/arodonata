@@ -1,0 +1,13 @@
+{
+  "objects": [
+    {
+      "uid": "uid-global-svc-icmp-echo",
+      "name": "icmp-proto",
+      "type": "service-icmp",
+      "icmp-type": 8
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

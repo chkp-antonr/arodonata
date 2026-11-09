@@ -1,0 +1,147 @@
+{
+  "objects": [
+    {
+      "uid": "uid-db_seg-bulk-rng-001",
+      "name": "R_DB_Seg_Pool_001",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.1.10",
+      "ipv4-address-last": "10.168.1.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-002",
+      "name": "R_DB_Seg_Pool_002",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.2.10",
+      "ipv4-address-last": "10.168.2.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-003",
+      "name": "R_DB_Seg_Pool_003",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.3.10",
+      "ipv4-address-last": "10.168.3.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-004",
+      "name": "R_DB_Seg_Pool_004",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.4.10",
+      "ipv4-address-last": "10.168.4.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-005",
+      "name": "R_DB_Seg_Pool_005",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.5.10",
+      "ipv4-address-last": "10.168.5.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-006",
+      "name": "R_DB_Seg_Pool_006",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.6.10",
+      "ipv4-address-last": "10.168.6.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-007",
+      "name": "R_DB_Seg_Pool_007",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.7.10",
+      "ipv4-address-last": "10.168.7.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-008",
+      "name": "R_DB_Seg_Pool_008",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.8.10",
+      "ipv4-address-last": "10.168.8.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-009",
+      "name": "R_DB_Seg_Pool_009",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.9.10",
+      "ipv4-address-last": "10.168.9.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-010",
+      "name": "R_DB_Seg_Pool_010",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.10.10",
+      "ipv4-address-last": "10.168.10.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-011",
+      "name": "R_DB_Seg_Pool_011",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.11.10",
+      "ipv4-address-last": "10.168.11.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-012",
+      "name": "R_DB_Seg_Pool_012",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.12.10",
+      "ipv4-address-last": "10.168.12.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-013",
+      "name": "R_DB_Seg_Pool_013",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.13.10",
+      "ipv4-address-last": "10.168.13.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-014",
+      "name": "R_DB_Seg_Pool_014",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.14.10",
+      "ipv4-address-last": "10.168.14.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-015",
+      "name": "R_DB_Seg_Pool_015",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.15.10",
+      "ipv4-address-last": "10.168.15.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-016",
+      "name": "R_DB_Seg_Pool_016",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.16.10",
+      "ipv4-address-last": "10.168.16.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-017",
+      "name": "R_DB_Seg_Pool_017",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.17.10",
+      "ipv4-address-last": "10.168.17.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-018",
+      "name": "R_DB_Seg_Pool_018",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.18.10",
+      "ipv4-address-last": "10.168.18.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-019",
+      "name": "R_DB_Seg_Pool_019",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.19.10",
+      "ipv4-address-last": "10.168.19.50"
+    },
+    {
+      "uid": "uid-db_seg-bulk-rng-020",
+      "name": "R_DB_Seg_Pool_020",
+      "type": "address-range",
+      "ipv4-address-first": "10.168.20.10",
+      "ipv4-address-last": "10.168.20.50"
+    }
+  ],
+  "from": 1,
+  "to": 20,
+  "total": 20
+}

@@ -1,0 +1,13 @@
+{
+  "objects": [
+    {
+      "uid": "uid-wan_core-dns-corp",
+      "name": ".wan_core.enterprise.internal",
+      "type": "dns-domain",
+      "is-sub-domain": true
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

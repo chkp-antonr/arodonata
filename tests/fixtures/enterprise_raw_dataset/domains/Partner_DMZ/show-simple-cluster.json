@@ -1,0 +1,63 @@
+{
+  "uid-partner-b2b-cluster": {
+    "uid": "uid-partner-b2b-cluster",
+    "name": "partner-b2b-cluster",
+    "type": "simple-cluster",
+    "ipv4-address": "172.30.0.10",
+    "cluster-members": [
+      {
+        "uid": "uid-partner-b2b-1a",
+        "name": "partner-b2b-1a",
+        "type": "cluster-member",
+        "ipv4-address": "172.30.0.11",
+        "cluster-uid": "uid-partner-b2b-cluster"
+      },
+      {
+        "uid": "uid-partner-b2b-1b",
+        "name": "partner-b2b-1b",
+        "type": "cluster-member",
+        "ipv4-address": "172.30.0.12",
+        "cluster-uid": "uid-partner-b2b-cluster"
+      }
+    ],
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.30.0.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "172.30.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "G_Partner_B2B_Static"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "172.30.20.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  }
+}

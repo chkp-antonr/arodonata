@@ -1,0 +1,17 @@
+{
+  "objects": [
+    {
+      "uid": "uid-wan_core-svc-grp-web",
+      "name": "G_WAN_Core_App_Services",
+      "type": "service-group",
+      "members": [
+        "uid-wan_core-svc-tcp-80",
+        "uid-wan_core-svc-tcp-443",
+        "uid-wan_core-svc-tcp-8443"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

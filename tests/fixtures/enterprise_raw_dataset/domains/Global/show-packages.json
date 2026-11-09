@@ -1,0 +1,41 @@
+{
+  "packages": [
+    {
+      "uid": "uid-pkg-global",
+      "name": "Global_Standard_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [],
+      "access-layers": [
+        {
+          "uid": "uid-layer-global-security",
+          "name": "Global_Standard_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "uid": "uid-pkg-global",
+      "name": "Global_Standard_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [],
+      "access-layers": [
+        {
+          "uid": "uid-layer-global-security",
+          "name": "Global_Standard_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

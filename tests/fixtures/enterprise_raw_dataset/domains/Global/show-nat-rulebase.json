@@ -1,0 +1,519 @@
+{
+  "Global_Standard_Pkg": {
+    "package": "Global_Standard_Pkg",
+    "uid": "nat:uid-pkg-global",
+    "rulebase": [
+      {
+        "uid": "uid-nsec-global-01",
+        "name": "Global Automatic & Manual NAT",
+        "type": "nat-section",
+        "from": 1,
+        "to": 12,
+        "rulebase": [
+          {
+            "uid": "uid-nrule-global-001",
+            "name": "Global_NAT_001",
+            "type": "nat-rule",
+            "rule-number": 1,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-glob-host-001",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-glob-host-001",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-global-002",
+            "name": "Global_NAT_002",
+            "type": "nat-rule",
+            "rule-number": 2,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-glob-host-002",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-glob-host-002",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-global-003",
+            "name": "Global_NAT_003",
+            "type": "nat-rule",
+            "rule-number": 3,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-glob-host-003",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-glob-host-003",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-global-004",
+            "name": "Global_NAT_004",
+            "type": "nat-rule",
+            "rule-number": 4,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-glob-host-004",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-glob-host-004",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-global-005",
+            "name": "Global_NAT_005",
+            "type": "nat-rule",
+            "rule-number": 5,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-glob-host-005",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-glob-host-005",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-global-006",
+            "name": "Global_NAT_006",
+            "type": "nat-rule",
+            "rule-number": 6,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-glob-host-006",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-glob-host-006",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-global-007",
+            "name": "Global_NAT_007",
+            "type": "nat-rule",
+            "rule-number": 7,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-glob-host-007",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-glob-host-007",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-global-008",
+            "name": "Global_NAT_008",
+            "type": "nat-rule",
+            "rule-number": 8,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-glob-host-008",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-glob-host-008",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-global-009",
+            "name": "Global_NAT_009",
+            "type": "nat-rule",
+            "rule-number": 9,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-glob-host-009",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-glob-host-009",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-global-010",
+            "name": "Global_NAT_010",
+            "type": "nat-rule",
+            "rule-number": 10,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-glob-host-010",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-glob-host-010",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-global-011",
+            "name": "Global_NAT_011",
+            "type": "nat-rule",
+            "rule-number": 11,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-glob-host-011",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-glob-host-011",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-global-012",
+            "name": "Global_NAT_012",
+            "type": "nat-rule",
+            "rule-number": 12,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-glob-host-012",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-glob-host-012",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          }
+        ]
+      }
+    ],
+    "objects-dictionary": [
+      {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c473",
+        "name": "Drop",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "598ead32-aa42-4615-90ed-f51a5928d41d",
+        "name": "Log",
+        "type": "Track"
+      },
+      {
+        "uid": "uid-glob-host-001",
+        "name": "H_Global_DNS_001",
+        "type": "host",
+        "ipv4-address": "10.253.0.1"
+      },
+      {
+        "uid": "uid-glob-host-002",
+        "name": "H_Global_DNS_002",
+        "type": "host",
+        "ipv4-address": "10.253.0.2"
+      },
+      {
+        "uid": "uid-glob-host-003",
+        "name": "H_Global_DNS_003",
+        "type": "host",
+        "ipv4-address": "10.253.0.3"
+      },
+      {
+        "uid": "uid-glob-host-004",
+        "name": "H_Global_DNS_004",
+        "type": "host",
+        "ipv4-address": "10.253.0.4"
+      },
+      {
+        "uid": "uid-glob-host-005",
+        "name": "H_Global_DNS_005",
+        "type": "host",
+        "ipv4-address": "10.253.0.5"
+      },
+      {
+        "uid": "uid-glob-host-006",
+        "name": "H_Global_DNS_006",
+        "type": "host",
+        "ipv4-address": "10.253.0.6"
+      },
+      {
+        "uid": "uid-glob-host-007",
+        "name": "H_Global_DNS_007",
+        "type": "host",
+        "ipv4-address": "10.253.0.7"
+      },
+      {
+        "uid": "uid-glob-host-008",
+        "name": "H_Global_DNS_008",
+        "type": "host",
+        "ipv4-address": "10.253.0.8"
+      },
+      {
+        "uid": "uid-glob-host-009",
+        "name": "H_Global_DNS_009",
+        "type": "host",
+        "ipv4-address": "10.253.0.9"
+      },
+      {
+        "uid": "uid-glob-host-010",
+        "name": "H_Global_DNS_010",
+        "type": "host",
+        "ipv4-address": "10.253.0.10"
+      },
+      {
+        "uid": "uid-glob-host-011",
+        "name": "H_Global_DNS_011",
+        "type": "host",
+        "ipv4-address": "10.253.0.11"
+      },
+      {
+        "uid": "uid-glob-host-012",
+        "name": "H_Global_DNS_012",
+        "type": "host",
+        "ipv4-address": "10.253.0.12"
+      },
+      {
+        "uid": "uid-glob-host-013",
+        "name": "H_Global_DNS_013",
+        "type": "host",
+        "ipv4-address": "10.253.0.13"
+      },
+      {
+        "uid": "uid-glob-host-014",
+        "name": "H_Global_DNS_014",
+        "type": "host",
+        "ipv4-address": "10.253.0.14"
+      },
+      {
+        "uid": "uid-glob-host-015",
+        "name": "H_Global_DNS_015",
+        "type": "host",
+        "ipv4-address": "10.253.0.15"
+      },
+      {
+        "uid": "uid-glob-host-016",
+        "name": "H_Global_DNS_016",
+        "type": "host",
+        "ipv4-address": "10.253.0.16"
+      },
+      {
+        "uid": "uid-glob-host-017",
+        "name": "H_Global_DNS_017",
+        "type": "host",
+        "ipv4-address": "10.253.0.17"
+      },
+      {
+        "uid": "uid-glob-host-018",
+        "name": "H_Global_DNS_018",
+        "type": "host",
+        "ipv4-address": "10.253.0.18"
+      },
+      {
+        "uid": "uid-glob-host-019",
+        "name": "H_Global_DNS_019",
+        "type": "host",
+        "ipv4-address": "10.253.0.19"
+      },
+      {
+        "uid": "uid-glob-host-020",
+        "name": "H_Global_DNS_020",
+        "type": "host",
+        "ipv4-address": "10.253.0.20"
+      },
+      {
+        "uid": "uid-glob-host-021",
+        "name": "H_Global_DNS_021",
+        "type": "host",
+        "ipv4-address": "10.253.0.21"
+      },
+      {
+        "uid": "uid-glob-host-022",
+        "name": "H_Global_DNS_022",
+        "type": "host",
+        "ipv4-address": "10.253.0.22"
+      },
+      {
+        "uid": "uid-glob-host-023",
+        "name": "H_Global_DNS_023",
+        "type": "host",
+        "ipv4-address": "10.253.0.23"
+      },
+      {
+        "uid": "uid-glob-host-024",
+        "name": "H_Global_DNS_024",
+        "type": "host",
+        "ipv4-address": "10.253.0.24"
+      },
+      {
+        "uid": "uid-glob-host-025",
+        "name": "H_Global_DNS_025",
+        "type": "host",
+        "ipv4-address": "10.253.0.25"
+      },
+      {
+        "uid": "uid-glob-host-026",
+        "name": "H_Global_DNS_026",
+        "type": "host",
+        "ipv4-address": "10.253.0.26"
+      },
+      {
+        "uid": "uid-glob-host-027",
+        "name": "H_Global_DNS_027",
+        "type": "host",
+        "ipv4-address": "10.253.0.27"
+      },
+      {
+        "uid": "uid-glob-host-028",
+        "name": "H_Global_DNS_028",
+        "type": "host",
+        "ipv4-address": "10.253.0.28"
+      },
+      {
+        "uid": "uid-glob-host-029",
+        "name": "H_Global_DNS_029",
+        "type": "host",
+        "ipv4-address": "10.253.0.29"
+      },
+      {
+        "uid": "uid-glob-host-030",
+        "name": "H_Global_DNS_030",
+        "type": "host",
+        "ipv4-address": "10.253.0.30"
+      },
+      {
+        "uid": "uid-glob-net-branches",
+        "name": "N_Global_All_Branches",
+        "type": "network",
+        "subnet4": "10.11.0.0",
+        "mask-length4": 16
+      },
+      {
+        "uid": "uid-glob-net-dc-vault",
+        "name": "N_Global_DC_Vault_Super",
+        "type": "network",
+        "subnet4": "10.220.0.0",
+        "mask-length4": 16
+      },
+      {
+        "uid": "uid-glob-net-rfc1918-10",
+        "name": "N_Global_RFC1918_10",
+        "type": "network",
+        "subnet4": "10.0.0.0",
+        "mask-length4": 8
+      },
+      {
+        "uid": "uid-global-svc-tcp-22",
+        "name": "TCP_22",
+        "type": "service-tcp",
+        "port": "22"
+      },
+      {
+        "uid": "uid-global-svc-tcp-53",
+        "name": "TCP_53",
+        "type": "service-tcp",
+        "port": "53"
+      },
+      {
+        "uid": "uid-global-svc-tcp-80",
+        "name": "TCP_80",
+        "type": "service-tcp",
+        "port": "80"
+      },
+      {
+        "uid": "uid-global-svc-tcp-443",
+        "name": "TCP_443",
+        "type": "service-tcp",
+        "port": "443"
+      },
+      {
+        "uid": "uid-global-svc-tcp-1521",
+        "name": "TCP_1521",
+        "type": "service-tcp",
+        "port": "1521"
+      },
+      {
+        "uid": "uid-global-svc-tcp-3306",
+        "name": "TCP_3306",
+        "type": "service-tcp",
+        "port": "3306"
+      },
+      {
+        "uid": "uid-global-svc-tcp-5432",
+        "name": "TCP_5432",
+        "type": "service-tcp",
+        "port": "5432"
+      },
+      {
+        "uid": "uid-global-svc-tcp-6379",
+        "name": "TCP_6379",
+        "type": "service-tcp",
+        "port": "6379"
+      },
+      {
+        "uid": "uid-global-svc-tcp-8080",
+        "name": "TCP_8080",
+        "type": "service-tcp",
+        "port": "8080"
+      },
+      {
+        "uid": "uid-global-svc-tcp-8443",
+        "name": "TCP_8443",
+        "type": "service-tcp",
+        "port": "8443"
+      },
+      {
+        "uid": "uid-global-svc-tcp-9092",
+        "name": "TCP_9092",
+        "type": "service-tcp",
+        "port": "9092"
+      },
+      {
+        "uid": "uid-global-svc-tcp-9200",
+        "name": "TCP_9200",
+        "type": "service-tcp",
+        "port": "9200"
+      }
+    ],
+    "from": 1,
+    "to": 12,
+    "total": 12
+  }
+}

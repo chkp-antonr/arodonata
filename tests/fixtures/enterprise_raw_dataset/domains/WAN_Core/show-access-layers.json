@@ -1,0 +1,23 @@
+{
+  "access-layers": [
+    {
+      "uid": "uid-layer-wan_core-security",
+      "name": "WAN_Core_Transit_Pkg Network",
+      "type": "access-layer",
+      "firewall": true,
+      "applications-and-url-filtering": true
+    }
+  ],
+  "objects": [
+    {
+      "uid": "uid-layer-wan_core-security",
+      "name": "WAN_Core_Transit_Pkg Network",
+      "type": "access-layer",
+      "firewall": true,
+      "applications-and-url-filtering": true
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

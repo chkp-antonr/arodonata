@@ -1,0 +1,259 @@
+{
+  "objects": [
+    {
+      "uid": "uid-dom-branch",
+      "name": "Branch",
+      "type": "domain",
+      "domain-type": "domain",
+      "servers": [
+        {
+          "name": "branch-cma-primary",
+          "ipv4-address": "10.250.1.11",
+          "multi-domain-server": {
+            "uid": "uid-mds-primary",
+            "name": "mds-ent-primary",
+            "ipv4-address": "10.250.0.10"
+          },
+          "active": true
+        },
+        {
+          "name": "branch-cma-standby",
+          "ipv4-address": "10.250.2.11",
+          "multi-domain-server": {
+            "uid": "uid-mds-standby",
+            "name": "mds-ent-standby",
+            "ipv4-address": "10.250.0.11"
+          },
+          "active": false
+        }
+      ]
+    },
+    {
+      "uid": "uid-dom-regional",
+      "name": "Regional",
+      "type": "domain",
+      "domain-type": "domain",
+      "servers": [
+        {
+          "name": "regional-cma-primary",
+          "ipv4-address": "10.250.1.12",
+          "multi-domain-server": {
+            "uid": "uid-mds-primary",
+            "name": "mds-ent-primary",
+            "ipv4-address": "10.250.0.10"
+          },
+          "active": true
+        },
+        {
+          "name": "regional-cma-standby",
+          "ipv4-address": "10.250.2.12",
+          "multi-domain-server": {
+            "uid": "uid-mds-standby",
+            "name": "mds-ent-standby",
+            "ipv4-address": "10.250.0.11"
+          },
+          "active": false
+        }
+      ]
+    },
+    {
+      "uid": "uid-dom-wan_core",
+      "name": "WAN_Core",
+      "type": "domain",
+      "domain-type": "domain",
+      "servers": [
+        {
+          "name": "wan_core-cma-primary",
+          "ipv4-address": "10.250.1.13",
+          "multi-domain-server": {
+            "uid": "uid-mds-primary",
+            "name": "mds-ent-primary",
+            "ipv4-address": "10.250.0.10"
+          },
+          "active": true
+        },
+        {
+          "name": "wan_core-cma-standby",
+          "ipv4-address": "10.250.2.13",
+          "multi-domain-server": {
+            "uid": "uid-mds-standby",
+            "name": "mds-ent-standby",
+            "ipv4-address": "10.250.0.11"
+          },
+          "active": false
+        }
+      ]
+    },
+    {
+      "uid": "uid-dom-perimeter",
+      "name": "Perimeter",
+      "type": "domain",
+      "domain-type": "domain",
+      "servers": [
+        {
+          "name": "perimeter-cma-primary",
+          "ipv4-address": "10.250.1.14",
+          "multi-domain-server": {
+            "uid": "uid-mds-primary",
+            "name": "mds-ent-primary",
+            "ipv4-address": "10.250.0.10"
+          },
+          "active": true
+        },
+        {
+          "name": "perimeter-cma-standby",
+          "ipv4-address": "10.250.2.14",
+          "multi-domain-server": {
+            "uid": "uid-mds-standby",
+            "name": "mds-ent-standby",
+            "ipv4-address": "10.250.0.11"
+          },
+          "active": false
+        }
+      ]
+    },
+    {
+      "uid": "uid-dom-transit",
+      "name": "Transit",
+      "type": "domain",
+      "domain-type": "domain",
+      "servers": [
+        {
+          "name": "transit-cma-primary",
+          "ipv4-address": "10.250.1.15",
+          "multi-domain-server": {
+            "uid": "uid-mds-primary",
+            "name": "mds-ent-primary",
+            "ipv4-address": "10.250.0.10"
+          },
+          "active": true
+        },
+        {
+          "name": "transit-cma-standby",
+          "ipv4-address": "10.250.2.15",
+          "multi-domain-server": {
+            "uid": "uid-mds-standby",
+            "name": "mds-ent-standby",
+            "ipv4-address": "10.250.0.11"
+          },
+          "active": false
+        }
+      ]
+    },
+    {
+      "uid": "uid-dom-dc_spine",
+      "name": "DC_Spine",
+      "type": "domain",
+      "domain-type": "domain",
+      "servers": [
+        {
+          "name": "dc_spine-cma-primary",
+          "ipv4-address": "10.250.1.16",
+          "multi-domain-server": {
+            "uid": "uid-mds-primary",
+            "name": "mds-ent-primary",
+            "ipv4-address": "10.250.0.10"
+          },
+          "active": true
+        },
+        {
+          "name": "dc_spine-cma-standby",
+          "ipv4-address": "10.250.2.16",
+          "multi-domain-server": {
+            "uid": "uid-mds-standby",
+            "name": "mds-ent-standby",
+            "ipv4-address": "10.250.0.11"
+          },
+          "active": false
+        }
+      ]
+    },
+    {
+      "uid": "uid-dom-dc_pod",
+      "name": "DC_Pod",
+      "type": "domain",
+      "domain-type": "domain",
+      "servers": [
+        {
+          "name": "dc_pod-cma-primary",
+          "ipv4-address": "10.250.1.17",
+          "multi-domain-server": {
+            "uid": "uid-mds-primary",
+            "name": "mds-ent-primary",
+            "ipv4-address": "10.250.0.10"
+          },
+          "active": true
+        },
+        {
+          "name": "dc_pod-cma-standby",
+          "ipv4-address": "10.250.2.17",
+          "multi-domain-server": {
+            "uid": "uid-mds-standby",
+            "name": "mds-ent-standby",
+            "ipv4-address": "10.250.0.11"
+          },
+          "active": false
+        }
+      ]
+    },
+    {
+      "uid": "uid-dom-db_seg",
+      "name": "DB_Seg",
+      "type": "domain",
+      "domain-type": "domain",
+      "servers": [
+        {
+          "name": "db_seg-cma-primary",
+          "ipv4-address": "10.250.1.18",
+          "multi-domain-server": {
+            "uid": "uid-mds-primary",
+            "name": "mds-ent-primary",
+            "ipv4-address": "10.250.0.10"
+          },
+          "active": true
+        },
+        {
+          "name": "db_seg-cma-standby",
+          "ipv4-address": "10.250.2.18",
+          "multi-domain-server": {
+            "uid": "uid-mds-standby",
+            "name": "mds-ent-standby",
+            "ipv4-address": "10.250.0.11"
+          },
+          "active": false
+        }
+      ]
+    },
+    {
+      "uid": "uid-dom-partner_dmz",
+      "name": "Partner_DMZ",
+      "type": "domain",
+      "domain-type": "domain",
+      "servers": [
+        {
+          "name": "partner_dmz-cma-primary",
+          "ipv4-address": "10.250.1.19",
+          "multi-domain-server": {
+            "uid": "uid-mds-primary",
+            "name": "mds-ent-primary",
+            "ipv4-address": "10.250.0.10"
+          },
+          "active": true
+        },
+        {
+          "name": "partner_dmz-cma-standby",
+          "ipv4-address": "10.250.2.19",
+          "multi-domain-server": {
+            "uid": "uid-mds-standby",
+            "name": "mds-ent-standby",
+            "ipv4-address": "10.250.0.11"
+          },
+          "active": false
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 9,
+  "total": 9
+}

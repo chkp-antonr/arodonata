@@ -1,0 +1,517 @@
+{
+  "objects": [
+    {
+      "uid": "uid-wan-core-ecmp-a",
+      "name": "wan-core-ecmp-a",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.0.11",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.0.11",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "bond0.10",
+          "ipv4-address": "172.23.10.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "specific",
+            "specific-network": "G_WAN_Branches"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        },
+        {
+          "name": "bond0.20",
+          "ipv4-address": "172.23.20.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "specific",
+            "specific-network": "G_WAN_DC_Target"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-core-ecmp-b",
+      "name": "wan-core-ecmp-b",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.0.12",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.0.12",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "bond0.10",
+          "ipv4-address": "172.23.10.2",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "specific",
+            "specific-network": "G_WAN_Branches"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        },
+        {
+          "name": "bond0.20",
+          "ipv4-address": "172.23.20.2",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "specific",
+            "specific-network": "G_WAN_DC_Target"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-core-bgp-standby",
+      "name": "wan-core-bgp-standby",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.0.30",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.0.30",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "172.23.11.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "specific",
+            "specific-network": "G_WAN_Branches"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        },
+        {
+          "name": "eth2",
+          "ipv4-address": "172.23.21.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "specific",
+            "specific-network": "G_WAN_DC_Target"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-rtr-01",
+      "name": "wan-core-rtr-01",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.100.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.100.1",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.40.1.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-rtr-02",
+      "name": "wan-core-rtr-02",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.100.2",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.100.2",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.40.2.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-rtr-03",
+      "name": "wan-core-rtr-03",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.100.3",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.100.3",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.40.3.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-rtr-04",
+      "name": "wan-core-rtr-04",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.100.4",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.100.4",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.40.4.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-rtr-05",
+      "name": "wan-core-rtr-05",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.100.5",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.100.5",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.40.5.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-rtr-06",
+      "name": "wan-core-rtr-06",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.100.6",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.100.6",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.40.6.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-rtr-07",
+      "name": "wan-core-rtr-07",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.100.7",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.100.7",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.40.7.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-rtr-08",
+      "name": "wan-core-rtr-08",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.100.8",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.100.8",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.40.8.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-rtr-09",
+      "name": "wan-core-rtr-09",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.100.9",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.100.9",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.40.9.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-rtr-10",
+      "name": "wan-core-rtr-10",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.100.10",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.100.10",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.40.10.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-rtr-11",
+      "name": "wan-core-rtr-11",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.100.11",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.100.11",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.40.11.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-rtr-12",
+      "name": "wan-core-rtr-12",
+      "type": "simple-gateway",
+      "ipv4-address": "172.23.100.12",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.23.100.12",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.40.12.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 15,
+  "total": 15
+}

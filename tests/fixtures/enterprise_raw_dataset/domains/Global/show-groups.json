@@ -1,0 +1,23 @@
+{
+  "objects": [
+    {
+      "uid": "uid-glob-grp-branches",
+      "name": "G_Global_Branch_Supernet",
+      "type": "group",
+      "members": [
+        "uid-glob-net-branches"
+      ]
+    },
+    {
+      "uid": "uid-glob-grp-dc",
+      "name": "G_Global_DC_Supernet",
+      "type": "group",
+      "members": [
+        "uid-glob-net-dc-vault"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 2,
+  "total": 2
+}

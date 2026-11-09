@@ -1,0 +1,17 @@
+{
+  "objects": [
+    {
+      "uid": "uid-dc_spine-svc-grp-web",
+      "name": "G_DC_Spine_App_Services",
+      "type": "service-group",
+      "members": [
+        "uid-dc_spine-svc-tcp-80",
+        "uid-dc_spine-svc-tcp-443",
+        "uid-dc_spine-svc-tcp-8443"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

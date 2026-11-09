@@ -1,0 +1,147 @@
+{
+  "objects": [
+    {
+      "uid": "uid-perimeter-bulk-rng-001",
+      "name": "R_Perimeter_Pool_001",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.1.10",
+      "ipv4-address-last": "10.164.1.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-002",
+      "name": "R_Perimeter_Pool_002",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.2.10",
+      "ipv4-address-last": "10.164.2.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-003",
+      "name": "R_Perimeter_Pool_003",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.3.10",
+      "ipv4-address-last": "10.164.3.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-004",
+      "name": "R_Perimeter_Pool_004",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.4.10",
+      "ipv4-address-last": "10.164.4.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-005",
+      "name": "R_Perimeter_Pool_005",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.5.10",
+      "ipv4-address-last": "10.164.5.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-006",
+      "name": "R_Perimeter_Pool_006",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.6.10",
+      "ipv4-address-last": "10.164.6.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-007",
+      "name": "R_Perimeter_Pool_007",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.7.10",
+      "ipv4-address-last": "10.164.7.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-008",
+      "name": "R_Perimeter_Pool_008",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.8.10",
+      "ipv4-address-last": "10.164.8.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-009",
+      "name": "R_Perimeter_Pool_009",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.9.10",
+      "ipv4-address-last": "10.164.9.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-010",
+      "name": "R_Perimeter_Pool_010",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.10.10",
+      "ipv4-address-last": "10.164.10.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-011",
+      "name": "R_Perimeter_Pool_011",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.11.10",
+      "ipv4-address-last": "10.164.11.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-012",
+      "name": "R_Perimeter_Pool_012",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.12.10",
+      "ipv4-address-last": "10.164.12.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-013",
+      "name": "R_Perimeter_Pool_013",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.13.10",
+      "ipv4-address-last": "10.164.13.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-014",
+      "name": "R_Perimeter_Pool_014",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.14.10",
+      "ipv4-address-last": "10.164.14.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-015",
+      "name": "R_Perimeter_Pool_015",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.15.10",
+      "ipv4-address-last": "10.164.15.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-016",
+      "name": "R_Perimeter_Pool_016",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.16.10",
+      "ipv4-address-last": "10.164.16.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-017",
+      "name": "R_Perimeter_Pool_017",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.17.10",
+      "ipv4-address-last": "10.164.17.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-018",
+      "name": "R_Perimeter_Pool_018",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.18.10",
+      "ipv4-address-last": "10.164.18.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-019",
+      "name": "R_Perimeter_Pool_019",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.19.10",
+      "ipv4-address-last": "10.164.19.50"
+    },
+    {
+      "uid": "uid-perimeter-bulk-rng-020",
+      "name": "R_Perimeter_Pool_020",
+      "type": "address-range",
+      "ipv4-address-first": "10.164.20.10",
+      "ipv4-address-last": "10.164.20.50"
+    }
+  ],
+  "from": 1,
+  "to": 20,
+  "total": 20
+}

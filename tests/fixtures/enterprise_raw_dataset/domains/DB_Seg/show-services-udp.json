@@ -1,0 +1,49 @@
+{
+  "objects": [
+    {
+      "uid": "uid-db_seg-svc-udp-53",
+      "name": "SVC_DB_Seg_UDP_53",
+      "type": "service-udp",
+      "port": "53"
+    },
+    {
+      "uid": "uid-db_seg-svc-udp-123",
+      "name": "SVC_DB_Seg_UDP_123",
+      "type": "service-udp",
+      "port": "123"
+    },
+    {
+      "uid": "uid-db_seg-svc-udp-161",
+      "name": "SVC_DB_Seg_UDP_161",
+      "type": "service-udp",
+      "port": "161"
+    },
+    {
+      "uid": "uid-db_seg-svc-udp-500",
+      "name": "SVC_DB_Seg_UDP_500",
+      "type": "service-udp",
+      "port": "500"
+    },
+    {
+      "uid": "uid-db_seg-svc-udp-514",
+      "name": "SVC_DB_Seg_UDP_514",
+      "type": "service-udp",
+      "port": "514"
+    },
+    {
+      "uid": "uid-db_seg-svc-udp-1812",
+      "name": "SVC_DB_Seg_UDP_1812",
+      "type": "service-udp",
+      "port": "1812"
+    },
+    {
+      "uid": "uid-db_seg-svc-udp-4500",
+      "name": "SVC_DB_Seg_UDP_4500",
+      "type": "service-udp",
+      "port": "4500"
+    }
+  ],
+  "from": 1,
+  "to": 7,
+  "total": 7
+}

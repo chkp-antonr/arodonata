@@ -1,0 +1,147 @@
+{
+  "objects": [
+    {
+      "uid": "uid-dc_spine-bulk-rng-001",
+      "name": "R_DC_Spine_Pool_001",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.1.10",
+      "ipv4-address-last": "10.166.1.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-002",
+      "name": "R_DC_Spine_Pool_002",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.2.10",
+      "ipv4-address-last": "10.166.2.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-003",
+      "name": "R_DC_Spine_Pool_003",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.3.10",
+      "ipv4-address-last": "10.166.3.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-004",
+      "name": "R_DC_Spine_Pool_004",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.4.10",
+      "ipv4-address-last": "10.166.4.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-005",
+      "name": "R_DC_Spine_Pool_005",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.5.10",
+      "ipv4-address-last": "10.166.5.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-006",
+      "name": "R_DC_Spine_Pool_006",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.6.10",
+      "ipv4-address-last": "10.166.6.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-007",
+      "name": "R_DC_Spine_Pool_007",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.7.10",
+      "ipv4-address-last": "10.166.7.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-008",
+      "name": "R_DC_Spine_Pool_008",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.8.10",
+      "ipv4-address-last": "10.166.8.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-009",
+      "name": "R_DC_Spine_Pool_009",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.9.10",
+      "ipv4-address-last": "10.166.9.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-010",
+      "name": "R_DC_Spine_Pool_010",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.10.10",
+      "ipv4-address-last": "10.166.10.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-011",
+      "name": "R_DC_Spine_Pool_011",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.11.10",
+      "ipv4-address-last": "10.166.11.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-012",
+      "name": "R_DC_Spine_Pool_012",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.12.10",
+      "ipv4-address-last": "10.166.12.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-013",
+      "name": "R_DC_Spine_Pool_013",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.13.10",
+      "ipv4-address-last": "10.166.13.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-014",
+      "name": "R_DC_Spine_Pool_014",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.14.10",
+      "ipv4-address-last": "10.166.14.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-015",
+      "name": "R_DC_Spine_Pool_015",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.15.10",
+      "ipv4-address-last": "10.166.15.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-016",
+      "name": "R_DC_Spine_Pool_016",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.16.10",
+      "ipv4-address-last": "10.166.16.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-017",
+      "name": "R_DC_Spine_Pool_017",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.17.10",
+      "ipv4-address-last": "10.166.17.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-018",
+      "name": "R_DC_Spine_Pool_018",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.18.10",
+      "ipv4-address-last": "10.166.18.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-019",
+      "name": "R_DC_Spine_Pool_019",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.19.10",
+      "ipv4-address-last": "10.166.19.50"
+    },
+    {
+      "uid": "uid-dc_spine-bulk-rng-020",
+      "name": "R_DC_Spine_Pool_020",
+      "type": "address-range",
+      "ipv4-address-first": "10.166.20.10",
+      "ipv4-address-last": "10.166.20.50"
+    }
+  ],
+  "from": 1,
+  "to": 20,
+  "total": 20
+}

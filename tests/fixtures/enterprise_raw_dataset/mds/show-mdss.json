@@ -1,0 +1,19 @@
+{
+  "objects": [
+    {
+      "uid": "uid-mds-primary",
+      "name": "mds-ent-primary",
+      "type": "mds",
+      "ipv4-address": "10.250.0.10"
+    },
+    {
+      "uid": "uid-mds-standby",
+      "name": "mds-ent-standby",
+      "type": "mds",
+      "ipv4-address": "10.250.0.11"
+    }
+  ],
+  "from": 1,
+  "to": 2,
+  "total": 2
+}

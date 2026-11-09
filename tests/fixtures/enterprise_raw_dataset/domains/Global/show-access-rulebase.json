@@ -1,0 +1,3168 @@
+{
+  "uid-layer-global-security": {
+    "uid": "uid-layer-global-security",
+    "name": "Global_Standard_Pkg Network",
+    "rulebase": [
+      {
+        "uid": "uid-asec-global-01",
+        "name": "Section 1 - Global Traffic",
+        "type": "access-section",
+        "from": 1,
+        "to": 35,
+        "rulebase": [
+          {
+            "uid": "uid-arule-global-0001",
+            "name": "Global_Rule_001",
+            "type": "access-rule",
+            "rule-number": 1,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #1 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0002",
+            "name": "Global_Rule_002",
+            "type": "access-rule",
+            "rule-number": 2,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #2 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0003",
+            "name": "Global_Rule_003",
+            "type": "access-rule",
+            "rule-number": 3,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #3 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0004",
+            "name": "Global_Rule_004",
+            "type": "access-rule",
+            "rule-number": 4,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #4 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0005",
+            "name": "Global_Rule_005",
+            "type": "access-rule",
+            "rule-number": 5,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #5 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0006",
+            "name": "Global_Rule_006",
+            "type": "access-rule",
+            "rule-number": 6,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #6 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0007",
+            "name": "Global_Rule_007",
+            "type": "access-rule",
+            "rule-number": 7,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #7 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0008",
+            "name": "Global_Rule_008",
+            "type": "access-rule",
+            "rule-number": 8,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #8 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0009",
+            "name": "Global_Rule_009",
+            "type": "access-rule",
+            "rule-number": 9,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #9 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0010",
+            "name": "Global_Rule_010",
+            "type": "access-rule",
+            "rule-number": 10,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #10 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0011",
+            "name": "Global_Rule_011",
+            "type": "access-rule",
+            "rule-number": 11,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #11 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0012",
+            "name": "Global_Rule_012",
+            "type": "access-rule",
+            "rule-number": 12,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #12 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0013",
+            "name": "Global_Rule_013",
+            "type": "access-rule",
+            "rule-number": 13,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #13 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0014",
+            "name": "Global_Rule_014",
+            "type": "access-rule",
+            "rule-number": 14,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #14 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0015",
+            "name": "Global_Rule_015",
+            "type": "access-rule",
+            "rule-number": 15,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #15 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0016",
+            "name": "Global_Rule_016",
+            "type": "access-rule",
+            "rule-number": 16,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-016"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #16 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0017",
+            "name": "Global_Rule_017",
+            "type": "access-rule",
+            "rule-number": 17,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-017"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #17 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0018",
+            "name": "Global_Rule_018",
+            "type": "access-rule",
+            "rule-number": 18,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-018"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #18 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0019",
+            "name": "Global_Rule_019",
+            "type": "access-rule",
+            "rule-number": 19,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-019"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #19 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0020",
+            "name": "Global_Rule_020",
+            "type": "access-rule",
+            "rule-number": 20,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-020"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #20 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0021",
+            "name": "Global_Rule_021",
+            "type": "access-rule",
+            "rule-number": 21,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-021"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #21 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0022",
+            "name": "Global_Rule_022",
+            "type": "access-rule",
+            "rule-number": 22,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-022"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #22 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0023",
+            "name": "Global_Rule_023",
+            "type": "access-rule",
+            "rule-number": 23,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-023"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #23 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0024",
+            "name": "Global_Rule_024",
+            "type": "access-rule",
+            "rule-number": 24,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-024"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #24 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0025",
+            "name": "Global_Rule_025",
+            "type": "access-rule",
+            "rule-number": 25,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-025"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #25 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0026",
+            "name": "Global_Rule_026",
+            "type": "access-rule",
+            "rule-number": 26,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-026"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #26 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0027",
+            "name": "Global_Rule_027",
+            "type": "access-rule",
+            "rule-number": 27,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-027"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #27 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0028",
+            "name": "Global_Rule_028",
+            "type": "access-rule",
+            "rule-number": 28,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-028"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #28 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0029",
+            "name": "Global_Rule_029",
+            "type": "access-rule",
+            "rule-number": 29,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-029"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #29 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0030",
+            "name": "Global_Rule_030",
+            "type": "access-rule",
+            "rule-number": 30,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-030"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #30 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0031",
+            "name": "Global_Rule_031",
+            "type": "access-rule",
+            "rule-number": 31,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #31 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0032",
+            "name": "Global_Rule_032",
+            "type": "access-rule",
+            "rule-number": 32,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #32 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0033",
+            "name": "Global_Rule_033",
+            "type": "access-rule",
+            "rule-number": 33,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #33 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0034",
+            "name": "Global_Rule_034",
+            "type": "access-rule",
+            "rule-number": 34,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #34 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0035",
+            "name": "Global_Rule_035",
+            "type": "access-rule",
+            "rule-number": 35,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #35 in Global"
+          }
+        ]
+      },
+      {
+        "uid": "uid-asec-global-02",
+        "name": "Section 2 - Global Traffic",
+        "type": "access-section",
+        "from": 36,
+        "to": 70,
+        "rulebase": [
+          {
+            "uid": "uid-arule-global-0036",
+            "name": "Global_Rule_036",
+            "type": "access-rule",
+            "rule-number": 36,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #36 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0037",
+            "name": "Global_Rule_037",
+            "type": "access-rule",
+            "rule-number": 37,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #37 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0038",
+            "name": "Global_Rule_038",
+            "type": "access-rule",
+            "rule-number": 38,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #38 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0039",
+            "name": "Global_Rule_039",
+            "type": "access-rule",
+            "rule-number": 39,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #39 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0040",
+            "name": "Global_Rule_040",
+            "type": "access-rule",
+            "rule-number": 40,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #40 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0041",
+            "name": "Global_Rule_041",
+            "type": "access-rule",
+            "rule-number": 41,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #41 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0042",
+            "name": "Global_Rule_042",
+            "type": "access-rule",
+            "rule-number": 42,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #42 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0043",
+            "name": "Global_Rule_043",
+            "type": "access-rule",
+            "rule-number": 43,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #43 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0044",
+            "name": "Global_Rule_044",
+            "type": "access-rule",
+            "rule-number": 44,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #44 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0045",
+            "name": "Global_Rule_045",
+            "type": "access-rule",
+            "rule-number": 45,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #45 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0046",
+            "name": "Global_Rule_046",
+            "type": "access-rule",
+            "rule-number": 46,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-016"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #46 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0047",
+            "name": "Global_Rule_047",
+            "type": "access-rule",
+            "rule-number": 47,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-017"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #47 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0048",
+            "name": "Global_Rule_048",
+            "type": "access-rule",
+            "rule-number": 48,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-018"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #48 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0049",
+            "name": "Global_Rule_049",
+            "type": "access-rule",
+            "rule-number": 49,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-019"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #49 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0050",
+            "name": "Global_Rule_050",
+            "type": "access-rule",
+            "rule-number": 50,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-020"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #50 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0051",
+            "name": "Global_Rule_051",
+            "type": "access-rule",
+            "rule-number": 51,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-021"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #51 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0052",
+            "name": "Global_Rule_052",
+            "type": "access-rule",
+            "rule-number": 52,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-022"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #52 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0053",
+            "name": "Global_Rule_053",
+            "type": "access-rule",
+            "rule-number": 53,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-023"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #53 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0054",
+            "name": "Global_Rule_054",
+            "type": "access-rule",
+            "rule-number": 54,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-024"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #54 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0055",
+            "name": "Global_Rule_055",
+            "type": "access-rule",
+            "rule-number": 55,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-025"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #55 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0056",
+            "name": "Global_Rule_056",
+            "type": "access-rule",
+            "rule-number": 56,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-026"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #56 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0057",
+            "name": "Global_Rule_057",
+            "type": "access-rule",
+            "rule-number": 57,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-027"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #57 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0058",
+            "name": "Global_Rule_058",
+            "type": "access-rule",
+            "rule-number": 58,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-028"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #58 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0059",
+            "name": "Global_Rule_059",
+            "type": "access-rule",
+            "rule-number": 59,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-029"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #59 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0060",
+            "name": "Global_Rule_060",
+            "type": "access-rule",
+            "rule-number": 60,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-030"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #60 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0061",
+            "name": "Global_Rule_061",
+            "type": "access-rule",
+            "rule-number": 61,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #61 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0062",
+            "name": "Global_Rule_062",
+            "type": "access-rule",
+            "rule-number": 62,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #62 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0063",
+            "name": "Global_Rule_063",
+            "type": "access-rule",
+            "rule-number": 63,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #63 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0064",
+            "name": "Global_Rule_064",
+            "type": "access-rule",
+            "rule-number": 64,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #64 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0065",
+            "name": "Global_Rule_065",
+            "type": "access-rule",
+            "rule-number": 65,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #65 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0066",
+            "name": "Global_Rule_066",
+            "type": "access-rule",
+            "rule-number": 66,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #66 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0067",
+            "name": "Global_Rule_067",
+            "type": "access-rule",
+            "rule-number": 67,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #67 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0068",
+            "name": "Global_Rule_068",
+            "type": "access-rule",
+            "rule-number": 68,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #68 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0069",
+            "name": "Global_Rule_069",
+            "type": "access-rule",
+            "rule-number": 69,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #69 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0070",
+            "name": "Global_Rule_070",
+            "type": "access-rule",
+            "rule-number": 70,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #70 in Global"
+          }
+        ]
+      },
+      {
+        "uid": "uid-asec-global-03",
+        "name": "Section 3 - Global Traffic",
+        "type": "access-section",
+        "from": 71,
+        "to": 105,
+        "rulebase": [
+          {
+            "uid": "uid-arule-global-0071",
+            "name": "Global_Rule_071",
+            "type": "access-rule",
+            "rule-number": 71,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #71 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0072",
+            "name": "Global_Rule_072",
+            "type": "access-rule",
+            "rule-number": 72,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #72 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0073",
+            "name": "Global_Rule_073",
+            "type": "access-rule",
+            "rule-number": 73,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #73 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0074",
+            "name": "Global_Rule_074",
+            "type": "access-rule",
+            "rule-number": 74,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #74 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0075",
+            "name": "Global_Rule_075",
+            "type": "access-rule",
+            "rule-number": 75,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #75 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0076",
+            "name": "Global_Rule_076",
+            "type": "access-rule",
+            "rule-number": 76,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-016"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #76 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0077",
+            "name": "Global_Rule_077",
+            "type": "access-rule",
+            "rule-number": 77,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-017"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #77 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0078",
+            "name": "Global_Rule_078",
+            "type": "access-rule",
+            "rule-number": 78,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-018"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #78 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0079",
+            "name": "Global_Rule_079",
+            "type": "access-rule",
+            "rule-number": 79,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-019"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #79 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0080",
+            "name": "Global_Rule_080",
+            "type": "access-rule",
+            "rule-number": 80,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-020"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #80 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0081",
+            "name": "Global_Rule_081",
+            "type": "access-rule",
+            "rule-number": 81,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-021"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #81 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0082",
+            "name": "Global_Rule_082",
+            "type": "access-rule",
+            "rule-number": 82,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-022"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #82 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0083",
+            "name": "Global_Rule_083",
+            "type": "access-rule",
+            "rule-number": 83,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-023"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #83 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0084",
+            "name": "Global_Rule_084",
+            "type": "access-rule",
+            "rule-number": 84,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-024"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #84 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0085",
+            "name": "Global_Rule_085",
+            "type": "access-rule",
+            "rule-number": 85,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-025"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #85 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0086",
+            "name": "Global_Rule_086",
+            "type": "access-rule",
+            "rule-number": 86,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-026"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #86 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0087",
+            "name": "Global_Rule_087",
+            "type": "access-rule",
+            "rule-number": 87,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-027"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #87 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0088",
+            "name": "Global_Rule_088",
+            "type": "access-rule",
+            "rule-number": 88,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-028"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #88 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0089",
+            "name": "Global_Rule_089",
+            "type": "access-rule",
+            "rule-number": 89,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-029"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #89 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0090",
+            "name": "Global_Rule_090",
+            "type": "access-rule",
+            "rule-number": 90,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-030"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #90 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0091",
+            "name": "Global_Rule_091",
+            "type": "access-rule",
+            "rule-number": 91,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #91 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0092",
+            "name": "Global_Rule_092",
+            "type": "access-rule",
+            "rule-number": 92,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #92 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0093",
+            "name": "Global_Rule_093",
+            "type": "access-rule",
+            "rule-number": 93,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #93 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0094",
+            "name": "Global_Rule_094",
+            "type": "access-rule",
+            "rule-number": 94,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #94 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0095",
+            "name": "Global_Rule_095",
+            "type": "access-rule",
+            "rule-number": 95,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #95 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0096",
+            "name": "Global_Rule_096",
+            "type": "access-rule",
+            "rule-number": 96,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #96 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0097",
+            "name": "Global_Rule_097",
+            "type": "access-rule",
+            "rule-number": 97,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #97 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0098",
+            "name": "Global_Rule_098",
+            "type": "access-rule",
+            "rule-number": 98,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #98 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0099",
+            "name": "Global_Rule_099",
+            "type": "access-rule",
+            "rule-number": 99,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #99 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0100",
+            "name": "Global_Rule_100",
+            "type": "access-rule",
+            "rule-number": 100,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #100 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0101",
+            "name": "Global_Rule_101",
+            "type": "access-rule",
+            "rule-number": 101,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #101 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0102",
+            "name": "Global_Rule_102",
+            "type": "access-rule",
+            "rule-number": 102,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #102 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0103",
+            "name": "Global_Rule_103",
+            "type": "access-rule",
+            "rule-number": 103,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-branches"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #103 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0104",
+            "name": "Global_Rule_104",
+            "type": "access-rule",
+            "rule-number": 104,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-dc-vault"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #104 in Global"
+          },
+          {
+            "uid": "uid-arule-global-0105",
+            "name": "Global_Rule_105",
+            "type": "access-rule",
+            "rule-number": 105,
+            "enabled": true,
+            "source": [
+              "uid-glob-host-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-glob-net-rfc1918-10"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-global-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c473",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #105 in Global"
+          }
+        ]
+      }
+    ],
+    "objects-dictionary": [
+      {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c473",
+        "name": "Drop",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "598ead32-aa42-4615-90ed-f51a5928d41d",
+        "name": "Log",
+        "type": "Track"
+      },
+      {
+        "uid": "uid-glob-host-001",
+        "name": "H_Global_DNS_001",
+        "type": "host",
+        "ipv4-address": "10.253.0.1"
+      },
+      {
+        "uid": "uid-glob-host-002",
+        "name": "H_Global_DNS_002",
+        "type": "host",
+        "ipv4-address": "10.253.0.2"
+      },
+      {
+        "uid": "uid-glob-host-003",
+        "name": "H_Global_DNS_003",
+        "type": "host",
+        "ipv4-address": "10.253.0.3"
+      },
+      {
+        "uid": "uid-glob-host-004",
+        "name": "H_Global_DNS_004",
+        "type": "host",
+        "ipv4-address": "10.253.0.4"
+      },
+      {
+        "uid": "uid-glob-host-005",
+        "name": "H_Global_DNS_005",
+        "type": "host",
+        "ipv4-address": "10.253.0.5"
+      },
+      {
+        "uid": "uid-glob-host-006",
+        "name": "H_Global_DNS_006",
+        "type": "host",
+        "ipv4-address": "10.253.0.6"
+      },
+      {
+        "uid": "uid-glob-host-007",
+        "name": "H_Global_DNS_007",
+        "type": "host",
+        "ipv4-address": "10.253.0.7"
+      },
+      {
+        "uid": "uid-glob-host-008",
+        "name": "H_Global_DNS_008",
+        "type": "host",
+        "ipv4-address": "10.253.0.8"
+      },
+      {
+        "uid": "uid-glob-host-009",
+        "name": "H_Global_DNS_009",
+        "type": "host",
+        "ipv4-address": "10.253.0.9"
+      },
+      {
+        "uid": "uid-glob-host-010",
+        "name": "H_Global_DNS_010",
+        "type": "host",
+        "ipv4-address": "10.253.0.10"
+      },
+      {
+        "uid": "uid-glob-host-011",
+        "name": "H_Global_DNS_011",
+        "type": "host",
+        "ipv4-address": "10.253.0.11"
+      },
+      {
+        "uid": "uid-glob-host-012",
+        "name": "H_Global_DNS_012",
+        "type": "host",
+        "ipv4-address": "10.253.0.12"
+      },
+      {
+        "uid": "uid-glob-host-013",
+        "name": "H_Global_DNS_013",
+        "type": "host",
+        "ipv4-address": "10.253.0.13"
+      },
+      {
+        "uid": "uid-glob-host-014",
+        "name": "H_Global_DNS_014",
+        "type": "host",
+        "ipv4-address": "10.253.0.14"
+      },
+      {
+        "uid": "uid-glob-host-015",
+        "name": "H_Global_DNS_015",
+        "type": "host",
+        "ipv4-address": "10.253.0.15"
+      },
+      {
+        "uid": "uid-glob-host-016",
+        "name": "H_Global_DNS_016",
+        "type": "host",
+        "ipv4-address": "10.253.0.16"
+      },
+      {
+        "uid": "uid-glob-host-017",
+        "name": "H_Global_DNS_017",
+        "type": "host",
+        "ipv4-address": "10.253.0.17"
+      },
+      {
+        "uid": "uid-glob-host-018",
+        "name": "H_Global_DNS_018",
+        "type": "host",
+        "ipv4-address": "10.253.0.18"
+      },
+      {
+        "uid": "uid-glob-host-019",
+        "name": "H_Global_DNS_019",
+        "type": "host",
+        "ipv4-address": "10.253.0.19"
+      },
+      {
+        "uid": "uid-glob-host-020",
+        "name": "H_Global_DNS_020",
+        "type": "host",
+        "ipv4-address": "10.253.0.20"
+      },
+      {
+        "uid": "uid-glob-host-021",
+        "name": "H_Global_DNS_021",
+        "type": "host",
+        "ipv4-address": "10.253.0.21"
+      },
+      {
+        "uid": "uid-glob-host-022",
+        "name": "H_Global_DNS_022",
+        "type": "host",
+        "ipv4-address": "10.253.0.22"
+      },
+      {
+        "uid": "uid-glob-host-023",
+        "name": "H_Global_DNS_023",
+        "type": "host",
+        "ipv4-address": "10.253.0.23"
+      },
+      {
+        "uid": "uid-glob-host-024",
+        "name": "H_Global_DNS_024",
+        "type": "host",
+        "ipv4-address": "10.253.0.24"
+      },
+      {
+        "uid": "uid-glob-host-025",
+        "name": "H_Global_DNS_025",
+        "type": "host",
+        "ipv4-address": "10.253.0.25"
+      },
+      {
+        "uid": "uid-glob-host-026",
+        "name": "H_Global_DNS_026",
+        "type": "host",
+        "ipv4-address": "10.253.0.26"
+      },
+      {
+        "uid": "uid-glob-host-027",
+        "name": "H_Global_DNS_027",
+        "type": "host",
+        "ipv4-address": "10.253.0.27"
+      },
+      {
+        "uid": "uid-glob-host-028",
+        "name": "H_Global_DNS_028",
+        "type": "host",
+        "ipv4-address": "10.253.0.28"
+      },
+      {
+        "uid": "uid-glob-host-029",
+        "name": "H_Global_DNS_029",
+        "type": "host",
+        "ipv4-address": "10.253.0.29"
+      },
+      {
+        "uid": "uid-glob-host-030",
+        "name": "H_Global_DNS_030",
+        "type": "host",
+        "ipv4-address": "10.253.0.30"
+      },
+      {
+        "uid": "uid-glob-net-branches",
+        "name": "N_Global_All_Branches",
+        "type": "network",
+        "subnet4": "10.11.0.0",
+        "mask-length4": 16
+      },
+      {
+        "uid": "uid-glob-net-dc-vault",
+        "name": "N_Global_DC_Vault_Super",
+        "type": "network",
+        "subnet4": "10.220.0.0",
+        "mask-length4": 16
+      },
+      {
+        "uid": "uid-glob-net-rfc1918-10",
+        "name": "N_Global_RFC1918_10",
+        "type": "network",
+        "subnet4": "10.0.0.0",
+        "mask-length4": 8
+      },
+      {
+        "uid": "uid-global-svc-tcp-22",
+        "name": "TCP_22",
+        "type": "service-tcp",
+        "port": "22"
+      },
+      {
+        "uid": "uid-global-svc-tcp-53",
+        "name": "TCP_53",
+        "type": "service-tcp",
+        "port": "53"
+      },
+      {
+        "uid": "uid-global-svc-tcp-80",
+        "name": "TCP_80",
+        "type": "service-tcp",
+        "port": "80"
+      },
+      {
+        "uid": "uid-global-svc-tcp-443",
+        "name": "TCP_443",
+        "type": "service-tcp",
+        "port": "443"
+      },
+      {
+        "uid": "uid-global-svc-tcp-1521",
+        "name": "TCP_1521",
+        "type": "service-tcp",
+        "port": "1521"
+      },
+      {
+        "uid": "uid-global-svc-tcp-3306",
+        "name": "TCP_3306",
+        "type": "service-tcp",
+        "port": "3306"
+      },
+      {
+        "uid": "uid-global-svc-tcp-5432",
+        "name": "TCP_5432",
+        "type": "service-tcp",
+        "port": "5432"
+      },
+      {
+        "uid": "uid-global-svc-tcp-6379",
+        "name": "TCP_6379",
+        "type": "service-tcp",
+        "port": "6379"
+      },
+      {
+        "uid": "uid-global-svc-tcp-8080",
+        "name": "TCP_8080",
+        "type": "service-tcp",
+        "port": "8080"
+      },
+      {
+        "uid": "uid-global-svc-tcp-8443",
+        "name": "TCP_8443",
+        "type": "service-tcp",
+        "port": "8443"
+      },
+      {
+        "uid": "uid-global-svc-tcp-9092",
+        "name": "TCP_9092",
+        "type": "service-tcp",
+        "port": "9092"
+      },
+      {
+        "uid": "uid-global-svc-tcp-9200",
+        "name": "TCP_9200",
+        "type": "service-tcp",
+        "port": "9200"
+      }
+    ],
+    "from": 1,
+    "to": 105,
+    "total": 105
+  }
+}

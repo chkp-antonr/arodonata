@@ -1,0 +1,3317 @@
+{
+  "uid-layer-partner_dmz-security": {
+    "uid": "uid-layer-partner_dmz-security",
+    "name": "Partner_DMZ_Pkg Network",
+    "rulebase": [
+      {
+        "uid": "uid-asec-partner_dmz-01",
+        "name": "Section 1 - Partner_DMZ Traffic",
+        "type": "access-section",
+        "from": 1,
+        "to": 35,
+        "rulebase": [
+          {
+            "uid": "uid-arule-partner_dmz-0001",
+            "name": "Partner_DMZ_Rule_001",
+            "type": "access-rule",
+            "rule-number": 1,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-active"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #1 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0002",
+            "name": "Partner_DMZ_Rule_002",
+            "type": "access-rule",
+            "rule-number": 2,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-stale"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #2 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0003",
+            "name": "Partner_DMZ_Rule_003",
+            "type": "access-rule",
+            "rule-number": 3,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-rerouted"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #3 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0004",
+            "name": "Partner_DMZ_Rule_004",
+            "type": "access-rule",
+            "rule-number": 4,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #4 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0005",
+            "name": "Partner_DMZ_Rule_005",
+            "type": "access-rule",
+            "rule-number": 5,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #5 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0006",
+            "name": "Partner_DMZ_Rule_006",
+            "type": "access-rule",
+            "rule-number": 6,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #6 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0007",
+            "name": "Partner_DMZ_Rule_007",
+            "type": "access-rule",
+            "rule-number": 7,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #7 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0008",
+            "name": "Partner_DMZ_Rule_008",
+            "type": "access-rule",
+            "rule-number": 8,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #8 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0009",
+            "name": "Partner_DMZ_Rule_009",
+            "type": "access-rule",
+            "rule-number": 9,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #9 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0010",
+            "name": "Partner_DMZ_Rule_010",
+            "type": "access-rule",
+            "rule-number": 10,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #10 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0011",
+            "name": "Partner_DMZ_Rule_011",
+            "type": "access-rule",
+            "rule-number": 11,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #11 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0012",
+            "name": "Partner_DMZ_Rule_012",
+            "type": "access-rule",
+            "rule-number": 12,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #12 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0013",
+            "name": "Partner_DMZ_Rule_013",
+            "type": "access-rule",
+            "rule-number": 13,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #13 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0014",
+            "name": "Partner_DMZ_Rule_014",
+            "type": "access-rule",
+            "rule-number": 14,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-011"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #14 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0015",
+            "name": "Partner_DMZ_Rule_015",
+            "type": "access-rule",
+            "rule-number": 15,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-012"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #15 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0016",
+            "name": "Partner_DMZ_Rule_016",
+            "type": "access-rule",
+            "rule-number": 16,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-016"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-013"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #16 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0017",
+            "name": "Partner_DMZ_Rule_017",
+            "type": "access-rule",
+            "rule-number": 17,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-017"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-014"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #17 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0018",
+            "name": "Partner_DMZ_Rule_018",
+            "type": "access-rule",
+            "rule-number": 18,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-018"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-015"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #18 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0019",
+            "name": "Partner_DMZ_Rule_019",
+            "type": "access-rule",
+            "rule-number": 19,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-019"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-016"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #19 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0020",
+            "name": "Partner_DMZ_Rule_020",
+            "type": "access-rule",
+            "rule-number": 20,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-020"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-017"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #20 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0021",
+            "name": "Partner_DMZ_Rule_021",
+            "type": "access-rule",
+            "rule-number": 21,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-021"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-active"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #21 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0022",
+            "name": "Partner_DMZ_Rule_022",
+            "type": "access-rule",
+            "rule-number": 22,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-022"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-stale"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #22 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0023",
+            "name": "Partner_DMZ_Rule_023",
+            "type": "access-rule",
+            "rule-number": 23,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-023"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-rerouted"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #23 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0024",
+            "name": "Partner_DMZ_Rule_024",
+            "type": "access-rule",
+            "rule-number": 24,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-024"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #24 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0025",
+            "name": "Partner_DMZ_Rule_025",
+            "type": "access-rule",
+            "rule-number": 25,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-025"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #25 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0026",
+            "name": "Partner_DMZ_Rule_026",
+            "type": "access-rule",
+            "rule-number": 26,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-026"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #26 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0027",
+            "name": "Partner_DMZ_Rule_027",
+            "type": "access-rule",
+            "rule-number": 27,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-027"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #27 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0028",
+            "name": "Partner_DMZ_Rule_028",
+            "type": "access-rule",
+            "rule-number": 28,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-028"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #28 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0029",
+            "name": "Partner_DMZ_Rule_029",
+            "type": "access-rule",
+            "rule-number": 29,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-029"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #29 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0030",
+            "name": "Partner_DMZ_Rule_030",
+            "type": "access-rule",
+            "rule-number": 30,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-030"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #30 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0031",
+            "name": "Partner_DMZ_Rule_031",
+            "type": "access-rule",
+            "rule-number": 31,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #31 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0032",
+            "name": "Partner_DMZ_Rule_032",
+            "type": "access-rule",
+            "rule-number": 32,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #32 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0033",
+            "name": "Partner_DMZ_Rule_033",
+            "type": "access-rule",
+            "rule-number": 33,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #33 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0034",
+            "name": "Partner_DMZ_Rule_034",
+            "type": "access-rule",
+            "rule-number": 34,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-011"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #34 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0035",
+            "name": "Partner_DMZ_Rule_035",
+            "type": "access-rule",
+            "rule-number": 35,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-012"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #35 in Partner_DMZ"
+          }
+        ]
+      },
+      {
+        "uid": "uid-asec-partner_dmz-02",
+        "name": "Section 2 - Partner_DMZ Traffic",
+        "type": "access-section",
+        "from": 36,
+        "to": 70,
+        "rulebase": [
+          {
+            "uid": "uid-arule-partner_dmz-0036",
+            "name": "Partner_DMZ_Rule_036",
+            "type": "access-rule",
+            "rule-number": 36,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-013"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #36 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0037",
+            "name": "Partner_DMZ_Rule_037",
+            "type": "access-rule",
+            "rule-number": 37,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-014"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #37 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0038",
+            "name": "Partner_DMZ_Rule_038",
+            "type": "access-rule",
+            "rule-number": 38,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-015"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #38 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0039",
+            "name": "Partner_DMZ_Rule_039",
+            "type": "access-rule",
+            "rule-number": 39,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-016"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #39 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0040",
+            "name": "Partner_DMZ_Rule_040",
+            "type": "access-rule",
+            "rule-number": 40,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-017"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #40 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0041",
+            "name": "Partner_DMZ_Rule_041",
+            "type": "access-rule",
+            "rule-number": 41,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-active"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #41 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0042",
+            "name": "Partner_DMZ_Rule_042",
+            "type": "access-rule",
+            "rule-number": 42,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-stale"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #42 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0043",
+            "name": "Partner_DMZ_Rule_043",
+            "type": "access-rule",
+            "rule-number": 43,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-rerouted"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #43 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0044",
+            "name": "Partner_DMZ_Rule_044",
+            "type": "access-rule",
+            "rule-number": 44,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #44 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0045",
+            "name": "Partner_DMZ_Rule_045",
+            "type": "access-rule",
+            "rule-number": 45,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #45 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0046",
+            "name": "Partner_DMZ_Rule_046",
+            "type": "access-rule",
+            "rule-number": 46,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-016"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #46 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0047",
+            "name": "Partner_DMZ_Rule_047",
+            "type": "access-rule",
+            "rule-number": 47,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-017"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #47 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0048",
+            "name": "Partner_DMZ_Rule_048",
+            "type": "access-rule",
+            "rule-number": 48,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-018"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #48 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0049",
+            "name": "Partner_DMZ_Rule_049",
+            "type": "access-rule",
+            "rule-number": 49,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-019"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #49 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0050",
+            "name": "Partner_DMZ_Rule_050",
+            "type": "access-rule",
+            "rule-number": 50,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-020"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #50 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0051",
+            "name": "Partner_DMZ_Rule_051",
+            "type": "access-rule",
+            "rule-number": 51,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-021"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #51 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0052",
+            "name": "Partner_DMZ_Rule_052",
+            "type": "access-rule",
+            "rule-number": 52,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-022"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #52 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0053",
+            "name": "Partner_DMZ_Rule_053",
+            "type": "access-rule",
+            "rule-number": 53,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-023"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #53 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0054",
+            "name": "Partner_DMZ_Rule_054",
+            "type": "access-rule",
+            "rule-number": 54,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-024"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-011"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #54 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0055",
+            "name": "Partner_DMZ_Rule_055",
+            "type": "access-rule",
+            "rule-number": 55,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-025"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-012"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #55 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0056",
+            "name": "Partner_DMZ_Rule_056",
+            "type": "access-rule",
+            "rule-number": 56,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-026"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-013"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #56 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0057",
+            "name": "Partner_DMZ_Rule_057",
+            "type": "access-rule",
+            "rule-number": 57,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-027"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-014"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #57 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0058",
+            "name": "Partner_DMZ_Rule_058",
+            "type": "access-rule",
+            "rule-number": 58,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-028"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-015"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #58 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0059",
+            "name": "Partner_DMZ_Rule_059",
+            "type": "access-rule",
+            "rule-number": 59,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-029"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-016"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #59 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0060",
+            "name": "Partner_DMZ_Rule_060",
+            "type": "access-rule",
+            "rule-number": 60,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-030"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-017"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #60 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0061",
+            "name": "Partner_DMZ_Rule_061",
+            "type": "access-rule",
+            "rule-number": 61,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-active"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #61 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0062",
+            "name": "Partner_DMZ_Rule_062",
+            "type": "access-rule",
+            "rule-number": 62,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-stale"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #62 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0063",
+            "name": "Partner_DMZ_Rule_063",
+            "type": "access-rule",
+            "rule-number": 63,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-rerouted"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #63 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0064",
+            "name": "Partner_DMZ_Rule_064",
+            "type": "access-rule",
+            "rule-number": 64,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #64 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0065",
+            "name": "Partner_DMZ_Rule_065",
+            "type": "access-rule",
+            "rule-number": 65,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #65 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0066",
+            "name": "Partner_DMZ_Rule_066",
+            "type": "access-rule",
+            "rule-number": 66,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #66 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0067",
+            "name": "Partner_DMZ_Rule_067",
+            "type": "access-rule",
+            "rule-number": 67,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #67 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0068",
+            "name": "Partner_DMZ_Rule_068",
+            "type": "access-rule",
+            "rule-number": 68,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #68 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0069",
+            "name": "Partner_DMZ_Rule_069",
+            "type": "access-rule",
+            "rule-number": 69,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #69 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0070",
+            "name": "Partner_DMZ_Rule_070",
+            "type": "access-rule",
+            "rule-number": 70,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #70 in Partner_DMZ"
+          }
+        ]
+      },
+      {
+        "uid": "uid-asec-partner_dmz-03",
+        "name": "Section 3 - Partner_DMZ Traffic",
+        "type": "access-section",
+        "from": 71,
+        "to": 105,
+        "rulebase": [
+          {
+            "uid": "uid-arule-partner_dmz-0071",
+            "name": "Partner_DMZ_Rule_071",
+            "type": "access-rule",
+            "rule-number": 71,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #71 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0072",
+            "name": "Partner_DMZ_Rule_072",
+            "type": "access-rule",
+            "rule-number": 72,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #72 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0073",
+            "name": "Partner_DMZ_Rule_073",
+            "type": "access-rule",
+            "rule-number": 73,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #73 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0074",
+            "name": "Partner_DMZ_Rule_074",
+            "type": "access-rule",
+            "rule-number": 74,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-011"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #74 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0075",
+            "name": "Partner_DMZ_Rule_075",
+            "type": "access-rule",
+            "rule-number": 75,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-012"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #75 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0076",
+            "name": "Partner_DMZ_Rule_076",
+            "type": "access-rule",
+            "rule-number": 76,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-016"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-013"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #76 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0077",
+            "name": "Partner_DMZ_Rule_077",
+            "type": "access-rule",
+            "rule-number": 77,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-017"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-014"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #77 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0078",
+            "name": "Partner_DMZ_Rule_078",
+            "type": "access-rule",
+            "rule-number": 78,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-018"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-015"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #78 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0079",
+            "name": "Partner_DMZ_Rule_079",
+            "type": "access-rule",
+            "rule-number": 79,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-019"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-016"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #79 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0080",
+            "name": "Partner_DMZ_Rule_080",
+            "type": "access-rule",
+            "rule-number": 80,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-020"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-017"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #80 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0081",
+            "name": "Partner_DMZ_Rule_081",
+            "type": "access-rule",
+            "rule-number": 81,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-021"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-active"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #81 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0082",
+            "name": "Partner_DMZ_Rule_082",
+            "type": "access-rule",
+            "rule-number": 82,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-022"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-stale"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #82 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0083",
+            "name": "Partner_DMZ_Rule_083",
+            "type": "access-rule",
+            "rule-number": 83,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-023"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-rerouted"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #83 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0084",
+            "name": "Partner_DMZ_Rule_084",
+            "type": "access-rule",
+            "rule-number": 84,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-024"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #84 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0085",
+            "name": "Partner_DMZ_Rule_085",
+            "type": "access-rule",
+            "rule-number": 85,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-025"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #85 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0086",
+            "name": "Partner_DMZ_Rule_086",
+            "type": "access-rule",
+            "rule-number": 86,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-026"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #86 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0087",
+            "name": "Partner_DMZ_Rule_087",
+            "type": "access-rule",
+            "rule-number": 87,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-027"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #87 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0088",
+            "name": "Partner_DMZ_Rule_088",
+            "type": "access-rule",
+            "rule-number": 88,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-028"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #88 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0089",
+            "name": "Partner_DMZ_Rule_089",
+            "type": "access-rule",
+            "rule-number": 89,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-029"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #89 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0090",
+            "name": "Partner_DMZ_Rule_090",
+            "type": "access-rule",
+            "rule-number": 90,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-030"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #90 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0091",
+            "name": "Partner_DMZ_Rule_091",
+            "type": "access-rule",
+            "rule-number": 91,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #91 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0092",
+            "name": "Partner_DMZ_Rule_092",
+            "type": "access-rule",
+            "rule-number": 92,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #92 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0093",
+            "name": "Partner_DMZ_Rule_093",
+            "type": "access-rule",
+            "rule-number": 93,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #93 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0094",
+            "name": "Partner_DMZ_Rule_094",
+            "type": "access-rule",
+            "rule-number": 94,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-011"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #94 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0095",
+            "name": "Partner_DMZ_Rule_095",
+            "type": "access-rule",
+            "rule-number": 95,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-012"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #95 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0096",
+            "name": "Partner_DMZ_Rule_096",
+            "type": "access-rule",
+            "rule-number": 96,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-013"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #96 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0097",
+            "name": "Partner_DMZ_Rule_097",
+            "type": "access-rule",
+            "rule-number": 97,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-014"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #97 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0098",
+            "name": "Partner_DMZ_Rule_098",
+            "type": "access-rule",
+            "rule-number": 98,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-015"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #98 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0099",
+            "name": "Partner_DMZ_Rule_099",
+            "type": "access-rule",
+            "rule-number": 99,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-016"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #99 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0100",
+            "name": "Partner_DMZ_Rule_100",
+            "type": "access-rule",
+            "rule-number": 100,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-017"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #100 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0101",
+            "name": "Partner_DMZ_Rule_101",
+            "type": "access-rule",
+            "rule-number": 101,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-active"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #101 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0102",
+            "name": "Partner_DMZ_Rule_102",
+            "type": "access-rule",
+            "rule-number": 102,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-stale"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #102 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0103",
+            "name": "Partner_DMZ_Rule_103",
+            "type": "access-rule",
+            "rule-number": 103,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-part-net-rerouted"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #103 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0104",
+            "name": "Partner_DMZ_Rule_104",
+            "type": "access-rule",
+            "rule-number": 104,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #104 in Partner_DMZ"
+          },
+          {
+            "uid": "uid-arule-partner_dmz-0105",
+            "name": "Partner_DMZ_Rule_105",
+            "type": "access-rule",
+            "rule-number": 105,
+            "enabled": true,
+            "source": [
+              "uid-partner_dmz-bulk-host-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-partner_dmz-bulk-net-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-partner_dmz-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c473",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #105 in Partner_DMZ"
+          }
+        ]
+      }
+    ],
+    "objects-dictionary": [
+      {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c473",
+        "name": "Drop",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "598ead32-aa42-4615-90ed-f51a5928d41d",
+        "name": "Log",
+        "type": "Track"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-001",
+        "name": "H_Partner_DMZ_AppNode_001",
+        "type": "host",
+        "ipv4-address": "10.129.0.2",
+        "comments": "Enterprise host #1 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-002",
+        "name": "H_Partner_DMZ_AppNode_002",
+        "type": "host",
+        "ipv4-address": "10.129.0.3",
+        "comments": "Enterprise host #2 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-003",
+        "name": "H_Partner_DMZ_AppNode_003",
+        "type": "host",
+        "ipv4-address": "10.129.0.4",
+        "comments": "Enterprise host #3 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-004",
+        "name": "H_Partner_DMZ_AppNode_004",
+        "type": "host",
+        "ipv4-address": "10.129.0.5",
+        "comments": "Enterprise host #4 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-005",
+        "name": "H_Partner_DMZ_AppNode_005",
+        "type": "host",
+        "ipv4-address": "10.129.0.6",
+        "comments": "Enterprise host #5 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-006",
+        "name": "H_Partner_DMZ_AppNode_006",
+        "type": "host",
+        "ipv4-address": "10.129.0.7",
+        "comments": "Enterprise host #6 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-007",
+        "name": "H_Partner_DMZ_AppNode_007",
+        "type": "host",
+        "ipv4-address": "10.129.0.8",
+        "comments": "Enterprise host #7 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-008",
+        "name": "H_Partner_DMZ_AppNode_008",
+        "type": "host",
+        "ipv4-address": "10.129.0.9",
+        "comments": "Enterprise host #8 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-009",
+        "name": "H_Partner_DMZ_AppNode_009",
+        "type": "host",
+        "ipv4-address": "10.129.0.10",
+        "comments": "Enterprise host #9 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-010",
+        "name": "H_Partner_DMZ_AppNode_010",
+        "type": "host",
+        "ipv4-address": "10.129.0.11",
+        "comments": "Enterprise host #10 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-011",
+        "name": "H_Partner_DMZ_AppNode_011",
+        "type": "host",
+        "ipv4-address": "10.129.0.12",
+        "comments": "Enterprise host #11 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-012",
+        "name": "H_Partner_DMZ_AppNode_012",
+        "type": "host",
+        "ipv4-address": "10.129.0.13",
+        "comments": "Enterprise host #12 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-013",
+        "name": "H_Partner_DMZ_AppNode_013",
+        "type": "host",
+        "ipv4-address": "10.129.0.14",
+        "comments": "Enterprise host #13 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-014",
+        "name": "H_Partner_DMZ_AppNode_014",
+        "type": "host",
+        "ipv4-address": "10.129.0.15",
+        "comments": "Enterprise host #14 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-015",
+        "name": "H_Partner_DMZ_AppNode_015",
+        "type": "host",
+        "ipv4-address": "10.129.0.16",
+        "comments": "Enterprise host #15 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-016",
+        "name": "H_Partner_DMZ_AppNode_016",
+        "type": "host",
+        "ipv4-address": "10.129.0.17",
+        "comments": "Enterprise host #16 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-017",
+        "name": "H_Partner_DMZ_AppNode_017",
+        "type": "host",
+        "ipv4-address": "10.129.0.18",
+        "comments": "Enterprise host #17 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-018",
+        "name": "H_Partner_DMZ_AppNode_018",
+        "type": "host",
+        "ipv4-address": "10.129.0.19",
+        "comments": "Enterprise host #18 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-019",
+        "name": "H_Partner_DMZ_AppNode_019",
+        "type": "host",
+        "ipv4-address": "10.129.0.20",
+        "comments": "Enterprise host #19 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-020",
+        "name": "H_Partner_DMZ_AppNode_020",
+        "type": "host",
+        "ipv4-address": "10.129.0.21",
+        "comments": "Enterprise host #20 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-021",
+        "name": "H_Partner_DMZ_AppNode_021",
+        "type": "host",
+        "ipv4-address": "10.129.0.22",
+        "comments": "Enterprise host #21 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-022",
+        "name": "H_Partner_DMZ_AppNode_022",
+        "type": "host",
+        "ipv4-address": "10.129.0.23",
+        "comments": "Enterprise host #22 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-023",
+        "name": "H_Partner_DMZ_AppNode_023",
+        "type": "host",
+        "ipv4-address": "10.129.0.24",
+        "comments": "Enterprise host #23 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-024",
+        "name": "H_Partner_DMZ_AppNode_024",
+        "type": "host",
+        "ipv4-address": "10.129.0.25",
+        "comments": "Enterprise host #24 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-025",
+        "name": "H_Partner_DMZ_AppNode_025",
+        "type": "host",
+        "ipv4-address": "10.129.0.26",
+        "comments": "Enterprise host #25 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-026",
+        "name": "H_Partner_DMZ_AppNode_026",
+        "type": "host",
+        "ipv4-address": "10.129.0.27",
+        "comments": "Enterprise host #26 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-027",
+        "name": "H_Partner_DMZ_AppNode_027",
+        "type": "host",
+        "ipv4-address": "10.129.0.28",
+        "comments": "Enterprise host #27 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-028",
+        "name": "H_Partner_DMZ_AppNode_028",
+        "type": "host",
+        "ipv4-address": "10.129.0.29",
+        "comments": "Enterprise host #28 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-029",
+        "name": "H_Partner_DMZ_AppNode_029",
+        "type": "host",
+        "ipv4-address": "10.129.0.30",
+        "comments": "Enterprise host #29 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-host-030",
+        "name": "H_Partner_DMZ_AppNode_030",
+        "type": "host",
+        "ipv4-address": "10.129.0.31",
+        "comments": "Enterprise host #30 in Partner_DMZ"
+      },
+      {
+        "uid": "uid-part-net-active",
+        "name": "N_Partner_B2B_Active",
+        "type": "network",
+        "subnet4": "172.30.1.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-part-net-stale",
+        "name": "N_Partner_B2B_Stale",
+        "type": "network",
+        "subnet4": "172.30.2.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-part-net-rerouted",
+        "name": "N_Partner_B2B_Rerouted",
+        "type": "network",
+        "subnet4": "172.30.3.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-001",
+        "name": "N_Partner_DMZ_Segment_001",
+        "type": "network",
+        "subnet4": "10.149.1.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-002",
+        "name": "N_Partner_DMZ_Segment_002",
+        "type": "network",
+        "subnet4": "10.149.2.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-003",
+        "name": "N_Partner_DMZ_Segment_003",
+        "type": "network",
+        "subnet4": "10.149.3.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-004",
+        "name": "N_Partner_DMZ_Segment_004",
+        "type": "network",
+        "subnet4": "10.149.4.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-005",
+        "name": "N_Partner_DMZ_Segment_005",
+        "type": "network",
+        "subnet4": "10.149.5.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-006",
+        "name": "N_Partner_DMZ_Segment_006",
+        "type": "network",
+        "subnet4": "10.149.6.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-007",
+        "name": "N_Partner_DMZ_Segment_007",
+        "type": "network",
+        "subnet4": "10.149.7.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-008",
+        "name": "N_Partner_DMZ_Segment_008",
+        "type": "network",
+        "subnet4": "10.149.8.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-009",
+        "name": "N_Partner_DMZ_Segment_009",
+        "type": "network",
+        "subnet4": "10.149.9.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-010",
+        "name": "N_Partner_DMZ_Segment_010",
+        "type": "network",
+        "subnet4": "10.149.10.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-011",
+        "name": "N_Partner_DMZ_Segment_011",
+        "type": "network",
+        "subnet4": "10.149.11.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-012",
+        "name": "N_Partner_DMZ_Segment_012",
+        "type": "network",
+        "subnet4": "10.149.12.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-013",
+        "name": "N_Partner_DMZ_Segment_013",
+        "type": "network",
+        "subnet4": "10.149.13.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-014",
+        "name": "N_Partner_DMZ_Segment_014",
+        "type": "network",
+        "subnet4": "10.149.14.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-015",
+        "name": "N_Partner_DMZ_Segment_015",
+        "type": "network",
+        "subnet4": "10.149.15.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-016",
+        "name": "N_Partner_DMZ_Segment_016",
+        "type": "network",
+        "subnet4": "10.149.16.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-bulk-net-017",
+        "name": "N_Partner_DMZ_Segment_017",
+        "type": "network",
+        "subnet4": "10.149.17.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-partner_dmz-svc-tcp-22",
+        "name": "SVC_Partner_DMZ_TCP_22",
+        "type": "service-tcp",
+        "port": "22"
+      },
+      {
+        "uid": "uid-partner_dmz-svc-tcp-53",
+        "name": "SVC_Partner_DMZ_TCP_53",
+        "type": "service-tcp",
+        "port": "53"
+      },
+      {
+        "uid": "uid-partner_dmz-svc-tcp-80",
+        "name": "SVC_Partner_DMZ_TCP_80",
+        "type": "service-tcp",
+        "port": "80"
+      },
+      {
+        "uid": "uid-partner_dmz-svc-tcp-443",
+        "name": "SVC_Partner_DMZ_TCP_443",
+        "type": "service-tcp",
+        "port": "443"
+      },
+      {
+        "uid": "uid-partner_dmz-svc-tcp-1521",
+        "name": "SVC_Partner_DMZ_TCP_1521",
+        "type": "service-tcp",
+        "port": "1521"
+      },
+      {
+        "uid": "uid-partner_dmz-svc-tcp-3306",
+        "name": "SVC_Partner_DMZ_TCP_3306",
+        "type": "service-tcp",
+        "port": "3306"
+      },
+      {
+        "uid": "uid-partner_dmz-svc-tcp-5432",
+        "name": "SVC_Partner_DMZ_TCP_5432",
+        "type": "service-tcp",
+        "port": "5432"
+      },
+      {
+        "uid": "uid-partner_dmz-svc-tcp-6379",
+        "name": "SVC_Partner_DMZ_TCP_6379",
+        "type": "service-tcp",
+        "port": "6379"
+      },
+      {
+        "uid": "uid-partner_dmz-svc-tcp-8080",
+        "name": "SVC_Partner_DMZ_TCP_8080",
+        "type": "service-tcp",
+        "port": "8080"
+      },
+      {
+        "uid": "uid-partner_dmz-svc-tcp-8443",
+        "name": "SVC_Partner_DMZ_TCP_8443",
+        "type": "service-tcp",
+        "port": "8443"
+      },
+      {
+        "uid": "uid-partner_dmz-svc-tcp-9092",
+        "name": "SVC_Partner_DMZ_TCP_9092",
+        "type": "service-tcp",
+        "port": "9092"
+      },
+      {
+        "uid": "uid-partner_dmz-svc-tcp-9200",
+        "name": "SVC_Partner_DMZ_TCP_9200",
+        "type": "service-tcp",
+        "port": "9200"
+      }
+    ],
+    "from": 1,
+    "to": 105,
+    "total": 105
+  }
+}

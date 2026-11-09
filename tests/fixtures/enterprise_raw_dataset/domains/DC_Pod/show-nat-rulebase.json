@@ -1,0 +1,668 @@
+{
+  "DC_Pod_Tier_Pkg": {
+    "package": "DC_Pod_Tier_Pkg",
+    "uid": "nat:uid-pkg-dc_pod",
+    "rulebase": [
+      {
+        "uid": "uid-nsec-dc_pod-01",
+        "name": "DC_Pod Automatic & Manual NAT",
+        "type": "nat-section",
+        "from": 1,
+        "to": 12,
+        "rulebase": [
+          {
+            "uid": "uid-nrule-dc_pod-001",
+            "name": "DC_Pod_NAT_001",
+            "type": "nat-rule",
+            "rule-number": 1,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-dc_pod-bulk-host-001",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-dc_pod-bulk-host-001",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-dc_pod-002",
+            "name": "DC_Pod_NAT_002",
+            "type": "nat-rule",
+            "rule-number": 2,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-dc_pod-bulk-host-002",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-dc_pod-bulk-host-002",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-dc_pod-003",
+            "name": "DC_Pod_NAT_003",
+            "type": "nat-rule",
+            "rule-number": 3,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-dc_pod-bulk-host-003",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-dc_pod-bulk-host-003",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-dc_pod-004",
+            "name": "DC_Pod_NAT_004",
+            "type": "nat-rule",
+            "rule-number": 4,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-dc_pod-bulk-host-004",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-dc_pod-bulk-host-004",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-dc_pod-005",
+            "name": "DC_Pod_NAT_005",
+            "type": "nat-rule",
+            "rule-number": 5,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-dc_pod-bulk-host-005",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-dc_pod-bulk-host-005",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-dc_pod-006",
+            "name": "DC_Pod_NAT_006",
+            "type": "nat-rule",
+            "rule-number": 6,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-dc_pod-bulk-host-006",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-dc_pod-bulk-host-006",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-dc_pod-007",
+            "name": "DC_Pod_NAT_007",
+            "type": "nat-rule",
+            "rule-number": 7,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-dc_pod-bulk-host-007",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-dc_pod-bulk-host-007",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-dc_pod-008",
+            "name": "DC_Pod_NAT_008",
+            "type": "nat-rule",
+            "rule-number": 8,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-dc_pod-bulk-host-008",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-dc_pod-bulk-host-008",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-dc_pod-009",
+            "name": "DC_Pod_NAT_009",
+            "type": "nat-rule",
+            "rule-number": 9,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-dc_pod-bulk-host-009",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-dc_pod-bulk-host-009",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-dc_pod-010",
+            "name": "DC_Pod_NAT_010",
+            "type": "nat-rule",
+            "rule-number": 10,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-dc_pod-bulk-host-010",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-dc_pod-bulk-host-010",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-dc_pod-011",
+            "name": "DC_Pod_NAT_011",
+            "type": "nat-rule",
+            "rule-number": 11,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-dc_pod-bulk-host-011",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-dc_pod-bulk-host-011",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-dc_pod-012",
+            "name": "DC_Pod_NAT_012",
+            "type": "nat-rule",
+            "rule-number": 12,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-dc_pod-bulk-host-012",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-dc_pod-bulk-host-012",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          }
+        ]
+      }
+    ],
+    "objects-dictionary": [
+      {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c473",
+        "name": "Drop",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "598ead32-aa42-4615-90ed-f51a5928d41d",
+        "name": "Log",
+        "type": "Track"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-001",
+        "name": "H_DC_Pod_AppNode_001",
+        "type": "host",
+        "ipv4-address": "10.127.0.2",
+        "comments": "Enterprise host #1 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-002",
+        "name": "H_DC_Pod_AppNode_002",
+        "type": "host",
+        "ipv4-address": "10.127.0.3",
+        "comments": "Enterprise host #2 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-003",
+        "name": "H_DC_Pod_AppNode_003",
+        "type": "host",
+        "ipv4-address": "10.127.0.4",
+        "comments": "Enterprise host #3 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-004",
+        "name": "H_DC_Pod_AppNode_004",
+        "type": "host",
+        "ipv4-address": "10.127.0.5",
+        "comments": "Enterprise host #4 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-005",
+        "name": "H_DC_Pod_AppNode_005",
+        "type": "host",
+        "ipv4-address": "10.127.0.6",
+        "comments": "Enterprise host #5 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-006",
+        "name": "H_DC_Pod_AppNode_006",
+        "type": "host",
+        "ipv4-address": "10.127.0.7",
+        "comments": "Enterprise host #6 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-007",
+        "name": "H_DC_Pod_AppNode_007",
+        "type": "host",
+        "ipv4-address": "10.127.0.8",
+        "comments": "Enterprise host #7 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-008",
+        "name": "H_DC_Pod_AppNode_008",
+        "type": "host",
+        "ipv4-address": "10.127.0.9",
+        "comments": "Enterprise host #8 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-009",
+        "name": "H_DC_Pod_AppNode_009",
+        "type": "host",
+        "ipv4-address": "10.127.0.10",
+        "comments": "Enterprise host #9 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-010",
+        "name": "H_DC_Pod_AppNode_010",
+        "type": "host",
+        "ipv4-address": "10.127.0.11",
+        "comments": "Enterprise host #10 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-011",
+        "name": "H_DC_Pod_AppNode_011",
+        "type": "host",
+        "ipv4-address": "10.127.0.12",
+        "comments": "Enterprise host #11 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-012",
+        "name": "H_DC_Pod_AppNode_012",
+        "type": "host",
+        "ipv4-address": "10.127.0.13",
+        "comments": "Enterprise host #12 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-013",
+        "name": "H_DC_Pod_AppNode_013",
+        "type": "host",
+        "ipv4-address": "10.127.0.14",
+        "comments": "Enterprise host #13 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-014",
+        "name": "H_DC_Pod_AppNode_014",
+        "type": "host",
+        "ipv4-address": "10.127.0.15",
+        "comments": "Enterprise host #14 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-015",
+        "name": "H_DC_Pod_AppNode_015",
+        "type": "host",
+        "ipv4-address": "10.127.0.16",
+        "comments": "Enterprise host #15 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-016",
+        "name": "H_DC_Pod_AppNode_016",
+        "type": "host",
+        "ipv4-address": "10.127.0.17",
+        "comments": "Enterprise host #16 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-017",
+        "name": "H_DC_Pod_AppNode_017",
+        "type": "host",
+        "ipv4-address": "10.127.0.18",
+        "comments": "Enterprise host #17 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-018",
+        "name": "H_DC_Pod_AppNode_018",
+        "type": "host",
+        "ipv4-address": "10.127.0.19",
+        "comments": "Enterprise host #18 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-019",
+        "name": "H_DC_Pod_AppNode_019",
+        "type": "host",
+        "ipv4-address": "10.127.0.20",
+        "comments": "Enterprise host #19 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-020",
+        "name": "H_DC_Pod_AppNode_020",
+        "type": "host",
+        "ipv4-address": "10.127.0.21",
+        "comments": "Enterprise host #20 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-021",
+        "name": "H_DC_Pod_AppNode_021",
+        "type": "host",
+        "ipv4-address": "10.127.0.22",
+        "comments": "Enterprise host #21 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-022",
+        "name": "H_DC_Pod_AppNode_022",
+        "type": "host",
+        "ipv4-address": "10.127.0.23",
+        "comments": "Enterprise host #22 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-023",
+        "name": "H_DC_Pod_AppNode_023",
+        "type": "host",
+        "ipv4-address": "10.127.0.24",
+        "comments": "Enterprise host #23 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-024",
+        "name": "H_DC_Pod_AppNode_024",
+        "type": "host",
+        "ipv4-address": "10.127.0.25",
+        "comments": "Enterprise host #24 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-025",
+        "name": "H_DC_Pod_AppNode_025",
+        "type": "host",
+        "ipv4-address": "10.127.0.26",
+        "comments": "Enterprise host #25 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-026",
+        "name": "H_DC_Pod_AppNode_026",
+        "type": "host",
+        "ipv4-address": "10.127.0.27",
+        "comments": "Enterprise host #26 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-027",
+        "name": "H_DC_Pod_AppNode_027",
+        "type": "host",
+        "ipv4-address": "10.127.0.28",
+        "comments": "Enterprise host #27 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-028",
+        "name": "H_DC_Pod_AppNode_028",
+        "type": "host",
+        "ipv4-address": "10.127.0.29",
+        "comments": "Enterprise host #28 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-029",
+        "name": "H_DC_Pod_AppNode_029",
+        "type": "host",
+        "ipv4-address": "10.127.0.30",
+        "comments": "Enterprise host #29 in DC_Pod"
+      },
+      {
+        "uid": "uid-dc_pod-bulk-host-030",
+        "name": "H_DC_Pod_AppNode_030",
+        "type": "host",
+        "ipv4-address": "10.127.0.31",
+        "comments": "Enterprise host #30 in DC_Pod"
+      },
+      {
+        "uid": "uid-dcpod-net-db-vault",
+        "name": "N_DC_DB_Vault_Sub",
+        "type": "network",
+        "subnet4": "10.220.77.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-21",
+        "name": "N_DC_Pod_21",
+        "type": "network",
+        "subnet4": "10.218.21.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-22",
+        "name": "N_DC_Pod_22",
+        "type": "network",
+        "subnet4": "10.218.22.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-23",
+        "name": "N_DC_Pod_23",
+        "type": "network",
+        "subnet4": "10.218.23.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-24",
+        "name": "N_DC_Pod_24",
+        "type": "network",
+        "subnet4": "10.218.24.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-25",
+        "name": "N_DC_Pod_25",
+        "type": "network",
+        "subnet4": "10.218.25.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-26",
+        "name": "N_DC_Pod_26",
+        "type": "network",
+        "subnet4": "10.218.26.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-27",
+        "name": "N_DC_Pod_27",
+        "type": "network",
+        "subnet4": "10.218.27.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-28",
+        "name": "N_DC_Pod_28",
+        "type": "network",
+        "subnet4": "10.218.28.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-29",
+        "name": "N_DC_Pod_29",
+        "type": "network",
+        "subnet4": "10.218.29.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-30",
+        "name": "N_DC_Pod_30",
+        "type": "network",
+        "subnet4": "10.218.30.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-31",
+        "name": "N_DC_Pod_31",
+        "type": "network",
+        "subnet4": "10.218.31.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-32",
+        "name": "N_DC_Pod_32",
+        "type": "network",
+        "subnet4": "10.218.32.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-33",
+        "name": "N_DC_Pod_33",
+        "type": "network",
+        "subnet4": "10.218.33.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-34",
+        "name": "N_DC_Pod_34",
+        "type": "network",
+        "subnet4": "10.218.34.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-35",
+        "name": "N_DC_Pod_35",
+        "type": "network",
+        "subnet4": "10.218.35.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-36",
+        "name": "N_DC_Pod_36",
+        "type": "network",
+        "subnet4": "10.218.36.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-37",
+        "name": "N_DC_Pod_37",
+        "type": "network",
+        "subnet4": "10.218.37.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-38",
+        "name": "N_DC_Pod_38",
+        "type": "network",
+        "subnet4": "10.218.38.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dcpod-net-39",
+        "name": "N_DC_Pod_39",
+        "type": "network",
+        "subnet4": "10.218.39.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-dc_pod-svc-tcp-22",
+        "name": "SVC_DC_Pod_TCP_22",
+        "type": "service-tcp",
+        "port": "22"
+      },
+      {
+        "uid": "uid-dc_pod-svc-tcp-53",
+        "name": "SVC_DC_Pod_TCP_53",
+        "type": "service-tcp",
+        "port": "53"
+      },
+      {
+        "uid": "uid-dc_pod-svc-tcp-80",
+        "name": "SVC_DC_Pod_TCP_80",
+        "type": "service-tcp",
+        "port": "80"
+      },
+      {
+        "uid": "uid-dc_pod-svc-tcp-443",
+        "name": "SVC_DC_Pod_TCP_443",
+        "type": "service-tcp",
+        "port": "443"
+      },
+      {
+        "uid": "uid-dc_pod-svc-tcp-1521",
+        "name": "SVC_DC_Pod_TCP_1521",
+        "type": "service-tcp",
+        "port": "1521"
+      },
+      {
+        "uid": "uid-dc_pod-svc-tcp-3306",
+        "name": "SVC_DC_Pod_TCP_3306",
+        "type": "service-tcp",
+        "port": "3306"
+      },
+      {
+        "uid": "uid-dc_pod-svc-tcp-5432",
+        "name": "SVC_DC_Pod_TCP_5432",
+        "type": "service-tcp",
+        "port": "5432"
+      },
+      {
+        "uid": "uid-dc_pod-svc-tcp-6379",
+        "name": "SVC_DC_Pod_TCP_6379",
+        "type": "service-tcp",
+        "port": "6379"
+      },
+      {
+        "uid": "uid-dc_pod-svc-tcp-8080",
+        "name": "SVC_DC_Pod_TCP_8080",
+        "type": "service-tcp",
+        "port": "8080"
+      },
+      {
+        "uid": "uid-dc_pod-svc-tcp-8443",
+        "name": "SVC_DC_Pod_TCP_8443",
+        "type": "service-tcp",
+        "port": "8443"
+      },
+      {
+        "uid": "uid-dc_pod-svc-tcp-9092",
+        "name": "SVC_DC_Pod_TCP_9092",
+        "type": "service-tcp",
+        "port": "9092"
+      },
+      {
+        "uid": "uid-dc_pod-svc-tcp-9200",
+        "name": "SVC_DC_Pod_TCP_9200",
+        "type": "service-tcp",
+        "port": "9200"
+      }
+    ],
+    "from": 1,
+    "to": 12,
+    "total": 12
+  }
+}

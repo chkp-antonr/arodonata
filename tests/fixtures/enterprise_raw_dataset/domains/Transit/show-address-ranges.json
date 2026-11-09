@@ -1,0 +1,147 @@
+{
+  "objects": [
+    {
+      "uid": "uid-transit-bulk-rng-001",
+      "name": "R_Transit_Pool_001",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.1.10",
+      "ipv4-address-last": "10.165.1.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-002",
+      "name": "R_Transit_Pool_002",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.2.10",
+      "ipv4-address-last": "10.165.2.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-003",
+      "name": "R_Transit_Pool_003",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.3.10",
+      "ipv4-address-last": "10.165.3.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-004",
+      "name": "R_Transit_Pool_004",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.4.10",
+      "ipv4-address-last": "10.165.4.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-005",
+      "name": "R_Transit_Pool_005",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.5.10",
+      "ipv4-address-last": "10.165.5.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-006",
+      "name": "R_Transit_Pool_006",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.6.10",
+      "ipv4-address-last": "10.165.6.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-007",
+      "name": "R_Transit_Pool_007",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.7.10",
+      "ipv4-address-last": "10.165.7.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-008",
+      "name": "R_Transit_Pool_008",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.8.10",
+      "ipv4-address-last": "10.165.8.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-009",
+      "name": "R_Transit_Pool_009",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.9.10",
+      "ipv4-address-last": "10.165.9.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-010",
+      "name": "R_Transit_Pool_010",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.10.10",
+      "ipv4-address-last": "10.165.10.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-011",
+      "name": "R_Transit_Pool_011",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.11.10",
+      "ipv4-address-last": "10.165.11.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-012",
+      "name": "R_Transit_Pool_012",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.12.10",
+      "ipv4-address-last": "10.165.12.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-013",
+      "name": "R_Transit_Pool_013",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.13.10",
+      "ipv4-address-last": "10.165.13.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-014",
+      "name": "R_Transit_Pool_014",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.14.10",
+      "ipv4-address-last": "10.165.14.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-015",
+      "name": "R_Transit_Pool_015",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.15.10",
+      "ipv4-address-last": "10.165.15.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-016",
+      "name": "R_Transit_Pool_016",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.16.10",
+      "ipv4-address-last": "10.165.16.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-017",
+      "name": "R_Transit_Pool_017",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.17.10",
+      "ipv4-address-last": "10.165.17.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-018",
+      "name": "R_Transit_Pool_018",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.18.10",
+      "ipv4-address-last": "10.165.18.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-019",
+      "name": "R_Transit_Pool_019",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.19.10",
+      "ipv4-address-last": "10.165.19.50"
+    },
+    {
+      "uid": "uid-transit-bulk-rng-020",
+      "name": "R_Transit_Pool_020",
+      "type": "address-range",
+      "ipv4-address-first": "10.165.20.10",
+      "ipv4-address-last": "10.165.20.50"
+    }
+  ],
+  "from": 1,
+  "to": 20,
+  "total": 20
+}

@@ -1,0 +1,17 @@
+{
+  "objects": [
+    {
+      "uid": "uid-global-svc-grp-web",
+      "name": "G_Web_Services",
+      "type": "service-group",
+      "members": [
+        "uid-global-svc-tcp-80",
+        "uid-global-svc-tcp-443",
+        "uid-global-svc-tcp-8443"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

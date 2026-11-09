@@ -1,0 +1,23 @@
+{
+  "access-layers": [
+    {
+      "uid": "uid-layer-transit-security",
+      "name": "Transit_Interconnect_Pkg Network",
+      "type": "access-layer",
+      "firewall": true,
+      "applications-and-url-filtering": true
+    }
+  ],
+  "objects": [
+    {
+      "uid": "uid-layer-transit-security",
+      "name": "Transit_Interconnect_Pkg Network",
+      "type": "access-layer",
+      "firewall": true,
+      "applications-and-url-filtering": true
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

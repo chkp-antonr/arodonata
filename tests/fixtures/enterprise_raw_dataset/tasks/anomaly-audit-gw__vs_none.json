@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-anomaly-audit-gw-0",
+      "task-name": "arodonata-route-collect-anomaly-audit-gw",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-anomaly-audit-gw-0",
+          "gatewayId": "anomaly-audit-gw",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDEwLjI1NC4yNTQuMjU0IGRldiBldGg1IHByb3RvIHN0YXRpYwoxMC4yNTQuMS4wLzI0IGRldiBldGgxIHByb3RvIGtlcm5lbCBzY29wZSBsaW5rIHNyYyAxMC4yNTQuMS4xCjEwLjI1NC4yLjAvMjQgZGV2IGV0aDIgcHJvdG8ga2VybmVsIHNjb3BlIGxpbmsgc3JjIDEwLjI1NC4yLjEKMTAuMjU0LjI1NC4wLzI0IGRldiBldGg1IHByb3RvIGtlcm5lbCBzY29wZSBsaW5rIHNyYyAxMC4yNTQuMjU0LjEKPT09QVJPRE9OQVRBX0lQX1JPVVRFX0VORD09PQo=",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

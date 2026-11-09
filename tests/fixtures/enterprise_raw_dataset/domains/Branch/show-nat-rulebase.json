@@ -1,0 +1,638 @@
+{
+  "Branch_Standard_Pkg": {
+    "package": "Branch_Standard_Pkg",
+    "uid": "nat:uid-pkg-branch",
+    "rulebase": [
+      {
+        "uid": "uid-nsec-branch-01",
+        "name": "Branch Automatic & Manual NAT",
+        "type": "nat-section",
+        "from": 1,
+        "to": 12,
+        "rulebase": [
+          {
+            "uid": "uid-nrule-branch-001",
+            "name": "Branch_NAT_001",
+            "type": "nat-rule",
+            "rule-number": 1,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-br-host-srv-001",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-br-host-srv-001",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-branch-002",
+            "name": "Branch_NAT_002",
+            "type": "nat-rule",
+            "rule-number": 2,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-br-host-srv-002",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-br-host-srv-002",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-branch-003",
+            "name": "Branch_NAT_003",
+            "type": "nat-rule",
+            "rule-number": 3,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-br-host-srv-003",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-br-host-srv-003",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-branch-004",
+            "name": "Branch_NAT_004",
+            "type": "nat-rule",
+            "rule-number": 4,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-br-host-srv-004",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-br-host-srv-004",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-branch-005",
+            "name": "Branch_NAT_005",
+            "type": "nat-rule",
+            "rule-number": 5,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-br-host-srv-005",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-br-host-srv-005",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-branch-006",
+            "name": "Branch_NAT_006",
+            "type": "nat-rule",
+            "rule-number": 6,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-br-host-srv-006",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-br-host-srv-006",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-branch-007",
+            "name": "Branch_NAT_007",
+            "type": "nat-rule",
+            "rule-number": 7,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-br-host-srv-007",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-br-host-srv-007",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-branch-008",
+            "name": "Branch_NAT_008",
+            "type": "nat-rule",
+            "rule-number": 8,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-br-host-srv-008",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-br-host-srv-008",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-branch-009",
+            "name": "Branch_NAT_009",
+            "type": "nat-rule",
+            "rule-number": 9,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-br-host-srv-009",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-br-host-srv-009",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-branch-010",
+            "name": "Branch_NAT_010",
+            "type": "nat-rule",
+            "rule-number": 10,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-br-host-srv-010",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-br-host-srv-010",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-branch-011",
+            "name": "Branch_NAT_011",
+            "type": "nat-rule",
+            "rule-number": 11,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-br-host-srv-011",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-br-host-srv-011",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          },
+          {
+            "uid": "uid-nrule-branch-012",
+            "name": "Branch_NAT_012",
+            "type": "nat-rule",
+            "rule-number": 12,
+            "enabled": true,
+            "method": "hide",
+            "original-source": "uid-br-host-srv-012",
+            "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-source": "uid-br-host-srv-012",
+            "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ]
+          }
+        ]
+      }
+    ],
+    "objects-dictionary": [
+      {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c473",
+        "name": "Drop",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "598ead32-aa42-4615-90ed-f51a5928d41d",
+        "name": "Log",
+        "type": "Track"
+      },
+      {
+        "uid": "uid-br-host-srv-001",
+        "name": "H_Branch_001_Server",
+        "type": "host",
+        "ipv4-address": "10.11.1.10"
+      },
+      {
+        "uid": "uid-br-host-srv-002",
+        "name": "H_Branch_002_Server",
+        "type": "host",
+        "ipv4-address": "10.11.2.10"
+      },
+      {
+        "uid": "uid-br-host-srv-003",
+        "name": "H_Branch_003_Server",
+        "type": "host",
+        "ipv4-address": "10.11.3.10"
+      },
+      {
+        "uid": "uid-br-host-srv-004",
+        "name": "H_Branch_004_Server",
+        "type": "host",
+        "ipv4-address": "10.11.4.10"
+      },
+      {
+        "uid": "uid-br-host-srv-005",
+        "name": "H_Branch_005_Server",
+        "type": "host",
+        "ipv4-address": "10.11.5.10"
+      },
+      {
+        "uid": "uid-br-host-srv-006",
+        "name": "H_Branch_006_Server",
+        "type": "host",
+        "ipv4-address": "10.11.6.10"
+      },
+      {
+        "uid": "uid-br-host-srv-007",
+        "name": "H_Branch_007_Server",
+        "type": "host",
+        "ipv4-address": "10.11.7.10"
+      },
+      {
+        "uid": "uid-br-host-srv-008",
+        "name": "H_Branch_008_Server",
+        "type": "host",
+        "ipv4-address": "10.11.8.10"
+      },
+      {
+        "uid": "uid-br-host-srv-009",
+        "name": "H_Branch_009_Server",
+        "type": "host",
+        "ipv4-address": "10.11.9.10"
+      },
+      {
+        "uid": "uid-br-host-srv-010",
+        "name": "H_Branch_010_Server",
+        "type": "host",
+        "ipv4-address": "10.11.10.10"
+      },
+      {
+        "uid": "uid-br-host-srv-011",
+        "name": "H_Branch_011_Server",
+        "type": "host",
+        "ipv4-address": "10.11.11.10"
+      },
+      {
+        "uid": "uid-br-host-srv-012",
+        "name": "H_Branch_012_Server",
+        "type": "host",
+        "ipv4-address": "10.11.12.10"
+      },
+      {
+        "uid": "uid-br-host-srv-013",
+        "name": "H_Branch_013_Server",
+        "type": "host",
+        "ipv4-address": "10.11.13.10"
+      },
+      {
+        "uid": "uid-br-host-srv-014",
+        "name": "H_Branch_014_Server",
+        "type": "host",
+        "ipv4-address": "10.11.14.10"
+      },
+      {
+        "uid": "uid-br-host-srv-015",
+        "name": "H_Branch_015_Server",
+        "type": "host",
+        "ipv4-address": "10.11.15.10"
+      },
+      {
+        "uid": "uid-br-host-srv-016",
+        "name": "H_Branch_016_Server",
+        "type": "host",
+        "ipv4-address": "10.11.16.10"
+      },
+      {
+        "uid": "uid-br-host-srv-017",
+        "name": "H_Branch_017_Server",
+        "type": "host",
+        "ipv4-address": "10.11.17.10"
+      },
+      {
+        "uid": "uid-br-host-srv-018",
+        "name": "H_Branch_018_Server",
+        "type": "host",
+        "ipv4-address": "10.11.18.10"
+      },
+      {
+        "uid": "uid-br-host-srv-019",
+        "name": "H_Branch_019_Server",
+        "type": "host",
+        "ipv4-address": "10.11.19.10"
+      },
+      {
+        "uid": "uid-br-host-srv-020",
+        "name": "H_Branch_020_Server",
+        "type": "host",
+        "ipv4-address": "10.11.20.10"
+      },
+      {
+        "uid": "uid-br-host-srv-021",
+        "name": "H_Branch_021_Server",
+        "type": "host",
+        "ipv4-address": "10.11.21.10"
+      },
+      {
+        "uid": "uid-br-host-srv-022",
+        "name": "H_Branch_022_Server",
+        "type": "host",
+        "ipv4-address": "10.11.22.10"
+      },
+      {
+        "uid": "uid-br-host-srv-023",
+        "name": "H_Branch_023_Server",
+        "type": "host",
+        "ipv4-address": "10.11.23.10"
+      },
+      {
+        "uid": "uid-br-host-srv-024",
+        "name": "H_Branch_024_Server",
+        "type": "host",
+        "ipv4-address": "10.11.24.10"
+      },
+      {
+        "uid": "uid-br-host-srv-025",
+        "name": "H_Branch_025_Server",
+        "type": "host",
+        "ipv4-address": "10.11.25.10"
+      },
+      {
+        "uid": "uid-br-host-srv-026",
+        "name": "H_Branch_026_Server",
+        "type": "host",
+        "ipv4-address": "10.11.26.10"
+      },
+      {
+        "uid": "uid-br-host-srv-027",
+        "name": "H_Branch_027_Server",
+        "type": "host",
+        "ipv4-address": "10.11.27.10"
+      },
+      {
+        "uid": "uid-br-host-srv-028",
+        "name": "H_Branch_028_Server",
+        "type": "host",
+        "ipv4-address": "10.11.28.10"
+      },
+      {
+        "uid": "uid-br-host-srv-029",
+        "name": "H_Branch_029_Server",
+        "type": "host",
+        "ipv4-address": "10.11.29.10"
+      },
+      {
+        "uid": "uid-br-host-srv-030",
+        "name": "H_Branch_030_Server",
+        "type": "host",
+        "ipv4-address": "10.11.30.10"
+      },
+      {
+        "uid": "uid-br-net-lan-001",
+        "name": "N_Branch_001_LAN",
+        "type": "network",
+        "subnet4": "10.11.1.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-001",
+        "name": "N_Branch_001_VoIP",
+        "type": "network",
+        "subnet4": "10.12.1.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-002",
+        "name": "N_Branch_002_LAN",
+        "type": "network",
+        "subnet4": "10.11.2.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-002",
+        "name": "N_Branch_002_VoIP",
+        "type": "network",
+        "subnet4": "10.12.2.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-003",
+        "name": "N_Branch_003_LAN",
+        "type": "network",
+        "subnet4": "10.11.3.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-003",
+        "name": "N_Branch_003_VoIP",
+        "type": "network",
+        "subnet4": "10.12.3.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-004",
+        "name": "N_Branch_004_LAN",
+        "type": "network",
+        "subnet4": "10.11.4.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-004",
+        "name": "N_Branch_004_VoIP",
+        "type": "network",
+        "subnet4": "10.12.4.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-005",
+        "name": "N_Branch_005_LAN",
+        "type": "network",
+        "subnet4": "10.11.5.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-005",
+        "name": "N_Branch_005_VoIP",
+        "type": "network",
+        "subnet4": "10.12.5.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-006",
+        "name": "N_Branch_006_LAN",
+        "type": "network",
+        "subnet4": "10.11.6.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-006",
+        "name": "N_Branch_006_VoIP",
+        "type": "network",
+        "subnet4": "10.12.6.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-007",
+        "name": "N_Branch_007_LAN",
+        "type": "network",
+        "subnet4": "10.11.7.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-007",
+        "name": "N_Branch_007_VoIP",
+        "type": "network",
+        "subnet4": "10.12.7.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-008",
+        "name": "N_Branch_008_LAN",
+        "type": "network",
+        "subnet4": "10.11.8.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-008",
+        "name": "N_Branch_008_VoIP",
+        "type": "network",
+        "subnet4": "10.12.8.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-009",
+        "name": "N_Branch_009_LAN",
+        "type": "network",
+        "subnet4": "10.11.9.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-009",
+        "name": "N_Branch_009_VoIP",
+        "type": "network",
+        "subnet4": "10.12.9.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-010",
+        "name": "N_Branch_010_LAN",
+        "type": "network",
+        "subnet4": "10.11.10.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-010",
+        "name": "N_Branch_010_VoIP",
+        "type": "network",
+        "subnet4": "10.12.10.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-branch-svc-tcp-22",
+        "name": "SVC_Branch_TCP_22",
+        "type": "service-tcp",
+        "port": "22"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-53",
+        "name": "SVC_Branch_TCP_53",
+        "type": "service-tcp",
+        "port": "53"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-80",
+        "name": "SVC_Branch_TCP_80",
+        "type": "service-tcp",
+        "port": "80"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-443",
+        "name": "SVC_Branch_TCP_443",
+        "type": "service-tcp",
+        "port": "443"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-1521",
+        "name": "SVC_Branch_TCP_1521",
+        "type": "service-tcp",
+        "port": "1521"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-3306",
+        "name": "SVC_Branch_TCP_3306",
+        "type": "service-tcp",
+        "port": "3306"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-5432",
+        "name": "SVC_Branch_TCP_5432",
+        "type": "service-tcp",
+        "port": "5432"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-6379",
+        "name": "SVC_Branch_TCP_6379",
+        "type": "service-tcp",
+        "port": "6379"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-8080",
+        "name": "SVC_Branch_TCP_8080",
+        "type": "service-tcp",
+        "port": "8080"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-8443",
+        "name": "SVC_Branch_TCP_8443",
+        "type": "service-tcp",
+        "port": "8443"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-9092",
+        "name": "SVC_Branch_TCP_9092",
+        "type": "service-tcp",
+        "port": "9092"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-9200",
+        "name": "SVC_Branch_TCP_9200",
+        "type": "service-tcp",
+        "port": "9200"
+      }
+    ],
+    "from": 1,
+    "to": 12,
+    "total": 12
+  }
+}

@@ -1,0 +1,6 @@
+===ARODONATA_IP_ROUTE_START===
+default via 10.254.254.254 dev eth5 proto static
+10.254.1.0/24 dev eth1 proto kernel scope link src 10.254.1.1
+10.254.2.0/24 dev eth2 proto kernel scope link src 10.254.2.1
+10.254.254.0/24 dev eth5 proto kernel scope link src 10.254.254.1
+===ARODONATA_IP_ROUTE_END===

@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-br-reg-gw-123-0",
+      "task-name": "arodonata-route-collect-br-reg-gw-123",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-br-reg-gw-123-0",
+          "gatewayId": "br-reg-gw-123",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4yMS4xLjEgZGV2IGV0aDAgcHJvdG8gc3RhdGljCjEwLjExLjEyMy4wLzI0IGRldiBldGgxIHByb3RvIGtlcm5lbCBzY29wZSBsaW5rIHNyYyAxMC4xMS4xMjMuMQoxMC4xMi4xMjMuMC8yNCB2aWEgMTAuMTMuMTIzLjIgZGV2IGV0aDIgcHJvdG8gb3NwZgo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cj09PUFST0RPTkFUQV9DTElTSF9ST1VURV9TVEFSVD09PQpDb2RlczogQyAtIENvbm5lY3RlZCwgUyAtIFN0YXRpYywgUiAtIFJJUCwgQiAtIEJHUCwgTyAtIE9TUEYsIEkgLSBJUy1JUywgQSAtIEFnZ3JlZ2F0ZSwgSyAtIEtlcm5lbApTIDAuMC4wLjAvMCB2aWEgMTcyLjIxLjEuMSwgZXRoMApDIDEwLjExLjEyMy4wLzI0IGlzIGRpcmVjdGx5IGNvbm5lY3RlZCwgZXRoMQpPIDEwLjEyLjEyMy4wLzI0IHZpYSAxMC4xMy4xMjMuMiwgZXRoMgo9PT1BUk9ET05BVEFfQ0xJU0hfUk9VVEVfRU5EPT09Cg==",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "objects": [
+    {
+      "uid": "uid-partner_dmz-svc-grp-web",
+      "name": "G_Partner_DMZ_App_Services",
+      "type": "service-group",
+      "members": [
+        "uid-partner_dmz-svc-tcp-80",
+        "uid-partner_dmz-svc-tcp-443",
+        "uid-partner_dmz-svc-tcp-8443"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

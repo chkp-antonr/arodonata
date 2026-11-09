@@ -1,0 +1,573 @@
+{
+  "uid-db-seg-fw-01": {
+    "uid": "uid-db-seg-fw-01",
+    "name": "db-seg-internal-fw-01",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.1.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.1.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "G_DB_Allowed_Clients"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.77.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-02": {
+    "uid": "uid-db-seg-fw-02",
+    "name": "db-seg-internal-fw-02",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.2.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.2.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.2.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-03": {
+    "uid": "uid-db-seg-fw-03",
+    "name": "db-seg-internal-fw-03",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.3.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.3.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.3.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-04": {
+    "uid": "uid-db-seg-fw-04",
+    "name": "db-seg-internal-fw-04",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.4.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.4.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.4.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-05": {
+    "uid": "uid-db-seg-fw-05",
+    "name": "db-seg-internal-fw-05",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.5.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.5.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.5.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-06": {
+    "uid": "uid-db-seg-fw-06",
+    "name": "db-seg-internal-fw-06",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.6.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.6.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.6.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-07": {
+    "uid": "uid-db-seg-fw-07",
+    "name": "db-seg-internal-fw-07",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.7.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.7.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.7.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-08": {
+    "uid": "uid-db-seg-fw-08",
+    "name": "db-seg-internal-fw-08",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.8.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.8.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.8.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-09": {
+    "uid": "uid-db-seg-fw-09",
+    "name": "db-seg-internal-fw-09",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.9.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.9.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.9.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-10": {
+    "uid": "uid-db-seg-fw-10",
+    "name": "db-seg-internal-fw-10",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.10.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-11": {
+    "uid": "uid-db-seg-fw-11",
+    "name": "db-seg-internal-fw-11",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.11.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.11.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.11.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-12": {
+    "uid": "uid-db-seg-fw-12",
+    "name": "db-seg-internal-fw-12",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.12.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.12.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.12.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-13": {
+    "uid": "uid-db-seg-fw-13",
+    "name": "db-seg-internal-fw-13",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.13.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.13.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.13.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-14": {
+    "uid": "uid-db-seg-fw-14",
+    "name": "db-seg-internal-fw-14",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.14.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.14.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.14.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-fw-15": {
+    "uid": "uid-db-seg-fw-15",
+    "name": "db-seg-internal-fw-15",
+    "type": "simple-gateway",
+    "ipv4-address": "10.210.15.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.210.15.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.220.15.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  }
+}

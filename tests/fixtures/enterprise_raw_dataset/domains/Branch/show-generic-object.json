@@ -1,0 +1,7142 @@
+{
+  "uid-branch-gw-001": {
+    "uid": "uid-branch-gw-001",
+    "name": "br-spb-gw-01",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.11",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.11",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.1.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.1.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-002": {
+    "uid": "uid-branch-gw-002",
+    "name": "br-reg-gw-002",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.12",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.12",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.2.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.2.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-003": {
+    "uid": "uid-branch-gw-003",
+    "name": "br-reg-gw-003",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.13",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.13",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.3.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.3.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-004": {
+    "uid": "uid-branch-gw-004",
+    "name": "br-reg-gw-004",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.14",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.14",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.4.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.4.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-005": {
+    "uid": "uid-branch-gw-005",
+    "name": "br-reg-gw-005",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.15",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.15",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.5.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.5.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-006": {
+    "uid": "uid-branch-gw-006",
+    "name": "br-reg-gw-006",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.16",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.16",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.6.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.6.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-007": {
+    "uid": "uid-branch-gw-007",
+    "name": "br-reg-gw-007",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.17",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.17",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.7.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.7.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-008": {
+    "uid": "uid-branch-gw-008",
+    "name": "br-reg-gw-008",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.18",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.18",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.8.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.8.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-009": {
+    "uid": "uid-branch-gw-009",
+    "name": "br-reg-gw-009",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.19",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.19",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.9.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.9.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-010": {
+    "uid": "uid-branch-gw-010",
+    "name": "br-reg-gw-010",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.20",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.20",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.10.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-011": {
+    "uid": "uid-branch-gw-011",
+    "name": "br-reg-gw-011",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.21",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.21",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.11.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.11.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-012": {
+    "uid": "uid-branch-gw-012",
+    "name": "br-reg-gw-012",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.22",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.22",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.12.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.12.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-013": {
+    "uid": "uid-branch-gw-013",
+    "name": "br-reg-gw-013",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.23",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.23",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.13.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.13.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-014": {
+    "uid": "uid-branch-gw-014",
+    "name": "br-reg-gw-014",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.24",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.24",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.14.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.14.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-015": {
+    "uid": "uid-branch-gw-015",
+    "name": "br-reg-gw-015",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.25",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.25",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.15.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.15.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-016": {
+    "uid": "uid-branch-gw-016",
+    "name": "br-reg-gw-016",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.26",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.26",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.16.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.16.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-017": {
+    "uid": "uid-branch-gw-017",
+    "name": "br-reg-gw-017",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.27",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.27",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.17.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.17.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-018": {
+    "uid": "uid-branch-gw-018",
+    "name": "br-reg-gw-018",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.28",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.28",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.18.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.18.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-019": {
+    "uid": "uid-branch-gw-019",
+    "name": "br-reg-gw-019",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.29",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.29",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.19.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.19.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-020": {
+    "uid": "uid-branch-gw-020",
+    "name": "br-reg-gw-020",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.30",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.30",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.20.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.20.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-021": {
+    "uid": "uid-branch-gw-021",
+    "name": "br-reg-gw-021",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.31",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.31",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.21.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.21.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-022": {
+    "uid": "uid-branch-gw-022",
+    "name": "br-reg-gw-022",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.32",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.32",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.22.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.22.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-023": {
+    "uid": "uid-branch-gw-023",
+    "name": "br-reg-gw-023",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.33",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.33",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.23.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.23.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-024": {
+    "uid": "uid-branch-gw-024",
+    "name": "br-reg-gw-024",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.34",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.34",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.24.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.24.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-025": {
+    "uid": "uid-branch-gw-025",
+    "name": "br-reg-gw-025",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.35",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.35",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.25.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.25.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-026": {
+    "uid": "uid-branch-gw-026",
+    "name": "br-reg-gw-026",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.36",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.36",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.26.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.26.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-027": {
+    "uid": "uid-branch-gw-027",
+    "name": "br-reg-gw-027",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.37",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.37",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.27.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.27.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-028": {
+    "uid": "uid-branch-gw-028",
+    "name": "br-reg-gw-028",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.38",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.38",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.28.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.28.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-029": {
+    "uid": "uid-branch-gw-029",
+    "name": "br-reg-gw-029",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.39",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.39",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.29.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.29.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-030": {
+    "uid": "uid-branch-gw-030",
+    "name": "br-reg-gw-030",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.40",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.40",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.30.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.30.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-031": {
+    "uid": "uid-branch-gw-031",
+    "name": "br-reg-gw-031",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.41",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.41",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.31.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.31.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-032": {
+    "uid": "uid-branch-gw-032",
+    "name": "br-reg-gw-032",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.42",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.42",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.32.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.32.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-033": {
+    "uid": "uid-branch-gw-033",
+    "name": "br-reg-gw-033",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.43",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.43",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.33.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.33.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-034": {
+    "uid": "uid-branch-gw-034",
+    "name": "br-reg-gw-034",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.44",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.44",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.34.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.34.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-035": {
+    "uid": "uid-branch-gw-035",
+    "name": "br-reg-gw-035",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.45",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.45",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.35.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.35.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-036": {
+    "uid": "uid-branch-gw-036",
+    "name": "br-reg-gw-036",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.46",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.46",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.36.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.36.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-037": {
+    "uid": "uid-branch-gw-037",
+    "name": "br-reg-gw-037",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.47",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.47",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.37.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.37.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-038": {
+    "uid": "uid-branch-gw-038",
+    "name": "br-reg-gw-038",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.48",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.48",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.38.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.38.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-039": {
+    "uid": "uid-branch-gw-039",
+    "name": "br-reg-gw-039",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.49",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.49",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.39.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.39.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-040": {
+    "uid": "uid-branch-gw-040",
+    "name": "br-reg-gw-040",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.50",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.50",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.40.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.40.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-041": {
+    "uid": "uid-branch-gw-041",
+    "name": "br-reg-gw-041",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.51",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.51",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.41.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.41.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-042": {
+    "uid": "uid-branch-gw-042",
+    "name": "br-reg-gw-042",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.52",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.52",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.42.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.42.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-043": {
+    "uid": "uid-branch-gw-043",
+    "name": "br-reg-gw-043",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.53",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.53",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.43.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.43.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-044": {
+    "uid": "uid-branch-gw-044",
+    "name": "br-reg-gw-044",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.54",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.54",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.44.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.44.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-045": {
+    "uid": "uid-branch-gw-045",
+    "name": "br-reg-gw-045",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.55",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.55",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.45.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.45.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-046": {
+    "uid": "uid-branch-gw-046",
+    "name": "br-reg-gw-046",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.56",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.56",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.46.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.46.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-047": {
+    "uid": "uid-branch-gw-047",
+    "name": "br-reg-gw-047",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.57",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.57",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.47.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.47.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-048": {
+    "uid": "uid-branch-gw-048",
+    "name": "br-reg-gw-048",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.58",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.58",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.48.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.48.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-049": {
+    "uid": "uid-branch-gw-049",
+    "name": "br-reg-gw-049",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.59",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.59",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.49.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.49.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-050": {
+    "uid": "uid-branch-gw-050",
+    "name": "br-reg-gw-050",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.60",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.60",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.50.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.50.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-051": {
+    "uid": "uid-branch-gw-051",
+    "name": "br-reg-gw-051",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.61",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.61",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.51.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.51.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-052": {
+    "uid": "uid-branch-gw-052",
+    "name": "br-reg-gw-052",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.62",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.62",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.52.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.52.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-053": {
+    "uid": "uid-branch-gw-053",
+    "name": "br-reg-gw-053",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.63",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.63",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.53.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.53.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-054": {
+    "uid": "uid-branch-gw-054",
+    "name": "br-reg-gw-054",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.64",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.64",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.54.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.54.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-055": {
+    "uid": "uid-branch-gw-055",
+    "name": "br-reg-gw-055",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.65",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.65",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.55.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.55.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-056": {
+    "uid": "uid-branch-gw-056",
+    "name": "br-reg-gw-056",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.66",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.66",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.56.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.56.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-057": {
+    "uid": "uid-branch-gw-057",
+    "name": "br-reg-gw-057",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.67",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.67",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.57.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.57.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-058": {
+    "uid": "uid-branch-gw-058",
+    "name": "br-reg-gw-058",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.68",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.68",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.58.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.58.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-059": {
+    "uid": "uid-branch-gw-059",
+    "name": "br-reg-gw-059",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.69",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.69",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.59.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.59.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-060": {
+    "uid": "uid-branch-gw-060",
+    "name": "br-reg-gw-060",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.70",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.70",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.60.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.60.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-061": {
+    "uid": "uid-branch-gw-061",
+    "name": "br-reg-gw-061",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.71",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.71",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.61.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.61.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-062": {
+    "uid": "uid-branch-gw-062",
+    "name": "br-reg-gw-062",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.72",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.72",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.62.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.62.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-063": {
+    "uid": "uid-branch-gw-063",
+    "name": "br-reg-gw-063",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.73",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.73",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.63.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.63.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-064": {
+    "uid": "uid-branch-gw-064",
+    "name": "br-reg-gw-064",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.74",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.74",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.64.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.64.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-065": {
+    "uid": "uid-branch-gw-065",
+    "name": "br-reg-gw-065",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.75",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.75",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.65.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.65.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-066": {
+    "uid": "uid-branch-gw-066",
+    "name": "br-reg-gw-066",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.76",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.76",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.66.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.66.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-067": {
+    "uid": "uid-branch-gw-067",
+    "name": "br-reg-gw-067",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.77",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.77",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.67.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.67.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-068": {
+    "uid": "uid-branch-gw-068",
+    "name": "br-reg-gw-068",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.78",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.78",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.68.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.68.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-069": {
+    "uid": "uid-branch-gw-069",
+    "name": "br-reg-gw-069",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.79",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.79",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.69.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.69.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-070": {
+    "uid": "uid-branch-gw-070",
+    "name": "br-reg-gw-070",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.80",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.80",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.70.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.70.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-071": {
+    "uid": "uid-branch-gw-071",
+    "name": "br-reg-gw-071",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.81",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.81",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.71.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.71.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-072": {
+    "uid": "uid-branch-gw-072",
+    "name": "br-reg-gw-072",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.82",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.82",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.72.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.72.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-073": {
+    "uid": "uid-branch-gw-073",
+    "name": "br-reg-gw-073",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.83",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.83",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.73.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.73.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-074": {
+    "uid": "uid-branch-gw-074",
+    "name": "br-reg-gw-074",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.84",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.84",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.74.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.74.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-075": {
+    "uid": "uid-branch-gw-075",
+    "name": "br-reg-gw-075",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.85",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.85",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.75.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.75.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-076": {
+    "uid": "uid-branch-gw-076",
+    "name": "br-reg-gw-076",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.86",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.86",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.76.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.76.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-077": {
+    "uid": "uid-branch-gw-077",
+    "name": "br-reg-gw-077",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.87",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.87",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.77.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.77.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-078": {
+    "uid": "uid-branch-gw-078",
+    "name": "br-reg-gw-078",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.88",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.88",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.78.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.78.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-079": {
+    "uid": "uid-branch-gw-079",
+    "name": "br-reg-gw-079",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.89",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.89",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.79.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.79.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-080": {
+    "uid": "uid-branch-gw-080",
+    "name": "br-reg-gw-080",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.90",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.90",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.80.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.80.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-081": {
+    "uid": "uid-branch-gw-081",
+    "name": "br-reg-gw-081",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.91",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.91",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.81.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.81.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-082": {
+    "uid": "uid-branch-gw-082",
+    "name": "br-reg-gw-082",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.92",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.92",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.82.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.82.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-083": {
+    "uid": "uid-branch-gw-083",
+    "name": "br-reg-gw-083",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.93",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.93",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.83.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.83.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-084": {
+    "uid": "uid-branch-gw-084",
+    "name": "br-reg-gw-084",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.94",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.94",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.84.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.84.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-085": {
+    "uid": "uid-branch-gw-085",
+    "name": "br-reg-gw-085",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.95",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.95",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.85.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.85.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-086": {
+    "uid": "uid-branch-gw-086",
+    "name": "br-reg-gw-086",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.96",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.96",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.86.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.86.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-087": {
+    "uid": "uid-branch-gw-087",
+    "name": "br-reg-gw-087",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.97",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.97",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.87.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.87.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-088": {
+    "uid": "uid-branch-gw-088",
+    "name": "br-reg-gw-088",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.98",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.98",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.88.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.88.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-089": {
+    "uid": "uid-branch-gw-089",
+    "name": "br-reg-gw-089",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.99",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.99",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.89.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.89.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-090": {
+    "uid": "uid-branch-gw-090",
+    "name": "br-reg-gw-090",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.100",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.100",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.90.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.90.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-091": {
+    "uid": "uid-branch-gw-091",
+    "name": "br-reg-gw-091",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.101",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.101",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.91.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.91.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-092": {
+    "uid": "uid-branch-gw-092",
+    "name": "br-reg-gw-092",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.102",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.102",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.92.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.92.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-093": {
+    "uid": "uid-branch-gw-093",
+    "name": "br-reg-gw-093",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.103",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.103",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.93.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.93.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-094": {
+    "uid": "uid-branch-gw-094",
+    "name": "br-reg-gw-094",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.104",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.104",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.94.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.94.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-095": {
+    "uid": "uid-branch-gw-095",
+    "name": "br-reg-gw-095",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.105",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.105",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.95.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.95.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-096": {
+    "uid": "uid-branch-gw-096",
+    "name": "br-reg-gw-096",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.106",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.106",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.96.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.96.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-097": {
+    "uid": "uid-branch-gw-097",
+    "name": "br-reg-gw-097",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.107",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.107",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.97.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.97.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-098": {
+    "uid": "uid-branch-gw-098",
+    "name": "br-reg-gw-098",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.108",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.108",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.98.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.98.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-099": {
+    "uid": "uid-branch-gw-099",
+    "name": "br-reg-gw-099",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.0.109",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.0.109",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.99.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.99.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-100": {
+    "uid": "uid-branch-gw-100",
+    "name": "br-reg-gw-100",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.10",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.10",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.100.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.100.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-101": {
+    "uid": "uid-branch-gw-101",
+    "name": "br-reg-gw-101",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.11",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.11",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.101.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.101.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-102": {
+    "uid": "uid-branch-gw-102",
+    "name": "br-reg-gw-102",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.12",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.12",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.102.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.102.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-103": {
+    "uid": "uid-branch-gw-103",
+    "name": "br-reg-gw-103",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.13",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.13",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.103.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.103.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-104": {
+    "uid": "uid-branch-gw-104",
+    "name": "br-reg-gw-104",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.14",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.14",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.104.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.104.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-105": {
+    "uid": "uid-branch-gw-105",
+    "name": "br-reg-gw-105",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.15",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.15",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.105.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.105.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-106": {
+    "uid": "uid-branch-gw-106",
+    "name": "br-reg-gw-106",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.16",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.16",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.106.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.106.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-107": {
+    "uid": "uid-branch-gw-107",
+    "name": "br-reg-gw-107",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.17",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.17",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.107.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.107.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-108": {
+    "uid": "uid-branch-gw-108",
+    "name": "br-reg-gw-108",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.18",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.18",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.108.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.108.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-109": {
+    "uid": "uid-branch-gw-109",
+    "name": "br-reg-gw-109",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.19",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.19",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.109.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.109.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-110": {
+    "uid": "uid-branch-gw-110",
+    "name": "br-reg-gw-110",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.20",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.20",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.110.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.110.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-111": {
+    "uid": "uid-branch-gw-111",
+    "name": "br-reg-gw-111",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.21",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.21",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.111.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.111.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-112": {
+    "uid": "uid-branch-gw-112",
+    "name": "br-reg-gw-112",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.22",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.22",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.112.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.112.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-113": {
+    "uid": "uid-branch-gw-113",
+    "name": "br-reg-gw-113",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.23",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.23",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.113.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.113.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-114": {
+    "uid": "uid-branch-gw-114",
+    "name": "br-reg-gw-114",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.24",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.24",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.114.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.114.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-115": {
+    "uid": "uid-branch-gw-115",
+    "name": "br-reg-gw-115",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.25",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.25",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.115.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.115.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-116": {
+    "uid": "uid-branch-gw-116",
+    "name": "br-reg-gw-116",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.26",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.26",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.116.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.116.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-117": {
+    "uid": "uid-branch-gw-117",
+    "name": "br-reg-gw-117",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.27",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.27",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.117.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.117.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-118": {
+    "uid": "uid-branch-gw-118",
+    "name": "br-reg-gw-118",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.28",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.28",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.118.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.118.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-119": {
+    "uid": "uid-branch-gw-119",
+    "name": "br-reg-gw-119",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.29",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.29",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.119.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.119.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-120": {
+    "uid": "uid-branch-gw-120",
+    "name": "br-reg-gw-120",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.30",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.30",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.120.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.120.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-121": {
+    "uid": "uid-branch-gw-121",
+    "name": "br-reg-gw-121",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.31",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.31",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.121.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.121.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-122": {
+    "uid": "uid-branch-gw-122",
+    "name": "br-reg-gw-122",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.32",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.32",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.122.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.122.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-123": {
+    "uid": "uid-branch-gw-123",
+    "name": "br-reg-gw-123",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.33",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.33",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.123.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.123.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-124": {
+    "uid": "uid-branch-gw-124",
+    "name": "br-reg-gw-124",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.34",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.34",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.124.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.124.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-125": {
+    "uid": "uid-branch-gw-125",
+    "name": "br-reg-gw-125",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.35",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.35",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.125.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.125.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-126": {
+    "uid": "uid-branch-gw-126",
+    "name": "br-reg-gw-126",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.36",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.36",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.126.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.126.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-127": {
+    "uid": "uid-branch-gw-127",
+    "name": "br-reg-gw-127",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.37",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.37",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.127.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.127.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-128": {
+    "uid": "uid-branch-gw-128",
+    "name": "br-reg-gw-128",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.38",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.38",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.128.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.128.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-129": {
+    "uid": "uid-branch-gw-129",
+    "name": "br-reg-gw-129",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.39",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.39",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.129.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.129.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-130": {
+    "uid": "uid-branch-gw-130",
+    "name": "br-reg-gw-130",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.40",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.40",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.130.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.130.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-131": {
+    "uid": "uid-branch-gw-131",
+    "name": "br-reg-gw-131",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.41",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.41",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.131.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.131.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-132": {
+    "uid": "uid-branch-gw-132",
+    "name": "br-reg-gw-132",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.42",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.42",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.132.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.132.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-133": {
+    "uid": "uid-branch-gw-133",
+    "name": "br-reg-gw-133",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.43",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.43",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.133.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.133.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-134": {
+    "uid": "uid-branch-gw-134",
+    "name": "br-reg-gw-134",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.44",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.44",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.134.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.134.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-135": {
+    "uid": "uid-branch-gw-135",
+    "name": "br-reg-gw-135",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.45",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.45",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.135.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.135.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-136": {
+    "uid": "uid-branch-gw-136",
+    "name": "br-reg-gw-136",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.46",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.46",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.136.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.136.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-137": {
+    "uid": "uid-branch-gw-137",
+    "name": "br-reg-gw-137",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.47",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.47",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.137.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.137.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-138": {
+    "uid": "uid-branch-gw-138",
+    "name": "br-reg-gw-138",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.48",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.48",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.138.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.138.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-139": {
+    "uid": "uid-branch-gw-139",
+    "name": "br-reg-gw-139",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.49",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.49",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.139.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.139.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-branch-gw-140": {
+    "uid": "uid-branch-gw-140",
+    "name": "br-reg-gw-140",
+    "type": "simple-gateway",
+    "ipv4-address": "172.21.1.50",
+    "network-security-blades": {
+      "firewall": true
+    },
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Branch_Standard_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.21.1.50",
+        "ipv4-mask-length": 24,
+        "topology": "external",
+        "topology-settings": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.11.140.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": false
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.13.140.1",
+        "ipv4-mask-length": 30,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  }
+}

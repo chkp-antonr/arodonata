@@ -1,0 +1,50 @@
+{
+  "uid-reg-nw-cluster": {
+    "uid": "uid-reg-nw-cluster",
+    "name": "reg-nw-cluster",
+    "type": "simple-cluster",
+    "ipv4-address": "172.22.1.10",
+    "cluster-members": [
+      {
+        "uid": "uid-reg-nw-node-1",
+        "name": "reg-nw-node-1",
+        "type": "cluster-member",
+        "ipv4-address": "172.22.1.11",
+        "cluster-uid": "uid-reg-nw-cluster"
+      },
+      {
+        "uid": "uid-reg-nw-node-2",
+        "name": "reg-nw-node-2",
+        "type": "cluster-member",
+        "ipv4-address": "172.22.1.12",
+        "cluster-uid": "uid-reg-nw-cluster"
+      }
+    ],
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.1.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "172.22.101.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "G_Reg_NW_L1_Root"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  }
+}

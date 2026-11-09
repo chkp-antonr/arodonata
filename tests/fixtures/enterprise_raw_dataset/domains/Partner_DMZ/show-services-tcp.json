@@ -1,0 +1,79 @@
+{
+  "objects": [
+    {
+      "uid": "uid-partner_dmz-svc-tcp-22",
+      "name": "SVC_Partner_DMZ_TCP_22",
+      "type": "service-tcp",
+      "port": "22"
+    },
+    {
+      "uid": "uid-partner_dmz-svc-tcp-53",
+      "name": "SVC_Partner_DMZ_TCP_53",
+      "type": "service-tcp",
+      "port": "53"
+    },
+    {
+      "uid": "uid-partner_dmz-svc-tcp-80",
+      "name": "SVC_Partner_DMZ_TCP_80",
+      "type": "service-tcp",
+      "port": "80"
+    },
+    {
+      "uid": "uid-partner_dmz-svc-tcp-443",
+      "name": "SVC_Partner_DMZ_TCP_443",
+      "type": "service-tcp",
+      "port": "443"
+    },
+    {
+      "uid": "uid-partner_dmz-svc-tcp-1521",
+      "name": "SVC_Partner_DMZ_TCP_1521",
+      "type": "service-tcp",
+      "port": "1521"
+    },
+    {
+      "uid": "uid-partner_dmz-svc-tcp-3306",
+      "name": "SVC_Partner_DMZ_TCP_3306",
+      "type": "service-tcp",
+      "port": "3306"
+    },
+    {
+      "uid": "uid-partner_dmz-svc-tcp-5432",
+      "name": "SVC_Partner_DMZ_TCP_5432",
+      "type": "service-tcp",
+      "port": "5432"
+    },
+    {
+      "uid": "uid-partner_dmz-svc-tcp-6379",
+      "name": "SVC_Partner_DMZ_TCP_6379",
+      "type": "service-tcp",
+      "port": "6379"
+    },
+    {
+      "uid": "uid-partner_dmz-svc-tcp-8080",
+      "name": "SVC_Partner_DMZ_TCP_8080",
+      "type": "service-tcp",
+      "port": "8080"
+    },
+    {
+      "uid": "uid-partner_dmz-svc-tcp-8443",
+      "name": "SVC_Partner_DMZ_TCP_8443",
+      "type": "service-tcp",
+      "port": "8443"
+    },
+    {
+      "uid": "uid-partner_dmz-svc-tcp-9092",
+      "name": "SVC_Partner_DMZ_TCP_9092",
+      "type": "service-tcp",
+      "port": "9092"
+    },
+    {
+      "uid": "uid-partner_dmz-svc-tcp-9200",
+      "name": "SVC_Partner_DMZ_TCP_9200",
+      "type": "service-tcp",
+      "port": "9200"
+    }
+  ],
+  "from": 1,
+  "to": 12,
+  "total": 12
+}

@@ -1,0 +1,407 @@
+{
+  "uid-part-onearm-01": {
+    "uid": "uid-part-onearm-01",
+    "name": "partner-onearm-gw-01",
+    "type": "simple-gateway",
+    "ipv4-address": "172.31.1.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.31.1.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-onearm-02": {
+    "uid": "uid-part-onearm-02",
+    "name": "partner-onearm-gw-02",
+    "type": "simple-gateway",
+    "ipv4-address": "172.31.2.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.31.2.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-onearm-03": {
+    "uid": "uid-part-onearm-03",
+    "name": "partner-onearm-gw-03",
+    "type": "simple-gateway",
+    "ipv4-address": "172.31.3.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.31.3.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-onearm-04": {
+    "uid": "uid-part-onearm-04",
+    "name": "partner-onearm-gw-04",
+    "type": "simple-gateway",
+    "ipv4-address": "172.31.4.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.31.4.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-onearm-05": {
+    "uid": "uid-part-onearm-05",
+    "name": "partner-onearm-gw-05",
+    "type": "simple-gateway",
+    "ipv4-address": "172.31.5.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.31.5.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-onearm-06": {
+    "uid": "uid-part-onearm-06",
+    "name": "partner-onearm-gw-06",
+    "type": "simple-gateway",
+    "ipv4-address": "172.31.6.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.31.6.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-onearm-07": {
+    "uid": "uid-part-onearm-07",
+    "name": "partner-onearm-gw-07",
+    "type": "simple-gateway",
+    "ipv4-address": "172.31.7.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.31.7.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-onearm-08": {
+    "uid": "uid-part-onearm-08",
+    "name": "partner-onearm-gw-08",
+    "type": "simple-gateway",
+    "ipv4-address": "172.31.8.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.31.8.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-onearm-09": {
+    "uid": "uid-part-onearm-09",
+    "name": "partner-onearm-gw-09",
+    "type": "simple-gateway",
+    "ipv4-address": "172.31.9.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.31.9.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-onearm-10": {
+    "uid": "uid-part-onearm-10",
+    "name": "partner-onearm-gw-10",
+    "type": "simple-gateway",
+    "ipv4-address": "172.31.10.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.31.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-ext-01": {
+    "uid": "uid-part-ext-01",
+    "name": "partner-ext-gw-01",
+    "type": "simple-gateway",
+    "ipv4-address": "172.30.100.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.30.100.1",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "172.30.111.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-ext-02": {
+    "uid": "uid-part-ext-02",
+    "name": "partner-ext-gw-02",
+    "type": "simple-gateway",
+    "ipv4-address": "172.30.100.2",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.30.100.2",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "172.30.112.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-ext-03": {
+    "uid": "uid-part-ext-03",
+    "name": "partner-ext-gw-03",
+    "type": "simple-gateway",
+    "ipv4-address": "172.30.100.3",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.30.100.3",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "172.30.113.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-ext-04": {
+    "uid": "uid-part-ext-04",
+    "name": "partner-ext-gw-04",
+    "type": "simple-gateway",
+    "ipv4-address": "172.30.100.4",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.30.100.4",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "172.30.114.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-part-ext-05": {
+    "uid": "uid-part-ext-05",
+    "name": "partner-ext-gw-05",
+    "type": "simple-gateway",
+    "ipv4-address": "172.30.100.5",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Partner_DMZ_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.30.100.5",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "172.30.115.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,147 @@
+{
+  "objects": [
+    {
+      "uid": "uid-regional-bulk-rng-001",
+      "name": "R_Regional_Pool_001",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.1.10",
+      "ipv4-address-last": "10.162.1.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-002",
+      "name": "R_Regional_Pool_002",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.2.10",
+      "ipv4-address-last": "10.162.2.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-003",
+      "name": "R_Regional_Pool_003",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.3.10",
+      "ipv4-address-last": "10.162.3.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-004",
+      "name": "R_Regional_Pool_004",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.4.10",
+      "ipv4-address-last": "10.162.4.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-005",
+      "name": "R_Regional_Pool_005",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.5.10",
+      "ipv4-address-last": "10.162.5.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-006",
+      "name": "R_Regional_Pool_006",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.6.10",
+      "ipv4-address-last": "10.162.6.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-007",
+      "name": "R_Regional_Pool_007",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.7.10",
+      "ipv4-address-last": "10.162.7.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-008",
+      "name": "R_Regional_Pool_008",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.8.10",
+      "ipv4-address-last": "10.162.8.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-009",
+      "name": "R_Regional_Pool_009",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.9.10",
+      "ipv4-address-last": "10.162.9.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-010",
+      "name": "R_Regional_Pool_010",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.10.10",
+      "ipv4-address-last": "10.162.10.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-011",
+      "name": "R_Regional_Pool_011",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.11.10",
+      "ipv4-address-last": "10.162.11.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-012",
+      "name": "R_Regional_Pool_012",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.12.10",
+      "ipv4-address-last": "10.162.12.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-013",
+      "name": "R_Regional_Pool_013",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.13.10",
+      "ipv4-address-last": "10.162.13.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-014",
+      "name": "R_Regional_Pool_014",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.14.10",
+      "ipv4-address-last": "10.162.14.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-015",
+      "name": "R_Regional_Pool_015",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.15.10",
+      "ipv4-address-last": "10.162.15.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-016",
+      "name": "R_Regional_Pool_016",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.16.10",
+      "ipv4-address-last": "10.162.16.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-017",
+      "name": "R_Regional_Pool_017",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.17.10",
+      "ipv4-address-last": "10.162.17.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-018",
+      "name": "R_Regional_Pool_018",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.18.10",
+      "ipv4-address-last": "10.162.18.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-019",
+      "name": "R_Regional_Pool_019",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.19.10",
+      "ipv4-address-last": "10.162.19.50"
+    },
+    {
+      "uid": "uid-regional-bulk-rng-020",
+      "name": "R_Regional_Pool_020",
+      "type": "address-range",
+      "ipv4-address-first": "10.162.20.10",
+      "ipv4-address-last": "10.162.20.50"
+    }
+  ],
+  "from": 1,
+  "to": 20,
+  "total": 20
+}

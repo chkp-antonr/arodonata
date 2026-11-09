@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-ix-transit-gw-04-0",
+      "task-name": "arodonata-route-collect-ix-transit-gw-04",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-ix-transit-gw-04-0",
+          "gatewayId": "ix-transit-gw-04",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4yNS4xMDAuMjU0IGRldiBldGgwIHByb3RvIHN0YXRpYwoxMC44MC40LjAvMjQgZGV2IGV0aDEgcHJvdG8ga2VybmVsIHNjb3BlIGxpbmsgc3JjIDEwLjgwLjQuMQoxMC44MS40LjAvMjQgdmlhIDEwLjgwLjQuMjU0IGRldiBldGgxIHByb3RvIHJvdXRlZAo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cj09PUFST0RPTkFUQV9DTElTSF9ST1VURV9TVEFSVD09PQpDb2RlczogQyAtIENvbm5lY3RlZCwgUyAtIFN0YXRpYywgUiAtIFJJUCwgQiAtIEJHUCwgTyAtIE9TUEYsIEkgLSBJUy1JUywgQSAtIEFnZ3JlZ2F0ZSwgSyAtIEtlcm5lbApTIDAuMC4wLjAvMCB2aWEgMTcyLjI1LjEwMC4yNTQsIGV0aDAKQyAxMC44MC40LjAvMjQgaXMgZGlyZWN0bHkgY29ubmVjdGVkLCBldGgxClIgMTAuODEuNC4wLzI0IHZpYSAxMC44MC40LjI1NCwgZXRoMQo9PT1BUk9ET05BVEFfQ0xJU0hfUk9VVEVfRU5EPT09Cg==",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

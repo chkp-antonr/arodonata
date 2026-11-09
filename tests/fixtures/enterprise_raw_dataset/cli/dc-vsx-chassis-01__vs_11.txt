@@ -1,0 +1,5 @@
+===ARODONATA_IP_ROUTE_START===
+default via 192.168.251.1 dev wrp11 proto static
+10.216.11.0/24 dev eth2.11 proto kernel scope link src 10.216.11.1
+10.220.77.0/24 via 10.216.11.254 dev eth2.11 proto ospf
+===ARODONATA_IP_ROUTE_END===

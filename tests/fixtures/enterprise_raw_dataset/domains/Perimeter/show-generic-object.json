@@ -1,0 +1,528 @@
+{
+  "uid-perim-edge-cluster": {
+    "uid": "uid-perim-edge-cluster",
+    "name": "perim-edge-cluster",
+    "type": "CpmiGatewayCluster",
+    "ipv4-address": "172.24.0.10",
+    "cluster-members": [
+      {
+        "uid": "uid-perim-edge-1a",
+        "name": "perim-edge-1a",
+        "type": "cluster-member",
+        "ipv4-address": "172.24.0.11",
+        "cluster-uid": "uid-perim-edge-cluster"
+      },
+      {
+        "uid": "uid-perim-edge-1b",
+        "name": "perim-edge-1b",
+        "type": "cluster-member",
+        "ipv4-address": "172.24.0.12",
+        "cluster-uid": "uid-perim-edge-cluster"
+      }
+    ],
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.0.10",
+        "ipv4-mask-length": 24,
+        "topology": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "172.24.10.1",
+        "ipv4-mask-length": 24,
+        "topology": {
+          "leads-to-internet": false,
+          "ip-address-behind-this-interface": "specific",
+          "leads-to-specific-network": "G_Global_Branch_Supernet"
+        },
+        "anti-spoofing": {
+          "perform-anti-spoofing": true,
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "172.24.20.1",
+        "ipv4-mask-length": 24,
+        "topology": {
+          "leads-to-internet": false,
+          "ip-address-behind-this-interface": "specific",
+          "leads-to-specific-network": "G_Global_DC_Supernet"
+        },
+        "anti-spoofing": {
+          "perform-anti-spoofing": true,
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-edge-1a": {
+    "uid": "uid-perim-edge-1a",
+    "name": "perim-edge-1a",
+    "type": "cluster-member",
+    "ipv4-address": "172.24.0.11",
+    "cluster-uid": "uid-perim-edge-cluster"
+  },
+  "uid-perim-edge-1b": {
+    "uid": "uid-perim-edge-1b",
+    "name": "perim-edge-1b",
+    "type": "cluster-member",
+    "ipv4-address": "172.24.0.12",
+    "cluster-uid": "uid-perim-edge-cluster"
+  },
+  "uid-perim-dmz-01": {
+    "uid": "uid-perim-dmz-01",
+    "name": "perim-dmz-gw-01",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.1",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.1.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-dmz-02": {
+    "uid": "uid-perim-dmz-02",
+    "name": "perim-dmz-gw-02",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.2",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.2",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.2.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-dmz-03": {
+    "uid": "uid-perim-dmz-03",
+    "name": "perim-dmz-gw-03",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.3",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.3",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.3.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-dmz-04": {
+    "uid": "uid-perim-dmz-04",
+    "name": "perim-dmz-gw-04",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.4",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.4",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.4.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-dmz-05": {
+    "uid": "uid-perim-dmz-05",
+    "name": "perim-dmz-gw-05",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.5",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.5",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.5.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-dmz-06": {
+    "uid": "uid-perim-dmz-06",
+    "name": "perim-dmz-gw-06",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.6",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.6",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.6.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-dmz-07": {
+    "uid": "uid-perim-dmz-07",
+    "name": "perim-dmz-gw-07",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.7",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.7",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.7.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-dmz-08": {
+    "uid": "uid-perim-dmz-08",
+    "name": "perim-dmz-gw-08",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.8",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.8",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.8.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-dmz-09": {
+    "uid": "uid-perim-dmz-09",
+    "name": "perim-dmz-gw-09",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.9",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.9",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.9.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-dmz-10": {
+    "uid": "uid-perim-dmz-10",
+    "name": "perim-dmz-gw-10",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-dmz-11": {
+    "uid": "uid-perim-dmz-11",
+    "name": "perim-dmz-gw-11",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.11",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.11",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.11.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-dmz-12": {
+    "uid": "uid-perim-dmz-12",
+    "name": "perim-dmz-gw-12",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.12",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.12",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.12.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-dmz-13": {
+    "uid": "uid-perim-dmz-13",
+    "name": "perim-dmz-gw-13",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.13",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.13",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.13.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-perim-dmz-14": {
+    "uid": "uid-perim-dmz-14",
+    "name": "perim-dmz-gw-14",
+    "type": "simple-gateway",
+    "ipv4-address": "172.24.100.14",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.100.14",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.50.14.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+          "interface-leads-to-dmz": true
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,540 @@
+{
+  "objects": [
+    {
+      "uid": "uid-dc-vsx-chassis-01",
+      "name": "dc-vsx-chassis-01",
+      "type": "CpmiVsxNetobj",
+      "ipv4-address": "172.26.0.10",
+      "virtual-systems": [
+        "uid-dc-vsx-spine-vs01",
+        "uid-dc-vs-tier1-web",
+        "uid-dc-vs-tier2-app",
+        "uid-dc-vs-pod-21",
+        "uid-dc-vs-pod-22",
+        "uid-dc-vs-pod-23",
+        "uid-dc-vs-pod-24",
+        "uid-dc-vs-pod-25",
+        "uid-dc-vs-pod-26",
+        "uid-dc-vs-pod-27",
+        "uid-dc-vs-pod-28",
+        "uid-dc-vs-pod-29",
+        "uid-dc-vs-pod-30",
+        "uid-dc-vs-pod-31",
+        "uid-dc-vs-pod-32",
+        "uid-dc-vs-pod-33",
+        "uid-dc-vs-pod-34",
+        "uid-dc-vs-pod-35",
+        "uid-dc-vs-pod-36",
+        "uid-dc-vs-pod-37",
+        "uid-dc-vs-pod-38",
+        "uid-dc-vs-pod-39",
+        "uid-dc-vs-pod-40",
+        "uid-dc-vs-pod-41",
+        "uid-dc-vs-pod-42",
+        "uid-dc-vs-pod-43",
+        "uid-dc-vs-pod-44",
+        "uid-dc-vs-pod-45"
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs01",
+      "name": "dc-vsx-spine-vs01",
+      "type": "CpmiVsNetobj",
+      "vsid": 1,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.215.0.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": []
+    },
+    {
+      "uid": "uid-dc-vsx-chassis-02",
+      "name": "dc-vsx-chassis-02",
+      "type": "CpmiVsxNetobj",
+      "ipv4-address": "172.26.0.20",
+      "virtual-systems": [
+        "uid-dc-vsx-spine-vs02",
+        "uid-dc-vsx-spine-vs03",
+        "uid-dc-vsx-spine-vs04",
+        "uid-dc-vsx-spine-vs05",
+        "uid-dc-vsx-spine-vs06",
+        "uid-dc-vsx-spine-vs07",
+        "uid-dc-vsx-spine-vs08",
+        "uid-dc-vsx-spine-vs09",
+        "uid-dc-vsx-spine-vs10",
+        "uid-dc-vsx-spine-vs11",
+        "uid-dc-vsx-spine-vs12",
+        "uid-dc-vsx-spine-vs13",
+        "uid-dc-vsx-spine-vs14",
+        "uid-dc-vsx-spine-vs15"
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs02",
+      "name": "dc-vsx-spine-vs02",
+      "type": "CpmiVsNetobj",
+      "vsid": 2,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.2.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.10",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.102",
+          "ipv4-address": "10.215.2.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs03",
+      "name": "dc-vsx-spine-vs03",
+      "type": "CpmiVsNetobj",
+      "vsid": 3,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.3.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.14",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.103",
+          "ipv4-address": "10.215.3.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs04",
+      "name": "dc-vsx-spine-vs04",
+      "type": "CpmiVsNetobj",
+      "vsid": 4,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.4.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.18",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.104",
+          "ipv4-address": "10.215.4.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs05",
+      "name": "dc-vsx-spine-vs05",
+      "type": "CpmiVsNetobj",
+      "vsid": 5,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.5.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.22",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.105",
+          "ipv4-address": "10.215.5.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs06",
+      "name": "dc-vsx-spine-vs06",
+      "type": "CpmiVsNetobj",
+      "vsid": 6,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.6.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.26",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.106",
+          "ipv4-address": "10.215.6.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs07",
+      "name": "dc-vsx-spine-vs07",
+      "type": "CpmiVsNetobj",
+      "vsid": 7,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.7.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.30",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.107",
+          "ipv4-address": "10.215.7.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs08",
+      "name": "dc-vsx-spine-vs08",
+      "type": "CpmiVsNetobj",
+      "vsid": 8,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.8.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.34",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.108",
+          "ipv4-address": "10.215.8.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs09",
+      "name": "dc-vsx-spine-vs09",
+      "type": "CpmiVsNetobj",
+      "vsid": 9,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.9.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.38",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.109",
+          "ipv4-address": "10.215.9.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs10",
+      "name": "dc-vsx-spine-vs10",
+      "type": "CpmiVsNetobj",
+      "vsid": 10,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.10.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.42",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.110",
+          "ipv4-address": "10.215.10.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs11",
+      "name": "dc-vsx-spine-vs11",
+      "type": "CpmiVsNetobj",
+      "vsid": 11,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.11.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.46",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.111",
+          "ipv4-address": "10.215.11.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs12",
+      "name": "dc-vsx-spine-vs12",
+      "type": "CpmiVsNetobj",
+      "vsid": 12,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.12.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.50",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.112",
+          "ipv4-address": "10.215.12.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs13",
+      "name": "dc-vsx-spine-vs13",
+      "type": "CpmiVsNetobj",
+      "vsid": 13,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.13.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.54",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.113",
+          "ipv4-address": "10.215.13.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs14",
+      "name": "dc-vsx-spine-vs14",
+      "type": "CpmiVsNetobj",
+      "vsid": 14,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.14.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.58",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.114",
+          "ipv4-address": "10.215.14.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vsx-spine-vs15",
+      "name": "dc-vsx-spine-vs15",
+      "type": "CpmiVsNetobj",
+      "vsid": 15,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "ipv4-address": "10.215.15.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.250.62",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.115",
+          "ipv4-address": "10.215.15.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 17,
+  "total": 17
+}

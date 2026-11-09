@@ -1,0 +1,18 @@
+{
+  "uid": "uid-dom-global",
+  "name": "Global",
+  "type": "global",
+  "domain-type": "global domain",
+  "servers": [
+    {
+      "name": "global-cma-primary",
+      "ipv4-address": "10.250.0.10",
+      "multi-domain-server": {
+        "uid": "uid-mds-primary",
+        "name": "mds-ent-primary",
+        "ipv4-address": "10.250.0.10"
+      },
+      "active": true
+    }
+  ]
+}

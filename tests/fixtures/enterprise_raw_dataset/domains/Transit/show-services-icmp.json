@@ -1,0 +1,13 @@
+{
+  "objects": [
+    {
+      "uid": "uid-transit-svc-icmp-echo",
+      "name": "ICMP_Transit_Echo",
+      "type": "service-icmp",
+      "icmp-type": 8
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

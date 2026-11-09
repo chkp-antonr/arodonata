@@ -1,0 +1,4 @@
+===ARODONATA_IP_ROUTE_START===
+10.11.0.0/16 via 10.216.12.254 dev eth1.12 proto ospf
+10.220.77.0/24 via 10.217.12.254 dev eth2.12 proto ospf
+===ARODONATA_IP_ROUTE_END===

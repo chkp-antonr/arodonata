@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-perim-edge-1a-0",
+      "task-name": "arodonata-route-collect-perim-edge-1a",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-perim-edge-1a-0",
+          "gatewayId": "perim-edge-1a",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4yNC4wLjEgZGV2IGV0aDAgcHJvdG8gc3RhdGljCjEwLjExLjAuMC8xNiB2aWEgMTcyLjI0LjEwLjI1NCBkZXYgZXRoMSBwcm90byBiZ3AKMTAuMjIwLjAuMC8xNiB2aWEgMTcyLjI0LjIwLjI1NCBkZXYgZXRoMiBwcm90byBiZ3AKPT09QVJPRE9OQVRBX0lQX1JPVVRFX0VORD09PQo=",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

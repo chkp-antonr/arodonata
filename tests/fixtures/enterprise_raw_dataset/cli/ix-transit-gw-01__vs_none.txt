@@ -1,0 +1,11 @@
+===ARODONATA_IP_ROUTE_START===
+default via 172.25.0.1 dev eth0 proto static
+10.11.0.0/16 via 172.25.10.254 dev eth1 proto gated
+10.220.0.0/16 via 172.25.20.254 dev eth2 proto gated
+===ARODONATA_IP_ROUTE_END===
+===ARODONATA_CLISH_ROUTE_START===
+Codes: C - Connected, S - Static, R - RIP, B - BGP, O - OSPF, I - IS-IS, A - Aggregate, K - Kernel
+S 0.0.0.0/0 via 172.25.0.1, eth0
+I 10.11.0.0/16 via 172.25.10.254, eth1
+I 10.220.0.0/16 via 172.25.20.254, eth2
+===ARODONATA_CLISH_ROUTE_END===

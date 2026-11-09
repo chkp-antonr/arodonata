@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-partner-b2b-1b-0",
+      "task-name": "arodonata-route-collect-partner-b2b-1b",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-partner-b2b-1b-0",
+          "gatewayId": "partner-b2b-1b",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4zMC4wLjEgZGV2IGV0aDAgcHJvdG8gc3RhdGljCjE3Mi4zMC4xMC4wLzI0IGRldiBldGgxIHByb3RvIGtlcm5lbCBzY29wZSBsaW5rIHNyYyAxNzIuMzAuMTAuMQoxNzIuMzAuMjAuMC8yNCBkZXYgZXRoMiBwcm90byBrZXJuZWwgc2NvcGUgbGluayBzcmMgMTcyLjMwLjIwLjEKMTcyLjMwLjEuMC8yNCB2aWEgMTcyLjMwLjEwLjI1NCBkZXYgZXRoMSBwcm90byBvc3BmCjE3Mi4zMC4zLjAvMjQgdmlhIDE3Mi4zMC4yMC4yNTQgZGV2IGV0aDIgcHJvdG8gb3NwZgoxNzIuMzAuNC4wLzI0IHZpYSAxNzIuMzAuMjAuMjU0IGRldiBldGgyIHByb3RvIGJncAoxNzIuMzAuNS4wLzI0IHZpYSAxNzIuMzAuMTAuMjU0IGRldiBldGgxIHByb3RvIG9zcGYKPT09QVJPRE9OQVRBX0lQX1JPVVRFX0VORD09PQo=",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

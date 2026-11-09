@@ -1,0 +1,79 @@
+{
+  "objects": [
+    {
+      "uid": "uid-global-svc-tcp-22",
+      "name": "TCP_22",
+      "type": "service-tcp",
+      "port": "22"
+    },
+    {
+      "uid": "uid-global-svc-tcp-53",
+      "name": "TCP_53",
+      "type": "service-tcp",
+      "port": "53"
+    },
+    {
+      "uid": "uid-global-svc-tcp-80",
+      "name": "TCP_80",
+      "type": "service-tcp",
+      "port": "80"
+    },
+    {
+      "uid": "uid-global-svc-tcp-443",
+      "name": "TCP_443",
+      "type": "service-tcp",
+      "port": "443"
+    },
+    {
+      "uid": "uid-global-svc-tcp-1521",
+      "name": "TCP_1521",
+      "type": "service-tcp",
+      "port": "1521"
+    },
+    {
+      "uid": "uid-global-svc-tcp-3306",
+      "name": "TCP_3306",
+      "type": "service-tcp",
+      "port": "3306"
+    },
+    {
+      "uid": "uid-global-svc-tcp-5432",
+      "name": "TCP_5432",
+      "type": "service-tcp",
+      "port": "5432"
+    },
+    {
+      "uid": "uid-global-svc-tcp-6379",
+      "name": "TCP_6379",
+      "type": "service-tcp",
+      "port": "6379"
+    },
+    {
+      "uid": "uid-global-svc-tcp-8080",
+      "name": "TCP_8080",
+      "type": "service-tcp",
+      "port": "8080"
+    },
+    {
+      "uid": "uid-global-svc-tcp-8443",
+      "name": "TCP_8443",
+      "type": "service-tcp",
+      "port": "8443"
+    },
+    {
+      "uid": "uid-global-svc-tcp-9092",
+      "name": "TCP_9092",
+      "type": "service-tcp",
+      "port": "9092"
+    },
+    {
+      "uid": "uid-global-svc-tcp-9200",
+      "name": "TCP_9200",
+      "type": "service-tcp",
+      "port": "9200"
+    }
+  ],
+  "from": 1,
+  "to": 12,
+  "total": 12
+}
