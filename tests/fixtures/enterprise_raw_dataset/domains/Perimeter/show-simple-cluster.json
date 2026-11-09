@@ -1,0 +1,66 @@
+{
+  "uid-perim-edge-cluster": {
+    "uid": "uid-perim-edge-cluster",
+    "name": "perim-edge-cluster",
+    "type": "CpmiGatewayCluster",
+    "ipv4-address": "172.24.0.10",
+    "cluster-members": [
+      {
+        "uid": "uid-perim-edge-1a",
+        "name": "perim-edge-1a",
+        "type": "cluster-member",
+        "ipv4-address": "172.24.0.11",
+        "cluster-uid": "uid-perim-edge-cluster"
+      },
+      {
+        "uid": "uid-perim-edge-1b",
+        "name": "perim-edge-1b",
+        "type": "cluster-member",
+        "ipv4-address": "172.24.0.12",
+        "cluster-uid": "uid-perim-edge-cluster"
+      }
+    ],
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Perimeter_Edge_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.24.0.10",
+        "ipv4-mask-length": 24,
+        "topology": {
+          "leads-to-internet": true
+        }
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "172.24.10.1",
+        "ipv4-mask-length": 24,
+        "topology": {
+          "leads-to-internet": false,
+          "ip-address-behind-this-interface": "specific",
+          "leads-to-specific-network": "G_Global_Branch_Supernet"
+        },
+        "anti-spoofing": {
+          "perform-anti-spoofing": true,
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "172.24.20.1",
+        "ipv4-mask-length": 24,
+        "topology": {
+          "leads-to-internet": false,
+          "ip-address-behind-this-interface": "specific",
+          "leads-to-specific-network": "G_Global_DC_Supernet"
+        },
+        "anti-spoofing": {
+          "perform-anti-spoofing": true,
+          "action": "prevent"
+        }
+      }
+    ]
+  }
+}

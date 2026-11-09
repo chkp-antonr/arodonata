@@ -1,0 +1,243 @@
+{
+  "packages": [
+    {
+      "uid": "uid-pkg-regional",
+      "name": "Regional_Hub_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-reg-nw-cluster",
+          "name": "reg-nw-cluster",
+          "type": "simple-cluster"
+        },
+        {
+          "uid": "uid-reg-hub-02",
+          "name": "reg-hub-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-03",
+          "name": "reg-hub-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-04",
+          "name": "reg-hub-gw-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-05",
+          "name": "reg-hub-gw-05",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-06",
+          "name": "reg-hub-gw-06",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-07",
+          "name": "reg-hub-gw-07",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-08",
+          "name": "reg-hub-gw-08",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-09",
+          "name": "reg-hub-gw-09",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-10",
+          "name": "reg-hub-gw-10",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-11",
+          "name": "reg-hub-gw-11",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-12",
+          "name": "reg-hub-gw-12",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-13",
+          "name": "reg-hub-gw-13",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-14",
+          "name": "reg-hub-gw-14",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-15",
+          "name": "reg-hub-gw-15",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-16",
+          "name": "reg-hub-gw-16",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-17",
+          "name": "reg-hub-gw-17",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-18",
+          "name": "reg-hub-gw-18",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-19",
+          "name": "reg-hub-gw-19",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-20",
+          "name": "reg-hub-gw-20",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-regional-security",
+          "name": "Regional_Hub_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "uid": "uid-pkg-regional",
+      "name": "Regional_Hub_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-reg-nw-cluster",
+          "name": "reg-nw-cluster",
+          "type": "simple-cluster"
+        },
+        {
+          "uid": "uid-reg-hub-02",
+          "name": "reg-hub-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-03",
+          "name": "reg-hub-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-04",
+          "name": "reg-hub-gw-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-05",
+          "name": "reg-hub-gw-05",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-06",
+          "name": "reg-hub-gw-06",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-07",
+          "name": "reg-hub-gw-07",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-08",
+          "name": "reg-hub-gw-08",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-09",
+          "name": "reg-hub-gw-09",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-10",
+          "name": "reg-hub-gw-10",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-11",
+          "name": "reg-hub-gw-11",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-12",
+          "name": "reg-hub-gw-12",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-13",
+          "name": "reg-hub-gw-13",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-14",
+          "name": "reg-hub-gw-14",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-15",
+          "name": "reg-hub-gw-15",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-16",
+          "name": "reg-hub-gw-16",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-17",
+          "name": "reg-hub-gw-17",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-18",
+          "name": "reg-hub-gw-18",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-19",
+          "name": "reg-hub-gw-19",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-hub-20",
+          "name": "reg-hub-gw-20",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-regional-security",
+          "name": "Regional_Hub_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-lpm-matryoshka-gw-0",
+      "task-name": "arodonata-route-collect-lpm-matryoshka-gw",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-lpm-matryoshka-gw-0",
+          "gatewayId": "lpm-matryoshka-gw",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE5OC41MS4xMDAuMjU0IGRldiBldGgwIHByb3RvIHN0YXRpYwoxMC4wLjAuMC84IHZpYSAxNzIuMjUuMTAxLjI1NCBkZXYgZXRoMSBwcm90byBiZ3AKMTAuNjQuMC4wLzEyIHZpYSAxNzIuMjUuMTAyLjI1NCBkZXYgZXRoMiBwcm90byBiZ3AKMTAuNzAuMC4wLzE2IHZpYSAxNzIuMjUuMTAzLjI1NCBkZXYgZXRoMyBwcm90byBvc3BmCjEwLjcwLjQuMC8yMiB2aWEgMTcyLjI1LjEwNC4yNTQgZGV2IGV0aDQgcHJvdG8gb3NwZgoxMC43MC41LjAvMjQgdmlhIDE3Mi4yNS4xMDUuMjU0IGRldiBldGg1IHByb3RvIG9zcGYKMTAuNzAuNS4xNi8yOCB2aWEgMTcyLjI1LjEwNi4yNTQgZGV2IGV0aDYgcHJvdG8gc3RhdGljCjEwLjcwLjUuMjAvMzIgdmlhIDE3Mi4yNS4xMDcuMjU0IGRldiBldGg3IHByb3RvIHN0YXRpYwo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cg==",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

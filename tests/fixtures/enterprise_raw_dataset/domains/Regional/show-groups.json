@@ -1,0 +1,452 @@
+{
+  "objects": [
+    {
+      "uid": "uid-reg-grp-l7",
+      "name": "G_Reg_NW_L7_Leaf",
+      "type": "group",
+      "members": [
+        "uid-reg-net-b-lan-001",
+        "uid-reg-net-b-voip-001",
+        "uid-reg-net-b-lan-002",
+        "uid-reg-net-b-voip-002",
+        "uid-reg-net-b-lan-003",
+        "uid-reg-net-b-voip-003",
+        "uid-reg-net-b-lan-004",
+        "uid-reg-net-b-voip-004",
+        "uid-reg-net-b-lan-005",
+        "uid-reg-net-b-voip-005",
+        "uid-reg-net-b-lan-006",
+        "uid-reg-net-b-voip-006",
+        "uid-reg-net-b-lan-007",
+        "uid-reg-net-b-voip-007",
+        "uid-reg-net-b-lan-008",
+        "uid-reg-net-b-voip-008",
+        "uid-reg-net-b-lan-009",
+        "uid-reg-net-b-voip-009",
+        "uid-reg-net-b-lan-010",
+        "uid-reg-net-b-voip-010",
+        "uid-reg-net-b-lan-011",
+        "uid-reg-net-b-voip-011",
+        "uid-reg-net-b-lan-012",
+        "uid-reg-net-b-voip-012",
+        "uid-reg-net-b-lan-013",
+        "uid-reg-net-b-voip-013",
+        "uid-reg-net-b-lan-014",
+        "uid-reg-net-b-voip-014",
+        "uid-reg-net-b-lan-015",
+        "uid-reg-net-b-voip-015",
+        "uid-reg-net-b-lan-016",
+        "uid-reg-net-b-voip-016",
+        "uid-reg-net-b-lan-017",
+        "uid-reg-net-b-voip-017",
+        "uid-reg-net-b-lan-018",
+        "uid-reg-net-b-voip-018",
+        "uid-reg-net-b-lan-019",
+        "uid-reg-net-b-voip-019",
+        "uid-reg-net-b-lan-020",
+        "uid-reg-net-b-voip-020"
+      ]
+    },
+    {
+      "uid": "uid-reg-grp-l6",
+      "name": "G_Reg_NW_L6_SubZone",
+      "type": "group",
+      "members": [
+        "uid-reg-grp-l7"
+      ]
+    },
+    {
+      "uid": "uid-reg-grp-l5",
+      "name": "G_Reg_NW_L5_District",
+      "type": "group",
+      "members": [
+        "uid-reg-grp-l6"
+      ]
+    },
+    {
+      "uid": "uid-reg-grp-l4",
+      "name": "G_Reg_NW_L4_Metro",
+      "type": "group",
+      "members": [
+        "uid-reg-grp-l5"
+      ]
+    },
+    {
+      "uid": "uid-reg-grp-l3",
+      "name": "G_Reg_NW_L3_Province",
+      "type": "group",
+      "members": [
+        "uid-reg-grp-l4"
+      ]
+    },
+    {
+      "uid": "uid-reg-grp-l2",
+      "name": "G_Reg_NW_L2_Division",
+      "type": "group",
+      "members": [
+        "uid-reg-grp-l3"
+      ]
+    },
+    {
+      "uid": "uid-reg-grp-l1-root",
+      "name": "G_Reg_NW_L1_Root",
+      "type": "group",
+      "members": [
+        "uid-reg-grp-l2"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-001",
+      "name": "G_Regional_TierGroup_001",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-114",
+        "uid-regional-bulk-host-091",
+        "uid-regional-bulk-host-027",
+        "uid-regional-bulk-host-111",
+        "uid-regional-bulk-host-001",
+        "uid-regional-bulk-net-023",
+        "uid-regional-bulk-net-043"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-002",
+      "name": "G_Regional_TierGroup_002",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-092",
+        "uid-regional-bulk-host-055",
+        "uid-regional-bulk-host-118",
+        "uid-regional-bulk-host-131",
+        "uid-regional-bulk-host-120",
+        "uid-regional-bulk-net-042",
+        "uid-regional-bulk-net-025"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-003",
+      "name": "G_Regional_TierGroup_003",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-095",
+        "uid-regional-bulk-host-041",
+        "uid-regional-bulk-host-033",
+        "uid-regional-bulk-host-105",
+        "uid-regional-bulk-host-013",
+        "uid-regional-bulk-net-038",
+        "uid-regional-bulk-net-012"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-004",
+      "name": "G_Regional_TierGroup_004",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-025",
+        "uid-regional-bulk-host-020",
+        "uid-regional-bulk-host-028",
+        "uid-regional-bulk-host-063",
+        "uid-regional-bulk-host-023",
+        "uid-regional-bulk-net-055",
+        "uid-regional-bulk-net-044"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-005",
+      "name": "G_Regional_TierGroup_005",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-015",
+        "uid-regional-bulk-host-122",
+        "uid-regional-bulk-host-032",
+        "uid-regional-bulk-host-021",
+        "uid-regional-bulk-host-064",
+        "uid-regional-bulk-net-047",
+        "uid-regional-bulk-net-056"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-006",
+      "name": "G_Regional_TierGroup_006",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-135",
+        "uid-regional-bulk-host-111",
+        "uid-regional-bulk-host-132",
+        "uid-regional-bulk-host-019",
+        "uid-regional-bulk-host-097",
+        "uid-regional-bulk-net-001",
+        "uid-regional-bulk-net-060"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-007",
+      "name": "G_Regional_TierGroup_007",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-035",
+        "uid-regional-bulk-host-105",
+        "uid-regional-bulk-host-031",
+        "uid-regional-bulk-host-145",
+        "uid-regional-bulk-host-066",
+        "uid-regional-bulk-net-055",
+        "uid-regional-bulk-net-052"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-008",
+      "name": "G_Regional_TierGroup_008",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-100",
+        "uid-regional-bulk-host-016",
+        "uid-regional-bulk-host-107",
+        "uid-regional-bulk-host-058",
+        "uid-regional-bulk-host-123",
+        "uid-regional-bulk-net-029",
+        "uid-regional-bulk-net-034"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-009",
+      "name": "G_Regional_TierGroup_009",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-082",
+        "uid-regional-bulk-host-102",
+        "uid-regional-bulk-host-023",
+        "uid-regional-bulk-host-043",
+        "uid-regional-bulk-host-044",
+        "uid-regional-bulk-net-039",
+        "uid-regional-bulk-net-010"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-010",
+      "name": "G_Regional_TierGroup_010",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-150",
+        "uid-regional-bulk-host-017",
+        "uid-regional-bulk-host-091",
+        "uid-regional-bulk-host-038",
+        "uid-regional-bulk-host-024",
+        "uid-regional-bulk-net-049",
+        "uid-regional-bulk-net-004"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-011",
+      "name": "G_Regional_TierGroup_011",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-025",
+        "uid-regional-bulk-host-106",
+        "uid-regional-bulk-host-095",
+        "uid-regional-bulk-host-080",
+        "uid-regional-bulk-host-030",
+        "uid-regional-bulk-net-047",
+        "uid-regional-bulk-net-023"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-012",
+      "name": "G_Regional_TierGroup_012",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-100",
+        "uid-regional-bulk-host-137",
+        "uid-regional-bulk-host-006",
+        "uid-regional-bulk-host-099",
+        "uid-regional-bulk-host-077",
+        "uid-regional-bulk-net-058",
+        "uid-regional-bulk-net-020"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-013",
+      "name": "G_Regional_TierGroup_013",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-139",
+        "uid-regional-bulk-host-043",
+        "uid-regional-bulk-host-076",
+        "uid-regional-bulk-host-063",
+        "uid-regional-bulk-host-005",
+        "uid-regional-bulk-net-011",
+        "uid-regional-bulk-net-035"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-014",
+      "name": "G_Regional_TierGroup_014",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-008",
+        "uid-regional-bulk-host-103",
+        "uid-regional-bulk-host-045",
+        "uid-regional-bulk-host-061",
+        "uid-regional-bulk-host-086",
+        "uid-regional-bulk-net-008",
+        "uid-regional-bulk-net-024"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-015",
+      "name": "G_Regional_TierGroup_015",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-032",
+        "uid-regional-bulk-host-004",
+        "uid-regional-bulk-host-133",
+        "uid-regional-bulk-host-138",
+        "uid-regional-bulk-host-130",
+        "uid-regional-bulk-net-050",
+        "uid-regional-bulk-net-044"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-016",
+      "name": "G_Regional_TierGroup_016",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-111",
+        "uid-regional-bulk-host-088",
+        "uid-regional-bulk-host-131",
+        "uid-regional-bulk-host-067",
+        "uid-regional-bulk-host-125",
+        "uid-regional-bulk-net-028",
+        "uid-regional-bulk-net-041"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-017",
+      "name": "G_Regional_TierGroup_017",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-120",
+        "uid-regional-bulk-host-078",
+        "uid-regional-bulk-host-011",
+        "uid-regional-bulk-host-001",
+        "uid-regional-bulk-host-076",
+        "uid-regional-bulk-net-038",
+        "uid-regional-bulk-net-003"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-018",
+      "name": "G_Regional_TierGroup_018",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-123",
+        "uid-regional-bulk-host-048",
+        "uid-regional-bulk-host-017",
+        "uid-regional-bulk-host-073",
+        "uid-regional-bulk-host-081",
+        "uid-regional-bulk-net-060",
+        "uid-regional-bulk-net-057"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-019",
+      "name": "G_Regional_TierGroup_019",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-134",
+        "uid-regional-bulk-host-108",
+        "uid-regional-bulk-host-121",
+        "uid-regional-bulk-host-120",
+        "uid-regional-bulk-host-026",
+        "uid-regional-bulk-net-035",
+        "uid-regional-bulk-net-004"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-020",
+      "name": "G_Regional_TierGroup_020",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-093",
+        "uid-regional-bulk-host-015",
+        "uid-regional-bulk-host-096",
+        "uid-regional-bulk-host-123",
+        "uid-regional-bulk-host-142",
+        "uid-regional-bulk-net-015",
+        "uid-regional-bulk-net-038"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-021",
+      "name": "G_Regional_TierGroup_021",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-093",
+        "uid-regional-bulk-host-070",
+        "uid-regional-bulk-host-117",
+        "uid-regional-bulk-host-073",
+        "uid-regional-bulk-host-033",
+        "uid-regional-bulk-net-036",
+        "uid-regional-bulk-net-046"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-022",
+      "name": "G_Regional_TierGroup_022",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-094",
+        "uid-regional-bulk-host-109",
+        "uid-regional-bulk-host-142",
+        "uid-regional-bulk-host-037",
+        "uid-regional-bulk-host-099",
+        "uid-regional-bulk-net-054",
+        "uid-regional-bulk-net-003"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-023",
+      "name": "G_Regional_TierGroup_023",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-005",
+        "uid-regional-bulk-host-052",
+        "uid-regional-bulk-host-146",
+        "uid-regional-bulk-host-074",
+        "uid-regional-bulk-host-121",
+        "uid-regional-bulk-net-022",
+        "uid-regional-bulk-net-041"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-024",
+      "name": "G_Regional_TierGroup_024",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-129",
+        "uid-regional-bulk-host-137",
+        "uid-regional-bulk-host-059",
+        "uid-regional-bulk-host-014",
+        "uid-regional-bulk-host-134",
+        "uid-regional-bulk-net-046",
+        "uid-regional-bulk-net-031"
+      ]
+    },
+    {
+      "uid": "uid-regional-bulk-grp-025",
+      "name": "G_Regional_TierGroup_025",
+      "type": "group",
+      "members": [
+        "uid-regional-bulk-host-112",
+        "uid-regional-bulk-host-141",
+        "uid-regional-bulk-host-130",
+        "uid-regional-bulk-host-091",
+        "uid-regional-bulk-host-126",
+        "uid-regional-bulk-net-022",
+        "uid-regional-bulk-net-009"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 32,
+  "total": 32
+}

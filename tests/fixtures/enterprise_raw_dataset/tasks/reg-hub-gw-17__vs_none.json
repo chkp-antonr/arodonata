@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-reg-hub-gw-17-0",
+      "task-name": "arodonata-route-collect-reg-hub-gw-17",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-reg-hub-gw-17-0",
+          "gatewayId": "reg-hub-gw-17",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4yMi4xNy4xIGRldiBldGgwIHByb3RvIHN0YXRpYwoxMC4zMC4xNy4wLzI0IGRldiBldGgxIHByb3RvIGtlcm5lbCBzY29wZSBsaW5rIHNyYyAxMC4zMC4xNy4xCj09PUFST0RPTkFUQV9JUF9ST1VURV9FTkQ9PT0K",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+===ARODONATA_IP_ROUTE_START===
+default via 172.25.100.254 dev eth0 proto static
+10.80.8.0/24 dev eth1 proto kernel scope link src 10.80.8.1
+10.81.8.0/24 via 10.80.8.254 dev eth1 proto routed
+===ARODONATA_IP_ROUTE_END===
+===ARODONATA_CLISH_ROUTE_START===
+Codes: C - Connected, S - Static, R - RIP, B - BGP, O - OSPF, I - IS-IS, A - Aggregate, K - Kernel
+S 0.0.0.0/0 via 172.25.100.254, eth0
+C 10.80.8.0/24 is directly connected, eth1
+R 10.81.8.0/24 via 10.80.8.254, eth1
+===ARODONATA_CLISH_ROUTE_END===

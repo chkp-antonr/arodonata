@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-dc-vsx-chassis-01-11",
+      "task-name": "arodonata-route-collect-dc-vsx-chassis-01",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-dc-vsx-chassis-01-11",
+          "gatewayId": "dc-vsx-chassis-01",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE5Mi4xNjguMjUxLjEgZGV2IHdycDExIHByb3RvIHN0YXRpYwoxMC4yMTYuMTEuMC8yNCBkZXYgZXRoMi4xMSBwcm90byBrZXJuZWwgc2NvcGUgbGluayBzcmMgMTAuMjE2LjExLjEKMTAuMjIwLjc3LjAvMjQgdmlhIDEwLjIxNi4xMS4yNTQgZGV2IGV0aDIuMTEgcHJvdG8gb3NwZgo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cg==",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

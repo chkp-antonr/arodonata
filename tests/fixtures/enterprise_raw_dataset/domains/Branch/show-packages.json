@@ -1,0 +1,1443 @@
+{
+  "packages": [
+    {
+      "uid": "uid-pkg-branch",
+      "name": "Branch_Standard_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-branch-gw-001",
+          "name": "br-spb-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-002",
+          "name": "br-reg-gw-002",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-003",
+          "name": "br-reg-gw-003",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-004",
+          "name": "br-reg-gw-004",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-005",
+          "name": "br-reg-gw-005",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-006",
+          "name": "br-reg-gw-006",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-007",
+          "name": "br-reg-gw-007",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-008",
+          "name": "br-reg-gw-008",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-009",
+          "name": "br-reg-gw-009",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-010",
+          "name": "br-reg-gw-010",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-011",
+          "name": "br-reg-gw-011",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-012",
+          "name": "br-reg-gw-012",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-013",
+          "name": "br-reg-gw-013",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-014",
+          "name": "br-reg-gw-014",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-015",
+          "name": "br-reg-gw-015",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-016",
+          "name": "br-reg-gw-016",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-017",
+          "name": "br-reg-gw-017",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-018",
+          "name": "br-reg-gw-018",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-019",
+          "name": "br-reg-gw-019",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-020",
+          "name": "br-reg-gw-020",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-021",
+          "name": "br-reg-gw-021",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-022",
+          "name": "br-reg-gw-022",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-023",
+          "name": "br-reg-gw-023",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-024",
+          "name": "br-reg-gw-024",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-025",
+          "name": "br-reg-gw-025",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-026",
+          "name": "br-reg-gw-026",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-027",
+          "name": "br-reg-gw-027",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-028",
+          "name": "br-reg-gw-028",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-029",
+          "name": "br-reg-gw-029",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-030",
+          "name": "br-reg-gw-030",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-031",
+          "name": "br-reg-gw-031",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-032",
+          "name": "br-reg-gw-032",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-033",
+          "name": "br-reg-gw-033",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-034",
+          "name": "br-reg-gw-034",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-035",
+          "name": "br-reg-gw-035",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-036",
+          "name": "br-reg-gw-036",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-037",
+          "name": "br-reg-gw-037",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-038",
+          "name": "br-reg-gw-038",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-039",
+          "name": "br-reg-gw-039",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-040",
+          "name": "br-reg-gw-040",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-041",
+          "name": "br-reg-gw-041",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-042",
+          "name": "br-reg-gw-042",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-043",
+          "name": "br-reg-gw-043",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-044",
+          "name": "br-reg-gw-044",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-045",
+          "name": "br-reg-gw-045",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-046",
+          "name": "br-reg-gw-046",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-047",
+          "name": "br-reg-gw-047",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-048",
+          "name": "br-reg-gw-048",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-049",
+          "name": "br-reg-gw-049",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-050",
+          "name": "br-reg-gw-050",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-051",
+          "name": "br-reg-gw-051",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-052",
+          "name": "br-reg-gw-052",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-053",
+          "name": "br-reg-gw-053",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-054",
+          "name": "br-reg-gw-054",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-055",
+          "name": "br-reg-gw-055",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-056",
+          "name": "br-reg-gw-056",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-057",
+          "name": "br-reg-gw-057",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-058",
+          "name": "br-reg-gw-058",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-059",
+          "name": "br-reg-gw-059",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-060",
+          "name": "br-reg-gw-060",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-061",
+          "name": "br-reg-gw-061",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-062",
+          "name": "br-reg-gw-062",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-063",
+          "name": "br-reg-gw-063",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-064",
+          "name": "br-reg-gw-064",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-065",
+          "name": "br-reg-gw-065",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-066",
+          "name": "br-reg-gw-066",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-067",
+          "name": "br-reg-gw-067",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-068",
+          "name": "br-reg-gw-068",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-069",
+          "name": "br-reg-gw-069",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-070",
+          "name": "br-reg-gw-070",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-071",
+          "name": "br-reg-gw-071",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-072",
+          "name": "br-reg-gw-072",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-073",
+          "name": "br-reg-gw-073",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-074",
+          "name": "br-reg-gw-074",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-075",
+          "name": "br-reg-gw-075",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-076",
+          "name": "br-reg-gw-076",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-077",
+          "name": "br-reg-gw-077",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-078",
+          "name": "br-reg-gw-078",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-079",
+          "name": "br-reg-gw-079",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-080",
+          "name": "br-reg-gw-080",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-081",
+          "name": "br-reg-gw-081",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-082",
+          "name": "br-reg-gw-082",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-083",
+          "name": "br-reg-gw-083",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-084",
+          "name": "br-reg-gw-084",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-085",
+          "name": "br-reg-gw-085",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-086",
+          "name": "br-reg-gw-086",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-087",
+          "name": "br-reg-gw-087",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-088",
+          "name": "br-reg-gw-088",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-089",
+          "name": "br-reg-gw-089",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-090",
+          "name": "br-reg-gw-090",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-091",
+          "name": "br-reg-gw-091",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-092",
+          "name": "br-reg-gw-092",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-093",
+          "name": "br-reg-gw-093",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-094",
+          "name": "br-reg-gw-094",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-095",
+          "name": "br-reg-gw-095",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-096",
+          "name": "br-reg-gw-096",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-097",
+          "name": "br-reg-gw-097",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-098",
+          "name": "br-reg-gw-098",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-099",
+          "name": "br-reg-gw-099",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-100",
+          "name": "br-reg-gw-100",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-101",
+          "name": "br-reg-gw-101",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-102",
+          "name": "br-reg-gw-102",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-103",
+          "name": "br-reg-gw-103",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-104",
+          "name": "br-reg-gw-104",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-105",
+          "name": "br-reg-gw-105",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-106",
+          "name": "br-reg-gw-106",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-107",
+          "name": "br-reg-gw-107",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-108",
+          "name": "br-reg-gw-108",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-109",
+          "name": "br-reg-gw-109",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-110",
+          "name": "br-reg-gw-110",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-111",
+          "name": "br-reg-gw-111",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-112",
+          "name": "br-reg-gw-112",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-113",
+          "name": "br-reg-gw-113",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-114",
+          "name": "br-reg-gw-114",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-115",
+          "name": "br-reg-gw-115",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-116",
+          "name": "br-reg-gw-116",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-117",
+          "name": "br-reg-gw-117",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-118",
+          "name": "br-reg-gw-118",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-119",
+          "name": "br-reg-gw-119",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-120",
+          "name": "br-reg-gw-120",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-121",
+          "name": "br-reg-gw-121",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-122",
+          "name": "br-reg-gw-122",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-123",
+          "name": "br-reg-gw-123",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-124",
+          "name": "br-reg-gw-124",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-125",
+          "name": "br-reg-gw-125",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-126",
+          "name": "br-reg-gw-126",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-127",
+          "name": "br-reg-gw-127",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-128",
+          "name": "br-reg-gw-128",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-129",
+          "name": "br-reg-gw-129",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-130",
+          "name": "br-reg-gw-130",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-131",
+          "name": "br-reg-gw-131",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-132",
+          "name": "br-reg-gw-132",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-133",
+          "name": "br-reg-gw-133",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-134",
+          "name": "br-reg-gw-134",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-135",
+          "name": "br-reg-gw-135",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-136",
+          "name": "br-reg-gw-136",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-137",
+          "name": "br-reg-gw-137",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-138",
+          "name": "br-reg-gw-138",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-139",
+          "name": "br-reg-gw-139",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-140",
+          "name": "br-reg-gw-140",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-branch-security",
+          "name": "Branch_Standard_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "uid": "uid-pkg-branch",
+      "name": "Branch_Standard_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-branch-gw-001",
+          "name": "br-spb-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-002",
+          "name": "br-reg-gw-002",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-003",
+          "name": "br-reg-gw-003",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-004",
+          "name": "br-reg-gw-004",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-005",
+          "name": "br-reg-gw-005",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-006",
+          "name": "br-reg-gw-006",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-007",
+          "name": "br-reg-gw-007",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-008",
+          "name": "br-reg-gw-008",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-009",
+          "name": "br-reg-gw-009",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-010",
+          "name": "br-reg-gw-010",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-011",
+          "name": "br-reg-gw-011",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-012",
+          "name": "br-reg-gw-012",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-013",
+          "name": "br-reg-gw-013",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-014",
+          "name": "br-reg-gw-014",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-015",
+          "name": "br-reg-gw-015",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-016",
+          "name": "br-reg-gw-016",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-017",
+          "name": "br-reg-gw-017",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-018",
+          "name": "br-reg-gw-018",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-019",
+          "name": "br-reg-gw-019",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-020",
+          "name": "br-reg-gw-020",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-021",
+          "name": "br-reg-gw-021",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-022",
+          "name": "br-reg-gw-022",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-023",
+          "name": "br-reg-gw-023",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-024",
+          "name": "br-reg-gw-024",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-025",
+          "name": "br-reg-gw-025",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-026",
+          "name": "br-reg-gw-026",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-027",
+          "name": "br-reg-gw-027",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-028",
+          "name": "br-reg-gw-028",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-029",
+          "name": "br-reg-gw-029",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-030",
+          "name": "br-reg-gw-030",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-031",
+          "name": "br-reg-gw-031",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-032",
+          "name": "br-reg-gw-032",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-033",
+          "name": "br-reg-gw-033",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-034",
+          "name": "br-reg-gw-034",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-035",
+          "name": "br-reg-gw-035",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-036",
+          "name": "br-reg-gw-036",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-037",
+          "name": "br-reg-gw-037",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-038",
+          "name": "br-reg-gw-038",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-039",
+          "name": "br-reg-gw-039",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-040",
+          "name": "br-reg-gw-040",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-041",
+          "name": "br-reg-gw-041",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-042",
+          "name": "br-reg-gw-042",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-043",
+          "name": "br-reg-gw-043",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-044",
+          "name": "br-reg-gw-044",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-045",
+          "name": "br-reg-gw-045",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-046",
+          "name": "br-reg-gw-046",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-047",
+          "name": "br-reg-gw-047",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-048",
+          "name": "br-reg-gw-048",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-049",
+          "name": "br-reg-gw-049",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-050",
+          "name": "br-reg-gw-050",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-051",
+          "name": "br-reg-gw-051",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-052",
+          "name": "br-reg-gw-052",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-053",
+          "name": "br-reg-gw-053",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-054",
+          "name": "br-reg-gw-054",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-055",
+          "name": "br-reg-gw-055",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-056",
+          "name": "br-reg-gw-056",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-057",
+          "name": "br-reg-gw-057",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-058",
+          "name": "br-reg-gw-058",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-059",
+          "name": "br-reg-gw-059",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-060",
+          "name": "br-reg-gw-060",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-061",
+          "name": "br-reg-gw-061",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-062",
+          "name": "br-reg-gw-062",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-063",
+          "name": "br-reg-gw-063",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-064",
+          "name": "br-reg-gw-064",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-065",
+          "name": "br-reg-gw-065",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-066",
+          "name": "br-reg-gw-066",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-067",
+          "name": "br-reg-gw-067",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-068",
+          "name": "br-reg-gw-068",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-069",
+          "name": "br-reg-gw-069",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-070",
+          "name": "br-reg-gw-070",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-071",
+          "name": "br-reg-gw-071",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-072",
+          "name": "br-reg-gw-072",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-073",
+          "name": "br-reg-gw-073",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-074",
+          "name": "br-reg-gw-074",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-075",
+          "name": "br-reg-gw-075",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-076",
+          "name": "br-reg-gw-076",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-077",
+          "name": "br-reg-gw-077",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-078",
+          "name": "br-reg-gw-078",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-079",
+          "name": "br-reg-gw-079",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-080",
+          "name": "br-reg-gw-080",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-081",
+          "name": "br-reg-gw-081",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-082",
+          "name": "br-reg-gw-082",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-083",
+          "name": "br-reg-gw-083",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-084",
+          "name": "br-reg-gw-084",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-085",
+          "name": "br-reg-gw-085",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-086",
+          "name": "br-reg-gw-086",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-087",
+          "name": "br-reg-gw-087",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-088",
+          "name": "br-reg-gw-088",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-089",
+          "name": "br-reg-gw-089",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-090",
+          "name": "br-reg-gw-090",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-091",
+          "name": "br-reg-gw-091",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-092",
+          "name": "br-reg-gw-092",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-093",
+          "name": "br-reg-gw-093",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-094",
+          "name": "br-reg-gw-094",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-095",
+          "name": "br-reg-gw-095",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-096",
+          "name": "br-reg-gw-096",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-097",
+          "name": "br-reg-gw-097",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-098",
+          "name": "br-reg-gw-098",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-099",
+          "name": "br-reg-gw-099",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-100",
+          "name": "br-reg-gw-100",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-101",
+          "name": "br-reg-gw-101",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-102",
+          "name": "br-reg-gw-102",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-103",
+          "name": "br-reg-gw-103",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-104",
+          "name": "br-reg-gw-104",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-105",
+          "name": "br-reg-gw-105",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-106",
+          "name": "br-reg-gw-106",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-107",
+          "name": "br-reg-gw-107",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-108",
+          "name": "br-reg-gw-108",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-109",
+          "name": "br-reg-gw-109",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-110",
+          "name": "br-reg-gw-110",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-111",
+          "name": "br-reg-gw-111",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-112",
+          "name": "br-reg-gw-112",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-113",
+          "name": "br-reg-gw-113",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-114",
+          "name": "br-reg-gw-114",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-115",
+          "name": "br-reg-gw-115",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-116",
+          "name": "br-reg-gw-116",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-117",
+          "name": "br-reg-gw-117",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-118",
+          "name": "br-reg-gw-118",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-119",
+          "name": "br-reg-gw-119",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-120",
+          "name": "br-reg-gw-120",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-121",
+          "name": "br-reg-gw-121",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-122",
+          "name": "br-reg-gw-122",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-123",
+          "name": "br-reg-gw-123",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-124",
+          "name": "br-reg-gw-124",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-125",
+          "name": "br-reg-gw-125",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-126",
+          "name": "br-reg-gw-126",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-127",
+          "name": "br-reg-gw-127",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-128",
+          "name": "br-reg-gw-128",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-129",
+          "name": "br-reg-gw-129",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-130",
+          "name": "br-reg-gw-130",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-131",
+          "name": "br-reg-gw-131",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-132",
+          "name": "br-reg-gw-132",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-133",
+          "name": "br-reg-gw-133",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-134",
+          "name": "br-reg-gw-134",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-135",
+          "name": "br-reg-gw-135",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-136",
+          "name": "br-reg-gw-136",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-137",
+          "name": "br-reg-gw-137",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-138",
+          "name": "br-reg-gw-138",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-139",
+          "name": "br-reg-gw-139",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-branch-gw-140",
+          "name": "br-reg-gw-140",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-branch-security",
+          "name": "Branch_Standard_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

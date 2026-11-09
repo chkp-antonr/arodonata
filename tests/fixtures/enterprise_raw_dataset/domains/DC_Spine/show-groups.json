@@ -1,0 +1,357 @@
+{
+  "objects": [
+    {
+      "uid": "uid-dc_spine-bulk-grp-001",
+      "name": "G_DC_Spine_TierGroup_001",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-030",
+        "uid-dc_spine-bulk-host-099",
+        "uid-dc_spine-bulk-host-149",
+        "uid-dc_spine-bulk-host-108",
+        "uid-dc_spine-bulk-host-051",
+        "uid-dc_spine-bulk-net-002",
+        "uid-dc_spine-bulk-net-060"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-002",
+      "name": "G_DC_Spine_TierGroup_002",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-110",
+        "uid-dc_spine-bulk-host-147",
+        "uid-dc_spine-bulk-host-049",
+        "uid-dc_spine-bulk-host-026",
+        "uid-dc_spine-bulk-host-091",
+        "uid-dc_spine-bulk-net-049",
+        "uid-dc_spine-bulk-net-052"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-003",
+      "name": "G_DC_Spine_TierGroup_003",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-039",
+        "uid-dc_spine-bulk-host-122",
+        "uid-dc_spine-bulk-host-023",
+        "uid-dc_spine-bulk-host-095",
+        "uid-dc_spine-bulk-host-112",
+        "uid-dc_spine-bulk-net-005",
+        "uid-dc_spine-bulk-net-040"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-004",
+      "name": "G_DC_Spine_TierGroup_004",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-055",
+        "uid-dc_spine-bulk-host-012",
+        "uid-dc_spine-bulk-host-101",
+        "uid-dc_spine-bulk-host-002",
+        "uid-dc_spine-bulk-host-102",
+        "uid-dc_spine-bulk-net-006",
+        "uid-dc_spine-bulk-net-051"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-005",
+      "name": "G_DC_Spine_TierGroup_005",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-132",
+        "uid-dc_spine-bulk-host-060",
+        "uid-dc_spine-bulk-host-022",
+        "uid-dc_spine-bulk-host-135",
+        "uid-dc_spine-bulk-host-051",
+        "uid-dc_spine-bulk-net-022",
+        "uid-dc_spine-bulk-net-024"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-006",
+      "name": "G_DC_Spine_TierGroup_006",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-062",
+        "uid-dc_spine-bulk-host-136",
+        "uid-dc_spine-bulk-host-054",
+        "uid-dc_spine-bulk-host-046",
+        "uid-dc_spine-bulk-host-142",
+        "uid-dc_spine-bulk-net-016",
+        "uid-dc_spine-bulk-net-018"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-007",
+      "name": "G_DC_Spine_TierGroup_007",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-071",
+        "uid-dc_spine-bulk-host-046",
+        "uid-dc_spine-bulk-host-018",
+        "uid-dc_spine-bulk-host-081",
+        "uid-dc_spine-bulk-host-068",
+        "uid-dc_spine-bulk-net-047",
+        "uid-dc_spine-bulk-net-007"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-008",
+      "name": "G_DC_Spine_TierGroup_008",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-099",
+        "uid-dc_spine-bulk-host-028",
+        "uid-dc_spine-bulk-host-107",
+        "uid-dc_spine-bulk-host-095",
+        "uid-dc_spine-bulk-host-074",
+        "uid-dc_spine-bulk-net-033",
+        "uid-dc_spine-bulk-net-013"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-009",
+      "name": "G_DC_Spine_TierGroup_009",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-092",
+        "uid-dc_spine-bulk-host-007",
+        "uid-dc_spine-bulk-host-124",
+        "uid-dc_spine-bulk-host-127",
+        "uid-dc_spine-bulk-host-116",
+        "uid-dc_spine-bulk-net-006",
+        "uid-dc_spine-bulk-net-015"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-010",
+      "name": "G_DC_Spine_TierGroup_010",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-126",
+        "uid-dc_spine-bulk-host-135",
+        "uid-dc_spine-bulk-host-110",
+        "uid-dc_spine-bulk-host-095",
+        "uid-dc_spine-bulk-host-010",
+        "uid-dc_spine-bulk-net-046",
+        "uid-dc_spine-bulk-net-008"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-011",
+      "name": "G_DC_Spine_TierGroup_011",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-131",
+        "uid-dc_spine-bulk-host-138",
+        "uid-dc_spine-bulk-host-070",
+        "uid-dc_spine-bulk-host-059",
+        "uid-dc_spine-bulk-host-122",
+        "uid-dc_spine-bulk-net-050",
+        "uid-dc_spine-bulk-net-002"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-012",
+      "name": "G_DC_Spine_TierGroup_012",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-030",
+        "uid-dc_spine-bulk-host-087",
+        "uid-dc_spine-bulk-host-070",
+        "uid-dc_spine-bulk-host-057",
+        "uid-dc_spine-bulk-host-047",
+        "uid-dc_spine-bulk-net-028",
+        "uid-dc_spine-bulk-net-009"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-013",
+      "name": "G_DC_Spine_TierGroup_013",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-034",
+        "uid-dc_spine-bulk-host-029",
+        "uid-dc_spine-bulk-host-030",
+        "uid-dc_spine-bulk-host-026",
+        "uid-dc_spine-bulk-host-148",
+        "uid-dc_spine-bulk-net-028",
+        "uid-dc_spine-bulk-net-024"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-014",
+      "name": "G_DC_Spine_TierGroup_014",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-146",
+        "uid-dc_spine-bulk-host-083",
+        "uid-dc_spine-bulk-host-117",
+        "uid-dc_spine-bulk-host-113",
+        "uid-dc_spine-bulk-host-143",
+        "uid-dc_spine-bulk-net-015",
+        "uid-dc_spine-bulk-net-050"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-015",
+      "name": "G_DC_Spine_TierGroup_015",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-145",
+        "uid-dc_spine-bulk-host-042",
+        "uid-dc_spine-bulk-host-063",
+        "uid-dc_spine-bulk-host-121",
+        "uid-dc_spine-bulk-host-059",
+        "uid-dc_spine-bulk-net-026",
+        "uid-dc_spine-bulk-net-012"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-016",
+      "name": "G_DC_Spine_TierGroup_016",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-108",
+        "uid-dc_spine-bulk-host-031",
+        "uid-dc_spine-bulk-host-039",
+        "uid-dc_spine-bulk-host-119",
+        "uid-dc_spine-bulk-host-025",
+        "uid-dc_spine-bulk-net-039",
+        "uid-dc_spine-bulk-net-059"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-017",
+      "name": "G_DC_Spine_TierGroup_017",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-140",
+        "uid-dc_spine-bulk-host-002",
+        "uid-dc_spine-bulk-host-068",
+        "uid-dc_spine-bulk-host-079",
+        "uid-dc_spine-bulk-host-119",
+        "uid-dc_spine-bulk-net-040",
+        "uid-dc_spine-bulk-net-011"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-018",
+      "name": "G_DC_Spine_TierGroup_018",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-080",
+        "uid-dc_spine-bulk-host-132",
+        "uid-dc_spine-bulk-host-108",
+        "uid-dc_spine-bulk-host-033",
+        "uid-dc_spine-bulk-host-044",
+        "uid-dc_spine-bulk-net-005",
+        "uid-dc_spine-bulk-net-051"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-019",
+      "name": "G_DC_Spine_TierGroup_019",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-033",
+        "uid-dc_spine-bulk-host-073",
+        "uid-dc_spine-bulk-host-124",
+        "uid-dc_spine-bulk-host-083",
+        "uid-dc_spine-bulk-host-050",
+        "uid-dc_spine-bulk-net-039",
+        "uid-dc_spine-bulk-net-012"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-020",
+      "name": "G_DC_Spine_TierGroup_020",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-025",
+        "uid-dc_spine-bulk-host-020",
+        "uid-dc_spine-bulk-host-129",
+        "uid-dc_spine-bulk-host-141",
+        "uid-dc_spine-bulk-host-066",
+        "uid-dc_spine-bulk-net-036",
+        "uid-dc_spine-bulk-net-033"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-021",
+      "name": "G_DC_Spine_TierGroup_021",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-111",
+        "uid-dc_spine-bulk-host-078",
+        "uid-dc_spine-bulk-host-057",
+        "uid-dc_spine-bulk-host-014",
+        "uid-dc_spine-bulk-host-088",
+        "uid-dc_spine-bulk-net-015",
+        "uid-dc_spine-bulk-net-041"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-022",
+      "name": "G_DC_Spine_TierGroup_022",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-047",
+        "uid-dc_spine-bulk-host-131",
+        "uid-dc_spine-bulk-host-086",
+        "uid-dc_spine-bulk-host-132",
+        "uid-dc_spine-bulk-host-126",
+        "uid-dc_spine-bulk-net-036",
+        "uid-dc_spine-bulk-net-039"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-023",
+      "name": "G_DC_Spine_TierGroup_023",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-070",
+        "uid-dc_spine-bulk-host-060",
+        "uid-dc_spine-bulk-host-114",
+        "uid-dc_spine-bulk-host-072",
+        "uid-dc_spine-bulk-host-034",
+        "uid-dc_spine-bulk-net-048",
+        "uid-dc_spine-bulk-net-051"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-024",
+      "name": "G_DC_Spine_TierGroup_024",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-039",
+        "uid-dc_spine-bulk-host-131",
+        "uid-dc_spine-bulk-host-021",
+        "uid-dc_spine-bulk-host-088",
+        "uid-dc_spine-bulk-host-029",
+        "uid-dc_spine-bulk-net-025",
+        "uid-dc_spine-bulk-net-005"
+      ]
+    },
+    {
+      "uid": "uid-dc_spine-bulk-grp-025",
+      "name": "G_DC_Spine_TierGroup_025",
+      "type": "group",
+      "members": [
+        "uid-dc_spine-bulk-host-131",
+        "uid-dc_spine-bulk-host-067",
+        "uid-dc_spine-bulk-host-102",
+        "uid-dc_spine-bulk-host-099",
+        "uid-dc_spine-bulk-host-047",
+        "uid-dc_spine-bulk-net-024",
+        "uid-dc_spine-bulk-net-049"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 25,
+  "total": 25
+}

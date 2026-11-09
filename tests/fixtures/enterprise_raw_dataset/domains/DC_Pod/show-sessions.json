@@ -1,0 +1,23 @@
+{
+  "objects": [
+    {
+      "uid": "sess-pub-dc_pod-001",
+      "name": "AutoPublish-DC_Pod",
+      "user-name": "admin",
+      "publish-time": {
+        "posix": 1794164400000,
+        "iso-8601": "2026-11-08T17:00:00Z"
+      },
+      "last-modify-time": {
+        "posix": 1794164400000,
+        "iso-8601": "2026-11-08T17:00:00Z"
+      },
+      "changes": 0,
+      "locks": 0,
+      "number-of-published-changes": 12
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

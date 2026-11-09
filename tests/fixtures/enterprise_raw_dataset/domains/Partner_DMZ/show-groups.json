@@ -1,0 +1,367 @@
+{
+  "objects": [
+    {
+      "uid": "uid-part-grp-b2b-static",
+      "name": "G_Partner_B2B_Static",
+      "type": "group",
+      "members": [
+        "uid-part-net-active",
+        "uid-part-net-stale",
+        "uid-part-net-rerouted"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-001",
+      "name": "G_Partner_DMZ_TierGroup_001",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-108",
+        "uid-partner_dmz-bulk-host-073",
+        "uid-partner_dmz-bulk-host-023",
+        "uid-partner_dmz-bulk-host-063",
+        "uid-partner_dmz-bulk-host-070",
+        "uid-partner_dmz-bulk-net-041",
+        "uid-partner_dmz-bulk-net-001"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-002",
+      "name": "G_Partner_DMZ_TierGroup_002",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-106",
+        "uid-partner_dmz-bulk-host-064",
+        "uid-partner_dmz-bulk-host-048",
+        "uid-partner_dmz-bulk-host-131",
+        "uid-partner_dmz-bulk-host-052",
+        "uid-partner_dmz-bulk-net-030",
+        "uid-partner_dmz-bulk-net-042"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-003",
+      "name": "G_Partner_DMZ_TierGroup_003",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-097",
+        "uid-partner_dmz-bulk-host-118",
+        "uid-partner_dmz-bulk-host-134",
+        "uid-partner_dmz-bulk-host-112",
+        "uid-partner_dmz-bulk-host-106",
+        "uid-partner_dmz-bulk-net-035",
+        "uid-partner_dmz-bulk-net-030"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-004",
+      "name": "G_Partner_DMZ_TierGroup_004",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-149",
+        "uid-partner_dmz-bulk-host-146",
+        "uid-partner_dmz-bulk-host-137",
+        "uid-partner_dmz-bulk-host-136",
+        "uid-partner_dmz-bulk-host-100",
+        "uid-partner_dmz-bulk-net-027",
+        "uid-partner_dmz-bulk-net-041"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-005",
+      "name": "G_Partner_DMZ_TierGroup_005",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-093",
+        "uid-partner_dmz-bulk-host-079",
+        "uid-partner_dmz-bulk-host-142",
+        "uid-partner_dmz-bulk-host-052",
+        "uid-partner_dmz-bulk-host-051",
+        "uid-partner_dmz-bulk-net-027",
+        "uid-partner_dmz-bulk-net-013"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-006",
+      "name": "G_Partner_DMZ_TierGroup_006",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-087",
+        "uid-partner_dmz-bulk-host-146",
+        "uid-partner_dmz-bulk-host-085",
+        "uid-partner_dmz-bulk-host-126",
+        "uid-partner_dmz-bulk-host-097",
+        "uid-partner_dmz-bulk-net-039",
+        "uid-partner_dmz-bulk-net-007"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-007",
+      "name": "G_Partner_DMZ_TierGroup_007",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-008",
+        "uid-partner_dmz-bulk-host-148",
+        "uid-partner_dmz-bulk-host-053",
+        "uid-partner_dmz-bulk-host-120",
+        "uid-partner_dmz-bulk-host-131",
+        "uid-partner_dmz-bulk-net-048",
+        "uid-partner_dmz-bulk-net-026"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-008",
+      "name": "G_Partner_DMZ_TierGroup_008",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-150",
+        "uid-partner_dmz-bulk-host-030",
+        "uid-partner_dmz-bulk-host-088",
+        "uid-partner_dmz-bulk-host-054",
+        "uid-partner_dmz-bulk-host-065",
+        "uid-partner_dmz-bulk-net-033",
+        "uid-partner_dmz-bulk-net-060"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-009",
+      "name": "G_Partner_DMZ_TierGroup_009",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-148",
+        "uid-partner_dmz-bulk-host-078",
+        "uid-partner_dmz-bulk-host-076",
+        "uid-partner_dmz-bulk-host-002",
+        "uid-partner_dmz-bulk-host-050",
+        "uid-partner_dmz-bulk-net-060",
+        "uid-partner_dmz-bulk-net-042"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-010",
+      "name": "G_Partner_DMZ_TierGroup_010",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-122",
+        "uid-partner_dmz-bulk-host-025",
+        "uid-partner_dmz-bulk-host-128",
+        "uid-partner_dmz-bulk-host-112",
+        "uid-partner_dmz-bulk-host-060",
+        "uid-partner_dmz-bulk-net-050",
+        "uid-partner_dmz-bulk-net-030"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-011",
+      "name": "G_Partner_DMZ_TierGroup_011",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-133",
+        "uid-partner_dmz-bulk-host-049",
+        "uid-partner_dmz-bulk-host-061",
+        "uid-partner_dmz-bulk-host-149",
+        "uid-partner_dmz-bulk-host-138",
+        "uid-partner_dmz-bulk-net-003",
+        "uid-partner_dmz-bulk-net-001"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-012",
+      "name": "G_Partner_DMZ_TierGroup_012",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-036",
+        "uid-partner_dmz-bulk-host-109",
+        "uid-partner_dmz-bulk-host-020",
+        "uid-partner_dmz-bulk-host-084",
+        "uid-partner_dmz-bulk-host-138",
+        "uid-partner_dmz-bulk-net-007",
+        "uid-partner_dmz-bulk-net-018"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-013",
+      "name": "G_Partner_DMZ_TierGroup_013",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-055",
+        "uid-partner_dmz-bulk-host-017",
+        "uid-partner_dmz-bulk-host-128",
+        "uid-partner_dmz-bulk-host-107",
+        "uid-partner_dmz-bulk-host-009",
+        "uid-partner_dmz-bulk-net-024",
+        "uid-partner_dmz-bulk-net-032"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-014",
+      "name": "G_Partner_DMZ_TierGroup_014",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-110",
+        "uid-partner_dmz-bulk-host-065",
+        "uid-partner_dmz-bulk-host-047",
+        "uid-partner_dmz-bulk-host-129",
+        "uid-partner_dmz-bulk-host-083",
+        "uid-partner_dmz-bulk-net-026",
+        "uid-partner_dmz-bulk-net-048"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-015",
+      "name": "G_Partner_DMZ_TierGroup_015",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-083",
+        "uid-partner_dmz-bulk-host-016",
+        "uid-partner_dmz-bulk-host-022",
+        "uid-partner_dmz-bulk-host-043",
+        "uid-partner_dmz-bulk-host-040",
+        "uid-partner_dmz-bulk-net-018",
+        "uid-partner_dmz-bulk-net-012"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-016",
+      "name": "G_Partner_DMZ_TierGroup_016",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-035",
+        "uid-partner_dmz-bulk-host-055",
+        "uid-partner_dmz-bulk-host-115",
+        "uid-partner_dmz-bulk-host-072",
+        "uid-partner_dmz-bulk-host-025",
+        "uid-partner_dmz-bulk-net-054",
+        "uid-partner_dmz-bulk-net-004"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-017",
+      "name": "G_Partner_DMZ_TierGroup_017",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-062",
+        "uid-partner_dmz-bulk-host-118",
+        "uid-partner_dmz-bulk-host-002",
+        "uid-partner_dmz-bulk-host-028",
+        "uid-partner_dmz-bulk-host-149",
+        "uid-partner_dmz-bulk-net-006",
+        "uid-partner_dmz-bulk-net-052"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-018",
+      "name": "G_Partner_DMZ_TierGroup_018",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-046",
+        "uid-partner_dmz-bulk-host-086",
+        "uid-partner_dmz-bulk-host-102",
+        "uid-partner_dmz-bulk-host-057",
+        "uid-partner_dmz-bulk-host-034",
+        "uid-partner_dmz-bulk-net-040",
+        "uid-partner_dmz-bulk-net-056"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-019",
+      "name": "G_Partner_DMZ_TierGroup_019",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-030",
+        "uid-partner_dmz-bulk-host-125",
+        "uid-partner_dmz-bulk-host-056",
+        "uid-partner_dmz-bulk-host-101",
+        "uid-partner_dmz-bulk-host-057",
+        "uid-partner_dmz-bulk-net-042",
+        "uid-partner_dmz-bulk-net-044"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-020",
+      "name": "G_Partner_DMZ_TierGroup_020",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-009",
+        "uid-partner_dmz-bulk-host-132",
+        "uid-partner_dmz-bulk-host-010",
+        "uid-partner_dmz-bulk-host-049",
+        "uid-partner_dmz-bulk-host-136",
+        "uid-partner_dmz-bulk-net-013",
+        "uid-partner_dmz-bulk-net-027"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-021",
+      "name": "G_Partner_DMZ_TierGroup_021",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-001",
+        "uid-partner_dmz-bulk-host-015",
+        "uid-partner_dmz-bulk-host-034",
+        "uid-partner_dmz-bulk-host-122",
+        "uid-partner_dmz-bulk-host-022",
+        "uid-partner_dmz-bulk-net-055",
+        "uid-partner_dmz-bulk-net-036"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-022",
+      "name": "G_Partner_DMZ_TierGroup_022",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-107",
+        "uid-partner_dmz-bulk-host-010",
+        "uid-partner_dmz-bulk-host-022",
+        "uid-partner_dmz-bulk-host-142",
+        "uid-partner_dmz-bulk-host-016",
+        "uid-partner_dmz-bulk-net-045",
+        "uid-partner_dmz-bulk-net-048"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-023",
+      "name": "G_Partner_DMZ_TierGroup_023",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-020",
+        "uid-partner_dmz-bulk-host-049",
+        "uid-partner_dmz-bulk-host-126",
+        "uid-partner_dmz-bulk-host-034",
+        "uid-partner_dmz-bulk-host-042",
+        "uid-partner_dmz-bulk-net-011",
+        "uid-partner_dmz-bulk-net-060"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-024",
+      "name": "G_Partner_DMZ_TierGroup_024",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-103",
+        "uid-partner_dmz-bulk-host-124",
+        "uid-partner_dmz-bulk-host-132",
+        "uid-partner_dmz-bulk-host-075",
+        "uid-partner_dmz-bulk-host-116",
+        "uid-partner_dmz-bulk-net-018",
+        "uid-partner_dmz-bulk-net-034"
+      ]
+    },
+    {
+      "uid": "uid-partner_dmz-bulk-grp-025",
+      "name": "G_Partner_DMZ_TierGroup_025",
+      "type": "group",
+      "members": [
+        "uid-partner_dmz-bulk-host-084",
+        "uid-partner_dmz-bulk-host-020",
+        "uid-partner_dmz-bulk-host-132",
+        "uid-partner_dmz-bulk-host-073",
+        "uid-partner_dmz-bulk-host-108",
+        "uid-partner_dmz-bulk-net-037",
+        "uid-partner_dmz-bulk-net-049"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 26,
+  "total": 26
+}

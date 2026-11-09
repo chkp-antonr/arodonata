@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-perim-dmz-gw-01-0",
+      "task-name": "arodonata-route-collect-perim-dmz-gw-01",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-perim-dmz-gw-01-0",
+          "gatewayId": "perim-dmz-gw-01",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4yNC4xMDAuMjU0IGRldiBldGgwIHByb3RvIHN0YXRpYwoxMC41MC4xLjAvMjQgZGV2IGV0aDEgcHJvdG8ga2VybmVsIHNjb3BlIGxpbmsgc3JjIDEwLjUwLjEuMQo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cg==",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

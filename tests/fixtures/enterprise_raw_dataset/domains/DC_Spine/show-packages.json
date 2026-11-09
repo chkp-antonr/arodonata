@@ -1,0 +1,193 @@
+{
+  "packages": [
+    {
+      "uid": "uid-pkg-dc_spine",
+      "name": "DC_Spine_VS_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-dc-vsx-spine-vs01",
+          "name": "dc-vsx-spine-vs01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs02",
+          "name": "dc-vsx-spine-vs02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs03",
+          "name": "dc-vsx-spine-vs03",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs04",
+          "name": "dc-vsx-spine-vs04",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs05",
+          "name": "dc-vsx-spine-vs05",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs06",
+          "name": "dc-vsx-spine-vs06",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs07",
+          "name": "dc-vsx-spine-vs07",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs08",
+          "name": "dc-vsx-spine-vs08",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs09",
+          "name": "dc-vsx-spine-vs09",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs10",
+          "name": "dc-vsx-spine-vs10",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs11",
+          "name": "dc-vsx-spine-vs11",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs12",
+          "name": "dc-vsx-spine-vs12",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs13",
+          "name": "dc-vsx-spine-vs13",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs14",
+          "name": "dc-vsx-spine-vs14",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs15",
+          "name": "dc-vsx-spine-vs15",
+          "type": "CpmiVsNetobj"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-dc_spine-security",
+          "name": "DC_Spine_VS_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "uid": "uid-pkg-dc_spine",
+      "name": "DC_Spine_VS_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-dc-vsx-spine-vs01",
+          "name": "dc-vsx-spine-vs01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs02",
+          "name": "dc-vsx-spine-vs02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs03",
+          "name": "dc-vsx-spine-vs03",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs04",
+          "name": "dc-vsx-spine-vs04",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs05",
+          "name": "dc-vsx-spine-vs05",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs06",
+          "name": "dc-vsx-spine-vs06",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs07",
+          "name": "dc-vsx-spine-vs07",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs08",
+          "name": "dc-vsx-spine-vs08",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs09",
+          "name": "dc-vsx-spine-vs09",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs10",
+          "name": "dc-vsx-spine-vs10",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs11",
+          "name": "dc-vsx-spine-vs11",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs12",
+          "name": "dc-vsx-spine-vs12",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs13",
+          "name": "dc-vsx-spine-vs13",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs14",
+          "name": "dc-vsx-spine-vs14",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-vsx-spine-vs15",
+          "name": "dc-vsx-spine-vs15",
+          "type": "CpmiVsNetobj"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-dc_spine-security",
+          "name": "DC_Spine_VS_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

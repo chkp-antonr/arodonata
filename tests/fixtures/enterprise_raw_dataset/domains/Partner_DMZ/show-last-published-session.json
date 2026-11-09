@@ -1,0 +1,16 @@
+{
+  "uid": "sess-pub-partner_dmz-001",
+  "name": "AutoPublish-Partner_DMZ",
+  "user-name": "admin",
+  "publish-time": {
+    "posix": 1794171600000,
+    "iso-8601": "2026-11-08T19:00:00Z"
+  },
+  "last-modify-time": {
+    "posix": 1794171600000,
+    "iso-8601": "2026-11-08T19:00:00Z"
+  },
+  "changes": 0,
+  "locks": 0,
+  "number-of-published-changes": 12
+}

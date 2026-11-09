@@ -1,0 +1,10 @@
+===ARODONATA_IP_ROUTE_START===
+default via 198.51.100.254 dev eth0 proto static
+10.0.0.0/8 via 172.25.101.254 dev eth1 proto bgp
+10.64.0.0/12 via 172.25.102.254 dev eth2 proto bgp
+10.70.0.0/16 via 172.25.103.254 dev eth3 proto ospf
+10.70.4.0/22 via 172.25.104.254 dev eth4 proto ospf
+10.70.5.0/24 via 172.25.105.254 dev eth5 proto ospf
+10.70.5.16/28 via 172.25.106.254 dev eth6 proto static
+10.70.5.20/32 via 172.25.107.254 dev eth7 proto static
+===ARODONATA_IP_ROUTE_END===

@@ -1,0 +1,490 @@
+{
+  "objects": [
+    {
+      "uid": "uid-tr-net-west",
+      "name": "N_Transit_West_10_11",
+      "type": "network",
+      "subnet4": "10.11.0.0",
+      "mask-length4": 16
+    },
+    {
+      "uid": "uid-tr-net-east",
+      "name": "N_Transit_East_10_220",
+      "type": "network",
+      "subnet4": "10.220.0.0",
+      "mask-length4": 16
+    },
+    {
+      "uid": "uid-tr-net-audit-detect",
+      "name": "N_Audit_Detect_Sub",
+      "type": "network",
+      "subnet4": "10.254.2.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-lpm-net-8",
+      "name": "N_Matryoshka_Slash8",
+      "type": "network",
+      "subnet4": "10.0.0.0",
+      "mask-length4": 8
+    },
+    {
+      "uid": "uid-lpm-net-12",
+      "name": "N_Matryoshka_Slash12",
+      "type": "network",
+      "subnet4": "10.64.0.0",
+      "mask-length4": 12
+    },
+    {
+      "uid": "uid-lpm-net-16",
+      "name": "N_Matryoshka_Slash16",
+      "type": "network",
+      "subnet4": "10.70.0.0",
+      "mask-length4": 16
+    },
+    {
+      "uid": "uid-lpm-net-22",
+      "name": "N_Matryoshka_Slash22",
+      "type": "network",
+      "subnet4": "10.70.4.0",
+      "mask-length4": 22
+    },
+    {
+      "uid": "uid-lpm-net-24",
+      "name": "N_Matryoshka_Slash24",
+      "type": "network",
+      "subnet4": "10.70.5.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-lpm-net-28",
+      "name": "N_Matryoshka_Slash28",
+      "type": "network",
+      "subnet4": "10.70.5.16",
+      "mask-length4": 28
+    },
+    {
+      "uid": "uid-transit-bulk-net-001",
+      "name": "N_Transit_Segment_001",
+      "type": "network",
+      "subnet4": "10.145.1.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-002",
+      "name": "N_Transit_Segment_002",
+      "type": "network",
+      "subnet4": "10.145.2.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-003",
+      "name": "N_Transit_Segment_003",
+      "type": "network",
+      "subnet4": "10.145.3.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-004",
+      "name": "N_Transit_Segment_004",
+      "type": "network",
+      "subnet4": "10.145.4.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-005",
+      "name": "N_Transit_Segment_005",
+      "type": "network",
+      "subnet4": "10.145.5.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-006",
+      "name": "N_Transit_Segment_006",
+      "type": "network",
+      "subnet4": "10.145.6.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-007",
+      "name": "N_Transit_Segment_007",
+      "type": "network",
+      "subnet4": "10.145.7.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-008",
+      "name": "N_Transit_Segment_008",
+      "type": "network",
+      "subnet4": "10.145.8.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-009",
+      "name": "N_Transit_Segment_009",
+      "type": "network",
+      "subnet4": "10.145.9.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-010",
+      "name": "N_Transit_Segment_010",
+      "type": "network",
+      "subnet4": "10.145.10.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-011",
+      "name": "N_Transit_Segment_011",
+      "type": "network",
+      "subnet4": "10.145.11.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-012",
+      "name": "N_Transit_Segment_012",
+      "type": "network",
+      "subnet4": "10.145.12.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-013",
+      "name": "N_Transit_Segment_013",
+      "type": "network",
+      "subnet4": "10.145.13.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-014",
+      "name": "N_Transit_Segment_014",
+      "type": "network",
+      "subnet4": "10.145.14.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-015",
+      "name": "N_Transit_Segment_015",
+      "type": "network",
+      "subnet4": "10.145.15.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-016",
+      "name": "N_Transit_Segment_016",
+      "type": "network",
+      "subnet4": "10.145.16.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-017",
+      "name": "N_Transit_Segment_017",
+      "type": "network",
+      "subnet4": "10.145.17.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-018",
+      "name": "N_Transit_Segment_018",
+      "type": "network",
+      "subnet4": "10.145.18.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-019",
+      "name": "N_Transit_Segment_019",
+      "type": "network",
+      "subnet4": "10.145.19.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-020",
+      "name": "N_Transit_Segment_020",
+      "type": "network",
+      "subnet4": "10.145.20.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-021",
+      "name": "N_Transit_Segment_021",
+      "type": "network",
+      "subnet4": "10.145.21.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-022",
+      "name": "N_Transit_Segment_022",
+      "type": "network",
+      "subnet4": "10.145.22.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-023",
+      "name": "N_Transit_Segment_023",
+      "type": "network",
+      "subnet4": "10.145.23.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-024",
+      "name": "N_Transit_Segment_024",
+      "type": "network",
+      "subnet4": "10.145.24.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-025",
+      "name": "N_Transit_Segment_025",
+      "type": "network",
+      "subnet4": "10.145.25.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-026",
+      "name": "N_Transit_Segment_026",
+      "type": "network",
+      "subnet4": "10.145.26.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-027",
+      "name": "N_Transit_Segment_027",
+      "type": "network",
+      "subnet4": "10.145.27.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-028",
+      "name": "N_Transit_Segment_028",
+      "type": "network",
+      "subnet4": "10.145.28.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-029",
+      "name": "N_Transit_Segment_029",
+      "type": "network",
+      "subnet4": "10.145.29.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-030",
+      "name": "N_Transit_Segment_030",
+      "type": "network",
+      "subnet4": "10.145.30.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-031",
+      "name": "N_Transit_Segment_031",
+      "type": "network",
+      "subnet4": "10.145.31.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-032",
+      "name": "N_Transit_Segment_032",
+      "type": "network",
+      "subnet4": "10.145.32.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-033",
+      "name": "N_Transit_Segment_033",
+      "type": "network",
+      "subnet4": "10.145.33.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-034",
+      "name": "N_Transit_Segment_034",
+      "type": "network",
+      "subnet4": "10.145.34.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-035",
+      "name": "N_Transit_Segment_035",
+      "type": "network",
+      "subnet4": "10.145.35.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-036",
+      "name": "N_Transit_Segment_036",
+      "type": "network",
+      "subnet4": "10.145.36.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-037",
+      "name": "N_Transit_Segment_037",
+      "type": "network",
+      "subnet4": "10.145.37.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-038",
+      "name": "N_Transit_Segment_038",
+      "type": "network",
+      "subnet4": "10.145.38.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-039",
+      "name": "N_Transit_Segment_039",
+      "type": "network",
+      "subnet4": "10.145.39.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-040",
+      "name": "N_Transit_Segment_040",
+      "type": "network",
+      "subnet4": "10.145.40.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-041",
+      "name": "N_Transit_Segment_041",
+      "type": "network",
+      "subnet4": "10.145.41.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-042",
+      "name": "N_Transit_Segment_042",
+      "type": "network",
+      "subnet4": "10.145.42.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-043",
+      "name": "N_Transit_Segment_043",
+      "type": "network",
+      "subnet4": "10.145.43.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-044",
+      "name": "N_Transit_Segment_044",
+      "type": "network",
+      "subnet4": "10.145.44.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-045",
+      "name": "N_Transit_Segment_045",
+      "type": "network",
+      "subnet4": "10.145.45.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-046",
+      "name": "N_Transit_Segment_046",
+      "type": "network",
+      "subnet4": "10.145.46.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-047",
+      "name": "N_Transit_Segment_047",
+      "type": "network",
+      "subnet4": "10.145.47.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-048",
+      "name": "N_Transit_Segment_048",
+      "type": "network",
+      "subnet4": "10.145.48.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-049",
+      "name": "N_Transit_Segment_049",
+      "type": "network",
+      "subnet4": "10.145.49.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-050",
+      "name": "N_Transit_Segment_050",
+      "type": "network",
+      "subnet4": "10.145.50.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-051",
+      "name": "N_Transit_Segment_051",
+      "type": "network",
+      "subnet4": "10.145.51.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-052",
+      "name": "N_Transit_Segment_052",
+      "type": "network",
+      "subnet4": "10.145.52.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-053",
+      "name": "N_Transit_Segment_053",
+      "type": "network",
+      "subnet4": "10.145.53.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-054",
+      "name": "N_Transit_Segment_054",
+      "type": "network",
+      "subnet4": "10.145.54.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-055",
+      "name": "N_Transit_Segment_055",
+      "type": "network",
+      "subnet4": "10.145.55.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-056",
+      "name": "N_Transit_Segment_056",
+      "type": "network",
+      "subnet4": "10.145.56.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-057",
+      "name": "N_Transit_Segment_057",
+      "type": "network",
+      "subnet4": "10.145.57.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-058",
+      "name": "N_Transit_Segment_058",
+      "type": "network",
+      "subnet4": "10.145.58.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-059",
+      "name": "N_Transit_Segment_059",
+      "type": "network",
+      "subnet4": "10.145.59.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-transit-bulk-net-060",
+      "name": "N_Transit_Segment_060",
+      "type": "network",
+      "subnet4": "10.145.60.0",
+      "mask-length4": 24
+    }
+  ],
+  "from": 1,
+  "to": 69,
+  "total": 69
+}

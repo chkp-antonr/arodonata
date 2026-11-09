@@ -1042,4 +1042,3 @@ async def test_unreachable_server_fails_fast_and_startup_cleanup_handles_error_c
     assert results is False
 
     await client.close()
-

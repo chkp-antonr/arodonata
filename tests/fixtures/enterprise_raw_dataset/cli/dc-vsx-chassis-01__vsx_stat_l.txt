@@ -1,0 +1,117 @@
+VSX Gateway Status
+==================
+VSID:            0
+Name:            dc-vsx-chassis-01
+Type:            VSX Gateway
+
+VSID:            1
+Name:            dc-vsx-spine-vs01
+Type:            Virtual System
+
+VSID:            11
+Name:            dc-vs-tier1-web
+Type:            Virtual System
+
+VSID:            12
+Name:            dc-vs-tier2-app
+Type:            Virtual System
+
+VSID:            21
+Name:            dc-vs-pod-21
+Type:            Virtual System
+
+VSID:            22
+Name:            dc-vs-pod-22
+Type:            Virtual System
+
+VSID:            23
+Name:            dc-vs-pod-23
+Type:            Virtual System
+
+VSID:            24
+Name:            dc-vs-pod-24
+Type:            Virtual System
+
+VSID:            25
+Name:            dc-vs-pod-25
+Type:            Virtual System
+
+VSID:            26
+Name:            dc-vs-pod-26
+Type:            Virtual System
+
+VSID:            27
+Name:            dc-vs-pod-27
+Type:            Virtual System
+
+VSID:            28
+Name:            dc-vs-pod-28
+Type:            Virtual System
+
+VSID:            29
+Name:            dc-vs-pod-29
+Type:            Virtual System
+
+VSID:            30
+Name:            dc-vs-pod-30
+Type:            Virtual System
+
+VSID:            31
+Name:            dc-vs-pod-31
+Type:            Virtual System
+
+VSID:            32
+Name:            dc-vs-pod-32
+Type:            Virtual System
+
+VSID:            33
+Name:            dc-vs-pod-33
+Type:            Virtual System
+
+VSID:            34
+Name:            dc-vs-pod-34
+Type:            Virtual System
+
+VSID:            35
+Name:            dc-vs-pod-35
+Type:            Virtual System
+
+VSID:            36
+Name:            dc-vs-pod-36
+Type:            Virtual System
+
+VSID:            37
+Name:            dc-vs-pod-37
+Type:            Virtual System
+
+VSID:            38
+Name:            dc-vs-pod-38
+Type:            Virtual System
+
+VSID:            39
+Name:            dc-vs-pod-39
+Type:            Virtual System
+
+VSID:            40
+Name:            dc-vs-pod-40
+Type:            Virtual System
+
+VSID:            41
+Name:            dc-vs-pod-41
+Type:            Virtual System
+
+VSID:            42
+Name:            dc-vs-pod-42
+Type:            Virtual System
+
+VSID:            43
+Name:            dc-vs-pod-43
+Type:            Virtual System
+
+VSID:            44
+Name:            dc-vs-pod-44
+Type:            Virtual System
+
+VSID:            45
+Name:            dc-vs-pod-45
+Type:            Virtual System

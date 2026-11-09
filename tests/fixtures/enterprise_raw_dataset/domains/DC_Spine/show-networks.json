@@ -1,0 +1,427 @@
+{
+  "objects": [
+    {
+      "uid": "uid-dc_spine-bulk-net-001",
+      "name": "N_DC_Spine_Segment_001",
+      "type": "network",
+      "subnet4": "10.146.1.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-002",
+      "name": "N_DC_Spine_Segment_002",
+      "type": "network",
+      "subnet4": "10.146.2.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-003",
+      "name": "N_DC_Spine_Segment_003",
+      "type": "network",
+      "subnet4": "10.146.3.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-004",
+      "name": "N_DC_Spine_Segment_004",
+      "type": "network",
+      "subnet4": "10.146.4.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-005",
+      "name": "N_DC_Spine_Segment_005",
+      "type": "network",
+      "subnet4": "10.146.5.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-006",
+      "name": "N_DC_Spine_Segment_006",
+      "type": "network",
+      "subnet4": "10.146.6.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-007",
+      "name": "N_DC_Spine_Segment_007",
+      "type": "network",
+      "subnet4": "10.146.7.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-008",
+      "name": "N_DC_Spine_Segment_008",
+      "type": "network",
+      "subnet4": "10.146.8.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-009",
+      "name": "N_DC_Spine_Segment_009",
+      "type": "network",
+      "subnet4": "10.146.9.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-010",
+      "name": "N_DC_Spine_Segment_010",
+      "type": "network",
+      "subnet4": "10.146.10.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-011",
+      "name": "N_DC_Spine_Segment_011",
+      "type": "network",
+      "subnet4": "10.146.11.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-012",
+      "name": "N_DC_Spine_Segment_012",
+      "type": "network",
+      "subnet4": "10.146.12.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-013",
+      "name": "N_DC_Spine_Segment_013",
+      "type": "network",
+      "subnet4": "10.146.13.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-014",
+      "name": "N_DC_Spine_Segment_014",
+      "type": "network",
+      "subnet4": "10.146.14.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-015",
+      "name": "N_DC_Spine_Segment_015",
+      "type": "network",
+      "subnet4": "10.146.15.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-016",
+      "name": "N_DC_Spine_Segment_016",
+      "type": "network",
+      "subnet4": "10.146.16.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-017",
+      "name": "N_DC_Spine_Segment_017",
+      "type": "network",
+      "subnet4": "10.146.17.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-018",
+      "name": "N_DC_Spine_Segment_018",
+      "type": "network",
+      "subnet4": "10.146.18.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-019",
+      "name": "N_DC_Spine_Segment_019",
+      "type": "network",
+      "subnet4": "10.146.19.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-020",
+      "name": "N_DC_Spine_Segment_020",
+      "type": "network",
+      "subnet4": "10.146.20.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-021",
+      "name": "N_DC_Spine_Segment_021",
+      "type": "network",
+      "subnet4": "10.146.21.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-022",
+      "name": "N_DC_Spine_Segment_022",
+      "type": "network",
+      "subnet4": "10.146.22.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-023",
+      "name": "N_DC_Spine_Segment_023",
+      "type": "network",
+      "subnet4": "10.146.23.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-024",
+      "name": "N_DC_Spine_Segment_024",
+      "type": "network",
+      "subnet4": "10.146.24.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-025",
+      "name": "N_DC_Spine_Segment_025",
+      "type": "network",
+      "subnet4": "10.146.25.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-026",
+      "name": "N_DC_Spine_Segment_026",
+      "type": "network",
+      "subnet4": "10.146.26.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-027",
+      "name": "N_DC_Spine_Segment_027",
+      "type": "network",
+      "subnet4": "10.146.27.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-028",
+      "name": "N_DC_Spine_Segment_028",
+      "type": "network",
+      "subnet4": "10.146.28.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-029",
+      "name": "N_DC_Spine_Segment_029",
+      "type": "network",
+      "subnet4": "10.146.29.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-030",
+      "name": "N_DC_Spine_Segment_030",
+      "type": "network",
+      "subnet4": "10.146.30.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-031",
+      "name": "N_DC_Spine_Segment_031",
+      "type": "network",
+      "subnet4": "10.146.31.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-032",
+      "name": "N_DC_Spine_Segment_032",
+      "type": "network",
+      "subnet4": "10.146.32.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-033",
+      "name": "N_DC_Spine_Segment_033",
+      "type": "network",
+      "subnet4": "10.146.33.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-034",
+      "name": "N_DC_Spine_Segment_034",
+      "type": "network",
+      "subnet4": "10.146.34.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-035",
+      "name": "N_DC_Spine_Segment_035",
+      "type": "network",
+      "subnet4": "10.146.35.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-036",
+      "name": "N_DC_Spine_Segment_036",
+      "type": "network",
+      "subnet4": "10.146.36.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-037",
+      "name": "N_DC_Spine_Segment_037",
+      "type": "network",
+      "subnet4": "10.146.37.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-038",
+      "name": "N_DC_Spine_Segment_038",
+      "type": "network",
+      "subnet4": "10.146.38.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-039",
+      "name": "N_DC_Spine_Segment_039",
+      "type": "network",
+      "subnet4": "10.146.39.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-040",
+      "name": "N_DC_Spine_Segment_040",
+      "type": "network",
+      "subnet4": "10.146.40.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-041",
+      "name": "N_DC_Spine_Segment_041",
+      "type": "network",
+      "subnet4": "10.146.41.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-042",
+      "name": "N_DC_Spine_Segment_042",
+      "type": "network",
+      "subnet4": "10.146.42.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-043",
+      "name": "N_DC_Spine_Segment_043",
+      "type": "network",
+      "subnet4": "10.146.43.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-044",
+      "name": "N_DC_Spine_Segment_044",
+      "type": "network",
+      "subnet4": "10.146.44.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-045",
+      "name": "N_DC_Spine_Segment_045",
+      "type": "network",
+      "subnet4": "10.146.45.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-046",
+      "name": "N_DC_Spine_Segment_046",
+      "type": "network",
+      "subnet4": "10.146.46.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-047",
+      "name": "N_DC_Spine_Segment_047",
+      "type": "network",
+      "subnet4": "10.146.47.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-048",
+      "name": "N_DC_Spine_Segment_048",
+      "type": "network",
+      "subnet4": "10.146.48.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-049",
+      "name": "N_DC_Spine_Segment_049",
+      "type": "network",
+      "subnet4": "10.146.49.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-050",
+      "name": "N_DC_Spine_Segment_050",
+      "type": "network",
+      "subnet4": "10.146.50.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-051",
+      "name": "N_DC_Spine_Segment_051",
+      "type": "network",
+      "subnet4": "10.146.51.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-052",
+      "name": "N_DC_Spine_Segment_052",
+      "type": "network",
+      "subnet4": "10.146.52.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-053",
+      "name": "N_DC_Spine_Segment_053",
+      "type": "network",
+      "subnet4": "10.146.53.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-054",
+      "name": "N_DC_Spine_Segment_054",
+      "type": "network",
+      "subnet4": "10.146.54.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-055",
+      "name": "N_DC_Spine_Segment_055",
+      "type": "network",
+      "subnet4": "10.146.55.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-056",
+      "name": "N_DC_Spine_Segment_056",
+      "type": "network",
+      "subnet4": "10.146.56.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-057",
+      "name": "N_DC_Spine_Segment_057",
+      "type": "network",
+      "subnet4": "10.146.57.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-058",
+      "name": "N_DC_Spine_Segment_058",
+      "type": "network",
+      "subnet4": "10.146.58.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-059",
+      "name": "N_DC_Spine_Segment_059",
+      "type": "network",
+      "subnet4": "10.146.59.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_spine-bulk-net-060",
+      "name": "N_DC_Spine_Segment_060",
+      "type": "network",
+      "subnet4": "10.146.60.0",
+      "mask-length4": 24
+    }
+  ],
+  "from": 1,
+  "to": 60,
+  "total": 60
+}

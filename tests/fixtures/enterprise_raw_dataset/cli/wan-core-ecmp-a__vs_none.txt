@@ -1,0 +1,13 @@
+===ARODONATA_IP_ROUTE_START===
+default via 172.23.0.1 dev eth0 proto static
+10.11.0.0/16 via 172.23.10.253 dev bond0.10 proto bgp
+10.11.0.0/16 via 172.23.10.254 dev bond0.10 proto bgp
+10.220.0.0/16 via 172.23.20.253 dev bond0.20 proto bgp
+10.220.0.0/16 via 172.23.20.254 dev bond0.20 proto bgp
+===ARODONATA_IP_ROUTE_END===
+===ARODONATA_CLISH_ROUTE_START===
+Codes: C - Connected, S - Static, R - RIP, B - BGP, O - OSPF, I - IS-IS, A - Aggregate, K - Kernel
+S 0.0.0.0/0 via 172.23.0.1, eth0
+B 10.11.0.0/16 via 172.23.10.253, bond0.10
+B 10.220.0.0/16 via 172.23.20.253, bond0.20
+===ARODONATA_CLISH_ROUTE_END===

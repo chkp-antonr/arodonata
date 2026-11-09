@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-partner-onearm-gw-04-0",
+      "task-name": "arodonata-route-collect-partner-onearm-gw-04",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-partner-onearm-gw-04-0",
+          "gatewayId": "partner-onearm-gw-04",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CjE3Mi4zMS40LjAvMjQgZGV2IGV0aDAgcHJvdG8ga2VybmVsIHNjb3BlIGxpbmsgc3JjIDE3Mi4zMS40LjEKPT09QVJPRE9OQVRBX0lQX1JPVVRFX0VORD09PQo=",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

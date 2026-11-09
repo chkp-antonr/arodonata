@@ -23,6 +23,7 @@ Provides:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -946,6 +947,7 @@ class TopologyService:
             ):
                 yield event
 
+        refreshed_labels: list[str] = []
         async for event in self._coordinator.stream_ensure(
             scope="topology",
             item_types=["*"],
@@ -956,13 +958,18 @@ class TopologyService:
             mode=mode,
             cache_ttl=cache_ttl,
         ):
+            if isinstance(event, SyncCompletedEvent):
+                refreshed_labels = list(event.details.get("refreshed_domains") or [])
             yield event
 
         if collect_routes and mode != "cache":
-            await self.collect_gateway_routes(
+            await self._collect_routes_for_refresh(
                 mgmt_name=mgmt_name,
                 domains=domains,
                 include_global=include_global,
+                mode=mode,
+                refreshed_domain_labels=refreshed_labels,
+                cache_ttl=cache_ttl,
             )
 
     @traced
@@ -1035,12 +1042,79 @@ class TopologyService:
             cache_ttl=cache_ttl,
         )
         if collect_routes and mode != "cache":
+            await self._collect_routes_for_refresh(
+                mgmt_name=mgmt_name,
+                domains=domains,
+                include_global=include_global,
+                mode=mode,
+                refreshed_domain_labels=outcome.refreshed_domains,
+                cache_ttl=cache_ttl,
+            )
+        return outcome
+
+    async def _collect_routes_for_refresh(
+        self,
+        *,
+        mgmt_name: str | None,
+        domains: Sequence[str] | str | None,
+        include_global: bool,
+        mode: CacheMode,
+        refreshed_domain_labels: Sequence[str],
+        cache_ttl: float | None = None,
+    ) -> None:
+        """Collect live gateway routes during `refresh_topology`, skipping domains whose routes are already fresh in `smart` mode."""
+        if mode == "cache":
+            return
+        if mode == "force":
             await self.collect_gateway_routes(
                 mgmt_name=mgmt_name,
                 domains=domains,
                 include_global=include_global,
             )
-        return outcome
+            return
+
+        target_domains = await self._coordinator.resolve_target_domains(
+            mgmt_name=mgmt_name,
+            domains=domains,
+            include_global=include_global,
+            mode="cache",
+        )
+        all_assets = await self._cache.get_assets(mgmt_name=mgmt_name)
+        domains_with_gateways: set[tuple[str, str]] = {
+            (a.mgmt_name, a.domain_name) for a in all_assets if is_policy_enforcing_gateway(a)
+        }
+        refreshed_set = set(refreshed_domain_labels)
+        now = self._now()
+        eff_ttl = float(cache_ttl) if cache_ttl is not None else float(self._settings.cache_ttl)
+        domains_to_collect: dict[str, list[str]] = defaultdict(list)
+
+        for dom in target_domains:
+            if (dom.mgmt_name, dom.name) not in domains_with_gateways:
+                continue
+            dom_label = f"{dom.mgmt_name}:{dom.name}"
+            if dom_label in refreshed_set or self._coordinator._is_domain_invalidated(dom.mgmt_name, dom.name):
+                domains_to_collect[dom.mgmt_name].append(dom.name)
+                continue
+            route_state = await self._cache.get_sync_state(
+                dom.mgmt_name,
+                dom.name,
+                "topology",
+                "routes",
+            )
+            if route_state is None or route_state.status != "ok" or route_state.synced_at is None:
+                domains_to_collect[dom.mgmt_name].append(dom.name)
+                continue
+            if eff_ttl > 0:
+                age = (now - route_state.synced_at).total_seconds()
+                if age >= eff_ttl:
+                    domains_to_collect[dom.mgmt_name].append(dom.name)
+
+        for m_name, dom_names in domains_to_collect.items():
+            await self.collect_gateway_routes(
+                mgmt_name=m_name,
+                domains=dom_names,
+                include_global=include_global or ("Global" in dom_names),
+            )
 
     async def _stream_targeted_gateway_refresh(
         self,
@@ -2279,6 +2353,20 @@ class TopologyService:
         for a in all_mgmt_assets:
             dom_assets_by_key[(a.mgmt_name, a.domain_name)].append(a)
 
+        cprid_sessions: dict[tuple[str, str], tuple[str, str]] = {}
+        cprid_session_locks: dict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
+
+        async def _get_cprid_session(m_name: str, d_name: str) -> tuple[str, str]:
+            key = (m_name, d_name)
+            async with cprid_session_locks[key]:
+                if key not in cprid_sessions:
+                    cprid_sessions[key] = await self._api.create_dedicated_session(
+                        m_name,
+                        domain=d_name,
+                        session_name="arodonata-route-collect",
+                    )
+                return cprid_sessions[key]
+
         async def _run_target(target: Any) -> tuple[Any, Any]:
             async with sem:
                 script = build_route_collection_script(vsid=target.vsid, vs_name=target.vs_name)
@@ -2289,6 +2377,7 @@ class TopologyService:
                     gateway_cli=eff_cli,
                     fallback_to_cprid=fallback_to_cprid,
                     timeout=timeout,
+                    cprid_session_getter=_get_cprid_session,
                 )
                 return target, res
 
@@ -2406,11 +2495,40 @@ class TopologyService:
                 len(route_entries),
             )
 
-        results = await asyncio.gather(*(_collect_for_gateway(gw) for gw in sorted_gateways))
+        try:
+            results = await asyncio.gather(*(_collect_for_gateway(gw) for gw in sorted_gateways))
+        finally:
+            for (m_name, _d_name), (ded_sid, ded_ip) in list(cprid_sessions.items()):
+                with contextlib.suppress(Exception):
+                    await self._api.logout_sid(m_name, ded_sid, server_ip=ded_ip)
+
         statuses = [st for st, _ in results]
         succeeded_count = sum(1 for st in statuses if st.success)
         failed_count = len(statuses) - succeeded_count
         total_routes_count = sum(cnt for _, cnt in results)
+
+        # If any gateway in a domain failed route collection, downgrade the domain-level `routes` sync state
+        # so subsequent `smart` refreshes retry route collection for that domain.
+        failed_by_dom: dict[tuple[str, str], list[str]] = defaultdict(list)
+        routes_count_by_dom: dict[tuple[str, str], int] = defaultdict(int)
+        for st, cnt in results:
+            routes_count_by_dom[(st.mgmt_name, st.domain_name)] += cnt
+            if not st.success:
+                failed_by_dom[(st.mgmt_name, st.domain_name)].append(f"{st.gateway_name}: {st.error or 'failed'}")
+
+        for (m_name, d_name), errs in failed_by_dom.items():
+            await self._cache.upsert_sync_state(
+                DomainSyncState(
+                    mgmt_name=m_name,
+                    domain_name=d_name,
+                    scope="topology",
+                    item_type="routes",
+                    synced_at=now,
+                    status="failed",
+                    object_count=routes_count_by_dom[(m_name, d_name)],
+                    last_error="; ".join(errs),
+                )
+            )
 
         return RouteCollectionOutcome(
             total_gateways=len(target_gateways),

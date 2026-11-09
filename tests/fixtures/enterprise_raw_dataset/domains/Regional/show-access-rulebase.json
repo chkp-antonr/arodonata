@@ -1,0 +1,3317 @@
+{
+  "uid-layer-regional-security": {
+    "uid": "uid-layer-regional-security",
+    "name": "Regional_Hub_Pkg Network",
+    "rulebase": [
+      {
+        "uid": "uid-asec-regional-01",
+        "name": "Section 1 - Regional Traffic",
+        "type": "access-section",
+        "from": 1,
+        "to": 35,
+        "rulebase": [
+          {
+            "uid": "uid-arule-regional-0001",
+            "name": "Regional_Rule_001",
+            "type": "access-rule",
+            "rule-number": 1,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #1 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0002",
+            "name": "Regional_Rule_002",
+            "type": "access-rule",
+            "rule-number": 2,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #2 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0003",
+            "name": "Regional_Rule_003",
+            "type": "access-rule",
+            "rule-number": 3,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #3 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0004",
+            "name": "Regional_Rule_004",
+            "type": "access-rule",
+            "rule-number": 4,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #4 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0005",
+            "name": "Regional_Rule_005",
+            "type": "access-rule",
+            "rule-number": 5,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #5 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0006",
+            "name": "Regional_Rule_006",
+            "type": "access-rule",
+            "rule-number": 6,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #6 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0007",
+            "name": "Regional_Rule_007",
+            "type": "access-rule",
+            "rule-number": 7,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #7 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0008",
+            "name": "Regional_Rule_008",
+            "type": "access-rule",
+            "rule-number": 8,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #8 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0009",
+            "name": "Regional_Rule_009",
+            "type": "access-rule",
+            "rule-number": 9,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #9 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0010",
+            "name": "Regional_Rule_010",
+            "type": "access-rule",
+            "rule-number": 10,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #10 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0011",
+            "name": "Regional_Rule_011",
+            "type": "access-rule",
+            "rule-number": 11,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #11 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0012",
+            "name": "Regional_Rule_012",
+            "type": "access-rule",
+            "rule-number": 12,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #12 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0013",
+            "name": "Regional_Rule_013",
+            "type": "access-rule",
+            "rule-number": 13,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #13 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0014",
+            "name": "Regional_Rule_014",
+            "type": "access-rule",
+            "rule-number": 14,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #14 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0015",
+            "name": "Regional_Rule_015",
+            "type": "access-rule",
+            "rule-number": 15,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #15 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0016",
+            "name": "Regional_Rule_016",
+            "type": "access-rule",
+            "rule-number": 16,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-016"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #16 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0017",
+            "name": "Regional_Rule_017",
+            "type": "access-rule",
+            "rule-number": 17,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-017"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #17 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0018",
+            "name": "Regional_Rule_018",
+            "type": "access-rule",
+            "rule-number": 18,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-018"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #18 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0019",
+            "name": "Regional_Rule_019",
+            "type": "access-rule",
+            "rule-number": 19,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-019"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #19 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0020",
+            "name": "Regional_Rule_020",
+            "type": "access-rule",
+            "rule-number": 20,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-020"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #20 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0021",
+            "name": "Regional_Rule_021",
+            "type": "access-rule",
+            "rule-number": 21,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-021"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #21 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0022",
+            "name": "Regional_Rule_022",
+            "type": "access-rule",
+            "rule-number": 22,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-022"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #22 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0023",
+            "name": "Regional_Rule_023",
+            "type": "access-rule",
+            "rule-number": 23,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-023"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #23 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0024",
+            "name": "Regional_Rule_024",
+            "type": "access-rule",
+            "rule-number": 24,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-024"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #24 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0025",
+            "name": "Regional_Rule_025",
+            "type": "access-rule",
+            "rule-number": 25,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-025"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #25 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0026",
+            "name": "Regional_Rule_026",
+            "type": "access-rule",
+            "rule-number": 26,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-026"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #26 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0027",
+            "name": "Regional_Rule_027",
+            "type": "access-rule",
+            "rule-number": 27,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-027"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #27 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0028",
+            "name": "Regional_Rule_028",
+            "type": "access-rule",
+            "rule-number": 28,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-028"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #28 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0029",
+            "name": "Regional_Rule_029",
+            "type": "access-rule",
+            "rule-number": 29,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-029"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #29 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0030",
+            "name": "Regional_Rule_030",
+            "type": "access-rule",
+            "rule-number": 30,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-030"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #30 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0031",
+            "name": "Regional_Rule_031",
+            "type": "access-rule",
+            "rule-number": 31,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #31 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0032",
+            "name": "Regional_Rule_032",
+            "type": "access-rule",
+            "rule-number": 32,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #32 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0033",
+            "name": "Regional_Rule_033",
+            "type": "access-rule",
+            "rule-number": 33,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #33 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0034",
+            "name": "Regional_Rule_034",
+            "type": "access-rule",
+            "rule-number": 34,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #34 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0035",
+            "name": "Regional_Rule_035",
+            "type": "access-rule",
+            "rule-number": 35,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #35 in Regional"
+          }
+        ]
+      },
+      {
+        "uid": "uid-asec-regional-02",
+        "name": "Section 2 - Regional Traffic",
+        "type": "access-section",
+        "from": 36,
+        "to": 70,
+        "rulebase": [
+          {
+            "uid": "uid-arule-regional-0036",
+            "name": "Regional_Rule_036",
+            "type": "access-rule",
+            "rule-number": 36,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #36 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0037",
+            "name": "Regional_Rule_037",
+            "type": "access-rule",
+            "rule-number": 37,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #37 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0038",
+            "name": "Regional_Rule_038",
+            "type": "access-rule",
+            "rule-number": 38,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #38 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0039",
+            "name": "Regional_Rule_039",
+            "type": "access-rule",
+            "rule-number": 39,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #39 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0040",
+            "name": "Regional_Rule_040",
+            "type": "access-rule",
+            "rule-number": 40,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #40 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0041",
+            "name": "Regional_Rule_041",
+            "type": "access-rule",
+            "rule-number": 41,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #41 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0042",
+            "name": "Regional_Rule_042",
+            "type": "access-rule",
+            "rule-number": 42,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #42 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0043",
+            "name": "Regional_Rule_043",
+            "type": "access-rule",
+            "rule-number": 43,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #43 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0044",
+            "name": "Regional_Rule_044",
+            "type": "access-rule",
+            "rule-number": 44,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #44 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0045",
+            "name": "Regional_Rule_045",
+            "type": "access-rule",
+            "rule-number": 45,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #45 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0046",
+            "name": "Regional_Rule_046",
+            "type": "access-rule",
+            "rule-number": 46,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-016"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #46 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0047",
+            "name": "Regional_Rule_047",
+            "type": "access-rule",
+            "rule-number": 47,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-017"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #47 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0048",
+            "name": "Regional_Rule_048",
+            "type": "access-rule",
+            "rule-number": 48,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-018"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #48 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0049",
+            "name": "Regional_Rule_049",
+            "type": "access-rule",
+            "rule-number": 49,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-019"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #49 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0050",
+            "name": "Regional_Rule_050",
+            "type": "access-rule",
+            "rule-number": 50,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-020"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #50 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0051",
+            "name": "Regional_Rule_051",
+            "type": "access-rule",
+            "rule-number": 51,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-021"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #51 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0052",
+            "name": "Regional_Rule_052",
+            "type": "access-rule",
+            "rule-number": 52,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-022"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #52 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0053",
+            "name": "Regional_Rule_053",
+            "type": "access-rule",
+            "rule-number": 53,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-023"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #53 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0054",
+            "name": "Regional_Rule_054",
+            "type": "access-rule",
+            "rule-number": 54,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-024"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #54 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0055",
+            "name": "Regional_Rule_055",
+            "type": "access-rule",
+            "rule-number": 55,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-025"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #55 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0056",
+            "name": "Regional_Rule_056",
+            "type": "access-rule",
+            "rule-number": 56,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-026"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #56 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0057",
+            "name": "Regional_Rule_057",
+            "type": "access-rule",
+            "rule-number": 57,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-027"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #57 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0058",
+            "name": "Regional_Rule_058",
+            "type": "access-rule",
+            "rule-number": 58,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-028"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #58 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0059",
+            "name": "Regional_Rule_059",
+            "type": "access-rule",
+            "rule-number": 59,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-029"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #59 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0060",
+            "name": "Regional_Rule_060",
+            "type": "access-rule",
+            "rule-number": 60,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-030"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #60 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0061",
+            "name": "Regional_Rule_061",
+            "type": "access-rule",
+            "rule-number": 61,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #61 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0062",
+            "name": "Regional_Rule_062",
+            "type": "access-rule",
+            "rule-number": 62,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #62 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0063",
+            "name": "Regional_Rule_063",
+            "type": "access-rule",
+            "rule-number": 63,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #63 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0064",
+            "name": "Regional_Rule_064",
+            "type": "access-rule",
+            "rule-number": 64,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #64 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0065",
+            "name": "Regional_Rule_065",
+            "type": "access-rule",
+            "rule-number": 65,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #65 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0066",
+            "name": "Regional_Rule_066",
+            "type": "access-rule",
+            "rule-number": 66,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #66 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0067",
+            "name": "Regional_Rule_067",
+            "type": "access-rule",
+            "rule-number": 67,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #67 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0068",
+            "name": "Regional_Rule_068",
+            "type": "access-rule",
+            "rule-number": 68,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #68 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0069",
+            "name": "Regional_Rule_069",
+            "type": "access-rule",
+            "rule-number": 69,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #69 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0070",
+            "name": "Regional_Rule_070",
+            "type": "access-rule",
+            "rule-number": 70,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #70 in Regional"
+          }
+        ]
+      },
+      {
+        "uid": "uid-asec-regional-03",
+        "name": "Section 3 - Regional Traffic",
+        "type": "access-section",
+        "from": 71,
+        "to": 105,
+        "rulebase": [
+          {
+            "uid": "uid-arule-regional-0071",
+            "name": "Regional_Rule_071",
+            "type": "access-rule",
+            "rule-number": 71,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #71 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0072",
+            "name": "Regional_Rule_072",
+            "type": "access-rule",
+            "rule-number": 72,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #72 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0073",
+            "name": "Regional_Rule_073",
+            "type": "access-rule",
+            "rule-number": 73,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #73 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0074",
+            "name": "Regional_Rule_074",
+            "type": "access-rule",
+            "rule-number": 74,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #74 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0075",
+            "name": "Regional_Rule_075",
+            "type": "access-rule",
+            "rule-number": 75,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #75 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0076",
+            "name": "Regional_Rule_076",
+            "type": "access-rule",
+            "rule-number": 76,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-016"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #76 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0077",
+            "name": "Regional_Rule_077",
+            "type": "access-rule",
+            "rule-number": 77,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-017"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #77 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0078",
+            "name": "Regional_Rule_078",
+            "type": "access-rule",
+            "rule-number": 78,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-018"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #78 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0079",
+            "name": "Regional_Rule_079",
+            "type": "access-rule",
+            "rule-number": 79,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-019"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #79 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0080",
+            "name": "Regional_Rule_080",
+            "type": "access-rule",
+            "rule-number": 80,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-020"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #80 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0081",
+            "name": "Regional_Rule_081",
+            "type": "access-rule",
+            "rule-number": 81,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-021"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #81 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0082",
+            "name": "Regional_Rule_082",
+            "type": "access-rule",
+            "rule-number": 82,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-022"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #82 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0083",
+            "name": "Regional_Rule_083",
+            "type": "access-rule",
+            "rule-number": 83,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-023"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #83 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0084",
+            "name": "Regional_Rule_084",
+            "type": "access-rule",
+            "rule-number": 84,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-024"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #84 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0085",
+            "name": "Regional_Rule_085",
+            "type": "access-rule",
+            "rule-number": 85,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-025"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #85 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0086",
+            "name": "Regional_Rule_086",
+            "type": "access-rule",
+            "rule-number": 86,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-026"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #86 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0087",
+            "name": "Regional_Rule_087",
+            "type": "access-rule",
+            "rule-number": 87,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-027"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #87 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0088",
+            "name": "Regional_Rule_088",
+            "type": "access-rule",
+            "rule-number": 88,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-028"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #88 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0089",
+            "name": "Regional_Rule_089",
+            "type": "access-rule",
+            "rule-number": 89,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-029"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #89 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0090",
+            "name": "Regional_Rule_090",
+            "type": "access-rule",
+            "rule-number": 90,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-030"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #90 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0091",
+            "name": "Regional_Rule_091",
+            "type": "access-rule",
+            "rule-number": 91,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #91 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0092",
+            "name": "Regional_Rule_092",
+            "type": "access-rule",
+            "rule-number": 92,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #92 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0093",
+            "name": "Regional_Rule_093",
+            "type": "access-rule",
+            "rule-number": 93,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #93 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0094",
+            "name": "Regional_Rule_094",
+            "type": "access-rule",
+            "rule-number": 94,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #94 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0095",
+            "name": "Regional_Rule_095",
+            "type": "access-rule",
+            "rule-number": 95,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #95 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0096",
+            "name": "Regional_Rule_096",
+            "type": "access-rule",
+            "rule-number": 96,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #96 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0097",
+            "name": "Regional_Rule_097",
+            "type": "access-rule",
+            "rule-number": 97,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #97 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0098",
+            "name": "Regional_Rule_098",
+            "type": "access-rule",
+            "rule-number": 98,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #98 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0099",
+            "name": "Regional_Rule_099",
+            "type": "access-rule",
+            "rule-number": 99,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #99 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0100",
+            "name": "Regional_Rule_100",
+            "type": "access-rule",
+            "rule-number": 100,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #100 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0101",
+            "name": "Regional_Rule_101",
+            "type": "access-rule",
+            "rule-number": 101,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #101 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0102",
+            "name": "Regional_Rule_102",
+            "type": "access-rule",
+            "rule-number": 102,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #102 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0103",
+            "name": "Regional_Rule_103",
+            "type": "access-rule",
+            "rule-number": 103,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #103 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0104",
+            "name": "Regional_Rule_104",
+            "type": "access-rule",
+            "rule-number": 104,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-voip-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #104 in Regional"
+          },
+          {
+            "uid": "uid-arule-regional-0105",
+            "name": "Regional_Rule_105",
+            "type": "access-rule",
+            "rule-number": 105,
+            "enabled": true,
+            "source": [
+              "uid-regional-bulk-host-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-reg-net-b-lan-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-regional-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c473",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #105 in Regional"
+          }
+        ]
+      }
+    ],
+    "objects-dictionary": [
+      {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c473",
+        "name": "Drop",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "598ead32-aa42-4615-90ed-f51a5928d41d",
+        "name": "Log",
+        "type": "Track"
+      },
+      {
+        "uid": "uid-regional-bulk-host-001",
+        "name": "H_Regional_AppNode_001",
+        "type": "host",
+        "ipv4-address": "10.122.0.2",
+        "comments": "Enterprise host #1 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-002",
+        "name": "H_Regional_AppNode_002",
+        "type": "host",
+        "ipv4-address": "10.122.0.3",
+        "comments": "Enterprise host #2 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-003",
+        "name": "H_Regional_AppNode_003",
+        "type": "host",
+        "ipv4-address": "10.122.0.4",
+        "comments": "Enterprise host #3 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-004",
+        "name": "H_Regional_AppNode_004",
+        "type": "host",
+        "ipv4-address": "10.122.0.5",
+        "comments": "Enterprise host #4 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-005",
+        "name": "H_Regional_AppNode_005",
+        "type": "host",
+        "ipv4-address": "10.122.0.6",
+        "comments": "Enterprise host #5 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-006",
+        "name": "H_Regional_AppNode_006",
+        "type": "host",
+        "ipv4-address": "10.122.0.7",
+        "comments": "Enterprise host #6 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-007",
+        "name": "H_Regional_AppNode_007",
+        "type": "host",
+        "ipv4-address": "10.122.0.8",
+        "comments": "Enterprise host #7 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-008",
+        "name": "H_Regional_AppNode_008",
+        "type": "host",
+        "ipv4-address": "10.122.0.9",
+        "comments": "Enterprise host #8 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-009",
+        "name": "H_Regional_AppNode_009",
+        "type": "host",
+        "ipv4-address": "10.122.0.10",
+        "comments": "Enterprise host #9 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-010",
+        "name": "H_Regional_AppNode_010",
+        "type": "host",
+        "ipv4-address": "10.122.0.11",
+        "comments": "Enterprise host #10 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-011",
+        "name": "H_Regional_AppNode_011",
+        "type": "host",
+        "ipv4-address": "10.122.0.12",
+        "comments": "Enterprise host #11 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-012",
+        "name": "H_Regional_AppNode_012",
+        "type": "host",
+        "ipv4-address": "10.122.0.13",
+        "comments": "Enterprise host #12 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-013",
+        "name": "H_Regional_AppNode_013",
+        "type": "host",
+        "ipv4-address": "10.122.0.14",
+        "comments": "Enterprise host #13 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-014",
+        "name": "H_Regional_AppNode_014",
+        "type": "host",
+        "ipv4-address": "10.122.0.15",
+        "comments": "Enterprise host #14 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-015",
+        "name": "H_Regional_AppNode_015",
+        "type": "host",
+        "ipv4-address": "10.122.0.16",
+        "comments": "Enterprise host #15 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-016",
+        "name": "H_Regional_AppNode_016",
+        "type": "host",
+        "ipv4-address": "10.122.0.17",
+        "comments": "Enterprise host #16 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-017",
+        "name": "H_Regional_AppNode_017",
+        "type": "host",
+        "ipv4-address": "10.122.0.18",
+        "comments": "Enterprise host #17 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-018",
+        "name": "H_Regional_AppNode_018",
+        "type": "host",
+        "ipv4-address": "10.122.0.19",
+        "comments": "Enterprise host #18 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-019",
+        "name": "H_Regional_AppNode_019",
+        "type": "host",
+        "ipv4-address": "10.122.0.20",
+        "comments": "Enterprise host #19 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-020",
+        "name": "H_Regional_AppNode_020",
+        "type": "host",
+        "ipv4-address": "10.122.0.21",
+        "comments": "Enterprise host #20 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-021",
+        "name": "H_Regional_AppNode_021",
+        "type": "host",
+        "ipv4-address": "10.122.0.22",
+        "comments": "Enterprise host #21 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-022",
+        "name": "H_Regional_AppNode_022",
+        "type": "host",
+        "ipv4-address": "10.122.0.23",
+        "comments": "Enterprise host #22 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-023",
+        "name": "H_Regional_AppNode_023",
+        "type": "host",
+        "ipv4-address": "10.122.0.24",
+        "comments": "Enterprise host #23 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-024",
+        "name": "H_Regional_AppNode_024",
+        "type": "host",
+        "ipv4-address": "10.122.0.25",
+        "comments": "Enterprise host #24 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-025",
+        "name": "H_Regional_AppNode_025",
+        "type": "host",
+        "ipv4-address": "10.122.0.26",
+        "comments": "Enterprise host #25 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-026",
+        "name": "H_Regional_AppNode_026",
+        "type": "host",
+        "ipv4-address": "10.122.0.27",
+        "comments": "Enterprise host #26 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-027",
+        "name": "H_Regional_AppNode_027",
+        "type": "host",
+        "ipv4-address": "10.122.0.28",
+        "comments": "Enterprise host #27 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-028",
+        "name": "H_Regional_AppNode_028",
+        "type": "host",
+        "ipv4-address": "10.122.0.29",
+        "comments": "Enterprise host #28 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-029",
+        "name": "H_Regional_AppNode_029",
+        "type": "host",
+        "ipv4-address": "10.122.0.30",
+        "comments": "Enterprise host #29 in Regional"
+      },
+      {
+        "uid": "uid-regional-bulk-host-030",
+        "name": "H_Regional_AppNode_030",
+        "type": "host",
+        "ipv4-address": "10.122.0.31",
+        "comments": "Enterprise host #30 in Regional"
+      },
+      {
+        "uid": "uid-reg-net-b-lan-001",
+        "name": "N_Reg_Branch_001_LAN",
+        "type": "network",
+        "subnet4": "10.11.1.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-voip-001",
+        "name": "N_Reg_Branch_001_VoIP",
+        "type": "network",
+        "subnet4": "10.12.1.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-lan-002",
+        "name": "N_Reg_Branch_002_LAN",
+        "type": "network",
+        "subnet4": "10.11.2.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-voip-002",
+        "name": "N_Reg_Branch_002_VoIP",
+        "type": "network",
+        "subnet4": "10.12.2.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-lan-003",
+        "name": "N_Reg_Branch_003_LAN",
+        "type": "network",
+        "subnet4": "10.11.3.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-voip-003",
+        "name": "N_Reg_Branch_003_VoIP",
+        "type": "network",
+        "subnet4": "10.12.3.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-lan-004",
+        "name": "N_Reg_Branch_004_LAN",
+        "type": "network",
+        "subnet4": "10.11.4.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-voip-004",
+        "name": "N_Reg_Branch_004_VoIP",
+        "type": "network",
+        "subnet4": "10.12.4.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-lan-005",
+        "name": "N_Reg_Branch_005_LAN",
+        "type": "network",
+        "subnet4": "10.11.5.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-voip-005",
+        "name": "N_Reg_Branch_005_VoIP",
+        "type": "network",
+        "subnet4": "10.12.5.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-lan-006",
+        "name": "N_Reg_Branch_006_LAN",
+        "type": "network",
+        "subnet4": "10.11.6.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-voip-006",
+        "name": "N_Reg_Branch_006_VoIP",
+        "type": "network",
+        "subnet4": "10.12.6.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-lan-007",
+        "name": "N_Reg_Branch_007_LAN",
+        "type": "network",
+        "subnet4": "10.11.7.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-voip-007",
+        "name": "N_Reg_Branch_007_VoIP",
+        "type": "network",
+        "subnet4": "10.12.7.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-lan-008",
+        "name": "N_Reg_Branch_008_LAN",
+        "type": "network",
+        "subnet4": "10.11.8.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-voip-008",
+        "name": "N_Reg_Branch_008_VoIP",
+        "type": "network",
+        "subnet4": "10.12.8.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-lan-009",
+        "name": "N_Reg_Branch_009_LAN",
+        "type": "network",
+        "subnet4": "10.11.9.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-voip-009",
+        "name": "N_Reg_Branch_009_VoIP",
+        "type": "network",
+        "subnet4": "10.12.9.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-lan-010",
+        "name": "N_Reg_Branch_010_LAN",
+        "type": "network",
+        "subnet4": "10.11.10.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-reg-net-b-voip-010",
+        "name": "N_Reg_Branch_010_VoIP",
+        "type": "network",
+        "subnet4": "10.12.10.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-regional-svc-tcp-22",
+        "name": "SVC_Regional_TCP_22",
+        "type": "service-tcp",
+        "port": "22"
+      },
+      {
+        "uid": "uid-regional-svc-tcp-53",
+        "name": "SVC_Regional_TCP_53",
+        "type": "service-tcp",
+        "port": "53"
+      },
+      {
+        "uid": "uid-regional-svc-tcp-80",
+        "name": "SVC_Regional_TCP_80",
+        "type": "service-tcp",
+        "port": "80"
+      },
+      {
+        "uid": "uid-regional-svc-tcp-443",
+        "name": "SVC_Regional_TCP_443",
+        "type": "service-tcp",
+        "port": "443"
+      },
+      {
+        "uid": "uid-regional-svc-tcp-1521",
+        "name": "SVC_Regional_TCP_1521",
+        "type": "service-tcp",
+        "port": "1521"
+      },
+      {
+        "uid": "uid-regional-svc-tcp-3306",
+        "name": "SVC_Regional_TCP_3306",
+        "type": "service-tcp",
+        "port": "3306"
+      },
+      {
+        "uid": "uid-regional-svc-tcp-5432",
+        "name": "SVC_Regional_TCP_5432",
+        "type": "service-tcp",
+        "port": "5432"
+      },
+      {
+        "uid": "uid-regional-svc-tcp-6379",
+        "name": "SVC_Regional_TCP_6379",
+        "type": "service-tcp",
+        "port": "6379"
+      },
+      {
+        "uid": "uid-regional-svc-tcp-8080",
+        "name": "SVC_Regional_TCP_8080",
+        "type": "service-tcp",
+        "port": "8080"
+      },
+      {
+        "uid": "uid-regional-svc-tcp-8443",
+        "name": "SVC_Regional_TCP_8443",
+        "type": "service-tcp",
+        "port": "8443"
+      },
+      {
+        "uid": "uid-regional-svc-tcp-9092",
+        "name": "SVC_Regional_TCP_9092",
+        "type": "service-tcp",
+        "port": "9092"
+      },
+      {
+        "uid": "uid-regional-svc-tcp-9200",
+        "name": "SVC_Regional_TCP_9200",
+        "type": "service-tcp",
+        "port": "9200"
+      }
+    ],
+    "from": 1,
+    "to": 105,
+    "total": 105
+  }
+}

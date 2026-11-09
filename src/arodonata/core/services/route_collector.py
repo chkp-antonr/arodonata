@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import ipaddress
 import re
 import shlex
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from arodonata.core.errors import SessionStateError
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import utc_now
 from arodonata.core.models.topology import (
@@ -217,6 +219,7 @@ async def execute_gateway_cli(
     gateway_cli: GatewayCliPort | GatewayCliCallable | None = None,
     fallback_to_cprid: bool = True,
     timeout: float = 30.0,
+    cprid_session_getter: Callable[[str, str], Awaitable[tuple[str, str]]] | None = None,
 ) -> GatewayCliResult:
     """Execute `script` on `target` via injected `gateway_cli` (SSH) with optional `cprid` `run-script` fallback."""
     ssh_error: str | None = None
@@ -303,14 +306,48 @@ async def execute_gateway_cli(
         "targets": [target.node_uid or target.node_name],
     }
     try:
-        res = await api.api_call(
-            target.mgmt_name,
-            "run-script",
-            payload,
-            domain=target.domain_name,
-            wait_for_task=True,
-            timeout=timeout,
-        )
+        try:
+            res = await api.api_call(
+                target.mgmt_name,
+                "run-script",
+                payload,
+                domain=target.domain_name,
+                wait_for_task=True,
+                timeout=timeout,
+            )
+        except SessionStateError:
+            if cprid_session_getter is not None:
+                ded_sid, ded_ip = await cprid_session_getter(target.mgmt_name, target.domain_name)
+                res = await api.api_call(
+                    target.mgmt_name,
+                    "run-script",
+                    payload,
+                    domain=target.domain_name,
+                    sid=ded_sid,
+                    server_ip=ded_ip,
+                    wait_for_task=True,
+                    timeout=timeout,
+                )
+            else:
+                ded_sid, ded_ip = await api.create_dedicated_session(
+                    target.mgmt_name,
+                    domain=target.domain_name,
+                    session_name="arodonata-route-collect",
+                )
+                try:
+                    res = await api.api_call(
+                        target.mgmt_name,
+                        "run-script",
+                        payload,
+                        domain=target.domain_name,
+                        sid=ded_sid,
+                        server_ip=ded_ip,
+                        wait_for_task=True,
+                        timeout=timeout,
+                    )
+                finally:
+                    with contextlib.suppress(Exception):
+                        await api.logout_sid(target.mgmt_name, ded_sid, server_ip=ded_ip)
     except Exception as exc:
         err_msg = f"run-script failed: {exc}"
         if ssh_error:

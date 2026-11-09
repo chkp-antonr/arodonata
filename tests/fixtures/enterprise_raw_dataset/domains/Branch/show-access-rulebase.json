@@ -1,0 +1,3287 @@
+{
+  "uid-layer-branch-security": {
+    "uid": "uid-layer-branch-security",
+    "name": "Branch_Standard_Pkg Network",
+    "rulebase": [
+      {
+        "uid": "uid-asec-branch-01",
+        "name": "Section 1 - Branch Traffic",
+        "type": "access-section",
+        "from": 1,
+        "to": 35,
+        "rulebase": [
+          {
+            "uid": "uid-arule-branch-0001",
+            "name": "Branch_Rule_001",
+            "type": "access-rule",
+            "rule-number": 1,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #1 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0002",
+            "name": "Branch_Rule_002",
+            "type": "access-rule",
+            "rule-number": 2,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #2 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0003",
+            "name": "Branch_Rule_003",
+            "type": "access-rule",
+            "rule-number": 3,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #3 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0004",
+            "name": "Branch_Rule_004",
+            "type": "access-rule",
+            "rule-number": 4,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #4 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0005",
+            "name": "Branch_Rule_005",
+            "type": "access-rule",
+            "rule-number": 5,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #5 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0006",
+            "name": "Branch_Rule_006",
+            "type": "access-rule",
+            "rule-number": 6,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #6 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0007",
+            "name": "Branch_Rule_007",
+            "type": "access-rule",
+            "rule-number": 7,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #7 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0008",
+            "name": "Branch_Rule_008",
+            "type": "access-rule",
+            "rule-number": 8,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #8 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0009",
+            "name": "Branch_Rule_009",
+            "type": "access-rule",
+            "rule-number": 9,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #9 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0010",
+            "name": "Branch_Rule_010",
+            "type": "access-rule",
+            "rule-number": 10,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #10 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0011",
+            "name": "Branch_Rule_011",
+            "type": "access-rule",
+            "rule-number": 11,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #11 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0012",
+            "name": "Branch_Rule_012",
+            "type": "access-rule",
+            "rule-number": 12,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #12 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0013",
+            "name": "Branch_Rule_013",
+            "type": "access-rule",
+            "rule-number": 13,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #13 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0014",
+            "name": "Branch_Rule_014",
+            "type": "access-rule",
+            "rule-number": 14,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #14 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0015",
+            "name": "Branch_Rule_015",
+            "type": "access-rule",
+            "rule-number": 15,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #15 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0016",
+            "name": "Branch_Rule_016",
+            "type": "access-rule",
+            "rule-number": 16,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-016"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #16 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0017",
+            "name": "Branch_Rule_017",
+            "type": "access-rule",
+            "rule-number": 17,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-017"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #17 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0018",
+            "name": "Branch_Rule_018",
+            "type": "access-rule",
+            "rule-number": 18,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-018"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #18 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0019",
+            "name": "Branch_Rule_019",
+            "type": "access-rule",
+            "rule-number": 19,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-019"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #19 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0020",
+            "name": "Branch_Rule_020",
+            "type": "access-rule",
+            "rule-number": 20,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-020"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #20 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0021",
+            "name": "Branch_Rule_021",
+            "type": "access-rule",
+            "rule-number": 21,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-021"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #21 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0022",
+            "name": "Branch_Rule_022",
+            "type": "access-rule",
+            "rule-number": 22,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-022"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #22 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0023",
+            "name": "Branch_Rule_023",
+            "type": "access-rule",
+            "rule-number": 23,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-023"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #23 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0024",
+            "name": "Branch_Rule_024",
+            "type": "access-rule",
+            "rule-number": 24,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-024"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #24 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0025",
+            "name": "Branch_Rule_025",
+            "type": "access-rule",
+            "rule-number": 25,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-025"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #25 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0026",
+            "name": "Branch_Rule_026",
+            "type": "access-rule",
+            "rule-number": 26,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-026"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #26 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0027",
+            "name": "Branch_Rule_027",
+            "type": "access-rule",
+            "rule-number": 27,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-027"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #27 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0028",
+            "name": "Branch_Rule_028",
+            "type": "access-rule",
+            "rule-number": 28,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-028"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #28 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0029",
+            "name": "Branch_Rule_029",
+            "type": "access-rule",
+            "rule-number": 29,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-029"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #29 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0030",
+            "name": "Branch_Rule_030",
+            "type": "access-rule",
+            "rule-number": 30,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-030"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #30 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0031",
+            "name": "Branch_Rule_031",
+            "type": "access-rule",
+            "rule-number": 31,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #31 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0032",
+            "name": "Branch_Rule_032",
+            "type": "access-rule",
+            "rule-number": 32,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #32 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0033",
+            "name": "Branch_Rule_033",
+            "type": "access-rule",
+            "rule-number": 33,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #33 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0034",
+            "name": "Branch_Rule_034",
+            "type": "access-rule",
+            "rule-number": 34,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #34 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0035",
+            "name": "Branch_Rule_035",
+            "type": "access-rule",
+            "rule-number": 35,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #35 in Branch"
+          }
+        ]
+      },
+      {
+        "uid": "uid-asec-branch-02",
+        "name": "Section 2 - Branch Traffic",
+        "type": "access-section",
+        "from": 36,
+        "to": 70,
+        "rulebase": [
+          {
+            "uid": "uid-arule-branch-0036",
+            "name": "Branch_Rule_036",
+            "type": "access-rule",
+            "rule-number": 36,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #36 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0037",
+            "name": "Branch_Rule_037",
+            "type": "access-rule",
+            "rule-number": 37,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #37 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0038",
+            "name": "Branch_Rule_038",
+            "type": "access-rule",
+            "rule-number": 38,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #38 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0039",
+            "name": "Branch_Rule_039",
+            "type": "access-rule",
+            "rule-number": 39,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #39 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0040",
+            "name": "Branch_Rule_040",
+            "type": "access-rule",
+            "rule-number": 40,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #40 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0041",
+            "name": "Branch_Rule_041",
+            "type": "access-rule",
+            "rule-number": 41,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #41 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0042",
+            "name": "Branch_Rule_042",
+            "type": "access-rule",
+            "rule-number": 42,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #42 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0043",
+            "name": "Branch_Rule_043",
+            "type": "access-rule",
+            "rule-number": 43,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #43 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0044",
+            "name": "Branch_Rule_044",
+            "type": "access-rule",
+            "rule-number": 44,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #44 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0045",
+            "name": "Branch_Rule_045",
+            "type": "access-rule",
+            "rule-number": 45,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #45 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0046",
+            "name": "Branch_Rule_046",
+            "type": "access-rule",
+            "rule-number": 46,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-016"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #46 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0047",
+            "name": "Branch_Rule_047",
+            "type": "access-rule",
+            "rule-number": 47,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-017"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #47 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0048",
+            "name": "Branch_Rule_048",
+            "type": "access-rule",
+            "rule-number": 48,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-018"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #48 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0049",
+            "name": "Branch_Rule_049",
+            "type": "access-rule",
+            "rule-number": 49,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-019"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #49 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0050",
+            "name": "Branch_Rule_050",
+            "type": "access-rule",
+            "rule-number": 50,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-020"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #50 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0051",
+            "name": "Branch_Rule_051",
+            "type": "access-rule",
+            "rule-number": 51,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-021"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #51 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0052",
+            "name": "Branch_Rule_052",
+            "type": "access-rule",
+            "rule-number": 52,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-022"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #52 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0053",
+            "name": "Branch_Rule_053",
+            "type": "access-rule",
+            "rule-number": 53,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-023"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #53 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0054",
+            "name": "Branch_Rule_054",
+            "type": "access-rule",
+            "rule-number": 54,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-024"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #54 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0055",
+            "name": "Branch_Rule_055",
+            "type": "access-rule",
+            "rule-number": 55,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-025"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #55 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0056",
+            "name": "Branch_Rule_056",
+            "type": "access-rule",
+            "rule-number": 56,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-026"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #56 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0057",
+            "name": "Branch_Rule_057",
+            "type": "access-rule",
+            "rule-number": 57,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-027"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #57 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0058",
+            "name": "Branch_Rule_058",
+            "type": "access-rule",
+            "rule-number": 58,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-028"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #58 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0059",
+            "name": "Branch_Rule_059",
+            "type": "access-rule",
+            "rule-number": 59,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-029"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #59 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0060",
+            "name": "Branch_Rule_060",
+            "type": "access-rule",
+            "rule-number": 60,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-030"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #60 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0061",
+            "name": "Branch_Rule_061",
+            "type": "access-rule",
+            "rule-number": 61,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #61 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0062",
+            "name": "Branch_Rule_062",
+            "type": "access-rule",
+            "rule-number": 62,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #62 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0063",
+            "name": "Branch_Rule_063",
+            "type": "access-rule",
+            "rule-number": 63,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #63 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0064",
+            "name": "Branch_Rule_064",
+            "type": "access-rule",
+            "rule-number": 64,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #64 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0065",
+            "name": "Branch_Rule_065",
+            "type": "access-rule",
+            "rule-number": 65,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #65 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0066",
+            "name": "Branch_Rule_066",
+            "type": "access-rule",
+            "rule-number": 66,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #66 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0067",
+            "name": "Branch_Rule_067",
+            "type": "access-rule",
+            "rule-number": 67,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #67 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0068",
+            "name": "Branch_Rule_068",
+            "type": "access-rule",
+            "rule-number": 68,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #68 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0069",
+            "name": "Branch_Rule_069",
+            "type": "access-rule",
+            "rule-number": 69,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #69 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0070",
+            "name": "Branch_Rule_070",
+            "type": "access-rule",
+            "rule-number": 70,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #70 in Branch"
+          }
+        ]
+      },
+      {
+        "uid": "uid-asec-branch-03",
+        "name": "Section 3 - Branch Traffic",
+        "type": "access-section",
+        "from": 71,
+        "to": 105,
+        "rulebase": [
+          {
+            "uid": "uid-arule-branch-0071",
+            "name": "Branch_Rule_071",
+            "type": "access-rule",
+            "rule-number": 71,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #71 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0072",
+            "name": "Branch_Rule_072",
+            "type": "access-rule",
+            "rule-number": 72,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #72 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0073",
+            "name": "Branch_Rule_073",
+            "type": "access-rule",
+            "rule-number": 73,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #73 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0074",
+            "name": "Branch_Rule_074",
+            "type": "access-rule",
+            "rule-number": 74,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #74 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0075",
+            "name": "Branch_Rule_075",
+            "type": "access-rule",
+            "rule-number": 75,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #75 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0076",
+            "name": "Branch_Rule_076",
+            "type": "access-rule",
+            "rule-number": 76,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-016"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #76 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0077",
+            "name": "Branch_Rule_077",
+            "type": "access-rule",
+            "rule-number": 77,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-017"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #77 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0078",
+            "name": "Branch_Rule_078",
+            "type": "access-rule",
+            "rule-number": 78,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-018"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #78 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0079",
+            "name": "Branch_Rule_079",
+            "type": "access-rule",
+            "rule-number": 79,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-019"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #79 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0080",
+            "name": "Branch_Rule_080",
+            "type": "access-rule",
+            "rule-number": 80,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-020"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #80 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0081",
+            "name": "Branch_Rule_081",
+            "type": "access-rule",
+            "rule-number": 81,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-021"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #81 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0082",
+            "name": "Branch_Rule_082",
+            "type": "access-rule",
+            "rule-number": 82,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-022"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #82 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0083",
+            "name": "Branch_Rule_083",
+            "type": "access-rule",
+            "rule-number": 83,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-023"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #83 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0084",
+            "name": "Branch_Rule_084",
+            "type": "access-rule",
+            "rule-number": 84,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-024"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #84 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0085",
+            "name": "Branch_Rule_085",
+            "type": "access-rule",
+            "rule-number": 85,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-025"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #85 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0086",
+            "name": "Branch_Rule_086",
+            "type": "access-rule",
+            "rule-number": 86,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-026"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #86 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0087",
+            "name": "Branch_Rule_087",
+            "type": "access-rule",
+            "rule-number": 87,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-027"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #87 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0088",
+            "name": "Branch_Rule_088",
+            "type": "access-rule",
+            "rule-number": 88,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-028"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-004"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #88 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0089",
+            "name": "Branch_Rule_089",
+            "type": "access-rule",
+            "rule-number": 89,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-029"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #89 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0090",
+            "name": "Branch_Rule_090",
+            "type": "access-rule",
+            "rule-number": 90,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-030"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-005"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #90 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0091",
+            "name": "Branch_Rule_091",
+            "type": "access-rule",
+            "rule-number": 91,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-001"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #91 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0092",
+            "name": "Branch_Rule_092",
+            "type": "access-rule",
+            "rule-number": 92,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-002"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-006"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #92 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0093",
+            "name": "Branch_Rule_093",
+            "type": "access-rule",
+            "rule-number": 93,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-003"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #93 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0094",
+            "name": "Branch_Rule_094",
+            "type": "access-rule",
+            "rule-number": 94,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-004"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-007"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #94 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0095",
+            "name": "Branch_Rule_095",
+            "type": "access-rule",
+            "rule-number": 95,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-005"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9092"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #95 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0096",
+            "name": "Branch_Rule_096",
+            "type": "access-rule",
+            "rule-number": 96,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-006"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-008"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-9200"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #96 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0097",
+            "name": "Branch_Rule_097",
+            "type": "access-rule",
+            "rule-number": 97,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-007"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-22"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #97 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0098",
+            "name": "Branch_Rule_098",
+            "type": "access-rule",
+            "rule-number": 98,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-008"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-009"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-53"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #98 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0099",
+            "name": "Branch_Rule_099",
+            "type": "access-rule",
+            "rule-number": 99,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-009"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-80"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #99 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0100",
+            "name": "Branch_Rule_100",
+            "type": "access-rule",
+            "rule-number": 100,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-010"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-010"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-443"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #100 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0101",
+            "name": "Branch_Rule_101",
+            "type": "access-rule",
+            "rule-number": 101,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-011"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-1521"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #101 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0102",
+            "name": "Branch_Rule_102",
+            "type": "access-rule",
+            "rule-number": 102,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-012"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-001"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-3306"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #102 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0103",
+            "name": "Branch_Rule_103",
+            "type": "access-rule",
+            "rule-number": 103,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-013"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-5432"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #103 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0104",
+            "name": "Branch_Rule_104",
+            "type": "access-rule",
+            "rule-number": 104,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-014"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-voip-002"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-6379"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #104 in Branch"
+          },
+          {
+            "uid": "uid-arule-branch-0105",
+            "name": "Branch_Rule_105",
+            "type": "access-rule",
+            "rule-number": 105,
+            "enabled": true,
+            "source": [
+              "uid-br-host-srv-015"
+            ],
+            "source-negate": false,
+            "destination": [
+              "uid-br-net-lan-003"
+            ],
+            "destination-negate": false,
+            "service": [
+              "uid-branch-svc-tcp-8080"
+            ],
+            "service-negate": false,
+            "action": "6c488338-8eec-4103-ad21-cd461ac2c473",
+            "track": {
+              "type": "598ead32-aa42-4615-90ed-f51a5928d41d"
+            },
+            "install-on": [
+              "97aeb369-9aea-11d5-bd16-0090272ccb30"
+            ],
+            "comments": "Generated enterprise access rule #105 in Branch"
+          }
+        ]
+      }
+    ],
+    "objects-dictionary": [
+      {
+        "uid": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+        "name": "Any",
+        "type": "CpmiAnyObject"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c472",
+        "name": "Accept",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "6c488338-8eec-4103-ad21-cd461ac2c473",
+        "name": "Drop",
+        "type": "RulebaseAction"
+      },
+      {
+        "uid": "598ead32-aa42-4615-90ed-f51a5928d41d",
+        "name": "Log",
+        "type": "Track"
+      },
+      {
+        "uid": "uid-br-host-srv-001",
+        "name": "H_Branch_001_Server",
+        "type": "host",
+        "ipv4-address": "10.11.1.10"
+      },
+      {
+        "uid": "uid-br-host-srv-002",
+        "name": "H_Branch_002_Server",
+        "type": "host",
+        "ipv4-address": "10.11.2.10"
+      },
+      {
+        "uid": "uid-br-host-srv-003",
+        "name": "H_Branch_003_Server",
+        "type": "host",
+        "ipv4-address": "10.11.3.10"
+      },
+      {
+        "uid": "uid-br-host-srv-004",
+        "name": "H_Branch_004_Server",
+        "type": "host",
+        "ipv4-address": "10.11.4.10"
+      },
+      {
+        "uid": "uid-br-host-srv-005",
+        "name": "H_Branch_005_Server",
+        "type": "host",
+        "ipv4-address": "10.11.5.10"
+      },
+      {
+        "uid": "uid-br-host-srv-006",
+        "name": "H_Branch_006_Server",
+        "type": "host",
+        "ipv4-address": "10.11.6.10"
+      },
+      {
+        "uid": "uid-br-host-srv-007",
+        "name": "H_Branch_007_Server",
+        "type": "host",
+        "ipv4-address": "10.11.7.10"
+      },
+      {
+        "uid": "uid-br-host-srv-008",
+        "name": "H_Branch_008_Server",
+        "type": "host",
+        "ipv4-address": "10.11.8.10"
+      },
+      {
+        "uid": "uid-br-host-srv-009",
+        "name": "H_Branch_009_Server",
+        "type": "host",
+        "ipv4-address": "10.11.9.10"
+      },
+      {
+        "uid": "uid-br-host-srv-010",
+        "name": "H_Branch_010_Server",
+        "type": "host",
+        "ipv4-address": "10.11.10.10"
+      },
+      {
+        "uid": "uid-br-host-srv-011",
+        "name": "H_Branch_011_Server",
+        "type": "host",
+        "ipv4-address": "10.11.11.10"
+      },
+      {
+        "uid": "uid-br-host-srv-012",
+        "name": "H_Branch_012_Server",
+        "type": "host",
+        "ipv4-address": "10.11.12.10"
+      },
+      {
+        "uid": "uid-br-host-srv-013",
+        "name": "H_Branch_013_Server",
+        "type": "host",
+        "ipv4-address": "10.11.13.10"
+      },
+      {
+        "uid": "uid-br-host-srv-014",
+        "name": "H_Branch_014_Server",
+        "type": "host",
+        "ipv4-address": "10.11.14.10"
+      },
+      {
+        "uid": "uid-br-host-srv-015",
+        "name": "H_Branch_015_Server",
+        "type": "host",
+        "ipv4-address": "10.11.15.10"
+      },
+      {
+        "uid": "uid-br-host-srv-016",
+        "name": "H_Branch_016_Server",
+        "type": "host",
+        "ipv4-address": "10.11.16.10"
+      },
+      {
+        "uid": "uid-br-host-srv-017",
+        "name": "H_Branch_017_Server",
+        "type": "host",
+        "ipv4-address": "10.11.17.10"
+      },
+      {
+        "uid": "uid-br-host-srv-018",
+        "name": "H_Branch_018_Server",
+        "type": "host",
+        "ipv4-address": "10.11.18.10"
+      },
+      {
+        "uid": "uid-br-host-srv-019",
+        "name": "H_Branch_019_Server",
+        "type": "host",
+        "ipv4-address": "10.11.19.10"
+      },
+      {
+        "uid": "uid-br-host-srv-020",
+        "name": "H_Branch_020_Server",
+        "type": "host",
+        "ipv4-address": "10.11.20.10"
+      },
+      {
+        "uid": "uid-br-host-srv-021",
+        "name": "H_Branch_021_Server",
+        "type": "host",
+        "ipv4-address": "10.11.21.10"
+      },
+      {
+        "uid": "uid-br-host-srv-022",
+        "name": "H_Branch_022_Server",
+        "type": "host",
+        "ipv4-address": "10.11.22.10"
+      },
+      {
+        "uid": "uid-br-host-srv-023",
+        "name": "H_Branch_023_Server",
+        "type": "host",
+        "ipv4-address": "10.11.23.10"
+      },
+      {
+        "uid": "uid-br-host-srv-024",
+        "name": "H_Branch_024_Server",
+        "type": "host",
+        "ipv4-address": "10.11.24.10"
+      },
+      {
+        "uid": "uid-br-host-srv-025",
+        "name": "H_Branch_025_Server",
+        "type": "host",
+        "ipv4-address": "10.11.25.10"
+      },
+      {
+        "uid": "uid-br-host-srv-026",
+        "name": "H_Branch_026_Server",
+        "type": "host",
+        "ipv4-address": "10.11.26.10"
+      },
+      {
+        "uid": "uid-br-host-srv-027",
+        "name": "H_Branch_027_Server",
+        "type": "host",
+        "ipv4-address": "10.11.27.10"
+      },
+      {
+        "uid": "uid-br-host-srv-028",
+        "name": "H_Branch_028_Server",
+        "type": "host",
+        "ipv4-address": "10.11.28.10"
+      },
+      {
+        "uid": "uid-br-host-srv-029",
+        "name": "H_Branch_029_Server",
+        "type": "host",
+        "ipv4-address": "10.11.29.10"
+      },
+      {
+        "uid": "uid-br-host-srv-030",
+        "name": "H_Branch_030_Server",
+        "type": "host",
+        "ipv4-address": "10.11.30.10"
+      },
+      {
+        "uid": "uid-br-net-lan-001",
+        "name": "N_Branch_001_LAN",
+        "type": "network",
+        "subnet4": "10.11.1.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-001",
+        "name": "N_Branch_001_VoIP",
+        "type": "network",
+        "subnet4": "10.12.1.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-002",
+        "name": "N_Branch_002_LAN",
+        "type": "network",
+        "subnet4": "10.11.2.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-002",
+        "name": "N_Branch_002_VoIP",
+        "type": "network",
+        "subnet4": "10.12.2.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-003",
+        "name": "N_Branch_003_LAN",
+        "type": "network",
+        "subnet4": "10.11.3.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-003",
+        "name": "N_Branch_003_VoIP",
+        "type": "network",
+        "subnet4": "10.12.3.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-004",
+        "name": "N_Branch_004_LAN",
+        "type": "network",
+        "subnet4": "10.11.4.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-004",
+        "name": "N_Branch_004_VoIP",
+        "type": "network",
+        "subnet4": "10.12.4.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-005",
+        "name": "N_Branch_005_LAN",
+        "type": "network",
+        "subnet4": "10.11.5.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-005",
+        "name": "N_Branch_005_VoIP",
+        "type": "network",
+        "subnet4": "10.12.5.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-006",
+        "name": "N_Branch_006_LAN",
+        "type": "network",
+        "subnet4": "10.11.6.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-006",
+        "name": "N_Branch_006_VoIP",
+        "type": "network",
+        "subnet4": "10.12.6.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-007",
+        "name": "N_Branch_007_LAN",
+        "type": "network",
+        "subnet4": "10.11.7.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-007",
+        "name": "N_Branch_007_VoIP",
+        "type": "network",
+        "subnet4": "10.12.7.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-008",
+        "name": "N_Branch_008_LAN",
+        "type": "network",
+        "subnet4": "10.11.8.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-008",
+        "name": "N_Branch_008_VoIP",
+        "type": "network",
+        "subnet4": "10.12.8.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-009",
+        "name": "N_Branch_009_LAN",
+        "type": "network",
+        "subnet4": "10.11.9.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-009",
+        "name": "N_Branch_009_VoIP",
+        "type": "network",
+        "subnet4": "10.12.9.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-lan-010",
+        "name": "N_Branch_010_LAN",
+        "type": "network",
+        "subnet4": "10.11.10.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-br-net-voip-010",
+        "name": "N_Branch_010_VoIP",
+        "type": "network",
+        "subnet4": "10.12.10.0",
+        "mask-length4": 24
+      },
+      {
+        "uid": "uid-branch-svc-tcp-22",
+        "name": "SVC_Branch_TCP_22",
+        "type": "service-tcp",
+        "port": "22"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-53",
+        "name": "SVC_Branch_TCP_53",
+        "type": "service-tcp",
+        "port": "53"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-80",
+        "name": "SVC_Branch_TCP_80",
+        "type": "service-tcp",
+        "port": "80"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-443",
+        "name": "SVC_Branch_TCP_443",
+        "type": "service-tcp",
+        "port": "443"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-1521",
+        "name": "SVC_Branch_TCP_1521",
+        "type": "service-tcp",
+        "port": "1521"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-3306",
+        "name": "SVC_Branch_TCP_3306",
+        "type": "service-tcp",
+        "port": "3306"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-5432",
+        "name": "SVC_Branch_TCP_5432",
+        "type": "service-tcp",
+        "port": "5432"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-6379",
+        "name": "SVC_Branch_TCP_6379",
+        "type": "service-tcp",
+        "port": "6379"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-8080",
+        "name": "SVC_Branch_TCP_8080",
+        "type": "service-tcp",
+        "port": "8080"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-8443",
+        "name": "SVC_Branch_TCP_8443",
+        "type": "service-tcp",
+        "port": "8443"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-9092",
+        "name": "SVC_Branch_TCP_9092",
+        "type": "service-tcp",
+        "port": "9092"
+      },
+      {
+        "uid": "uid-branch-svc-tcp-9200",
+        "name": "SVC_Branch_TCP_9200",
+        "type": "service-tcp",
+        "port": "9200"
+      }
+    ],
+    "from": 1,
+    "to": 105,
+    "total": 105
+  }
+}

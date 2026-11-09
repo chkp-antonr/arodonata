@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-wan-core-bgp-standby-0",
+      "task-name": "arodonata-route-collect-wan-core-bgp-standby",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-wan-core-bgp-standby-0",
+          "gatewayId": "wan-core-bgp-standby",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4yMy4wLjEgZGV2IGV0aDAgcHJvdG8gc3RhdGljCjEwLjExLjAuMC8xNiB2aWEgMTcyLjIzLjExLjI1NCBkZXYgZXRoMSBwcm90byBiZ3AKPT09QVJPRE9OQVRBX0lQX1JPVVRFX0VORD09PQo=",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

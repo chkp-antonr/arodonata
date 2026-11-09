@@ -1,0 +1,558 @@
+{
+  "uid-ix-transit-gw-01": {
+    "uid": "uid-ix-transit-gw-01",
+    "name": "ix-transit-gw-01",
+    "type": "simple-gateway",
+    "ipv4-address": "172.25.0.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.25.0.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "172.25.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "N_Transit_West_10_11"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "172.25.20.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "N_Transit_East_10_220"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-lpm-matryoshka-gw": {
+    "uid": "uid-lpm-matryoshka-gw",
+    "name": "lpm-matryoshka-gw",
+    "type": "simple-gateway",
+    "ipv4-address": "198.51.100.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "198.51.100.1",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "172.25.101.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "N_Matryoshka_Slash8"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "172.25.102.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "N_Matryoshka_Slash12"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth3",
+        "ipv4-address": "172.25.103.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "N_Matryoshka_Slash16"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth4",
+        "ipv4-address": "172.25.104.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "N_Matryoshka_Slash22"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth5",
+        "ipv4-address": "172.25.105.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "N_Matryoshka_Slash24"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth6",
+        "ipv4-address": "172.25.106.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "N_Matryoshka_Slash28"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth7",
+        "ipv4-address": "172.25.107.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "H_Matryoshka_Slash32"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-anomaly-audit-gw": {
+    "uid": "uid-anomaly-audit-gw",
+    "name": "anomaly-audit-gw",
+    "type": "simple-gateway",
+    "ipv4-address": "203.0.113.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "203.0.113.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.254.1.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.254.2.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "N_Audit_Detect_Sub"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "detect"
+        }
+      },
+      {
+        "name": "eth3",
+        "ipv4-address": "10.254.3.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "not defined"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth4",
+        "ipv4-address": "10.254.4.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by routing"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth5",
+        "ipv4-address": "10.254.254.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-ix-transit-02": {
+    "uid": "uid-ix-transit-02",
+    "name": "ix-transit-gw-02",
+    "type": "simple-gateway",
+    "ipv4-address": "172.25.100.2",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.25.100.2",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.80.2.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-ix-transit-03": {
+    "uid": "uid-ix-transit-03",
+    "name": "ix-transit-gw-03",
+    "type": "simple-gateway",
+    "ipv4-address": "172.25.100.3",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.25.100.3",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.80.3.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-ix-transit-04": {
+    "uid": "uid-ix-transit-04",
+    "name": "ix-transit-gw-04",
+    "type": "simple-gateway",
+    "ipv4-address": "172.25.100.4",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.25.100.4",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.80.4.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-ix-transit-05": {
+    "uid": "uid-ix-transit-05",
+    "name": "ix-transit-gw-05",
+    "type": "simple-gateway",
+    "ipv4-address": "172.25.100.5",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.25.100.5",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.80.5.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-ix-transit-06": {
+    "uid": "uid-ix-transit-06",
+    "name": "ix-transit-gw-06",
+    "type": "simple-gateway",
+    "ipv4-address": "172.25.100.6",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.25.100.6",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.80.6.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-ix-transit-07": {
+    "uid": "uid-ix-transit-07",
+    "name": "ix-transit-gw-07",
+    "type": "simple-gateway",
+    "ipv4-address": "172.25.100.7",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.25.100.7",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.80.7.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-ix-transit-08": {
+    "uid": "uid-ix-transit-08",
+    "name": "ix-transit-gw-08",
+    "type": "simple-gateway",
+    "ipv4-address": "172.25.100.8",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.25.100.8",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.80.8.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-ix-transit-09": {
+    "uid": "uid-ix-transit-09",
+    "name": "ix-transit-gw-09",
+    "type": "simple-gateway",
+    "ipv4-address": "172.25.100.9",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.25.100.9",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.80.9.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-ix-transit-10": {
+    "uid": "uid-ix-transit-10",
+    "name": "ix-transit-gw-10",
+    "type": "simple-gateway",
+    "ipv4-address": "172.25.100.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.25.100.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.80.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-ix-transit-11": {
+    "uid": "uid-ix-transit-11",
+    "name": "ix-transit-gw-11",
+    "type": "simple-gateway",
+    "ipv4-address": "172.25.100.11",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.25.100.11",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.80.11.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  }
+}

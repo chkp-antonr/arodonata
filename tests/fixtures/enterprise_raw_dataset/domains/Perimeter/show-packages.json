@@ -1,0 +1,193 @@
+{
+  "packages": [
+    {
+      "uid": "uid-pkg-perimeter",
+      "name": "Perimeter_Edge_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-perim-edge-cluster",
+          "name": "perim-edge-cluster",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-perim-dmz-01",
+          "name": "perim-dmz-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-02",
+          "name": "perim-dmz-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-03",
+          "name": "perim-dmz-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-04",
+          "name": "perim-dmz-gw-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-05",
+          "name": "perim-dmz-gw-05",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-06",
+          "name": "perim-dmz-gw-06",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-07",
+          "name": "perim-dmz-gw-07",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-08",
+          "name": "perim-dmz-gw-08",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-09",
+          "name": "perim-dmz-gw-09",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-10",
+          "name": "perim-dmz-gw-10",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-11",
+          "name": "perim-dmz-gw-11",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-12",
+          "name": "perim-dmz-gw-12",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-13",
+          "name": "perim-dmz-gw-13",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-14",
+          "name": "perim-dmz-gw-14",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-perimeter-security",
+          "name": "Perimeter_Edge_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "uid": "uid-pkg-perimeter",
+      "name": "Perimeter_Edge_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-perim-edge-cluster",
+          "name": "perim-edge-cluster",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-perim-dmz-01",
+          "name": "perim-dmz-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-02",
+          "name": "perim-dmz-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-03",
+          "name": "perim-dmz-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-04",
+          "name": "perim-dmz-gw-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-05",
+          "name": "perim-dmz-gw-05",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-06",
+          "name": "perim-dmz-gw-06",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-07",
+          "name": "perim-dmz-gw-07",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-08",
+          "name": "perim-dmz-gw-08",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-09",
+          "name": "perim-dmz-gw-09",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-10",
+          "name": "perim-dmz-gw-10",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-11",
+          "name": "perim-dmz-gw-11",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-12",
+          "name": "perim-dmz-gw-12",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-13",
+          "name": "perim-dmz-gw-13",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-dmz-14",
+          "name": "perim-dmz-gw-14",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-perimeter-security",
+          "name": "Perimeter_Edge_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

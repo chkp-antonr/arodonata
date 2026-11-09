@@ -1,0 +1,16 @@
+{
+  "uid": "sess-pub-branch-001",
+  "name": "AutoPublish-Branch",
+  "user-name": "admin",
+  "publish-time": {
+    "posix": 1794142800000,
+    "iso-8601": "2026-11-08T11:00:00Z"
+  },
+  "last-modify-time": {
+    "posix": 1794142800000,
+    "iso-8601": "2026-11-08T11:00:00Z"
+  },
+  "changes": 0,
+  "locks": 0,
+  "number-of-published-changes": 12
+}

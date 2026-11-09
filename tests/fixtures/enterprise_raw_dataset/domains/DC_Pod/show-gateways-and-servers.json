@@ -1,0 +1,913 @@
+{
+  "objects": [
+    {
+      "uid": "uid-dc-vs-tier1-web",
+      "name": "dc-vs-tier1-web",
+      "type": "CpmiVsNetobj",
+      "vsid": 11,
+      "vsx-gateway": {
+        "uid": "uid-dc-vsx-chassis-01",
+        "name": "dc-vsx-chassis-01"
+      },
+      "ipv4-address": "10.216.11.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp11",
+          "ipv4-address": "192.168.251.2",
+          "ipv4-mask-length": 30,
+          "topology": "external"
+        },
+        {
+          "name": "eth2.11",
+          "ipv4-address": "10.216.11.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "specific",
+            "specific-network": "N_DC_DB_Vault_Sub"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-tier2-app",
+      "name": "dc-vs-tier2-app",
+      "type": "CpmiVsNetobj",
+      "vsx-gateway": {
+        "uid": "uid-dc-vsx-chassis-01",
+        "name": "dc-vsx-chassis-01"
+      },
+      "ipv4-address": "10.216.12.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth1.12",
+          "ipv4-address": "10.216.12.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "specific",
+            "specific-network": "G_Global_Branch_Supernet"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        },
+        {
+          "name": "eth2.12",
+          "ipv4-address": "10.217.12.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "specific",
+            "specific-network": "N_DC_DB_Vault_Sub"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-21",
+      "name": "dc-vs-pod-21",
+      "type": "CpmiVsNetobj",
+      "vsid": 21,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.21.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.21",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.21",
+          "ipv4-address": "10.218.21.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-22",
+      "name": "dc-vs-pod-22",
+      "type": "CpmiVsNetobj",
+      "vsid": 22,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.22.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.22",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.22",
+          "ipv4-address": "10.218.22.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-23",
+      "name": "dc-vs-pod-23",
+      "type": "CpmiVsNetobj",
+      "vsid": 23,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.23.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.23",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.23",
+          "ipv4-address": "10.218.23.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-24",
+      "name": "dc-vs-pod-24",
+      "type": "CpmiVsNetobj",
+      "vsid": 24,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.24.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.24",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.24",
+          "ipv4-address": "10.218.24.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-25",
+      "name": "dc-vs-pod-25",
+      "type": "CpmiVsNetobj",
+      "vsid": 25,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.25.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.25",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.25",
+          "ipv4-address": "10.218.25.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-26",
+      "name": "dc-vs-pod-26",
+      "type": "CpmiVsNetobj",
+      "vsid": 26,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.26.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.26",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.26",
+          "ipv4-address": "10.218.26.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-27",
+      "name": "dc-vs-pod-27",
+      "type": "CpmiVsNetobj",
+      "vsid": 27,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.27.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.27",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.27",
+          "ipv4-address": "10.218.27.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-28",
+      "name": "dc-vs-pod-28",
+      "type": "CpmiVsNetobj",
+      "vsid": 28,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.28.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.28",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.28",
+          "ipv4-address": "10.218.28.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-29",
+      "name": "dc-vs-pod-29",
+      "type": "CpmiVsNetobj",
+      "vsid": 29,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.29.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.29",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.29",
+          "ipv4-address": "10.218.29.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-30",
+      "name": "dc-vs-pod-30",
+      "type": "CpmiVsNetobj",
+      "vsid": 30,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.30.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.30",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.30",
+          "ipv4-address": "10.218.30.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-31",
+      "name": "dc-vs-pod-31",
+      "type": "CpmiVsNetobj",
+      "vsid": 31,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.31.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.31",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.31",
+          "ipv4-address": "10.218.31.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-32",
+      "name": "dc-vs-pod-32",
+      "type": "CpmiVsNetobj",
+      "vsid": 32,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.32.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.32",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.32",
+          "ipv4-address": "10.218.32.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-33",
+      "name": "dc-vs-pod-33",
+      "type": "CpmiVsNetobj",
+      "vsid": 33,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.33.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.33",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.33",
+          "ipv4-address": "10.218.33.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-34",
+      "name": "dc-vs-pod-34",
+      "type": "CpmiVsNetobj",
+      "vsid": 34,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.34.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.34",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.34",
+          "ipv4-address": "10.218.34.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-35",
+      "name": "dc-vs-pod-35",
+      "type": "CpmiVsNetobj",
+      "vsid": 35,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.35.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.35",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.35",
+          "ipv4-address": "10.218.35.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-36",
+      "name": "dc-vs-pod-36",
+      "type": "CpmiVsNetobj",
+      "vsid": 36,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.36.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.36",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.36",
+          "ipv4-address": "10.218.36.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-37",
+      "name": "dc-vs-pod-37",
+      "type": "CpmiVsNetobj",
+      "vsid": 37,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.37.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.37",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.37",
+          "ipv4-address": "10.218.37.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-38",
+      "name": "dc-vs-pod-38",
+      "type": "CpmiVsNetobj",
+      "vsid": 38,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.38.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.38",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.38",
+          "ipv4-address": "10.218.38.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-39",
+      "name": "dc-vs-pod-39",
+      "type": "CpmiVsNetobj",
+      "vsid": 39,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.39.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.39",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.39",
+          "ipv4-address": "10.218.39.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-40",
+      "name": "dc-vs-pod-40",
+      "type": "CpmiVsNetobj",
+      "vsid": 40,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.40.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.40",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.40",
+          "ipv4-address": "10.218.40.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-41",
+      "name": "dc-vs-pod-41",
+      "type": "CpmiVsNetobj",
+      "vsid": 41,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.41.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.41",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.41",
+          "ipv4-address": "10.218.41.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-42",
+      "name": "dc-vs-pod-42",
+      "type": "CpmiVsNetobj",
+      "vsid": 42,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.42.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.42",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.42",
+          "ipv4-address": "10.218.42.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-43",
+      "name": "dc-vs-pod-43",
+      "type": "CpmiVsNetobj",
+      "vsid": 43,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.43.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.43",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.43",
+          "ipv4-address": "10.218.43.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-44",
+      "name": "dc-vs-pod-44",
+      "type": "CpmiVsNetobj",
+      "vsid": 44,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.44.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.44",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.44",
+          "ipv4-address": "10.218.44.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-vs-pod-45",
+      "name": "dc-vs-pod-45",
+      "type": "CpmiVsNetobj",
+      "vsid": 45,
+      "parent-uid": "uid-dc-vsx-chassis-01",
+      "ipv4-address": "10.218.45.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.252.45",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.45",
+          "ipv4-address": "10.218.45.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 27,
+  "total": 27
+}

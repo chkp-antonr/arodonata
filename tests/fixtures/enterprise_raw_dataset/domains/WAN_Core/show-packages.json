@@ -1,0 +1,193 @@
+{
+  "packages": [
+    {
+      "uid": "uid-pkg-wan_core",
+      "name": "WAN_Core_Transit_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-wan-core-ecmp-a",
+          "name": "wan-core-ecmp-a",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-core-ecmp-b",
+          "name": "wan-core-ecmp-b",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-core-bgp-standby",
+          "name": "wan-core-bgp-standby",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-01",
+          "name": "wan-core-rtr-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-02",
+          "name": "wan-core-rtr-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-03",
+          "name": "wan-core-rtr-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-04",
+          "name": "wan-core-rtr-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-05",
+          "name": "wan-core-rtr-05",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-06",
+          "name": "wan-core-rtr-06",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-07",
+          "name": "wan-core-rtr-07",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-08",
+          "name": "wan-core-rtr-08",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-09",
+          "name": "wan-core-rtr-09",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-10",
+          "name": "wan-core-rtr-10",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-11",
+          "name": "wan-core-rtr-11",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-12",
+          "name": "wan-core-rtr-12",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-wan_core-security",
+          "name": "WAN_Core_Transit_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "uid": "uid-pkg-wan_core",
+      "name": "WAN_Core_Transit_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-wan-core-ecmp-a",
+          "name": "wan-core-ecmp-a",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-core-ecmp-b",
+          "name": "wan-core-ecmp-b",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-core-bgp-standby",
+          "name": "wan-core-bgp-standby",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-01",
+          "name": "wan-core-rtr-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-02",
+          "name": "wan-core-rtr-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-03",
+          "name": "wan-core-rtr-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-04",
+          "name": "wan-core-rtr-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-05",
+          "name": "wan-core-rtr-05",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-06",
+          "name": "wan-core-rtr-06",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-07",
+          "name": "wan-core-rtr-07",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-08",
+          "name": "wan-core-rtr-08",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-09",
+          "name": "wan-core-rtr-09",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-10",
+          "name": "wan-core-rtr-10",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-11",
+          "name": "wan-core-rtr-11",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-rtr-12",
+          "name": "wan-core-rtr-12",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-wan_core-security",
+          "name": "WAN_Core_Transit_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

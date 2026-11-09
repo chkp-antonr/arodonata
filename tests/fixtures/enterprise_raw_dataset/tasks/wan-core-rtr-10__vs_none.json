@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-wan-core-rtr-10-0",
+      "task-name": "arodonata-route-collect-wan-core-rtr-10",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-wan-core-rtr-10-0",
+          "gatewayId": "wan-core-rtr-10",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4yMy4xMDAuMjU0IGRldiBldGgwIHByb3RvIHN0YXRpYwoxMC40MC4xMC4wLzI0IGRldiBldGgxIHByb3RvIGtlcm5lbCBzY29wZSBsaW5rIHNyYyAxMC40MC4xMC4xCj09PUFST0RPTkFUQV9JUF9ST1VURV9FTkQ9PT0K",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

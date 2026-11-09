@@ -1,0 +1,17 @@
+{
+  "objects": [
+    {
+      "uid": "uid-branch-svc-grp-web",
+      "name": "G_Branch_App_Services",
+      "type": "service-group",
+      "members": [
+        "uid-branch-svc-tcp-80",
+        "uid-branch-svc-tcp-443",
+        "uid-branch-svc-tcp-8443"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

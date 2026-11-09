@@ -1,0 +1,13 @@
+{
+  "objects": [
+    {
+      "uid": "uid-regional-svc-icmp-echo",
+      "name": "ICMP_Regional_Echo",
+      "type": "service-icmp",
+      "icmp-type": 8
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

@@ -1,0 +1,357 @@
+{
+  "objects": [
+    {
+      "uid": "uid-perimeter-bulk-grp-001",
+      "name": "G_Perimeter_TierGroup_001",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-071",
+        "uid-perimeter-bulk-host-049",
+        "uid-perimeter-bulk-host-112",
+        "uid-perimeter-bulk-host-094",
+        "uid-perimeter-bulk-host-027",
+        "uid-perimeter-bulk-net-013",
+        "uid-perimeter-bulk-net-054"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-002",
+      "name": "G_Perimeter_TierGroup_002",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-148",
+        "uid-perimeter-bulk-host-088",
+        "uid-perimeter-bulk-host-146",
+        "uid-perimeter-bulk-host-096",
+        "uid-perimeter-bulk-host-026",
+        "uid-perimeter-bulk-net-008",
+        "uid-perimeter-bulk-net-027"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-003",
+      "name": "G_Perimeter_TierGroup_003",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-006",
+        "uid-perimeter-bulk-host-008",
+        "uid-perimeter-bulk-host-054",
+        "uid-perimeter-bulk-host-144",
+        "uid-perimeter-bulk-host-045",
+        "uid-perimeter-bulk-net-038",
+        "uid-perimeter-bulk-net-057"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-004",
+      "name": "G_Perimeter_TierGroup_004",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-095",
+        "uid-perimeter-bulk-host-105",
+        "uid-perimeter-bulk-host-092",
+        "uid-perimeter-bulk-host-073",
+        "uid-perimeter-bulk-host-011",
+        "uid-perimeter-bulk-net-058",
+        "uid-perimeter-bulk-net-031"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-005",
+      "name": "G_Perimeter_TierGroup_005",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-014",
+        "uid-perimeter-bulk-host-082",
+        "uid-perimeter-bulk-host-072",
+        "uid-perimeter-bulk-host-143",
+        "uid-perimeter-bulk-host-097",
+        "uid-perimeter-bulk-net-045",
+        "uid-perimeter-bulk-net-049"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-006",
+      "name": "G_Perimeter_TierGroup_006",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-074",
+        "uid-perimeter-bulk-host-145",
+        "uid-perimeter-bulk-host-076",
+        "uid-perimeter-bulk-host-079",
+        "uid-perimeter-bulk-host-086",
+        "uid-perimeter-bulk-net-052",
+        "uid-perimeter-bulk-net-040"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-007",
+      "name": "G_Perimeter_TierGroup_007",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-127",
+        "uid-perimeter-bulk-host-036",
+        "uid-perimeter-bulk-host-058",
+        "uid-perimeter-bulk-host-009",
+        "uid-perimeter-bulk-host-066",
+        "uid-perimeter-bulk-net-051",
+        "uid-perimeter-bulk-net-017"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-008",
+      "name": "G_Perimeter_TierGroup_008",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-096",
+        "uid-perimeter-bulk-host-073",
+        "uid-perimeter-bulk-host-143",
+        "uid-perimeter-bulk-host-079",
+        "uid-perimeter-bulk-host-129",
+        "uid-perimeter-bulk-net-026",
+        "uid-perimeter-bulk-net-032"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-009",
+      "name": "G_Perimeter_TierGroup_009",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-066",
+        "uid-perimeter-bulk-host-067",
+        "uid-perimeter-bulk-host-047",
+        "uid-perimeter-bulk-host-054",
+        "uid-perimeter-bulk-host-146",
+        "uid-perimeter-bulk-net-043",
+        "uid-perimeter-bulk-net-054"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-010",
+      "name": "G_Perimeter_TierGroup_010",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-015",
+        "uid-perimeter-bulk-host-031",
+        "uid-perimeter-bulk-host-032",
+        "uid-perimeter-bulk-host-083",
+        "uid-perimeter-bulk-host-029",
+        "uid-perimeter-bulk-net-040",
+        "uid-perimeter-bulk-net-038"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-011",
+      "name": "G_Perimeter_TierGroup_011",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-026",
+        "uid-perimeter-bulk-host-117",
+        "uid-perimeter-bulk-host-140",
+        "uid-perimeter-bulk-host-031",
+        "uid-perimeter-bulk-host-027",
+        "uid-perimeter-bulk-net-022",
+        "uid-perimeter-bulk-net-036"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-012",
+      "name": "G_Perimeter_TierGroup_012",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-139",
+        "uid-perimeter-bulk-host-056",
+        "uid-perimeter-bulk-host-025",
+        "uid-perimeter-bulk-host-099",
+        "uid-perimeter-bulk-host-062",
+        "uid-perimeter-bulk-net-037",
+        "uid-perimeter-bulk-net-021"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-013",
+      "name": "G_Perimeter_TierGroup_013",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-123",
+        "uid-perimeter-bulk-host-077",
+        "uid-perimeter-bulk-host-122",
+        "uid-perimeter-bulk-host-024",
+        "uid-perimeter-bulk-host-055",
+        "uid-perimeter-bulk-net-008",
+        "uid-perimeter-bulk-net-043"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-014",
+      "name": "G_Perimeter_TierGroup_014",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-086",
+        "uid-perimeter-bulk-host-119",
+        "uid-perimeter-bulk-host-038",
+        "uid-perimeter-bulk-host-146",
+        "uid-perimeter-bulk-host-097",
+        "uid-perimeter-bulk-net-036",
+        "uid-perimeter-bulk-net-055"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-015",
+      "name": "G_Perimeter_TierGroup_015",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-146",
+        "uid-perimeter-bulk-host-064",
+        "uid-perimeter-bulk-host-028",
+        "uid-perimeter-bulk-host-004",
+        "uid-perimeter-bulk-host-065",
+        "uid-perimeter-bulk-net-027",
+        "uid-perimeter-bulk-net-044"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-016",
+      "name": "G_Perimeter_TierGroup_016",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-038",
+        "uid-perimeter-bulk-host-113",
+        "uid-perimeter-bulk-host-090",
+        "uid-perimeter-bulk-host-037",
+        "uid-perimeter-bulk-host-116",
+        "uid-perimeter-bulk-net-004",
+        "uid-perimeter-bulk-net-029"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-017",
+      "name": "G_Perimeter_TierGroup_017",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-043",
+        "uid-perimeter-bulk-host-129",
+        "uid-perimeter-bulk-host-010",
+        "uid-perimeter-bulk-host-112",
+        "uid-perimeter-bulk-host-098",
+        "uid-perimeter-bulk-net-027",
+        "uid-perimeter-bulk-net-043"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-018",
+      "name": "G_Perimeter_TierGroup_018",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-112",
+        "uid-perimeter-bulk-host-006",
+        "uid-perimeter-bulk-host-078",
+        "uid-perimeter-bulk-host-021",
+        "uid-perimeter-bulk-host-150",
+        "uid-perimeter-bulk-net-008",
+        "uid-perimeter-bulk-net-039"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-019",
+      "name": "G_Perimeter_TierGroup_019",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-142",
+        "uid-perimeter-bulk-host-114",
+        "uid-perimeter-bulk-host-093",
+        "uid-perimeter-bulk-host-148",
+        "uid-perimeter-bulk-host-070",
+        "uid-perimeter-bulk-net-053",
+        "uid-perimeter-bulk-net-045"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-020",
+      "name": "G_Perimeter_TierGroup_020",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-047",
+        "uid-perimeter-bulk-host-038",
+        "uid-perimeter-bulk-host-088",
+        "uid-perimeter-bulk-host-074",
+        "uid-perimeter-bulk-host-139",
+        "uid-perimeter-bulk-net-032",
+        "uid-perimeter-bulk-net-013"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-021",
+      "name": "G_Perimeter_TierGroup_021",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-140",
+        "uid-perimeter-bulk-host-091",
+        "uid-perimeter-bulk-host-037",
+        "uid-perimeter-bulk-host-089",
+        "uid-perimeter-bulk-host-044",
+        "uid-perimeter-bulk-net-053",
+        "uid-perimeter-bulk-net-050"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-022",
+      "name": "G_Perimeter_TierGroup_022",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-027",
+        "uid-perimeter-bulk-host-050",
+        "uid-perimeter-bulk-host-078",
+        "uid-perimeter-bulk-host-080",
+        "uid-perimeter-bulk-host-108",
+        "uid-perimeter-bulk-net-023",
+        "uid-perimeter-bulk-net-017"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-023",
+      "name": "G_Perimeter_TierGroup_023",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-028",
+        "uid-perimeter-bulk-host-048",
+        "uid-perimeter-bulk-host-082",
+        "uid-perimeter-bulk-host-077",
+        "uid-perimeter-bulk-host-031",
+        "uid-perimeter-bulk-net-045",
+        "uid-perimeter-bulk-net-023"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-024",
+      "name": "G_Perimeter_TierGroup_024",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-039",
+        "uid-perimeter-bulk-host-029",
+        "uid-perimeter-bulk-host-126",
+        "uid-perimeter-bulk-host-035",
+        "uid-perimeter-bulk-host-066",
+        "uid-perimeter-bulk-net-024",
+        "uid-perimeter-bulk-net-019"
+      ]
+    },
+    {
+      "uid": "uid-perimeter-bulk-grp-025",
+      "name": "G_Perimeter_TierGroup_025",
+      "type": "group",
+      "members": [
+        "uid-perimeter-bulk-host-129",
+        "uid-perimeter-bulk-host-036",
+        "uid-perimeter-bulk-host-071",
+        "uid-perimeter-bulk-host-012",
+        "uid-perimeter-bulk-host-083",
+        "uid-perimeter-bulk-net-026",
+        "uid-perimeter-bulk-net-036"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 25,
+  "total": 25
+}

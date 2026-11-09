@@ -1,0 +1,13 @@
+{
+  "objects": [
+    {
+      "uid": "uid-transit-dns-corp",
+      "name": ".transit.enterprise.internal",
+      "type": "dns-domain",
+      "is-sub-domain": true
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

@@ -1,0 +1,653 @@
+{
+  "uid-reg-nw-cluster": {
+    "uid": "uid-reg-nw-cluster",
+    "name": "reg-nw-cluster",
+    "type": "simple-cluster",
+    "ipv4-address": "172.22.1.10",
+    "cluster-members": [
+      {
+        "uid": "uid-reg-nw-node-1",
+        "name": "reg-nw-node-1",
+        "type": "cluster-member",
+        "ipv4-address": "172.22.1.11",
+        "cluster-uid": "uid-reg-nw-cluster"
+      },
+      {
+        "uid": "uid-reg-nw-node-2",
+        "name": "reg-nw-node-2",
+        "type": "cluster-member",
+        "ipv4-address": "172.22.1.12",
+        "cluster-uid": "uid-reg-nw-cluster"
+      }
+    ],
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.1.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "172.22.101.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "specific",
+          "specific-network": "G_Reg_NW_L1_Root"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-nw-node-1": {
+    "uid": "uid-reg-nw-node-1",
+    "name": "reg-nw-node-1",
+    "type": "cluster-member",
+    "ipv4-address": "172.22.1.11",
+    "cluster-uid": "uid-reg-nw-cluster"
+  },
+  "uid-reg-nw-node-2": {
+    "uid": "uid-reg-nw-node-2",
+    "name": "reg-nw-node-2",
+    "type": "cluster-member",
+    "ipv4-address": "172.22.1.12",
+    "cluster-uid": "uid-reg-nw-cluster"
+  },
+  "uid-reg-hub-02": {
+    "uid": "uid-reg-hub-02",
+    "name": "reg-hub-gw-02",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.2.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.2.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.2.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-03": {
+    "uid": "uid-reg-hub-03",
+    "name": "reg-hub-gw-03",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.3.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.3.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.3.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-04": {
+    "uid": "uid-reg-hub-04",
+    "name": "reg-hub-gw-04",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.4.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.4.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.4.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-05": {
+    "uid": "uid-reg-hub-05",
+    "name": "reg-hub-gw-05",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.5.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.5.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.5.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-06": {
+    "uid": "uid-reg-hub-06",
+    "name": "reg-hub-gw-06",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.6.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.6.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.6.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-07": {
+    "uid": "uid-reg-hub-07",
+    "name": "reg-hub-gw-07",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.7.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.7.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.7.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-08": {
+    "uid": "uid-reg-hub-08",
+    "name": "reg-hub-gw-08",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.8.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.8.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.8.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-09": {
+    "uid": "uid-reg-hub-09",
+    "name": "reg-hub-gw-09",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.9.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.9.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.9.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-10": {
+    "uid": "uid-reg-hub-10",
+    "name": "reg-hub-gw-10",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.10.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.10.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-11": {
+    "uid": "uid-reg-hub-11",
+    "name": "reg-hub-gw-11",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.11.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.11.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.11.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-12": {
+    "uid": "uid-reg-hub-12",
+    "name": "reg-hub-gw-12",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.12.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.12.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.12.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-13": {
+    "uid": "uid-reg-hub-13",
+    "name": "reg-hub-gw-13",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.13.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.13.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.13.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-14": {
+    "uid": "uid-reg-hub-14",
+    "name": "reg-hub-gw-14",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.14.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.14.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.14.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-15": {
+    "uid": "uid-reg-hub-15",
+    "name": "reg-hub-gw-15",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.15.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.15.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.15.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-16": {
+    "uid": "uid-reg-hub-16",
+    "name": "reg-hub-gw-16",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.16.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.16.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.16.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-17": {
+    "uid": "uid-reg-hub-17",
+    "name": "reg-hub-gw-17",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.17.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.17.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.17.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-18": {
+    "uid": "uid-reg-hub-18",
+    "name": "reg-hub-gw-18",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.18.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.18.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.18.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-19": {
+    "uid": "uid-reg-hub-19",
+    "name": "reg-hub-gw-19",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.19.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.19.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.19.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-reg-hub-20": {
+    "uid": "uid-reg-hub-20",
+    "name": "reg-hub-gw-20",
+    "type": "simple-gateway",
+    "ipv4-address": "172.22.20.10",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.22.20.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.30.20.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  }
+}

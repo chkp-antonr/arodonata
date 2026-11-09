@@ -1,0 +1,17 @@
+{
+  "objects": [
+    {
+      "uid": "uid-db_seg-svc-grp-web",
+      "name": "G_DB_Seg_App_Services",
+      "type": "service-group",
+      "members": [
+        "uid-db_seg-svc-tcp-80",
+        "uid-db_seg-svc-tcp-443",
+        "uid-db_seg-svc-tcp-8443"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

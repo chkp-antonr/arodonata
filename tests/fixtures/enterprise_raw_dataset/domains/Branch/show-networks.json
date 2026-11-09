@@ -1,0 +1,2387 @@
+{
+  "objects": [
+    {
+      "uid": "uid-br-net-lan-001",
+      "name": "N_Branch_001_LAN",
+      "type": "network",
+      "subnet4": "10.11.1.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-001",
+      "name": "N_Branch_001_VoIP",
+      "type": "network",
+      "subnet4": "10.12.1.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-002",
+      "name": "N_Branch_002_LAN",
+      "type": "network",
+      "subnet4": "10.11.2.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-002",
+      "name": "N_Branch_002_VoIP",
+      "type": "network",
+      "subnet4": "10.12.2.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-003",
+      "name": "N_Branch_003_LAN",
+      "type": "network",
+      "subnet4": "10.11.3.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-003",
+      "name": "N_Branch_003_VoIP",
+      "type": "network",
+      "subnet4": "10.12.3.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-004",
+      "name": "N_Branch_004_LAN",
+      "type": "network",
+      "subnet4": "10.11.4.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-004",
+      "name": "N_Branch_004_VoIP",
+      "type": "network",
+      "subnet4": "10.12.4.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-005",
+      "name": "N_Branch_005_LAN",
+      "type": "network",
+      "subnet4": "10.11.5.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-005",
+      "name": "N_Branch_005_VoIP",
+      "type": "network",
+      "subnet4": "10.12.5.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-006",
+      "name": "N_Branch_006_LAN",
+      "type": "network",
+      "subnet4": "10.11.6.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-006",
+      "name": "N_Branch_006_VoIP",
+      "type": "network",
+      "subnet4": "10.12.6.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-007",
+      "name": "N_Branch_007_LAN",
+      "type": "network",
+      "subnet4": "10.11.7.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-007",
+      "name": "N_Branch_007_VoIP",
+      "type": "network",
+      "subnet4": "10.12.7.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-008",
+      "name": "N_Branch_008_LAN",
+      "type": "network",
+      "subnet4": "10.11.8.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-008",
+      "name": "N_Branch_008_VoIP",
+      "type": "network",
+      "subnet4": "10.12.8.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-009",
+      "name": "N_Branch_009_LAN",
+      "type": "network",
+      "subnet4": "10.11.9.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-009",
+      "name": "N_Branch_009_VoIP",
+      "type": "network",
+      "subnet4": "10.12.9.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-010",
+      "name": "N_Branch_010_LAN",
+      "type": "network",
+      "subnet4": "10.11.10.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-010",
+      "name": "N_Branch_010_VoIP",
+      "type": "network",
+      "subnet4": "10.12.10.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-011",
+      "name": "N_Branch_011_LAN",
+      "type": "network",
+      "subnet4": "10.11.11.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-011",
+      "name": "N_Branch_011_VoIP",
+      "type": "network",
+      "subnet4": "10.12.11.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-012",
+      "name": "N_Branch_012_LAN",
+      "type": "network",
+      "subnet4": "10.11.12.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-012",
+      "name": "N_Branch_012_VoIP",
+      "type": "network",
+      "subnet4": "10.12.12.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-013",
+      "name": "N_Branch_013_LAN",
+      "type": "network",
+      "subnet4": "10.11.13.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-013",
+      "name": "N_Branch_013_VoIP",
+      "type": "network",
+      "subnet4": "10.12.13.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-014",
+      "name": "N_Branch_014_LAN",
+      "type": "network",
+      "subnet4": "10.11.14.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-014",
+      "name": "N_Branch_014_VoIP",
+      "type": "network",
+      "subnet4": "10.12.14.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-015",
+      "name": "N_Branch_015_LAN",
+      "type": "network",
+      "subnet4": "10.11.15.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-015",
+      "name": "N_Branch_015_VoIP",
+      "type": "network",
+      "subnet4": "10.12.15.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-016",
+      "name": "N_Branch_016_LAN",
+      "type": "network",
+      "subnet4": "10.11.16.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-016",
+      "name": "N_Branch_016_VoIP",
+      "type": "network",
+      "subnet4": "10.12.16.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-017",
+      "name": "N_Branch_017_LAN",
+      "type": "network",
+      "subnet4": "10.11.17.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-017",
+      "name": "N_Branch_017_VoIP",
+      "type": "network",
+      "subnet4": "10.12.17.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-018",
+      "name": "N_Branch_018_LAN",
+      "type": "network",
+      "subnet4": "10.11.18.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-018",
+      "name": "N_Branch_018_VoIP",
+      "type": "network",
+      "subnet4": "10.12.18.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-019",
+      "name": "N_Branch_019_LAN",
+      "type": "network",
+      "subnet4": "10.11.19.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-019",
+      "name": "N_Branch_019_VoIP",
+      "type": "network",
+      "subnet4": "10.12.19.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-020",
+      "name": "N_Branch_020_LAN",
+      "type": "network",
+      "subnet4": "10.11.20.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-020",
+      "name": "N_Branch_020_VoIP",
+      "type": "network",
+      "subnet4": "10.12.20.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-021",
+      "name": "N_Branch_021_LAN",
+      "type": "network",
+      "subnet4": "10.11.21.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-021",
+      "name": "N_Branch_021_VoIP",
+      "type": "network",
+      "subnet4": "10.12.21.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-022",
+      "name": "N_Branch_022_LAN",
+      "type": "network",
+      "subnet4": "10.11.22.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-022",
+      "name": "N_Branch_022_VoIP",
+      "type": "network",
+      "subnet4": "10.12.22.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-023",
+      "name": "N_Branch_023_LAN",
+      "type": "network",
+      "subnet4": "10.11.23.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-023",
+      "name": "N_Branch_023_VoIP",
+      "type": "network",
+      "subnet4": "10.12.23.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-024",
+      "name": "N_Branch_024_LAN",
+      "type": "network",
+      "subnet4": "10.11.24.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-024",
+      "name": "N_Branch_024_VoIP",
+      "type": "network",
+      "subnet4": "10.12.24.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-025",
+      "name": "N_Branch_025_LAN",
+      "type": "network",
+      "subnet4": "10.11.25.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-025",
+      "name": "N_Branch_025_VoIP",
+      "type": "network",
+      "subnet4": "10.12.25.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-026",
+      "name": "N_Branch_026_LAN",
+      "type": "network",
+      "subnet4": "10.11.26.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-026",
+      "name": "N_Branch_026_VoIP",
+      "type": "network",
+      "subnet4": "10.12.26.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-027",
+      "name": "N_Branch_027_LAN",
+      "type": "network",
+      "subnet4": "10.11.27.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-027",
+      "name": "N_Branch_027_VoIP",
+      "type": "network",
+      "subnet4": "10.12.27.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-028",
+      "name": "N_Branch_028_LAN",
+      "type": "network",
+      "subnet4": "10.11.28.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-028",
+      "name": "N_Branch_028_VoIP",
+      "type": "network",
+      "subnet4": "10.12.28.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-029",
+      "name": "N_Branch_029_LAN",
+      "type": "network",
+      "subnet4": "10.11.29.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-029",
+      "name": "N_Branch_029_VoIP",
+      "type": "network",
+      "subnet4": "10.12.29.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-030",
+      "name": "N_Branch_030_LAN",
+      "type": "network",
+      "subnet4": "10.11.30.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-030",
+      "name": "N_Branch_030_VoIP",
+      "type": "network",
+      "subnet4": "10.12.30.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-031",
+      "name": "N_Branch_031_LAN",
+      "type": "network",
+      "subnet4": "10.11.31.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-031",
+      "name": "N_Branch_031_VoIP",
+      "type": "network",
+      "subnet4": "10.12.31.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-032",
+      "name": "N_Branch_032_LAN",
+      "type": "network",
+      "subnet4": "10.11.32.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-032",
+      "name": "N_Branch_032_VoIP",
+      "type": "network",
+      "subnet4": "10.12.32.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-033",
+      "name": "N_Branch_033_LAN",
+      "type": "network",
+      "subnet4": "10.11.33.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-033",
+      "name": "N_Branch_033_VoIP",
+      "type": "network",
+      "subnet4": "10.12.33.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-034",
+      "name": "N_Branch_034_LAN",
+      "type": "network",
+      "subnet4": "10.11.34.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-034",
+      "name": "N_Branch_034_VoIP",
+      "type": "network",
+      "subnet4": "10.12.34.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-035",
+      "name": "N_Branch_035_LAN",
+      "type": "network",
+      "subnet4": "10.11.35.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-035",
+      "name": "N_Branch_035_VoIP",
+      "type": "network",
+      "subnet4": "10.12.35.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-036",
+      "name": "N_Branch_036_LAN",
+      "type": "network",
+      "subnet4": "10.11.36.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-036",
+      "name": "N_Branch_036_VoIP",
+      "type": "network",
+      "subnet4": "10.12.36.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-037",
+      "name": "N_Branch_037_LAN",
+      "type": "network",
+      "subnet4": "10.11.37.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-037",
+      "name": "N_Branch_037_VoIP",
+      "type": "network",
+      "subnet4": "10.12.37.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-038",
+      "name": "N_Branch_038_LAN",
+      "type": "network",
+      "subnet4": "10.11.38.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-038",
+      "name": "N_Branch_038_VoIP",
+      "type": "network",
+      "subnet4": "10.12.38.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-039",
+      "name": "N_Branch_039_LAN",
+      "type": "network",
+      "subnet4": "10.11.39.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-039",
+      "name": "N_Branch_039_VoIP",
+      "type": "network",
+      "subnet4": "10.12.39.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-040",
+      "name": "N_Branch_040_LAN",
+      "type": "network",
+      "subnet4": "10.11.40.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-040",
+      "name": "N_Branch_040_VoIP",
+      "type": "network",
+      "subnet4": "10.12.40.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-041",
+      "name": "N_Branch_041_LAN",
+      "type": "network",
+      "subnet4": "10.11.41.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-041",
+      "name": "N_Branch_041_VoIP",
+      "type": "network",
+      "subnet4": "10.12.41.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-042",
+      "name": "N_Branch_042_LAN",
+      "type": "network",
+      "subnet4": "10.11.42.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-042",
+      "name": "N_Branch_042_VoIP",
+      "type": "network",
+      "subnet4": "10.12.42.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-043",
+      "name": "N_Branch_043_LAN",
+      "type": "network",
+      "subnet4": "10.11.43.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-043",
+      "name": "N_Branch_043_VoIP",
+      "type": "network",
+      "subnet4": "10.12.43.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-044",
+      "name": "N_Branch_044_LAN",
+      "type": "network",
+      "subnet4": "10.11.44.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-044",
+      "name": "N_Branch_044_VoIP",
+      "type": "network",
+      "subnet4": "10.12.44.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-045",
+      "name": "N_Branch_045_LAN",
+      "type": "network",
+      "subnet4": "10.11.45.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-045",
+      "name": "N_Branch_045_VoIP",
+      "type": "network",
+      "subnet4": "10.12.45.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-046",
+      "name": "N_Branch_046_LAN",
+      "type": "network",
+      "subnet4": "10.11.46.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-046",
+      "name": "N_Branch_046_VoIP",
+      "type": "network",
+      "subnet4": "10.12.46.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-047",
+      "name": "N_Branch_047_LAN",
+      "type": "network",
+      "subnet4": "10.11.47.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-047",
+      "name": "N_Branch_047_VoIP",
+      "type": "network",
+      "subnet4": "10.12.47.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-048",
+      "name": "N_Branch_048_LAN",
+      "type": "network",
+      "subnet4": "10.11.48.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-048",
+      "name": "N_Branch_048_VoIP",
+      "type": "network",
+      "subnet4": "10.12.48.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-049",
+      "name": "N_Branch_049_LAN",
+      "type": "network",
+      "subnet4": "10.11.49.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-049",
+      "name": "N_Branch_049_VoIP",
+      "type": "network",
+      "subnet4": "10.12.49.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-050",
+      "name": "N_Branch_050_LAN",
+      "type": "network",
+      "subnet4": "10.11.50.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-050",
+      "name": "N_Branch_050_VoIP",
+      "type": "network",
+      "subnet4": "10.12.50.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-051",
+      "name": "N_Branch_051_LAN",
+      "type": "network",
+      "subnet4": "10.11.51.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-051",
+      "name": "N_Branch_051_VoIP",
+      "type": "network",
+      "subnet4": "10.12.51.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-052",
+      "name": "N_Branch_052_LAN",
+      "type": "network",
+      "subnet4": "10.11.52.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-052",
+      "name": "N_Branch_052_VoIP",
+      "type": "network",
+      "subnet4": "10.12.52.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-053",
+      "name": "N_Branch_053_LAN",
+      "type": "network",
+      "subnet4": "10.11.53.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-053",
+      "name": "N_Branch_053_VoIP",
+      "type": "network",
+      "subnet4": "10.12.53.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-054",
+      "name": "N_Branch_054_LAN",
+      "type": "network",
+      "subnet4": "10.11.54.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-054",
+      "name": "N_Branch_054_VoIP",
+      "type": "network",
+      "subnet4": "10.12.54.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-055",
+      "name": "N_Branch_055_LAN",
+      "type": "network",
+      "subnet4": "10.11.55.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-055",
+      "name": "N_Branch_055_VoIP",
+      "type": "network",
+      "subnet4": "10.12.55.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-056",
+      "name": "N_Branch_056_LAN",
+      "type": "network",
+      "subnet4": "10.11.56.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-056",
+      "name": "N_Branch_056_VoIP",
+      "type": "network",
+      "subnet4": "10.12.56.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-057",
+      "name": "N_Branch_057_LAN",
+      "type": "network",
+      "subnet4": "10.11.57.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-057",
+      "name": "N_Branch_057_VoIP",
+      "type": "network",
+      "subnet4": "10.12.57.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-058",
+      "name": "N_Branch_058_LAN",
+      "type": "network",
+      "subnet4": "10.11.58.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-058",
+      "name": "N_Branch_058_VoIP",
+      "type": "network",
+      "subnet4": "10.12.58.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-059",
+      "name": "N_Branch_059_LAN",
+      "type": "network",
+      "subnet4": "10.11.59.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-059",
+      "name": "N_Branch_059_VoIP",
+      "type": "network",
+      "subnet4": "10.12.59.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-060",
+      "name": "N_Branch_060_LAN",
+      "type": "network",
+      "subnet4": "10.11.60.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-060",
+      "name": "N_Branch_060_VoIP",
+      "type": "network",
+      "subnet4": "10.12.60.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-061",
+      "name": "N_Branch_061_LAN",
+      "type": "network",
+      "subnet4": "10.11.61.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-061",
+      "name": "N_Branch_061_VoIP",
+      "type": "network",
+      "subnet4": "10.12.61.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-062",
+      "name": "N_Branch_062_LAN",
+      "type": "network",
+      "subnet4": "10.11.62.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-062",
+      "name": "N_Branch_062_VoIP",
+      "type": "network",
+      "subnet4": "10.12.62.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-063",
+      "name": "N_Branch_063_LAN",
+      "type": "network",
+      "subnet4": "10.11.63.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-063",
+      "name": "N_Branch_063_VoIP",
+      "type": "network",
+      "subnet4": "10.12.63.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-064",
+      "name": "N_Branch_064_LAN",
+      "type": "network",
+      "subnet4": "10.11.64.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-064",
+      "name": "N_Branch_064_VoIP",
+      "type": "network",
+      "subnet4": "10.12.64.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-065",
+      "name": "N_Branch_065_LAN",
+      "type": "network",
+      "subnet4": "10.11.65.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-065",
+      "name": "N_Branch_065_VoIP",
+      "type": "network",
+      "subnet4": "10.12.65.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-066",
+      "name": "N_Branch_066_LAN",
+      "type": "network",
+      "subnet4": "10.11.66.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-066",
+      "name": "N_Branch_066_VoIP",
+      "type": "network",
+      "subnet4": "10.12.66.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-067",
+      "name": "N_Branch_067_LAN",
+      "type": "network",
+      "subnet4": "10.11.67.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-067",
+      "name": "N_Branch_067_VoIP",
+      "type": "network",
+      "subnet4": "10.12.67.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-068",
+      "name": "N_Branch_068_LAN",
+      "type": "network",
+      "subnet4": "10.11.68.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-068",
+      "name": "N_Branch_068_VoIP",
+      "type": "network",
+      "subnet4": "10.12.68.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-069",
+      "name": "N_Branch_069_LAN",
+      "type": "network",
+      "subnet4": "10.11.69.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-069",
+      "name": "N_Branch_069_VoIP",
+      "type": "network",
+      "subnet4": "10.12.69.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-070",
+      "name": "N_Branch_070_LAN",
+      "type": "network",
+      "subnet4": "10.11.70.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-070",
+      "name": "N_Branch_070_VoIP",
+      "type": "network",
+      "subnet4": "10.12.70.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-071",
+      "name": "N_Branch_071_LAN",
+      "type": "network",
+      "subnet4": "10.11.71.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-071",
+      "name": "N_Branch_071_VoIP",
+      "type": "network",
+      "subnet4": "10.12.71.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-072",
+      "name": "N_Branch_072_LAN",
+      "type": "network",
+      "subnet4": "10.11.72.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-072",
+      "name": "N_Branch_072_VoIP",
+      "type": "network",
+      "subnet4": "10.12.72.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-073",
+      "name": "N_Branch_073_LAN",
+      "type": "network",
+      "subnet4": "10.11.73.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-073",
+      "name": "N_Branch_073_VoIP",
+      "type": "network",
+      "subnet4": "10.12.73.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-074",
+      "name": "N_Branch_074_LAN",
+      "type": "network",
+      "subnet4": "10.11.74.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-074",
+      "name": "N_Branch_074_VoIP",
+      "type": "network",
+      "subnet4": "10.12.74.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-075",
+      "name": "N_Branch_075_LAN",
+      "type": "network",
+      "subnet4": "10.11.75.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-075",
+      "name": "N_Branch_075_VoIP",
+      "type": "network",
+      "subnet4": "10.12.75.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-076",
+      "name": "N_Branch_076_LAN",
+      "type": "network",
+      "subnet4": "10.11.76.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-076",
+      "name": "N_Branch_076_VoIP",
+      "type": "network",
+      "subnet4": "10.12.76.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-077",
+      "name": "N_Branch_077_LAN",
+      "type": "network",
+      "subnet4": "10.11.77.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-077",
+      "name": "N_Branch_077_VoIP",
+      "type": "network",
+      "subnet4": "10.12.77.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-078",
+      "name": "N_Branch_078_LAN",
+      "type": "network",
+      "subnet4": "10.11.78.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-078",
+      "name": "N_Branch_078_VoIP",
+      "type": "network",
+      "subnet4": "10.12.78.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-079",
+      "name": "N_Branch_079_LAN",
+      "type": "network",
+      "subnet4": "10.11.79.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-079",
+      "name": "N_Branch_079_VoIP",
+      "type": "network",
+      "subnet4": "10.12.79.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-080",
+      "name": "N_Branch_080_LAN",
+      "type": "network",
+      "subnet4": "10.11.80.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-080",
+      "name": "N_Branch_080_VoIP",
+      "type": "network",
+      "subnet4": "10.12.80.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-081",
+      "name": "N_Branch_081_LAN",
+      "type": "network",
+      "subnet4": "10.11.81.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-081",
+      "name": "N_Branch_081_VoIP",
+      "type": "network",
+      "subnet4": "10.12.81.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-082",
+      "name": "N_Branch_082_LAN",
+      "type": "network",
+      "subnet4": "10.11.82.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-082",
+      "name": "N_Branch_082_VoIP",
+      "type": "network",
+      "subnet4": "10.12.82.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-083",
+      "name": "N_Branch_083_LAN",
+      "type": "network",
+      "subnet4": "10.11.83.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-083",
+      "name": "N_Branch_083_VoIP",
+      "type": "network",
+      "subnet4": "10.12.83.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-084",
+      "name": "N_Branch_084_LAN",
+      "type": "network",
+      "subnet4": "10.11.84.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-084",
+      "name": "N_Branch_084_VoIP",
+      "type": "network",
+      "subnet4": "10.12.84.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-085",
+      "name": "N_Branch_085_LAN",
+      "type": "network",
+      "subnet4": "10.11.85.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-085",
+      "name": "N_Branch_085_VoIP",
+      "type": "network",
+      "subnet4": "10.12.85.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-086",
+      "name": "N_Branch_086_LAN",
+      "type": "network",
+      "subnet4": "10.11.86.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-086",
+      "name": "N_Branch_086_VoIP",
+      "type": "network",
+      "subnet4": "10.12.86.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-087",
+      "name": "N_Branch_087_LAN",
+      "type": "network",
+      "subnet4": "10.11.87.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-087",
+      "name": "N_Branch_087_VoIP",
+      "type": "network",
+      "subnet4": "10.12.87.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-088",
+      "name": "N_Branch_088_LAN",
+      "type": "network",
+      "subnet4": "10.11.88.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-088",
+      "name": "N_Branch_088_VoIP",
+      "type": "network",
+      "subnet4": "10.12.88.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-089",
+      "name": "N_Branch_089_LAN",
+      "type": "network",
+      "subnet4": "10.11.89.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-089",
+      "name": "N_Branch_089_VoIP",
+      "type": "network",
+      "subnet4": "10.12.89.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-090",
+      "name": "N_Branch_090_LAN",
+      "type": "network",
+      "subnet4": "10.11.90.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-090",
+      "name": "N_Branch_090_VoIP",
+      "type": "network",
+      "subnet4": "10.12.90.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-091",
+      "name": "N_Branch_091_LAN",
+      "type": "network",
+      "subnet4": "10.11.91.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-091",
+      "name": "N_Branch_091_VoIP",
+      "type": "network",
+      "subnet4": "10.12.91.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-092",
+      "name": "N_Branch_092_LAN",
+      "type": "network",
+      "subnet4": "10.11.92.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-092",
+      "name": "N_Branch_092_VoIP",
+      "type": "network",
+      "subnet4": "10.12.92.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-093",
+      "name": "N_Branch_093_LAN",
+      "type": "network",
+      "subnet4": "10.11.93.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-093",
+      "name": "N_Branch_093_VoIP",
+      "type": "network",
+      "subnet4": "10.12.93.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-094",
+      "name": "N_Branch_094_LAN",
+      "type": "network",
+      "subnet4": "10.11.94.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-094",
+      "name": "N_Branch_094_VoIP",
+      "type": "network",
+      "subnet4": "10.12.94.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-095",
+      "name": "N_Branch_095_LAN",
+      "type": "network",
+      "subnet4": "10.11.95.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-095",
+      "name": "N_Branch_095_VoIP",
+      "type": "network",
+      "subnet4": "10.12.95.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-096",
+      "name": "N_Branch_096_LAN",
+      "type": "network",
+      "subnet4": "10.11.96.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-096",
+      "name": "N_Branch_096_VoIP",
+      "type": "network",
+      "subnet4": "10.12.96.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-097",
+      "name": "N_Branch_097_LAN",
+      "type": "network",
+      "subnet4": "10.11.97.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-097",
+      "name": "N_Branch_097_VoIP",
+      "type": "network",
+      "subnet4": "10.12.97.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-098",
+      "name": "N_Branch_098_LAN",
+      "type": "network",
+      "subnet4": "10.11.98.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-098",
+      "name": "N_Branch_098_VoIP",
+      "type": "network",
+      "subnet4": "10.12.98.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-099",
+      "name": "N_Branch_099_LAN",
+      "type": "network",
+      "subnet4": "10.11.99.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-099",
+      "name": "N_Branch_099_VoIP",
+      "type": "network",
+      "subnet4": "10.12.99.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-100",
+      "name": "N_Branch_100_LAN",
+      "type": "network",
+      "subnet4": "10.11.100.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-100",
+      "name": "N_Branch_100_VoIP",
+      "type": "network",
+      "subnet4": "10.12.100.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-101",
+      "name": "N_Branch_101_LAN",
+      "type": "network",
+      "subnet4": "10.11.101.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-101",
+      "name": "N_Branch_101_VoIP",
+      "type": "network",
+      "subnet4": "10.12.101.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-102",
+      "name": "N_Branch_102_LAN",
+      "type": "network",
+      "subnet4": "10.11.102.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-102",
+      "name": "N_Branch_102_VoIP",
+      "type": "network",
+      "subnet4": "10.12.102.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-103",
+      "name": "N_Branch_103_LAN",
+      "type": "network",
+      "subnet4": "10.11.103.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-103",
+      "name": "N_Branch_103_VoIP",
+      "type": "network",
+      "subnet4": "10.12.103.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-104",
+      "name": "N_Branch_104_LAN",
+      "type": "network",
+      "subnet4": "10.11.104.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-104",
+      "name": "N_Branch_104_VoIP",
+      "type": "network",
+      "subnet4": "10.12.104.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-105",
+      "name": "N_Branch_105_LAN",
+      "type": "network",
+      "subnet4": "10.11.105.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-105",
+      "name": "N_Branch_105_VoIP",
+      "type": "network",
+      "subnet4": "10.12.105.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-106",
+      "name": "N_Branch_106_LAN",
+      "type": "network",
+      "subnet4": "10.11.106.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-106",
+      "name": "N_Branch_106_VoIP",
+      "type": "network",
+      "subnet4": "10.12.106.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-107",
+      "name": "N_Branch_107_LAN",
+      "type": "network",
+      "subnet4": "10.11.107.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-107",
+      "name": "N_Branch_107_VoIP",
+      "type": "network",
+      "subnet4": "10.12.107.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-108",
+      "name": "N_Branch_108_LAN",
+      "type": "network",
+      "subnet4": "10.11.108.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-108",
+      "name": "N_Branch_108_VoIP",
+      "type": "network",
+      "subnet4": "10.12.108.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-109",
+      "name": "N_Branch_109_LAN",
+      "type": "network",
+      "subnet4": "10.11.109.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-109",
+      "name": "N_Branch_109_VoIP",
+      "type": "network",
+      "subnet4": "10.12.109.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-110",
+      "name": "N_Branch_110_LAN",
+      "type": "network",
+      "subnet4": "10.11.110.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-110",
+      "name": "N_Branch_110_VoIP",
+      "type": "network",
+      "subnet4": "10.12.110.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-111",
+      "name": "N_Branch_111_LAN",
+      "type": "network",
+      "subnet4": "10.11.111.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-111",
+      "name": "N_Branch_111_VoIP",
+      "type": "network",
+      "subnet4": "10.12.111.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-112",
+      "name": "N_Branch_112_LAN",
+      "type": "network",
+      "subnet4": "10.11.112.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-112",
+      "name": "N_Branch_112_VoIP",
+      "type": "network",
+      "subnet4": "10.12.112.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-113",
+      "name": "N_Branch_113_LAN",
+      "type": "network",
+      "subnet4": "10.11.113.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-113",
+      "name": "N_Branch_113_VoIP",
+      "type": "network",
+      "subnet4": "10.12.113.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-114",
+      "name": "N_Branch_114_LAN",
+      "type": "network",
+      "subnet4": "10.11.114.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-114",
+      "name": "N_Branch_114_VoIP",
+      "type": "network",
+      "subnet4": "10.12.114.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-115",
+      "name": "N_Branch_115_LAN",
+      "type": "network",
+      "subnet4": "10.11.115.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-115",
+      "name": "N_Branch_115_VoIP",
+      "type": "network",
+      "subnet4": "10.12.115.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-116",
+      "name": "N_Branch_116_LAN",
+      "type": "network",
+      "subnet4": "10.11.116.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-116",
+      "name": "N_Branch_116_VoIP",
+      "type": "network",
+      "subnet4": "10.12.116.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-117",
+      "name": "N_Branch_117_LAN",
+      "type": "network",
+      "subnet4": "10.11.117.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-117",
+      "name": "N_Branch_117_VoIP",
+      "type": "network",
+      "subnet4": "10.12.117.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-118",
+      "name": "N_Branch_118_LAN",
+      "type": "network",
+      "subnet4": "10.11.118.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-118",
+      "name": "N_Branch_118_VoIP",
+      "type": "network",
+      "subnet4": "10.12.118.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-119",
+      "name": "N_Branch_119_LAN",
+      "type": "network",
+      "subnet4": "10.11.119.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-119",
+      "name": "N_Branch_119_VoIP",
+      "type": "network",
+      "subnet4": "10.12.119.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-120",
+      "name": "N_Branch_120_LAN",
+      "type": "network",
+      "subnet4": "10.11.120.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-120",
+      "name": "N_Branch_120_VoIP",
+      "type": "network",
+      "subnet4": "10.12.120.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-121",
+      "name": "N_Branch_121_LAN",
+      "type": "network",
+      "subnet4": "10.11.121.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-121",
+      "name": "N_Branch_121_VoIP",
+      "type": "network",
+      "subnet4": "10.12.121.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-122",
+      "name": "N_Branch_122_LAN",
+      "type": "network",
+      "subnet4": "10.11.122.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-122",
+      "name": "N_Branch_122_VoIP",
+      "type": "network",
+      "subnet4": "10.12.122.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-123",
+      "name": "N_Branch_123_LAN",
+      "type": "network",
+      "subnet4": "10.11.123.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-123",
+      "name": "N_Branch_123_VoIP",
+      "type": "network",
+      "subnet4": "10.12.123.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-124",
+      "name": "N_Branch_124_LAN",
+      "type": "network",
+      "subnet4": "10.11.124.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-124",
+      "name": "N_Branch_124_VoIP",
+      "type": "network",
+      "subnet4": "10.12.124.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-125",
+      "name": "N_Branch_125_LAN",
+      "type": "network",
+      "subnet4": "10.11.125.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-125",
+      "name": "N_Branch_125_VoIP",
+      "type": "network",
+      "subnet4": "10.12.125.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-126",
+      "name": "N_Branch_126_LAN",
+      "type": "network",
+      "subnet4": "10.11.126.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-126",
+      "name": "N_Branch_126_VoIP",
+      "type": "network",
+      "subnet4": "10.12.126.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-127",
+      "name": "N_Branch_127_LAN",
+      "type": "network",
+      "subnet4": "10.11.127.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-127",
+      "name": "N_Branch_127_VoIP",
+      "type": "network",
+      "subnet4": "10.12.127.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-128",
+      "name": "N_Branch_128_LAN",
+      "type": "network",
+      "subnet4": "10.11.128.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-128",
+      "name": "N_Branch_128_VoIP",
+      "type": "network",
+      "subnet4": "10.12.128.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-129",
+      "name": "N_Branch_129_LAN",
+      "type": "network",
+      "subnet4": "10.11.129.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-129",
+      "name": "N_Branch_129_VoIP",
+      "type": "network",
+      "subnet4": "10.12.129.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-130",
+      "name": "N_Branch_130_LAN",
+      "type": "network",
+      "subnet4": "10.11.130.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-130",
+      "name": "N_Branch_130_VoIP",
+      "type": "network",
+      "subnet4": "10.12.130.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-131",
+      "name": "N_Branch_131_LAN",
+      "type": "network",
+      "subnet4": "10.11.131.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-131",
+      "name": "N_Branch_131_VoIP",
+      "type": "network",
+      "subnet4": "10.12.131.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-132",
+      "name": "N_Branch_132_LAN",
+      "type": "network",
+      "subnet4": "10.11.132.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-132",
+      "name": "N_Branch_132_VoIP",
+      "type": "network",
+      "subnet4": "10.12.132.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-133",
+      "name": "N_Branch_133_LAN",
+      "type": "network",
+      "subnet4": "10.11.133.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-133",
+      "name": "N_Branch_133_VoIP",
+      "type": "network",
+      "subnet4": "10.12.133.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-134",
+      "name": "N_Branch_134_LAN",
+      "type": "network",
+      "subnet4": "10.11.134.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-134",
+      "name": "N_Branch_134_VoIP",
+      "type": "network",
+      "subnet4": "10.12.134.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-135",
+      "name": "N_Branch_135_LAN",
+      "type": "network",
+      "subnet4": "10.11.135.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-135",
+      "name": "N_Branch_135_VoIP",
+      "type": "network",
+      "subnet4": "10.12.135.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-136",
+      "name": "N_Branch_136_LAN",
+      "type": "network",
+      "subnet4": "10.11.136.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-136",
+      "name": "N_Branch_136_VoIP",
+      "type": "network",
+      "subnet4": "10.12.136.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-137",
+      "name": "N_Branch_137_LAN",
+      "type": "network",
+      "subnet4": "10.11.137.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-137",
+      "name": "N_Branch_137_VoIP",
+      "type": "network",
+      "subnet4": "10.12.137.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-138",
+      "name": "N_Branch_138_LAN",
+      "type": "network",
+      "subnet4": "10.11.138.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-138",
+      "name": "N_Branch_138_VoIP",
+      "type": "network",
+      "subnet4": "10.12.138.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-139",
+      "name": "N_Branch_139_LAN",
+      "type": "network",
+      "subnet4": "10.11.139.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-139",
+      "name": "N_Branch_139_VoIP",
+      "type": "network",
+      "subnet4": "10.12.139.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-lan-140",
+      "name": "N_Branch_140_LAN",
+      "type": "network",
+      "subnet4": "10.11.140.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-br-net-voip-140",
+      "name": "N_Branch_140_VoIP",
+      "type": "network",
+      "subnet4": "10.12.140.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-001",
+      "name": "N_Branch_Segment_001",
+      "type": "network",
+      "subnet4": "10.141.1.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-002",
+      "name": "N_Branch_Segment_002",
+      "type": "network",
+      "subnet4": "10.141.2.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-003",
+      "name": "N_Branch_Segment_003",
+      "type": "network",
+      "subnet4": "10.141.3.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-004",
+      "name": "N_Branch_Segment_004",
+      "type": "network",
+      "subnet4": "10.141.4.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-005",
+      "name": "N_Branch_Segment_005",
+      "type": "network",
+      "subnet4": "10.141.5.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-006",
+      "name": "N_Branch_Segment_006",
+      "type": "network",
+      "subnet4": "10.141.6.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-007",
+      "name": "N_Branch_Segment_007",
+      "type": "network",
+      "subnet4": "10.141.7.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-008",
+      "name": "N_Branch_Segment_008",
+      "type": "network",
+      "subnet4": "10.141.8.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-009",
+      "name": "N_Branch_Segment_009",
+      "type": "network",
+      "subnet4": "10.141.9.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-010",
+      "name": "N_Branch_Segment_010",
+      "type": "network",
+      "subnet4": "10.141.10.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-011",
+      "name": "N_Branch_Segment_011",
+      "type": "network",
+      "subnet4": "10.141.11.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-012",
+      "name": "N_Branch_Segment_012",
+      "type": "network",
+      "subnet4": "10.141.12.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-013",
+      "name": "N_Branch_Segment_013",
+      "type": "network",
+      "subnet4": "10.141.13.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-014",
+      "name": "N_Branch_Segment_014",
+      "type": "network",
+      "subnet4": "10.141.14.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-015",
+      "name": "N_Branch_Segment_015",
+      "type": "network",
+      "subnet4": "10.141.15.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-016",
+      "name": "N_Branch_Segment_016",
+      "type": "network",
+      "subnet4": "10.141.16.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-017",
+      "name": "N_Branch_Segment_017",
+      "type": "network",
+      "subnet4": "10.141.17.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-018",
+      "name": "N_Branch_Segment_018",
+      "type": "network",
+      "subnet4": "10.141.18.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-019",
+      "name": "N_Branch_Segment_019",
+      "type": "network",
+      "subnet4": "10.141.19.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-020",
+      "name": "N_Branch_Segment_020",
+      "type": "network",
+      "subnet4": "10.141.20.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-021",
+      "name": "N_Branch_Segment_021",
+      "type": "network",
+      "subnet4": "10.141.21.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-022",
+      "name": "N_Branch_Segment_022",
+      "type": "network",
+      "subnet4": "10.141.22.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-023",
+      "name": "N_Branch_Segment_023",
+      "type": "network",
+      "subnet4": "10.141.23.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-024",
+      "name": "N_Branch_Segment_024",
+      "type": "network",
+      "subnet4": "10.141.24.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-025",
+      "name": "N_Branch_Segment_025",
+      "type": "network",
+      "subnet4": "10.141.25.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-026",
+      "name": "N_Branch_Segment_026",
+      "type": "network",
+      "subnet4": "10.141.26.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-027",
+      "name": "N_Branch_Segment_027",
+      "type": "network",
+      "subnet4": "10.141.27.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-028",
+      "name": "N_Branch_Segment_028",
+      "type": "network",
+      "subnet4": "10.141.28.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-029",
+      "name": "N_Branch_Segment_029",
+      "type": "network",
+      "subnet4": "10.141.29.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-030",
+      "name": "N_Branch_Segment_030",
+      "type": "network",
+      "subnet4": "10.141.30.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-031",
+      "name": "N_Branch_Segment_031",
+      "type": "network",
+      "subnet4": "10.141.31.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-032",
+      "name": "N_Branch_Segment_032",
+      "type": "network",
+      "subnet4": "10.141.32.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-033",
+      "name": "N_Branch_Segment_033",
+      "type": "network",
+      "subnet4": "10.141.33.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-034",
+      "name": "N_Branch_Segment_034",
+      "type": "network",
+      "subnet4": "10.141.34.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-035",
+      "name": "N_Branch_Segment_035",
+      "type": "network",
+      "subnet4": "10.141.35.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-036",
+      "name": "N_Branch_Segment_036",
+      "type": "network",
+      "subnet4": "10.141.36.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-037",
+      "name": "N_Branch_Segment_037",
+      "type": "network",
+      "subnet4": "10.141.37.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-038",
+      "name": "N_Branch_Segment_038",
+      "type": "network",
+      "subnet4": "10.141.38.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-039",
+      "name": "N_Branch_Segment_039",
+      "type": "network",
+      "subnet4": "10.141.39.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-040",
+      "name": "N_Branch_Segment_040",
+      "type": "network",
+      "subnet4": "10.141.40.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-041",
+      "name": "N_Branch_Segment_041",
+      "type": "network",
+      "subnet4": "10.141.41.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-042",
+      "name": "N_Branch_Segment_042",
+      "type": "network",
+      "subnet4": "10.141.42.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-043",
+      "name": "N_Branch_Segment_043",
+      "type": "network",
+      "subnet4": "10.141.43.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-044",
+      "name": "N_Branch_Segment_044",
+      "type": "network",
+      "subnet4": "10.141.44.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-045",
+      "name": "N_Branch_Segment_045",
+      "type": "network",
+      "subnet4": "10.141.45.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-046",
+      "name": "N_Branch_Segment_046",
+      "type": "network",
+      "subnet4": "10.141.46.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-047",
+      "name": "N_Branch_Segment_047",
+      "type": "network",
+      "subnet4": "10.141.47.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-048",
+      "name": "N_Branch_Segment_048",
+      "type": "network",
+      "subnet4": "10.141.48.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-049",
+      "name": "N_Branch_Segment_049",
+      "type": "network",
+      "subnet4": "10.141.49.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-050",
+      "name": "N_Branch_Segment_050",
+      "type": "network",
+      "subnet4": "10.141.50.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-051",
+      "name": "N_Branch_Segment_051",
+      "type": "network",
+      "subnet4": "10.141.51.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-052",
+      "name": "N_Branch_Segment_052",
+      "type": "network",
+      "subnet4": "10.141.52.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-053",
+      "name": "N_Branch_Segment_053",
+      "type": "network",
+      "subnet4": "10.141.53.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-054",
+      "name": "N_Branch_Segment_054",
+      "type": "network",
+      "subnet4": "10.141.54.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-055",
+      "name": "N_Branch_Segment_055",
+      "type": "network",
+      "subnet4": "10.141.55.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-056",
+      "name": "N_Branch_Segment_056",
+      "type": "network",
+      "subnet4": "10.141.56.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-057",
+      "name": "N_Branch_Segment_057",
+      "type": "network",
+      "subnet4": "10.141.57.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-058",
+      "name": "N_Branch_Segment_058",
+      "type": "network",
+      "subnet4": "10.141.58.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-059",
+      "name": "N_Branch_Segment_059",
+      "type": "network",
+      "subnet4": "10.141.59.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-branch-bulk-net-060",
+      "name": "N_Branch_Segment_060",
+      "type": "network",
+      "subnet4": "10.141.60.0",
+      "mask-length4": 24
+    }
+  ],
+  "from": 1,
+  "to": 340,
+  "total": 340
+}

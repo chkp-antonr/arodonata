@@ -1,0 +1,16 @@
+{
+  "uid": "sess-pub-db_seg-001",
+  "name": "AutoPublish-DB_Seg",
+  "user-name": "admin",
+  "publish-time": {
+    "posix": 1794168000000,
+    "iso-8601": "2026-11-08T18:00:00Z"
+  },
+  "last-modify-time": {
+    "posix": 1794168000000,
+    "iso-8601": "2026-11-08T18:00:00Z"
+  },
+  "changes": 0,
+  "locks": 0,
+  "number-of-published-changes": 12
+}

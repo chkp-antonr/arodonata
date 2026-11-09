@@ -1,0 +1,193 @@
+{
+  "packages": [
+    {
+      "uid": "uid-pkg-db_seg",
+      "name": "DB_Vault_Seg_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-db-seg-fw-01",
+          "name": "db-seg-internal-fw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-02",
+          "name": "db-seg-internal-fw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-03",
+          "name": "db-seg-internal-fw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-04",
+          "name": "db-seg-internal-fw-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-05",
+          "name": "db-seg-internal-fw-05",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-06",
+          "name": "db-seg-internal-fw-06",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-07",
+          "name": "db-seg-internal-fw-07",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-08",
+          "name": "db-seg-internal-fw-08",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-09",
+          "name": "db-seg-internal-fw-09",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-10",
+          "name": "db-seg-internal-fw-10",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-11",
+          "name": "db-seg-internal-fw-11",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-12",
+          "name": "db-seg-internal-fw-12",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-13",
+          "name": "db-seg-internal-fw-13",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-14",
+          "name": "db-seg-internal-fw-14",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-15",
+          "name": "db-seg-internal-fw-15",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-db_seg-security",
+          "name": "DB_Vault_Seg_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "uid": "uid-pkg-db_seg",
+      "name": "DB_Vault_Seg_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-db-seg-fw-01",
+          "name": "db-seg-internal-fw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-02",
+          "name": "db-seg-internal-fw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-03",
+          "name": "db-seg-internal-fw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-04",
+          "name": "db-seg-internal-fw-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-05",
+          "name": "db-seg-internal-fw-05",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-06",
+          "name": "db-seg-internal-fw-06",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-07",
+          "name": "db-seg-internal-fw-07",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-08",
+          "name": "db-seg-internal-fw-08",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-09",
+          "name": "db-seg-internal-fw-09",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-10",
+          "name": "db-seg-internal-fw-10",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-11",
+          "name": "db-seg-internal-fw-11",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-12",
+          "name": "db-seg-internal-fw-12",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-13",
+          "name": "db-seg-internal-fw-13",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-14",
+          "name": "db-seg-internal-fw-14",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-fw-15",
+          "name": "db-seg-internal-fw-15",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-db_seg-security",
+          "name": "DB_Vault_Seg_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

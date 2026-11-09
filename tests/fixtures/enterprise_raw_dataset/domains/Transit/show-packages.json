@@ -1,0 +1,173 @@
+{
+  "packages": [
+    {
+      "uid": "uid-pkg-transit",
+      "name": "Transit_Interconnect_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-ix-transit-gw-01",
+          "name": "ix-transit-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-lpm-matryoshka-gw",
+          "name": "lpm-matryoshka-gw",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-anomaly-audit-gw",
+          "name": "anomaly-audit-gw",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-02",
+          "name": "ix-transit-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-03",
+          "name": "ix-transit-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-04",
+          "name": "ix-transit-gw-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-05",
+          "name": "ix-transit-gw-05",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-06",
+          "name": "ix-transit-gw-06",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-07",
+          "name": "ix-transit-gw-07",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-08",
+          "name": "ix-transit-gw-08",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-09",
+          "name": "ix-transit-gw-09",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-10",
+          "name": "ix-transit-gw-10",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-11",
+          "name": "ix-transit-gw-11",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-transit-security",
+          "name": "Transit_Interconnect_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "uid": "uid-pkg-transit",
+      "name": "Transit_Interconnect_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-ix-transit-gw-01",
+          "name": "ix-transit-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-lpm-matryoshka-gw",
+          "name": "lpm-matryoshka-gw",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-anomaly-audit-gw",
+          "name": "anomaly-audit-gw",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-02",
+          "name": "ix-transit-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-03",
+          "name": "ix-transit-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-04",
+          "name": "ix-transit-gw-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-05",
+          "name": "ix-transit-gw-05",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-06",
+          "name": "ix-transit-gw-06",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-07",
+          "name": "ix-transit-gw-07",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-08",
+          "name": "ix-transit-gw-08",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-09",
+          "name": "ix-transit-gw-09",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-10",
+          "name": "ix-transit-gw-10",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-ix-transit-11",
+          "name": "ix-transit-gw-11",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-transit-security",
+          "name": "Transit_Interconnect_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

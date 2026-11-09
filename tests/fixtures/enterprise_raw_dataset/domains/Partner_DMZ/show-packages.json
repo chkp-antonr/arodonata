@@ -1,0 +1,203 @@
+{
+  "packages": [
+    {
+      "uid": "uid-pkg-partner_dmz",
+      "name": "Partner_DMZ_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-part-onearm-01",
+          "name": "partner-onearm-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-02",
+          "name": "partner-onearm-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-03",
+          "name": "partner-onearm-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-04",
+          "name": "partner-onearm-gw-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-05",
+          "name": "partner-onearm-gw-05",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-06",
+          "name": "partner-onearm-gw-06",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-07",
+          "name": "partner-onearm-gw-07",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-08",
+          "name": "partner-onearm-gw-08",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-09",
+          "name": "partner-onearm-gw-09",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-10",
+          "name": "partner-onearm-gw-10",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-partner-b2b-cluster",
+          "name": "partner-b2b-cluster",
+          "type": "simple-cluster"
+        },
+        {
+          "uid": "uid-part-ext-01",
+          "name": "partner-ext-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-ext-02",
+          "name": "partner-ext-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-ext-03",
+          "name": "partner-ext-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-ext-04",
+          "name": "partner-ext-gw-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-ext-05",
+          "name": "partner-ext-gw-05",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-partner_dmz-security",
+          "name": "Partner_DMZ_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "uid": "uid-pkg-partner_dmz",
+      "name": "Partner_DMZ_Pkg",
+      "type": "package",
+      "access": true,
+      "nat-policy": true,
+      "installation-targets": [
+        {
+          "uid": "uid-part-onearm-01",
+          "name": "partner-onearm-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-02",
+          "name": "partner-onearm-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-03",
+          "name": "partner-onearm-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-04",
+          "name": "partner-onearm-gw-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-05",
+          "name": "partner-onearm-gw-05",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-06",
+          "name": "partner-onearm-gw-06",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-07",
+          "name": "partner-onearm-gw-07",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-08",
+          "name": "partner-onearm-gw-08",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-09",
+          "name": "partner-onearm-gw-09",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-onearm-10",
+          "name": "partner-onearm-gw-10",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-partner-b2b-cluster",
+          "name": "partner-b2b-cluster",
+          "type": "simple-cluster"
+        },
+        {
+          "uid": "uid-part-ext-01",
+          "name": "partner-ext-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-ext-02",
+          "name": "partner-ext-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-ext-03",
+          "name": "partner-ext-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-ext-04",
+          "name": "partner-ext-gw-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-part-ext-05",
+          "name": "partner-ext-gw-05",
+          "type": "simple-gateway"
+        }
+      ],
+      "access-layers": [
+        {
+          "uid": "uid-layer-partner_dmz-security",
+          "name": "Partner_DMZ_Pkg Network",
+          "type": "access-layer",
+          "position": 1
+        }
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

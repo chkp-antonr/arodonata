@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-db-seg-internal-fw-11-0",
+      "task-name": "arodonata-route-collect-db-seg-internal-fw-11",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-db-seg-internal-fw-11-0",
+          "gatewayId": "db-seg-internal-fw-11",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CjEwLjIxMC4xMS4wLzI0IGRldiBldGgxIHByb3RvIGtlcm5lbCBzY29wZSBsaW5rIHNyYyAxMC4yMTAuMTEuMQoxMC4yMjAuMTEuMC8yNCBkZXYgZXRoMiBwcm90byBrZXJuZWwgc2NvcGUgbGluayBzcmMgMTAuMjIwLjExLjEKPT09QVJPRE9OQVRBX0lQX1JPVVRFX0VORD09PQo=",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

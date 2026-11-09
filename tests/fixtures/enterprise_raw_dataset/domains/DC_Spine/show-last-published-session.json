@@ -1,0 +1,16 @@
+{
+  "uid": "sess-pub-dc_spine-001",
+  "name": "AutoPublish-DC_Spine",
+  "user-name": "admin",
+  "publish-time": {
+    "posix": 1794160800000,
+    "iso-8601": "2026-11-08T16:00:00Z"
+  },
+  "last-modify-time": {
+    "posix": 1794160800000,
+    "iso-8601": "2026-11-08T16:00:00Z"
+  },
+  "changes": 0,
+  "locks": 0,
+  "number-of-published-changes": 12
+}

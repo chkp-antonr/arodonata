@@ -1,0 +1,840 @@
+{
+  "objects": [
+    {
+      "uid": "uid-reg-net-b-lan-001",
+      "name": "N_Reg_Branch_001_LAN",
+      "type": "network",
+      "subnet4": "10.11.1.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-001",
+      "name": "N_Reg_Branch_001_VoIP",
+      "type": "network",
+      "subnet4": "10.12.1.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-002",
+      "name": "N_Reg_Branch_002_LAN",
+      "type": "network",
+      "subnet4": "10.11.2.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-002",
+      "name": "N_Reg_Branch_002_VoIP",
+      "type": "network",
+      "subnet4": "10.12.2.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-003",
+      "name": "N_Reg_Branch_003_LAN",
+      "type": "network",
+      "subnet4": "10.11.3.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-003",
+      "name": "N_Reg_Branch_003_VoIP",
+      "type": "network",
+      "subnet4": "10.12.3.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-004",
+      "name": "N_Reg_Branch_004_LAN",
+      "type": "network",
+      "subnet4": "10.11.4.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-004",
+      "name": "N_Reg_Branch_004_VoIP",
+      "type": "network",
+      "subnet4": "10.12.4.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-005",
+      "name": "N_Reg_Branch_005_LAN",
+      "type": "network",
+      "subnet4": "10.11.5.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-005",
+      "name": "N_Reg_Branch_005_VoIP",
+      "type": "network",
+      "subnet4": "10.12.5.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-006",
+      "name": "N_Reg_Branch_006_LAN",
+      "type": "network",
+      "subnet4": "10.11.6.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-006",
+      "name": "N_Reg_Branch_006_VoIP",
+      "type": "network",
+      "subnet4": "10.12.6.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-007",
+      "name": "N_Reg_Branch_007_LAN",
+      "type": "network",
+      "subnet4": "10.11.7.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-007",
+      "name": "N_Reg_Branch_007_VoIP",
+      "type": "network",
+      "subnet4": "10.12.7.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-008",
+      "name": "N_Reg_Branch_008_LAN",
+      "type": "network",
+      "subnet4": "10.11.8.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-008",
+      "name": "N_Reg_Branch_008_VoIP",
+      "type": "network",
+      "subnet4": "10.12.8.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-009",
+      "name": "N_Reg_Branch_009_LAN",
+      "type": "network",
+      "subnet4": "10.11.9.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-009",
+      "name": "N_Reg_Branch_009_VoIP",
+      "type": "network",
+      "subnet4": "10.12.9.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-010",
+      "name": "N_Reg_Branch_010_LAN",
+      "type": "network",
+      "subnet4": "10.11.10.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-010",
+      "name": "N_Reg_Branch_010_VoIP",
+      "type": "network",
+      "subnet4": "10.12.10.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-011",
+      "name": "N_Reg_Branch_011_LAN",
+      "type": "network",
+      "subnet4": "10.11.11.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-011",
+      "name": "N_Reg_Branch_011_VoIP",
+      "type": "network",
+      "subnet4": "10.12.11.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-012",
+      "name": "N_Reg_Branch_012_LAN",
+      "type": "network",
+      "subnet4": "10.11.12.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-012",
+      "name": "N_Reg_Branch_012_VoIP",
+      "type": "network",
+      "subnet4": "10.12.12.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-013",
+      "name": "N_Reg_Branch_013_LAN",
+      "type": "network",
+      "subnet4": "10.11.13.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-013",
+      "name": "N_Reg_Branch_013_VoIP",
+      "type": "network",
+      "subnet4": "10.12.13.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-014",
+      "name": "N_Reg_Branch_014_LAN",
+      "type": "network",
+      "subnet4": "10.11.14.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-014",
+      "name": "N_Reg_Branch_014_VoIP",
+      "type": "network",
+      "subnet4": "10.12.14.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-015",
+      "name": "N_Reg_Branch_015_LAN",
+      "type": "network",
+      "subnet4": "10.11.15.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-015",
+      "name": "N_Reg_Branch_015_VoIP",
+      "type": "network",
+      "subnet4": "10.12.15.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-016",
+      "name": "N_Reg_Branch_016_LAN",
+      "type": "network",
+      "subnet4": "10.11.16.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-016",
+      "name": "N_Reg_Branch_016_VoIP",
+      "type": "network",
+      "subnet4": "10.12.16.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-017",
+      "name": "N_Reg_Branch_017_LAN",
+      "type": "network",
+      "subnet4": "10.11.17.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-017",
+      "name": "N_Reg_Branch_017_VoIP",
+      "type": "network",
+      "subnet4": "10.12.17.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-018",
+      "name": "N_Reg_Branch_018_LAN",
+      "type": "network",
+      "subnet4": "10.11.18.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-018",
+      "name": "N_Reg_Branch_018_VoIP",
+      "type": "network",
+      "subnet4": "10.12.18.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-019",
+      "name": "N_Reg_Branch_019_LAN",
+      "type": "network",
+      "subnet4": "10.11.19.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-019",
+      "name": "N_Reg_Branch_019_VoIP",
+      "type": "network",
+      "subnet4": "10.12.19.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-lan-020",
+      "name": "N_Reg_Branch_020_LAN",
+      "type": "network",
+      "subnet4": "10.11.20.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-b-voip-020",
+      "name": "N_Reg_Branch_020_VoIP",
+      "type": "network",
+      "subnet4": "10.12.20.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-02",
+      "name": "N_Reg_Hub_02",
+      "type": "network",
+      "subnet4": "10.30.2.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-03",
+      "name": "N_Reg_Hub_03",
+      "type": "network",
+      "subnet4": "10.30.3.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-04",
+      "name": "N_Reg_Hub_04",
+      "type": "network",
+      "subnet4": "10.30.4.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-05",
+      "name": "N_Reg_Hub_05",
+      "type": "network",
+      "subnet4": "10.30.5.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-06",
+      "name": "N_Reg_Hub_06",
+      "type": "network",
+      "subnet4": "10.30.6.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-07",
+      "name": "N_Reg_Hub_07",
+      "type": "network",
+      "subnet4": "10.30.7.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-08",
+      "name": "N_Reg_Hub_08",
+      "type": "network",
+      "subnet4": "10.30.8.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-09",
+      "name": "N_Reg_Hub_09",
+      "type": "network",
+      "subnet4": "10.30.9.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-10",
+      "name": "N_Reg_Hub_10",
+      "type": "network",
+      "subnet4": "10.30.10.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-11",
+      "name": "N_Reg_Hub_11",
+      "type": "network",
+      "subnet4": "10.30.11.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-12",
+      "name": "N_Reg_Hub_12",
+      "type": "network",
+      "subnet4": "10.30.12.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-13",
+      "name": "N_Reg_Hub_13",
+      "type": "network",
+      "subnet4": "10.30.13.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-14",
+      "name": "N_Reg_Hub_14",
+      "type": "network",
+      "subnet4": "10.30.14.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-15",
+      "name": "N_Reg_Hub_15",
+      "type": "network",
+      "subnet4": "10.30.15.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-16",
+      "name": "N_Reg_Hub_16",
+      "type": "network",
+      "subnet4": "10.30.16.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-17",
+      "name": "N_Reg_Hub_17",
+      "type": "network",
+      "subnet4": "10.30.17.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-18",
+      "name": "N_Reg_Hub_18",
+      "type": "network",
+      "subnet4": "10.30.18.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-19",
+      "name": "N_Reg_Hub_19",
+      "type": "network",
+      "subnet4": "10.30.19.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-reg-net-hub-20",
+      "name": "N_Reg_Hub_20",
+      "type": "network",
+      "subnet4": "10.30.20.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-001",
+      "name": "N_Regional_Segment_001",
+      "type": "network",
+      "subnet4": "10.142.1.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-002",
+      "name": "N_Regional_Segment_002",
+      "type": "network",
+      "subnet4": "10.142.2.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-003",
+      "name": "N_Regional_Segment_003",
+      "type": "network",
+      "subnet4": "10.142.3.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-004",
+      "name": "N_Regional_Segment_004",
+      "type": "network",
+      "subnet4": "10.142.4.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-005",
+      "name": "N_Regional_Segment_005",
+      "type": "network",
+      "subnet4": "10.142.5.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-006",
+      "name": "N_Regional_Segment_006",
+      "type": "network",
+      "subnet4": "10.142.6.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-007",
+      "name": "N_Regional_Segment_007",
+      "type": "network",
+      "subnet4": "10.142.7.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-008",
+      "name": "N_Regional_Segment_008",
+      "type": "network",
+      "subnet4": "10.142.8.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-009",
+      "name": "N_Regional_Segment_009",
+      "type": "network",
+      "subnet4": "10.142.9.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-010",
+      "name": "N_Regional_Segment_010",
+      "type": "network",
+      "subnet4": "10.142.10.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-011",
+      "name": "N_Regional_Segment_011",
+      "type": "network",
+      "subnet4": "10.142.11.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-012",
+      "name": "N_Regional_Segment_012",
+      "type": "network",
+      "subnet4": "10.142.12.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-013",
+      "name": "N_Regional_Segment_013",
+      "type": "network",
+      "subnet4": "10.142.13.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-014",
+      "name": "N_Regional_Segment_014",
+      "type": "network",
+      "subnet4": "10.142.14.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-015",
+      "name": "N_Regional_Segment_015",
+      "type": "network",
+      "subnet4": "10.142.15.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-016",
+      "name": "N_Regional_Segment_016",
+      "type": "network",
+      "subnet4": "10.142.16.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-017",
+      "name": "N_Regional_Segment_017",
+      "type": "network",
+      "subnet4": "10.142.17.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-018",
+      "name": "N_Regional_Segment_018",
+      "type": "network",
+      "subnet4": "10.142.18.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-019",
+      "name": "N_Regional_Segment_019",
+      "type": "network",
+      "subnet4": "10.142.19.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-020",
+      "name": "N_Regional_Segment_020",
+      "type": "network",
+      "subnet4": "10.142.20.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-021",
+      "name": "N_Regional_Segment_021",
+      "type": "network",
+      "subnet4": "10.142.21.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-022",
+      "name": "N_Regional_Segment_022",
+      "type": "network",
+      "subnet4": "10.142.22.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-023",
+      "name": "N_Regional_Segment_023",
+      "type": "network",
+      "subnet4": "10.142.23.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-024",
+      "name": "N_Regional_Segment_024",
+      "type": "network",
+      "subnet4": "10.142.24.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-025",
+      "name": "N_Regional_Segment_025",
+      "type": "network",
+      "subnet4": "10.142.25.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-026",
+      "name": "N_Regional_Segment_026",
+      "type": "network",
+      "subnet4": "10.142.26.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-027",
+      "name": "N_Regional_Segment_027",
+      "type": "network",
+      "subnet4": "10.142.27.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-028",
+      "name": "N_Regional_Segment_028",
+      "type": "network",
+      "subnet4": "10.142.28.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-029",
+      "name": "N_Regional_Segment_029",
+      "type": "network",
+      "subnet4": "10.142.29.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-030",
+      "name": "N_Regional_Segment_030",
+      "type": "network",
+      "subnet4": "10.142.30.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-031",
+      "name": "N_Regional_Segment_031",
+      "type": "network",
+      "subnet4": "10.142.31.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-032",
+      "name": "N_Regional_Segment_032",
+      "type": "network",
+      "subnet4": "10.142.32.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-033",
+      "name": "N_Regional_Segment_033",
+      "type": "network",
+      "subnet4": "10.142.33.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-034",
+      "name": "N_Regional_Segment_034",
+      "type": "network",
+      "subnet4": "10.142.34.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-035",
+      "name": "N_Regional_Segment_035",
+      "type": "network",
+      "subnet4": "10.142.35.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-036",
+      "name": "N_Regional_Segment_036",
+      "type": "network",
+      "subnet4": "10.142.36.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-037",
+      "name": "N_Regional_Segment_037",
+      "type": "network",
+      "subnet4": "10.142.37.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-038",
+      "name": "N_Regional_Segment_038",
+      "type": "network",
+      "subnet4": "10.142.38.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-039",
+      "name": "N_Regional_Segment_039",
+      "type": "network",
+      "subnet4": "10.142.39.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-040",
+      "name": "N_Regional_Segment_040",
+      "type": "network",
+      "subnet4": "10.142.40.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-041",
+      "name": "N_Regional_Segment_041",
+      "type": "network",
+      "subnet4": "10.142.41.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-042",
+      "name": "N_Regional_Segment_042",
+      "type": "network",
+      "subnet4": "10.142.42.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-043",
+      "name": "N_Regional_Segment_043",
+      "type": "network",
+      "subnet4": "10.142.43.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-044",
+      "name": "N_Regional_Segment_044",
+      "type": "network",
+      "subnet4": "10.142.44.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-045",
+      "name": "N_Regional_Segment_045",
+      "type": "network",
+      "subnet4": "10.142.45.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-046",
+      "name": "N_Regional_Segment_046",
+      "type": "network",
+      "subnet4": "10.142.46.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-047",
+      "name": "N_Regional_Segment_047",
+      "type": "network",
+      "subnet4": "10.142.47.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-048",
+      "name": "N_Regional_Segment_048",
+      "type": "network",
+      "subnet4": "10.142.48.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-049",
+      "name": "N_Regional_Segment_049",
+      "type": "network",
+      "subnet4": "10.142.49.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-050",
+      "name": "N_Regional_Segment_050",
+      "type": "network",
+      "subnet4": "10.142.50.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-051",
+      "name": "N_Regional_Segment_051",
+      "type": "network",
+      "subnet4": "10.142.51.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-052",
+      "name": "N_Regional_Segment_052",
+      "type": "network",
+      "subnet4": "10.142.52.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-053",
+      "name": "N_Regional_Segment_053",
+      "type": "network",
+      "subnet4": "10.142.53.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-054",
+      "name": "N_Regional_Segment_054",
+      "type": "network",
+      "subnet4": "10.142.54.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-055",
+      "name": "N_Regional_Segment_055",
+      "type": "network",
+      "subnet4": "10.142.55.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-056",
+      "name": "N_Regional_Segment_056",
+      "type": "network",
+      "subnet4": "10.142.56.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-057",
+      "name": "N_Regional_Segment_057",
+      "type": "network",
+      "subnet4": "10.142.57.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-058",
+      "name": "N_Regional_Segment_058",
+      "type": "network",
+      "subnet4": "10.142.58.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-059",
+      "name": "N_Regional_Segment_059",
+      "type": "network",
+      "subnet4": "10.142.59.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-regional-bulk-net-060",
+      "name": "N_Regional_Segment_060",
+      "type": "network",
+      "subnet4": "10.142.60.0",
+      "mask-length4": 24
+    }
+  ],
+  "from": 1,
+  "to": 119,
+  "total": 119
+}

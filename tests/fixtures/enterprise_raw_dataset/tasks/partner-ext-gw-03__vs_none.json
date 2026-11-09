@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-partner-ext-gw-03-0",
+      "task-name": "arodonata-route-collect-partner-ext-gw-03",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-partner-ext-gw-03-0",
+          "gatewayId": "partner-ext-gw-03",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4zMC4xMDAuMjU0IGRldiBldGgwIHByb3RvIHN0YXRpYwoxNzIuMzAuMTEzLjAvMjQgZGV2IGV0aDEgcHJvdG8ga2VybmVsIHNjb3BlIGxpbmsgc3JjIDE3Mi4zMC4xMTMuMQo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cg==",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

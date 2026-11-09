@@ -1,0 +1,13 @@
+{
+  "objects": [
+    {
+      "uid": "uid-regional-dns-corp",
+      "name": ".regional.enterprise.internal",
+      "type": "dns-domain",
+      "is-sub-domain": true
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

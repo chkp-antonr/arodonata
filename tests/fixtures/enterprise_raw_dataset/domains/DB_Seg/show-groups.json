@@ -1,0 +1,365 @@
+{
+  "objects": [
+    {
+      "uid": "uid-dbseg-grp-clients",
+      "name": "G_DB_Allowed_Clients",
+      "type": "group",
+      "members": [
+        "G_Global_Branch_Supernet"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-001",
+      "name": "G_DB_Seg_TierGroup_001",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-113",
+        "uid-db_seg-bulk-host-005",
+        "uid-db_seg-bulk-host-019",
+        "uid-db_seg-bulk-host-031",
+        "uid-db_seg-bulk-host-045",
+        "uid-db_seg-bulk-net-002",
+        "uid-db_seg-bulk-net-046"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-002",
+      "name": "G_DB_Seg_TierGroup_002",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-089",
+        "uid-db_seg-bulk-host-069",
+        "uid-db_seg-bulk-host-070",
+        "uid-db_seg-bulk-host-122",
+        "uid-db_seg-bulk-host-132",
+        "uid-db_seg-bulk-net-047",
+        "uid-db_seg-bulk-net-024"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-003",
+      "name": "G_DB_Seg_TierGroup_003",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-090",
+        "uid-db_seg-bulk-host-127",
+        "uid-db_seg-bulk-host-021",
+        "uid-db_seg-bulk-host-006",
+        "uid-db_seg-bulk-host-097",
+        "uid-db_seg-bulk-net-011",
+        "uid-db_seg-bulk-net-058"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-004",
+      "name": "G_DB_Seg_TierGroup_004",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-111",
+        "uid-db_seg-bulk-host-084",
+        "uid-db_seg-bulk-host-022",
+        "uid-db_seg-bulk-host-103",
+        "uid-db_seg-bulk-host-089",
+        "uid-db_seg-bulk-net-019",
+        "uid-db_seg-bulk-net-015"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-005",
+      "name": "G_DB_Seg_TierGroup_005",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-116",
+        "uid-db_seg-bulk-host-055",
+        "uid-db_seg-bulk-host-124",
+        "uid-db_seg-bulk-host-122",
+        "uid-db_seg-bulk-host-121",
+        "uid-db_seg-bulk-net-057",
+        "uid-db_seg-bulk-net-045"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-006",
+      "name": "G_DB_Seg_TierGroup_006",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-128",
+        "uid-db_seg-bulk-host-077",
+        "uid-db_seg-bulk-host-078",
+        "uid-db_seg-bulk-host-088",
+        "uid-db_seg-bulk-host-063",
+        "uid-db_seg-bulk-net-055",
+        "uid-db_seg-bulk-net-014"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-007",
+      "name": "G_DB_Seg_TierGroup_007",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-024",
+        "uid-db_seg-bulk-host-040",
+        "uid-db_seg-bulk-host-002",
+        "uid-db_seg-bulk-host-150",
+        "uid-db_seg-bulk-host-101",
+        "uid-db_seg-bulk-net-031",
+        "uid-db_seg-bulk-net-038"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-008",
+      "name": "G_DB_Seg_TierGroup_008",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-050",
+        "uid-db_seg-bulk-host-051",
+        "uid-db_seg-bulk-host-096",
+        "uid-db_seg-bulk-host-106",
+        "uid-db_seg-bulk-host-087",
+        "uid-db_seg-bulk-net-035",
+        "uid-db_seg-bulk-net-013"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-009",
+      "name": "G_DB_Seg_TierGroup_009",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-098",
+        "uid-db_seg-bulk-host-002",
+        "uid-db_seg-bulk-host-036",
+        "uid-db_seg-bulk-host-127",
+        "uid-db_seg-bulk-host-075",
+        "uid-db_seg-bulk-net-027",
+        "uid-db_seg-bulk-net-049"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-010",
+      "name": "G_DB_Seg_TierGroup_010",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-059",
+        "uid-db_seg-bulk-host-111",
+        "uid-db_seg-bulk-host-125",
+        "uid-db_seg-bulk-host-113",
+        "uid-db_seg-bulk-host-091",
+        "uid-db_seg-bulk-net-020",
+        "uid-db_seg-bulk-net-021"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-011",
+      "name": "G_DB_Seg_TierGroup_011",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-150",
+        "uid-db_seg-bulk-host-020",
+        "uid-db_seg-bulk-host-094",
+        "uid-db_seg-bulk-host-034",
+        "uid-db_seg-bulk-host-131",
+        "uid-db_seg-bulk-net-054",
+        "uid-db_seg-bulk-net-036"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-012",
+      "name": "G_DB_Seg_TierGroup_012",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-080",
+        "uid-db_seg-bulk-host-006",
+        "uid-db_seg-bulk-host-129",
+        "uid-db_seg-bulk-host-105",
+        "uid-db_seg-bulk-host-073",
+        "uid-db_seg-bulk-net-011",
+        "uid-db_seg-bulk-net-047"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-013",
+      "name": "G_DB_Seg_TierGroup_013",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-099",
+        "uid-db_seg-bulk-host-015",
+        "uid-db_seg-bulk-host-055",
+        "uid-db_seg-bulk-host-065",
+        "uid-db_seg-bulk-host-020",
+        "uid-db_seg-bulk-net-011",
+        "uid-db_seg-bulk-net-004"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-014",
+      "name": "G_DB_Seg_TierGroup_014",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-090",
+        "uid-db_seg-bulk-host-017",
+        "uid-db_seg-bulk-host-011",
+        "uid-db_seg-bulk-host-040",
+        "uid-db_seg-bulk-host-072",
+        "uid-db_seg-bulk-net-016",
+        "uid-db_seg-bulk-net-003"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-015",
+      "name": "G_DB_Seg_TierGroup_015",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-061",
+        "uid-db_seg-bulk-host-069",
+        "uid-db_seg-bulk-host-003",
+        "uid-db_seg-bulk-host-141",
+        "uid-db_seg-bulk-host-063",
+        "uid-db_seg-bulk-net-057",
+        "uid-db_seg-bulk-net-011"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-016",
+      "name": "G_DB_Seg_TierGroup_016",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-081",
+        "uid-db_seg-bulk-host-014",
+        "uid-db_seg-bulk-host-010",
+        "uid-db_seg-bulk-host-134",
+        "uid-db_seg-bulk-host-143",
+        "uid-db_seg-bulk-net-005",
+        "uid-db_seg-bulk-net-006"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-017",
+      "name": "G_DB_Seg_TierGroup_017",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-060",
+        "uid-db_seg-bulk-host-048",
+        "uid-db_seg-bulk-host-063",
+        "uid-db_seg-bulk-host-049",
+        "uid-db_seg-bulk-host-058",
+        "uid-db_seg-bulk-net-051",
+        "uid-db_seg-bulk-net-019"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-018",
+      "name": "G_DB_Seg_TierGroup_018",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-004",
+        "uid-db_seg-bulk-host-149",
+        "uid-db_seg-bulk-host-085",
+        "uid-db_seg-bulk-host-103",
+        "uid-db_seg-bulk-host-141",
+        "uid-db_seg-bulk-net-019",
+        "uid-db_seg-bulk-net-059"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-019",
+      "name": "G_DB_Seg_TierGroup_019",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-133",
+        "uid-db_seg-bulk-host-129",
+        "uid-db_seg-bulk-host-145",
+        "uid-db_seg-bulk-host-017",
+        "uid-db_seg-bulk-host-041",
+        "uid-db_seg-bulk-net-035",
+        "uid-db_seg-bulk-net-042"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-020",
+      "name": "G_DB_Seg_TierGroup_020",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-047",
+        "uid-db_seg-bulk-host-126",
+        "uid-db_seg-bulk-host-141",
+        "uid-db_seg-bulk-host-021",
+        "uid-db_seg-bulk-host-053",
+        "uid-db_seg-bulk-net-034",
+        "uid-db_seg-bulk-net-005"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-021",
+      "name": "G_DB_Seg_TierGroup_021",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-008",
+        "uid-db_seg-bulk-host-116",
+        "uid-db_seg-bulk-host-003",
+        "uid-db_seg-bulk-host-060",
+        "uid-db_seg-bulk-host-044",
+        "uid-db_seg-bulk-net-046",
+        "uid-db_seg-bulk-net-048"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-022",
+      "name": "G_DB_Seg_TierGroup_022",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-080",
+        "uid-db_seg-bulk-host-046",
+        "uid-db_seg-bulk-host-137",
+        "uid-db_seg-bulk-host-099",
+        "uid-db_seg-bulk-host-104",
+        "uid-db_seg-bulk-net-013",
+        "uid-db_seg-bulk-net-011"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-023",
+      "name": "G_DB_Seg_TierGroup_023",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-007",
+        "uid-db_seg-bulk-host-045",
+        "uid-db_seg-bulk-host-097",
+        "uid-db_seg-bulk-host-028",
+        "uid-db_seg-bulk-host-093",
+        "uid-db_seg-bulk-net-044",
+        "uid-db_seg-bulk-net-008"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-024",
+      "name": "G_DB_Seg_TierGroup_024",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-110",
+        "uid-db_seg-bulk-host-068",
+        "uid-db_seg-bulk-host-102",
+        "uid-db_seg-bulk-host-063",
+        "uid-db_seg-bulk-host-123",
+        "uid-db_seg-bulk-net-032",
+        "uid-db_seg-bulk-net-003"
+      ]
+    },
+    {
+      "uid": "uid-db_seg-bulk-grp-025",
+      "name": "G_DB_Seg_TierGroup_025",
+      "type": "group",
+      "members": [
+        "uid-db_seg-bulk-host-102",
+        "uid-db_seg-bulk-host-068",
+        "uid-db_seg-bulk-host-014",
+        "uid-db_seg-bulk-host-084",
+        "uid-db_seg-bulk-host-020",
+        "uid-db_seg-bulk-net-051",
+        "uid-db_seg-bulk-net-022"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 26,
+  "total": 26
+}

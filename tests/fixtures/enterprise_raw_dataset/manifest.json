@@ -1,0 +1,94 @@
+{
+  "version": "1.0.0",
+  "seed": 20261108,
+  "domains": [
+    "Global",
+    "Branch",
+    "Regional",
+    "WAN_Core",
+    "Perimeter",
+    "Transit",
+    "DC_Spine",
+    "DC_Pod",
+    "DB_Seg",
+    "Partner_DMZ"
+  ],
+  "user_domains": [
+    "Branch",
+    "Regional",
+    "WAN_Core",
+    "Perimeter",
+    "Transit",
+    "DC_Spine",
+    "DC_Pod",
+    "DB_Seg",
+    "Partner_DMZ"
+  ],
+  "counts": {
+    "total_domains": 10,
+    "user_domains": 9,
+    "total_assets": 284,
+    "policy_enforcing_gateways": 276,
+    "total_network_objects": 2951,
+    "total_service_objects": 210,
+    "total_access_rules": 1050,
+    "total_nat_rules": 120,
+    "total_cli_targets": 279
+  },
+  "cprid_fallback_gateways": [
+    "br-reg-gw-138",
+    "br-reg-gw-139",
+    "br-reg-gw-140"
+  ],
+  "nine_hop_chain": [
+    {
+      "hop": 1,
+      "domain": "Branch",
+      "gateway": "br-spb-gw-01"
+    },
+    {
+      "hop": 2,
+      "domain": "Regional",
+      "gateway": "reg-nw-cluster"
+    },
+    {
+      "hop": 3,
+      "domain": "WAN_Core",
+      "gateways_ecmp": [
+        "wan-core-ecmp-a",
+        "wan-core-ecmp-b"
+      ],
+      "standby": "wan-core-bgp-standby"
+    },
+    {
+      "hop": 4,
+      "domain": "Perimeter",
+      "gateway": "perim-edge-cluster"
+    },
+    {
+      "hop": 5,
+      "domain": "Transit",
+      "gateway": "ix-transit-gw-01"
+    },
+    {
+      "hop": 6,
+      "domain": "DC_Spine",
+      "gateway": "dc-vsx-spine-vs01"
+    },
+    {
+      "hop": 7,
+      "domain": "DC_Pod",
+      "gateway": "dc-vs-tier1-web"
+    },
+    {
+      "hop": 8,
+      "domain": "DC_Pod",
+      "gateway": "dc-vs-tier2-app"
+    },
+    {
+      "hop": 9,
+      "domain": "DB_Seg",
+      "gateway": "db-seg-internal-fw-01"
+    }
+  ]
+}

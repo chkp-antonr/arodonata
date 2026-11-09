@@ -1,0 +1,5 @@
+===ARODONATA_IP_ROUTE_START===
+10.11.0.0/16 via 10.210.1.254 dev eth1 proto static
+10.210.1.0/24 dev eth1 proto kernel scope link src 10.210.1.1
+10.220.77.0/24 dev eth2 proto kernel scope link src 10.220.77.1
+===ARODONATA_IP_ROUTE_END===

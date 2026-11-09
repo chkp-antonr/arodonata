@@ -1,0 +1,13 @@
+{
+  "objects": [
+    {
+      "uid": "uid-branch-svc-icmp-echo",
+      "name": "ICMP_Branch_Echo",
+      "type": "service-icmp",
+      "icmp-type": 8
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

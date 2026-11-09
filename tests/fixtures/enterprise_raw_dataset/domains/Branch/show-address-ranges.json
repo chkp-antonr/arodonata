@@ -1,0 +1,357 @@
+{
+  "objects": [
+    {
+      "uid": "uid-br-rng-dhcp-001",
+      "name": "R_Branch_001_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.1.100",
+      "ipv4-address-last": "10.11.1.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-002",
+      "name": "R_Branch_002_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.2.100",
+      "ipv4-address-last": "10.11.2.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-003",
+      "name": "R_Branch_003_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.3.100",
+      "ipv4-address-last": "10.11.3.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-004",
+      "name": "R_Branch_004_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.4.100",
+      "ipv4-address-last": "10.11.4.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-005",
+      "name": "R_Branch_005_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.5.100",
+      "ipv4-address-last": "10.11.5.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-006",
+      "name": "R_Branch_006_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.6.100",
+      "ipv4-address-last": "10.11.6.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-007",
+      "name": "R_Branch_007_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.7.100",
+      "ipv4-address-last": "10.11.7.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-008",
+      "name": "R_Branch_008_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.8.100",
+      "ipv4-address-last": "10.11.8.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-009",
+      "name": "R_Branch_009_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.9.100",
+      "ipv4-address-last": "10.11.9.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-010",
+      "name": "R_Branch_010_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.10.100",
+      "ipv4-address-last": "10.11.10.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-011",
+      "name": "R_Branch_011_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.11.100",
+      "ipv4-address-last": "10.11.11.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-012",
+      "name": "R_Branch_012_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.12.100",
+      "ipv4-address-last": "10.11.12.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-013",
+      "name": "R_Branch_013_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.13.100",
+      "ipv4-address-last": "10.11.13.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-014",
+      "name": "R_Branch_014_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.14.100",
+      "ipv4-address-last": "10.11.14.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-015",
+      "name": "R_Branch_015_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.15.100",
+      "ipv4-address-last": "10.11.15.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-016",
+      "name": "R_Branch_016_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.16.100",
+      "ipv4-address-last": "10.11.16.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-017",
+      "name": "R_Branch_017_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.17.100",
+      "ipv4-address-last": "10.11.17.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-018",
+      "name": "R_Branch_018_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.18.100",
+      "ipv4-address-last": "10.11.18.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-019",
+      "name": "R_Branch_019_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.19.100",
+      "ipv4-address-last": "10.11.19.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-020",
+      "name": "R_Branch_020_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.20.100",
+      "ipv4-address-last": "10.11.20.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-021",
+      "name": "R_Branch_021_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.21.100",
+      "ipv4-address-last": "10.11.21.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-022",
+      "name": "R_Branch_022_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.22.100",
+      "ipv4-address-last": "10.11.22.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-023",
+      "name": "R_Branch_023_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.23.100",
+      "ipv4-address-last": "10.11.23.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-024",
+      "name": "R_Branch_024_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.24.100",
+      "ipv4-address-last": "10.11.24.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-025",
+      "name": "R_Branch_025_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.25.100",
+      "ipv4-address-last": "10.11.25.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-026",
+      "name": "R_Branch_026_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.26.100",
+      "ipv4-address-last": "10.11.26.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-027",
+      "name": "R_Branch_027_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.27.100",
+      "ipv4-address-last": "10.11.27.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-028",
+      "name": "R_Branch_028_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.28.100",
+      "ipv4-address-last": "10.11.28.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-029",
+      "name": "R_Branch_029_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.29.100",
+      "ipv4-address-last": "10.11.29.199"
+    },
+    {
+      "uid": "uid-br-rng-dhcp-030",
+      "name": "R_Branch_030_DHCP",
+      "type": "address-range",
+      "ipv4-address-first": "10.11.30.100",
+      "ipv4-address-last": "10.11.30.199"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-001",
+      "name": "R_Branch_Pool_001",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.1.10",
+      "ipv4-address-last": "10.161.1.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-002",
+      "name": "R_Branch_Pool_002",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.2.10",
+      "ipv4-address-last": "10.161.2.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-003",
+      "name": "R_Branch_Pool_003",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.3.10",
+      "ipv4-address-last": "10.161.3.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-004",
+      "name": "R_Branch_Pool_004",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.4.10",
+      "ipv4-address-last": "10.161.4.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-005",
+      "name": "R_Branch_Pool_005",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.5.10",
+      "ipv4-address-last": "10.161.5.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-006",
+      "name": "R_Branch_Pool_006",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.6.10",
+      "ipv4-address-last": "10.161.6.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-007",
+      "name": "R_Branch_Pool_007",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.7.10",
+      "ipv4-address-last": "10.161.7.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-008",
+      "name": "R_Branch_Pool_008",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.8.10",
+      "ipv4-address-last": "10.161.8.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-009",
+      "name": "R_Branch_Pool_009",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.9.10",
+      "ipv4-address-last": "10.161.9.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-010",
+      "name": "R_Branch_Pool_010",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.10.10",
+      "ipv4-address-last": "10.161.10.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-011",
+      "name": "R_Branch_Pool_011",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.11.10",
+      "ipv4-address-last": "10.161.11.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-012",
+      "name": "R_Branch_Pool_012",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.12.10",
+      "ipv4-address-last": "10.161.12.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-013",
+      "name": "R_Branch_Pool_013",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.13.10",
+      "ipv4-address-last": "10.161.13.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-014",
+      "name": "R_Branch_Pool_014",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.14.10",
+      "ipv4-address-last": "10.161.14.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-015",
+      "name": "R_Branch_Pool_015",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.15.10",
+      "ipv4-address-last": "10.161.15.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-016",
+      "name": "R_Branch_Pool_016",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.16.10",
+      "ipv4-address-last": "10.161.16.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-017",
+      "name": "R_Branch_Pool_017",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.17.10",
+      "ipv4-address-last": "10.161.17.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-018",
+      "name": "R_Branch_Pool_018",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.18.10",
+      "ipv4-address-last": "10.161.18.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-019",
+      "name": "R_Branch_Pool_019",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.19.10",
+      "ipv4-address-last": "10.161.19.50"
+    },
+    {
+      "uid": "uid-branch-bulk-rng-020",
+      "name": "R_Branch_Pool_020",
+      "type": "address-range",
+      "ipv4-address-first": "10.161.20.10",
+      "ipv4-address-last": "10.161.20.50"
+    }
+  ],
+  "from": 1,
+  "to": 50,
+  "total": 50
+}

@@ -1,0 +1,13 @@
+{
+  "objects": [
+    {
+      "uid": "uid-db_seg-svc-icmp-echo",
+      "name": "ICMP_DB_Seg_Echo",
+      "type": "service-icmp",
+      "icmp-type": 8
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

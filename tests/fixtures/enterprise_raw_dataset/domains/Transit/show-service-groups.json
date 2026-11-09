@@ -1,0 +1,17 @@
+{
+  "objects": [
+    {
+      "uid": "uid-transit-svc-grp-web",
+      "name": "G_Transit_App_Services",
+      "type": "service-group",
+      "members": [
+        "uid-transit-svc-tcp-80",
+        "uid-transit-svc-tcp-443",
+        "uid-transit-svc-tcp-8443"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

@@ -1,0 +1,441 @@
+{
+  "objects": [
+    {
+      "uid": "uid-wan-net-branches",
+      "name": "N_WAN_Branch_Agg",
+      "type": "network",
+      "subnet4": "10.11.0.0",
+      "mask-length4": 16
+    },
+    {
+      "uid": "uid-wan-net-dc-vault",
+      "name": "N_WAN_DC_Vault_Agg",
+      "type": "network",
+      "subnet4": "10.220.0.0",
+      "mask-length4": 16
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-001",
+      "name": "N_WAN_Core_Segment_001",
+      "type": "network",
+      "subnet4": "10.143.1.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-002",
+      "name": "N_WAN_Core_Segment_002",
+      "type": "network",
+      "subnet4": "10.143.2.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-003",
+      "name": "N_WAN_Core_Segment_003",
+      "type": "network",
+      "subnet4": "10.143.3.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-004",
+      "name": "N_WAN_Core_Segment_004",
+      "type": "network",
+      "subnet4": "10.143.4.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-005",
+      "name": "N_WAN_Core_Segment_005",
+      "type": "network",
+      "subnet4": "10.143.5.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-006",
+      "name": "N_WAN_Core_Segment_006",
+      "type": "network",
+      "subnet4": "10.143.6.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-007",
+      "name": "N_WAN_Core_Segment_007",
+      "type": "network",
+      "subnet4": "10.143.7.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-008",
+      "name": "N_WAN_Core_Segment_008",
+      "type": "network",
+      "subnet4": "10.143.8.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-009",
+      "name": "N_WAN_Core_Segment_009",
+      "type": "network",
+      "subnet4": "10.143.9.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-010",
+      "name": "N_WAN_Core_Segment_010",
+      "type": "network",
+      "subnet4": "10.143.10.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-011",
+      "name": "N_WAN_Core_Segment_011",
+      "type": "network",
+      "subnet4": "10.143.11.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-012",
+      "name": "N_WAN_Core_Segment_012",
+      "type": "network",
+      "subnet4": "10.143.12.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-013",
+      "name": "N_WAN_Core_Segment_013",
+      "type": "network",
+      "subnet4": "10.143.13.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-014",
+      "name": "N_WAN_Core_Segment_014",
+      "type": "network",
+      "subnet4": "10.143.14.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-015",
+      "name": "N_WAN_Core_Segment_015",
+      "type": "network",
+      "subnet4": "10.143.15.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-016",
+      "name": "N_WAN_Core_Segment_016",
+      "type": "network",
+      "subnet4": "10.143.16.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-017",
+      "name": "N_WAN_Core_Segment_017",
+      "type": "network",
+      "subnet4": "10.143.17.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-018",
+      "name": "N_WAN_Core_Segment_018",
+      "type": "network",
+      "subnet4": "10.143.18.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-019",
+      "name": "N_WAN_Core_Segment_019",
+      "type": "network",
+      "subnet4": "10.143.19.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-020",
+      "name": "N_WAN_Core_Segment_020",
+      "type": "network",
+      "subnet4": "10.143.20.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-021",
+      "name": "N_WAN_Core_Segment_021",
+      "type": "network",
+      "subnet4": "10.143.21.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-022",
+      "name": "N_WAN_Core_Segment_022",
+      "type": "network",
+      "subnet4": "10.143.22.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-023",
+      "name": "N_WAN_Core_Segment_023",
+      "type": "network",
+      "subnet4": "10.143.23.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-024",
+      "name": "N_WAN_Core_Segment_024",
+      "type": "network",
+      "subnet4": "10.143.24.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-025",
+      "name": "N_WAN_Core_Segment_025",
+      "type": "network",
+      "subnet4": "10.143.25.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-026",
+      "name": "N_WAN_Core_Segment_026",
+      "type": "network",
+      "subnet4": "10.143.26.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-027",
+      "name": "N_WAN_Core_Segment_027",
+      "type": "network",
+      "subnet4": "10.143.27.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-028",
+      "name": "N_WAN_Core_Segment_028",
+      "type": "network",
+      "subnet4": "10.143.28.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-029",
+      "name": "N_WAN_Core_Segment_029",
+      "type": "network",
+      "subnet4": "10.143.29.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-030",
+      "name": "N_WAN_Core_Segment_030",
+      "type": "network",
+      "subnet4": "10.143.30.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-031",
+      "name": "N_WAN_Core_Segment_031",
+      "type": "network",
+      "subnet4": "10.143.31.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-032",
+      "name": "N_WAN_Core_Segment_032",
+      "type": "network",
+      "subnet4": "10.143.32.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-033",
+      "name": "N_WAN_Core_Segment_033",
+      "type": "network",
+      "subnet4": "10.143.33.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-034",
+      "name": "N_WAN_Core_Segment_034",
+      "type": "network",
+      "subnet4": "10.143.34.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-035",
+      "name": "N_WAN_Core_Segment_035",
+      "type": "network",
+      "subnet4": "10.143.35.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-036",
+      "name": "N_WAN_Core_Segment_036",
+      "type": "network",
+      "subnet4": "10.143.36.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-037",
+      "name": "N_WAN_Core_Segment_037",
+      "type": "network",
+      "subnet4": "10.143.37.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-038",
+      "name": "N_WAN_Core_Segment_038",
+      "type": "network",
+      "subnet4": "10.143.38.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-039",
+      "name": "N_WAN_Core_Segment_039",
+      "type": "network",
+      "subnet4": "10.143.39.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-040",
+      "name": "N_WAN_Core_Segment_040",
+      "type": "network",
+      "subnet4": "10.143.40.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-041",
+      "name": "N_WAN_Core_Segment_041",
+      "type": "network",
+      "subnet4": "10.143.41.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-042",
+      "name": "N_WAN_Core_Segment_042",
+      "type": "network",
+      "subnet4": "10.143.42.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-043",
+      "name": "N_WAN_Core_Segment_043",
+      "type": "network",
+      "subnet4": "10.143.43.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-044",
+      "name": "N_WAN_Core_Segment_044",
+      "type": "network",
+      "subnet4": "10.143.44.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-045",
+      "name": "N_WAN_Core_Segment_045",
+      "type": "network",
+      "subnet4": "10.143.45.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-046",
+      "name": "N_WAN_Core_Segment_046",
+      "type": "network",
+      "subnet4": "10.143.46.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-047",
+      "name": "N_WAN_Core_Segment_047",
+      "type": "network",
+      "subnet4": "10.143.47.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-048",
+      "name": "N_WAN_Core_Segment_048",
+      "type": "network",
+      "subnet4": "10.143.48.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-049",
+      "name": "N_WAN_Core_Segment_049",
+      "type": "network",
+      "subnet4": "10.143.49.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-050",
+      "name": "N_WAN_Core_Segment_050",
+      "type": "network",
+      "subnet4": "10.143.50.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-051",
+      "name": "N_WAN_Core_Segment_051",
+      "type": "network",
+      "subnet4": "10.143.51.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-052",
+      "name": "N_WAN_Core_Segment_052",
+      "type": "network",
+      "subnet4": "10.143.52.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-053",
+      "name": "N_WAN_Core_Segment_053",
+      "type": "network",
+      "subnet4": "10.143.53.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-054",
+      "name": "N_WAN_Core_Segment_054",
+      "type": "network",
+      "subnet4": "10.143.54.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-055",
+      "name": "N_WAN_Core_Segment_055",
+      "type": "network",
+      "subnet4": "10.143.55.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-056",
+      "name": "N_WAN_Core_Segment_056",
+      "type": "network",
+      "subnet4": "10.143.56.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-057",
+      "name": "N_WAN_Core_Segment_057",
+      "type": "network",
+      "subnet4": "10.143.57.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-058",
+      "name": "N_WAN_Core_Segment_058",
+      "type": "network",
+      "subnet4": "10.143.58.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-059",
+      "name": "N_WAN_Core_Segment_059",
+      "type": "network",
+      "subnet4": "10.143.59.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-wan_core-bulk-net-060",
+      "name": "N_WAN_Core_Segment_060",
+      "type": "network",
+      "subnet4": "10.143.60.0",
+      "mask-length4": 24
+    }
+  ],
+  "from": 1,
+  "to": 62,
+  "total": 62
+}

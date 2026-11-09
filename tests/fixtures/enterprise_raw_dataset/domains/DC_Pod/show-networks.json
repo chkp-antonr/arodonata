@@ -1,0 +1,609 @@
+{
+  "objects": [
+    {
+      "uid": "uid-dcpod-net-db-vault",
+      "name": "N_DC_DB_Vault_Sub",
+      "type": "network",
+      "subnet4": "10.220.77.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-21",
+      "name": "N_DC_Pod_21",
+      "type": "network",
+      "subnet4": "10.218.21.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-22",
+      "name": "N_DC_Pod_22",
+      "type": "network",
+      "subnet4": "10.218.22.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-23",
+      "name": "N_DC_Pod_23",
+      "type": "network",
+      "subnet4": "10.218.23.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-24",
+      "name": "N_DC_Pod_24",
+      "type": "network",
+      "subnet4": "10.218.24.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-25",
+      "name": "N_DC_Pod_25",
+      "type": "network",
+      "subnet4": "10.218.25.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-26",
+      "name": "N_DC_Pod_26",
+      "type": "network",
+      "subnet4": "10.218.26.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-27",
+      "name": "N_DC_Pod_27",
+      "type": "network",
+      "subnet4": "10.218.27.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-28",
+      "name": "N_DC_Pod_28",
+      "type": "network",
+      "subnet4": "10.218.28.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-29",
+      "name": "N_DC_Pod_29",
+      "type": "network",
+      "subnet4": "10.218.29.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-30",
+      "name": "N_DC_Pod_30",
+      "type": "network",
+      "subnet4": "10.218.30.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-31",
+      "name": "N_DC_Pod_31",
+      "type": "network",
+      "subnet4": "10.218.31.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-32",
+      "name": "N_DC_Pod_32",
+      "type": "network",
+      "subnet4": "10.218.32.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-33",
+      "name": "N_DC_Pod_33",
+      "type": "network",
+      "subnet4": "10.218.33.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-34",
+      "name": "N_DC_Pod_34",
+      "type": "network",
+      "subnet4": "10.218.34.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-35",
+      "name": "N_DC_Pod_35",
+      "type": "network",
+      "subnet4": "10.218.35.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-36",
+      "name": "N_DC_Pod_36",
+      "type": "network",
+      "subnet4": "10.218.36.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-37",
+      "name": "N_DC_Pod_37",
+      "type": "network",
+      "subnet4": "10.218.37.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-38",
+      "name": "N_DC_Pod_38",
+      "type": "network",
+      "subnet4": "10.218.38.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-39",
+      "name": "N_DC_Pod_39",
+      "type": "network",
+      "subnet4": "10.218.39.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-40",
+      "name": "N_DC_Pod_40",
+      "type": "network",
+      "subnet4": "10.218.40.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-41",
+      "name": "N_DC_Pod_41",
+      "type": "network",
+      "subnet4": "10.218.41.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-42",
+      "name": "N_DC_Pod_42",
+      "type": "network",
+      "subnet4": "10.218.42.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-43",
+      "name": "N_DC_Pod_43",
+      "type": "network",
+      "subnet4": "10.218.43.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-44",
+      "name": "N_DC_Pod_44",
+      "type": "network",
+      "subnet4": "10.218.44.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dcpod-net-45",
+      "name": "N_DC_Pod_45",
+      "type": "network",
+      "subnet4": "10.218.45.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-001",
+      "name": "N_DC_Pod_Segment_001",
+      "type": "network",
+      "subnet4": "10.147.1.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-002",
+      "name": "N_DC_Pod_Segment_002",
+      "type": "network",
+      "subnet4": "10.147.2.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-003",
+      "name": "N_DC_Pod_Segment_003",
+      "type": "network",
+      "subnet4": "10.147.3.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-004",
+      "name": "N_DC_Pod_Segment_004",
+      "type": "network",
+      "subnet4": "10.147.4.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-005",
+      "name": "N_DC_Pod_Segment_005",
+      "type": "network",
+      "subnet4": "10.147.5.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-006",
+      "name": "N_DC_Pod_Segment_006",
+      "type": "network",
+      "subnet4": "10.147.6.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-007",
+      "name": "N_DC_Pod_Segment_007",
+      "type": "network",
+      "subnet4": "10.147.7.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-008",
+      "name": "N_DC_Pod_Segment_008",
+      "type": "network",
+      "subnet4": "10.147.8.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-009",
+      "name": "N_DC_Pod_Segment_009",
+      "type": "network",
+      "subnet4": "10.147.9.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-010",
+      "name": "N_DC_Pod_Segment_010",
+      "type": "network",
+      "subnet4": "10.147.10.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-011",
+      "name": "N_DC_Pod_Segment_011",
+      "type": "network",
+      "subnet4": "10.147.11.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-012",
+      "name": "N_DC_Pod_Segment_012",
+      "type": "network",
+      "subnet4": "10.147.12.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-013",
+      "name": "N_DC_Pod_Segment_013",
+      "type": "network",
+      "subnet4": "10.147.13.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-014",
+      "name": "N_DC_Pod_Segment_014",
+      "type": "network",
+      "subnet4": "10.147.14.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-015",
+      "name": "N_DC_Pod_Segment_015",
+      "type": "network",
+      "subnet4": "10.147.15.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-016",
+      "name": "N_DC_Pod_Segment_016",
+      "type": "network",
+      "subnet4": "10.147.16.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-017",
+      "name": "N_DC_Pod_Segment_017",
+      "type": "network",
+      "subnet4": "10.147.17.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-018",
+      "name": "N_DC_Pod_Segment_018",
+      "type": "network",
+      "subnet4": "10.147.18.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-019",
+      "name": "N_DC_Pod_Segment_019",
+      "type": "network",
+      "subnet4": "10.147.19.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-020",
+      "name": "N_DC_Pod_Segment_020",
+      "type": "network",
+      "subnet4": "10.147.20.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-021",
+      "name": "N_DC_Pod_Segment_021",
+      "type": "network",
+      "subnet4": "10.147.21.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-022",
+      "name": "N_DC_Pod_Segment_022",
+      "type": "network",
+      "subnet4": "10.147.22.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-023",
+      "name": "N_DC_Pod_Segment_023",
+      "type": "network",
+      "subnet4": "10.147.23.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-024",
+      "name": "N_DC_Pod_Segment_024",
+      "type": "network",
+      "subnet4": "10.147.24.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-025",
+      "name": "N_DC_Pod_Segment_025",
+      "type": "network",
+      "subnet4": "10.147.25.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-026",
+      "name": "N_DC_Pod_Segment_026",
+      "type": "network",
+      "subnet4": "10.147.26.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-027",
+      "name": "N_DC_Pod_Segment_027",
+      "type": "network",
+      "subnet4": "10.147.27.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-028",
+      "name": "N_DC_Pod_Segment_028",
+      "type": "network",
+      "subnet4": "10.147.28.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-029",
+      "name": "N_DC_Pod_Segment_029",
+      "type": "network",
+      "subnet4": "10.147.29.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-030",
+      "name": "N_DC_Pod_Segment_030",
+      "type": "network",
+      "subnet4": "10.147.30.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-031",
+      "name": "N_DC_Pod_Segment_031",
+      "type": "network",
+      "subnet4": "10.147.31.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-032",
+      "name": "N_DC_Pod_Segment_032",
+      "type": "network",
+      "subnet4": "10.147.32.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-033",
+      "name": "N_DC_Pod_Segment_033",
+      "type": "network",
+      "subnet4": "10.147.33.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-034",
+      "name": "N_DC_Pod_Segment_034",
+      "type": "network",
+      "subnet4": "10.147.34.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-035",
+      "name": "N_DC_Pod_Segment_035",
+      "type": "network",
+      "subnet4": "10.147.35.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-036",
+      "name": "N_DC_Pod_Segment_036",
+      "type": "network",
+      "subnet4": "10.147.36.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-037",
+      "name": "N_DC_Pod_Segment_037",
+      "type": "network",
+      "subnet4": "10.147.37.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-038",
+      "name": "N_DC_Pod_Segment_038",
+      "type": "network",
+      "subnet4": "10.147.38.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-039",
+      "name": "N_DC_Pod_Segment_039",
+      "type": "network",
+      "subnet4": "10.147.39.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-040",
+      "name": "N_DC_Pod_Segment_040",
+      "type": "network",
+      "subnet4": "10.147.40.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-041",
+      "name": "N_DC_Pod_Segment_041",
+      "type": "network",
+      "subnet4": "10.147.41.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-042",
+      "name": "N_DC_Pod_Segment_042",
+      "type": "network",
+      "subnet4": "10.147.42.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-043",
+      "name": "N_DC_Pod_Segment_043",
+      "type": "network",
+      "subnet4": "10.147.43.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-044",
+      "name": "N_DC_Pod_Segment_044",
+      "type": "network",
+      "subnet4": "10.147.44.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-045",
+      "name": "N_DC_Pod_Segment_045",
+      "type": "network",
+      "subnet4": "10.147.45.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-046",
+      "name": "N_DC_Pod_Segment_046",
+      "type": "network",
+      "subnet4": "10.147.46.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-047",
+      "name": "N_DC_Pod_Segment_047",
+      "type": "network",
+      "subnet4": "10.147.47.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-048",
+      "name": "N_DC_Pod_Segment_048",
+      "type": "network",
+      "subnet4": "10.147.48.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-049",
+      "name": "N_DC_Pod_Segment_049",
+      "type": "network",
+      "subnet4": "10.147.49.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-050",
+      "name": "N_DC_Pod_Segment_050",
+      "type": "network",
+      "subnet4": "10.147.50.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-051",
+      "name": "N_DC_Pod_Segment_051",
+      "type": "network",
+      "subnet4": "10.147.51.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-052",
+      "name": "N_DC_Pod_Segment_052",
+      "type": "network",
+      "subnet4": "10.147.52.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-053",
+      "name": "N_DC_Pod_Segment_053",
+      "type": "network",
+      "subnet4": "10.147.53.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-054",
+      "name": "N_DC_Pod_Segment_054",
+      "type": "network",
+      "subnet4": "10.147.54.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-055",
+      "name": "N_DC_Pod_Segment_055",
+      "type": "network",
+      "subnet4": "10.147.55.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-056",
+      "name": "N_DC_Pod_Segment_056",
+      "type": "network",
+      "subnet4": "10.147.56.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-057",
+      "name": "N_DC_Pod_Segment_057",
+      "type": "network",
+      "subnet4": "10.147.57.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-058",
+      "name": "N_DC_Pod_Segment_058",
+      "type": "network",
+      "subnet4": "10.147.58.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-059",
+      "name": "N_DC_Pod_Segment_059",
+      "type": "network",
+      "subnet4": "10.147.59.0",
+      "mask-length4": 24
+    },
+    {
+      "uid": "uid-dc_pod-bulk-net-060",
+      "name": "N_DC_Pod_Segment_060",
+      "type": "network",
+      "subnet4": "10.147.60.0",
+      "mask-length4": 24
+    }
+  ],
+  "from": 1,
+  "to": 86,
+  "total": 86
+}

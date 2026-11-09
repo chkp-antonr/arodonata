@@ -1,0 +1,13 @@
+{
+  "objects": [
+    {
+      "uid": "uid-wan_core-svc-icmp-echo",
+      "name": "ICMP_WAN_Core_Echo",
+      "type": "service-icmp",
+      "icmp-type": 8
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}

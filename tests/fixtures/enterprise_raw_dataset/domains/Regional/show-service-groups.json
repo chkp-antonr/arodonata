@@ -1,0 +1,17 @@
+{
+  "objects": [
+    {
+      "uid": "uid-regional-svc-grp-web",
+      "name": "G_Regional_App_Services",
+      "type": "service-group",
+      "members": [
+        "uid-regional-svc-tcp-80",
+        "uid-regional-svc-tcp-443",
+        "uid-regional-svc-tcp-8443"
+      ]
+    }
+  ],
+  "from": 1,
+  "to": 1,
+  "total": 1
+}
