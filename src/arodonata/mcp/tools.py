@@ -1748,8 +1748,8 @@ def register_mcp_tools(
             "Locate candidate policy-enforcing Check Point gateways (simple gateways, clusters, and VSX Virtual "
             "Systems), domains, policy packages, and access layers affected by traffic between sources and "
             "destinations (IPv4 addresses, CIDRs, ranges, or object/group names) where source and destination "
-            "reside behind distinct gateway interfaces, including confidence scores, standby indicators, and "
-            "topology warnings."
+            "reside behind distinct gateway interfaces or match explicit installed policy rules (one-arm / "
+            "incomplete topology), including confidence scores, standby indicators, and topology warnings."
         ),
     )
     @mcp_tool_guard("locate_gateways", client_getter)
@@ -1760,6 +1760,7 @@ def register_mcp_tools(
         domain: str | None = None,
         min_confidence: float = 0.0,
         include_standby: bool = True,
+        include_policy_inferred: bool = True,
         cache_mode: str = "smart",
     ) -> CallToolResult:
         client = client_getter()
@@ -1778,6 +1779,7 @@ def register_mcp_tools(
             domain=eff_domain,
             min_confidence=min_confidence,
             include_standby=include_standby,
+            include_policy_inferred=include_policy_inferred,
             cache_mode=eff_mode,
         )
         target_mgmt = eff_mgmt or (client.settings.mgmt_names[0] if client.settings.mgmt_names else "default")
@@ -1812,6 +1814,7 @@ def register_mcp_tools(
                 "destinations": dst_list,
                 "min_confidence": min_confidence,
                 "include_standby": include_standby,
+                "include_policy_inferred": include_policy_inferred,
                 "topology_warnings": topology_warnings,
                 "gateways": serialized,
             }

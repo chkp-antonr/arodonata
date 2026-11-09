@@ -107,9 +107,27 @@ class TopologyConfidenceWeights(BaseModel):
     admin_standby_dynamic: float = 0.35
 
     # Extensible future source hooks (Stages 2–4)
+    policy_rule_evidence: float = 0.25
+    vpn_encryption_domain: float = 0.45
     policy_rule_match: float = 0.25
-    vpn_domain_match: float = 0.35
+    vpn_domain_match: float = 0.45
     bridge_arp_mac_match: float = 0.40
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_stage2_weight_aliases(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        copied = dict(data)
+        if "policy_rule_evidence" in copied and "policy_rule_match" not in copied:
+            copied["policy_rule_match"] = copied["policy_rule_evidence"]
+        elif "policy_rule_match" in copied and "policy_rule_evidence" not in copied:
+            copied["policy_rule_evidence"] = copied["policy_rule_match"]
+        if "vpn_encryption_domain" in copied and "vpn_domain_match" not in copied:
+            copied["vpn_domain_match"] = copied["vpn_encryption_domain"]
+        elif "vpn_domain_match" in copied and "vpn_encryption_domain" not in copied:
+            copied["vpn_encryption_domain"] = copied["vpn_domain_match"]
+        return copied
 
     # Negative conflict / anomaly deltas
     conflict_missing_in_live_routes: float = -0.35

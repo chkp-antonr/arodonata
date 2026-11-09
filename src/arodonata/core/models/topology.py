@@ -12,6 +12,7 @@ from arodonata.core.models.common import to_naive_utc, utc_now
 TopologySourceType = Literal[
     "interface_connected",
     "interface_specific",
+    "vpn_domain",
     "vs_static_route",
     "external_interface",
     "connected_route",
@@ -26,6 +27,7 @@ STATIC_TOPOLOGY_SOURCES: frozenset[str] = frozenset(
     {
         "interface_connected",
         "interface_specific",
+        "vpn_domain",
         "vs_static_route",
         "external_interface",
     }
@@ -49,6 +51,7 @@ FlowMatchType = Literal[
     "internal_to_internal",
     "internal_to_external",
     "external_to_internal",
+    "policy_inferred",
 ]
 
 TopologyDiagnosticCode = Literal[
@@ -71,6 +74,7 @@ TopologyDiscrepancyType = Literal[
     "default_route_mismatch",
     "cluster_member_drift",
     "resolved_by_routing",
+    "policy_topology_mismatch",
 ]
 
 AnnotationDisposition = Literal[

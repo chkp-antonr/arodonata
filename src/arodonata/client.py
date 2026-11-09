@@ -1055,10 +1055,11 @@ class ArodonataClient:
         domain: str | None = None,
         min_confidence: float = 0.0,
         include_standby: bool = True,
+        include_policy_inferred: bool = True,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
     ) -> list[AffectedGatewayCandidate]:
-        """Locate policy-enforcing gateways where `sources` and `destinations` resolve to distinct interfaces."""
+        """Locate policy-enforcing gateways where `sources` and `destinations` resolve to distinct interfaces or via explicit installed policy rules."""
         if not self._db.is_initialized:
             await self._db.initialize()
         return await self._topology_service.find_affected_gateways(
@@ -1068,6 +1069,7 @@ class ArodonataClient:
             domain=domain,
             min_confidence=min_confidence,
             include_standby=include_standby,
+            include_policy_inferred=include_policy_inferred,
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
         )
@@ -1135,12 +1137,13 @@ class ArodonataClient:
         gateways: Sequence[str] | str | None = None,
         collect_routes: bool = False,
         collect_live_routes: bool = False,
+        check_policy: bool = False,
         gateway_cli: GatewayCliPort | GatewayCliCallable | None = None,
         fallback_to_cprid: bool = True,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
     ) -> TopologyReconciliationReport:
-        """Reconcile SmartConsole static topology against cached/collected live routes and administrator annotations."""
+        """Reconcile SmartConsole static topology against cached/collected live routes, gateway-targeted policy rules, and administrator annotations."""
         if not self._db.is_initialized:
             await self._db.initialize()
         return await self._topology_service.reconcile_gateway_topology(
@@ -1149,6 +1152,7 @@ class ArodonataClient:
             gateways=gateways,
             collect_routes=collect_routes,
             collect_live_routes=collect_live_routes,
+            check_policy=check_policy,
             gateway_cli=gateway_cli,
             fallback_to_cprid=fallback_to_cprid,
             cache_mode=cache_mode,
