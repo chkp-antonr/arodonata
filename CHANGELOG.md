@@ -5,7 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## v2.5.0 (2026-11-11)
+
+### Feat
+
+- **testing,topology**: add enterprise raw-replay scale suite and HTTPS mock server (#76)
+- **topology**: add policy/NAT topology inference, VPN domain extraction, and policy reconciliation (#75)
+- **topology**: add route collection, reconciliation, annotations, and confidence scoring (#73)
+
+### Fix
+
+- **sync,topology**: batch Core cache writes, serialize VSX route CLI, and harden single-flight locks (#77)
+- **sessions**: fail fast on unreachable login transport and suppress startup cleanup tracebacks (#74)
 
 ### Added
 
@@ -38,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Shared per-MDS domain sync semaphores and `(mgmt_name, domain_name, scope)` single-flight coalescing process-wide across coordinators attached to the same database engine (weakly keyed per `AbstractEventLoop`), while reusing the caller's active MDS permit via `ContextVar` on nested re-entrant `DomainSyncCoordinator.ensure()` calls so empty-cache asset lookups inside `TopologyService._sync_domain_topology()` cannot deadlock (`src/arodonata/core/services/sync_coordinator.py`).
 - Serialized gateway CLI/`cprid` route collection per physical `node_uid` before acquiring the per-management concurrency slot so multiple VSX Virtual Systems sharing one `VS0` chassis execute sequentially without starving independent gateways, coalesced identical concurrent `refresh_topology()` and `collect_gateway_routes()` calls while preserving waiter `CancelledError` (`asyncio.timeout`), capped collected routes in a single `ip -4 route show` `awk` pass (skipping `clish -c "show route"` above `10,000` kernel routes), and emitted truncation warnings strictly when routes are dropped beyond `max_routes_per_gateway` (`src/arodonata/core/services/topology_service.py`, `src/arodonata/core/services/route_collector.py`).
+- Failed fast on unreachable management login transport errors without redundant retries and suppressed noisy startup session-cleanup tracebacks (`src/arodonata/adapters/checkpoint/sessions.py`).
 
 ## v2.4.1 (2026-11-05)
 
