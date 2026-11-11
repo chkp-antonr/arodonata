@@ -875,3 +875,136 @@ async def test_gateway_topology_persistence_and_64bit_ipv4_bounds() -> None:
         assert bgp_only[0].cidr_or_range == "172.31.0.0/16"
     finally:
         await db.close()
+
+
+async def test_batched_core_replace_and_duplicate_pk_upsert() -> None:
+    """Verify multi-batch (>500 rows) `replace_domain_objects` and duplicate-PK `upsert_objects` persist cleanly."""
+    db = DatabaseManager(engine=None)
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        bulk_hosts = [
+            CPObject.from_cp_dict(
+                "mds1",
+                "BulkDom",
+                {
+                    "uid": f"uid-h-{i}",
+                    "name": f"H_Bulk_{i}",
+                    "type": "host",
+                    "ipv4-address": f"10.50.{i // 256}.{i % 256}",
+                },
+            )
+            for i in range(1250)
+        ]
+        written = await cache.replace_domain_objects("mds1", "BulkDom", bulk_hosts, types=["host"])
+        assert written == 1250
+
+        loaded = await cache.get_objects("mds1", "BulkDom", types=["host"])
+        assert len(loaded) == 1250
+
+        # Duplicate PK in a single upsert batch keeps the final value without raising SQL errors
+        dup_updates = [
+            CPObject.from_cp_dict(
+                "mds1",
+                "BulkDom",
+                {"uid": "uid-h-0", "name": "H_Bulk_0_v1", "type": "host", "ipv4-address": "10.99.0.1"},
+            ),
+            CPObject.from_cp_dict(
+                "mds1",
+                "BulkDom",
+                {"uid": "uid-h-0", "name": "H_Bulk_0_v2", "type": "host", "ipv4-address": "10.99.0.2"},
+            ),
+        ]
+        await cache.upsert_objects(dup_updates)
+        updated = await cache.get_object_by_uid("mds1", "BulkDom", "uid-h-0")
+        assert updated is not None
+        assert updated.name == "H_Bulk_0_v2"
+        assert updated.ipv4_address == "10.99.0.2"
+    finally:
+        await db.close()
+
+
+async def test_batched_replace_domain_rulebase_and_package_only_snapshot() -> None:
+    """Verify `replace_domain_rulebase` batches >500 rules via Core INSERT and `get_domain_rulebase_packages` avoids loading access rules."""
+    from arodonata.core.models.rulebase import (
+        AccessRuleEntry,
+        DomainRulebaseSnapshot,
+        NatRuleEntry,
+        RulebaseLayerEntry,
+        RulebasePackageLayerEntry,
+    )
+
+    db = DatabaseManager(engine=None)
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        access_rules = [
+            AccessRuleEntry(
+                mgmt_name="mds1",
+                domain_name="BulkRuleDom",
+                layer_uid="layer-acc-1",
+                layer_name="Network",
+                uid=f"rule-uid-{i}",
+                rule_number=str(i + 1),
+                position=i,
+                name=f"Rule_{i}",
+                enabled=True,
+                action="Accept",
+            )
+            for i in range(1150)
+        ]
+        nat_rules = [
+            NatRuleEntry(
+                mgmt_name="mds1",
+                domain_name="BulkRuleDom",
+                package_uid="pkg-nat-only",
+                package_name="NatOnlyPkg",
+                uid="nat-rule-1",
+                rule_number="1",
+                position=0,
+                enabled=True,
+            )
+        ]
+        snapshot = DomainRulebaseSnapshot(
+            mgmt_name="mds1",
+            domain_name="BulkRuleDom",
+            package_layers=[
+                RulebasePackageLayerEntry(
+                    mgmt_name="mds1",
+                    domain_name="BulkRuleDom",
+                    package_uid="pkg-main",
+                    package_name="MainPkg",
+                    rulebase_type="access",
+                    layer_uid="layer-acc-1",
+                    layer_name="Network",
+                    position=0,
+                    raw_data={"installation-targets": [{"name": "gw-1"}]},
+                )
+            ],
+            layers=[
+                RulebaseLayerEntry(
+                    mgmt_name="mds1",
+                    domain_name="BulkRuleDom",
+                    uid="layer-acc-1",
+                    name="Network",
+                    rulebase_type="access",
+                )
+            ],
+            access_rules=access_rules,
+            nat_rules=nat_rules,
+        )
+        await cache.replace_domain_rulebase(snapshot)
+
+        full_snap = await cache.get_domain_rulebase("mds1", "BulkRuleDom")
+        assert len(full_snap.access_rules) == 1150
+        assert len(full_snap.nat_rules) == 1
+
+        pkg_only = await cache.get_domain_rulebase_packages("mds1", "BulkRuleDom")
+        assert len(pkg_only.package_layers) == 1
+        assert pkg_only.package_layers[0].package_name == "MainPkg"
+        # Lightweight snapshot never loads access rules into memory, only package layers + 1 stub per NAT-only package
+        assert pkg_only.access_rules == []
+        assert len(pkg_only.nat_rules) == 1
+        assert pkg_only.nat_rules[0].package_name == "NatOnlyPkg"
+    finally:
+        await db.close()

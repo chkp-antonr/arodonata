@@ -435,6 +435,7 @@ class ObjectService:
                 if cp_obj.type != item_type:
                     cp_obj = cp_obj.model_copy(update={"type": item_type})
                 typed_objs.append(cp_obj)
+            del q_res
 
             collected_by_type[item_type] = typed_objs
             all_collected.extend(typed_objs)

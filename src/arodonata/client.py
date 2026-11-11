@@ -1086,7 +1086,7 @@ class ArodonataClient:
         gateway_cli: GatewayCliPort | GatewayCliCallable | None = None,
         fallback_to_cprid: bool = True,
         timeout: float = 45.0,
-        concurrency: int = 8,
+        concurrency: int | None = None,
     ) -> RouteCollectionOutcome:
         """Collect live OS/Clish routing tables from gateways via SSH (`GatewayCliPort`) or `cprid` `run-script` fallback."""
         if not self._db.is_initialized:

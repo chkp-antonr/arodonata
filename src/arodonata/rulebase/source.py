@@ -166,6 +166,13 @@ class CachedRulebaseSource:
             age = max(0.0, (self._now() - st.synced_at).total_seconds())
         return snapshot, st.last_session_uid, st.last_published_at, st.status, age
 
+    async def _load_package_only_snapshot(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+    ) -> DomainRulebaseSnapshot:
+        return await self._cache.get_domain_rulebase_packages(mgmt_name, domain_name)
+
     @traced
     async def get_policy_packages(
         self,
@@ -181,23 +188,30 @@ class CachedRulebaseSource:
             domains = await self._list_candidate_domains(mgmt_name)
             non_global = [d for d in domains if d != "Global"]
             target_domains = non_global or domains
-            results: list[PolicyPackageInfo] = []
-            for dom in target_domains:
-                snap, _, _, _, _ = await self._ensure_and_load_snapshot(
-                    mgmt_name,
-                    dom,
-                    cache_mode=cache_mode,
+            if cache_mode != "cache" and self._refresh_service is not None and target_domains:
+                await self._refresh_service.refresh_rulebases(
+                    mgmt_name=mgmt_name,
+                    domains=target_domains,
+                    include_global=("Global" in target_domains),
+                    mode=cache_mode,
                     cache_ttl=cache_ttl,
                 )
+            results: list[PolicyPackageInfo] = []
+            for dom in target_domains:
+                snap = await self._load_package_only_snapshot(mgmt_name, dom)
                 results.extend(extract_policy_packages(snap))
             return results
 
-        snap, _, _, _, _ = await self._ensure_and_load_snapshot(
-            mgmt_name,
-            domain_name.strip(),
-            cache_mode=cache_mode,
-            cache_ttl=cache_ttl,
-        )
+        clean_dom = domain_name.strip()
+        if cache_mode != "cache" and self._refresh_service is not None:
+            await self._refresh_service.refresh_rulebases(
+                mgmt_name=mgmt_name,
+                domains=[clean_dom],
+                include_global=(clean_dom == "Global"),
+                mode=cache_mode,
+                cache_ttl=cache_ttl,
+            )
+        snap = await self._load_package_only_snapshot(mgmt_name, clean_dom)
         return extract_policy_packages(snap)
 
     @traced

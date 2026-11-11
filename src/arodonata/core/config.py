@@ -253,6 +253,24 @@ class ArodonataSettings(BaseSettings):
         le=20,
         validation_alias=AliasChoices("ARODONATA_CONCURRENT_LIMIT"),
     )
+    domain_sync_concurrency: int = Field(
+        default=0,
+        ge=0,
+        le=20,
+        validation_alias=AliasChoices("ARODONATA_DOMAIN_SYNC_CONCURRENCY"),
+    )
+    route_collect_concurrency: int = Field(
+        default=0,
+        ge=0,
+        le=32,
+        validation_alias=AliasChoices("ARODONATA_ROUTE_COLLECT_CONCURRENCY"),
+    )
+    max_routes_per_gateway: int = Field(
+        default=50000,
+        ge=100,
+        le=500000,
+        validation_alias=AliasChoices("ARODONATA_MAX_ROUTES_PER_GATEWAY"),
+    )
     login_throttle_window: float = Field(
         default=70.0,
         gt=0,
@@ -432,6 +450,14 @@ class ArodonataSettings(BaseSettings):
         if self.trace_modules:
             _ = parse_trace_modules(self.trace_modules)
 
+        # 7. Resolve default domain_sync_concurrency capped at 2 unless explicitly overridden
+        if self.domain_sync_concurrency == 0:
+            self.domain_sync_concurrency = min(2, max(1, self.concurrent_limit - 1))
+
+        # 8. Resolve default route_collect_concurrency so cprid/SSH route collection leaves API headroom
+        if self.route_collect_concurrency == 0:
+            self.route_collect_concurrency = min(4, max(1, self.concurrent_limit // 2))
+
         return self
 
     @property
@@ -444,11 +470,6 @@ class ArodonataSettings(BaseSettings):
             ver = self.api_versions[idx] if idx < len(self.api_versions) else self.api_version
             registry[name] = ServerEndpointConfig(name=name, host=host, port=port, api_key=key, api_version=ver)
         return registry
-
-    @property
-    def domain_sync_concurrency(self) -> int:
-        """Maximum concurrent domain refreshes per MDS member (`max(1, concurrent_limit - 1)`)."""
-        return max(1, self.concurrent_limit - 1)
 
     @property
     def trace_modules_rules(self) -> dict[str, bool]:
