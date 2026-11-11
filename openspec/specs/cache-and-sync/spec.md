@@ -61,7 +61,7 @@ Defines the database-backed cache layer (`DatabaseManager`, `SqlCacheAdapter`, `
 #### Scenario: Parallel domain refresh per MDS member and background first-use warm-up
 
 - **WHEN** `DomainSyncCoordinator.ensure()` refreshes multiple domains
-- **THEN** domains SHALL be refreshed concurrently via `asyncio.TaskGroup` at up to `max(1, concurrent_limit - 1)` domains at once per MDS member (`active_mds_ip`, cancelling sibling tasks immediately if a fatal `ServerIdentityError` occurs), while `get_domains()` SHALL return the domain list without implicitly starting background object-cache warm-up (warm-up is invoked explicitly via `start_object_cache_warmup`)
+- **THEN** domains SHALL be refreshed concurrently via `asyncio.TaskGroup` at up to `settings.domain_sync_concurrency` (default `min(2, max(1, concurrent_limit - 1))`) domains at once per MDS member (`active_mds_ip`, shared process-wide across coordinators attached to the same database engine while reusing the caller's active MDS permit on nested re-entrant coordinator calls, coalescing concurrent in-process syncs of the same `(mgmt_name, domain_name, scope)`, writing cached rows in bounded Core batches, and cancelling sibling tasks immediately if a fatal `ServerIdentityError` occurs), while `get_domains()` SHALL return the domain list without implicitly starting background object-cache warm-up (warm-up is invoked explicitly via `start_object_cache_warmup`)
 
 ### Requirement: Dedicated Service Cache Table and Selective Refresh
 
@@ -84,7 +84,7 @@ Defines the database-backed cache layer (`DatabaseManager`, `SqlCacheAdapter`, `
 #### Scenario: Concurrent domain asset collection with interleaved SSE events
 
 - **WHEN** `stream_refresh_assets()` runs across multiple servers and domains
-- **THEN** it SHALL collect domains concurrently per MDS member (`max(1, concurrent_limit - 1)`), persist rows in `arodonata_assets` (avoiding collision with host application `assets` tables), emit typed `SyncProgressEvent` items (convertible to `SSEEvent` via `adapters.sse`) tagged with `mgmt_name` and `domain`, link cluster members and VSX virtual systems to their parent asset UIDs and composite IDs (`parent_id`, `parent_asset_id`, `member_asset_ids`, `virtual_system_asset_ids`), and update `domain_sync_state` (`scope="assets"`, `item_type="*"`)
+- **THEN** it SHALL collect domains concurrently per MDS member (`settings.domain_sync_concurrency`, default `min(2, max(1, concurrent_limit - 1))`), persist rows in `arodonata_assets` (avoiding collision with host application `assets` tables), emit typed `SyncProgressEvent` items (convertible to `SSEEvent` via `adapters.sse`) tagged with `mgmt_name` and `domain`, link cluster members and VSX virtual systems to their parent asset UIDs and composite IDs (`parent_id`, `parent_asset_id`, `member_asset_ids`, `virtual_system_asset_ids`), and update `domain_sync_state` (`scope="assets"`, `item_type="*"`)
 
 #### Scenario: Cross-domain VSX gateway and Virtual System topology reconciliation
 

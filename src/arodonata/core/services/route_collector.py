@@ -25,6 +25,9 @@ from arodonata.core.models.topology import (
 from arodonata.core.ports import ApiPort, GatewayCliCallable, GatewayCliPort
 
 MAX_IPV4_INT = 4294967295
+ROUTE_LIMIT_MARKER = "===ARODONATA_ROUTE_LIMIT_REACHED==="
+CLISH_SKIPPED_LARGE_TABLE_MARKER = "===ARODONATA_CLISH_SKIPPED_LARGE_TABLE==="
+DEFAULT_CLISH_SKIP_THRESHOLD = 10000
 
 _CLISH_PROTOCOL_MAP: dict[str, TopologySourceType] = {
     "C": "connected_route",
@@ -75,15 +78,30 @@ class ParsedCliRoute:
     protocol_label: str
 
 
-def build_route_collection_script(vsid: int | None = None, vs_name: str | None = None) -> str:
+def build_route_collection_script(
+    vsid: int | None = None,
+    vs_name: str | None = None,
+    *,
+    max_routes: int | None = None,
+) -> str:
     """Build a safe bash script for collecting IPv4 routes from Gaia OS or a VSX Virtual System context.
 
     When `vsid` is specified (`> 0`), switches context via `vsenv "$vsid" >/dev/null 2>&1 </dev/null`
     and verifies that `$FWDIR` contains `printf "CTX%05d" "$vsid"` before querying routes, redirecting
     stdin from `/dev/null` so nested loops or parent shells never lose stdin. When `vsid` is `None`
     but `vs_name` is set, dynamically resolves `vsid` via `vsx stat -l` on `VS0` and fails cleanly
-    if the VSID cannot be resolved.
+    if the VSID cannot be resolved. When `max_routes` (`> 0`) is specified, caps CLI output lines via
+    `awk` and skips `clish -c "show route"` on BGP full-view / large tables (`> 10000` kernel routes).
     """
+    eff_limit = int(max_routes) if max_routes is not None and int(max_routes) > 0 else None
+    if eff_limit is not None:
+        ip_cmd = (
+            f"ip -4 route show 2>/dev/null </dev/null | awk -v lim={eff_limit} "
+            f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
+        )
+    else:
+        ip_cmd = "ip -4 route show 2>/dev/null </dev/null || true\n"
+
     if vsid is not None and vsid > 0:
         return (
             f"vsid={int(vsid)}\n"
@@ -97,7 +115,7 @@ def build_route_collection_script(vsid: int | None = None, vs_name: str | None =
             '  *) echo "_vs_error=context not switched (FWDIR=$FWDIR)"; exit 1 ;;\n'
             "esac\n"
             'echo "===ARODONATA_IP_ROUTE_START==="\n'
-            "ip -4 route show 2>/dev/null </dev/null || true\n"
+            f"{ip_cmd}"
             'echo "===ARODONATA_IP_ROUTE_END==="\n'
         )
     if vs_name:
@@ -119,8 +137,26 @@ def build_route_collection_script(vsid: int | None = None, vs_name: str | None =
             "esac\n"
             'echo "===ARODONATA_VSID_RESOLVED=${vsid}==="\n'
             'echo "===ARODONATA_IP_ROUTE_START==="\n'
-            "ip -4 route show 2>/dev/null </dev/null || true\n"
+            f"{ip_cmd}"
             'echo "===ARODONATA_IP_ROUTE_END==="\n'
+        )
+    if eff_limit is not None:
+        skip_thr = min(eff_limit, DEFAULT_CLISH_SKIP_THRESHOLD)
+        return (
+            'echo "===ARODONATA_IP_ROUTE_START==="\n'
+            "_ip_rc=0\n"
+            f"ip -4 route show 2>/dev/null </dev/null | awk -v lim={eff_limit} -v thr={skip_thr} "
+            f'\'NR<=lim {{print}} NR==lim+1 {{print "{ROUTE_LIMIT_MARKER}"; exit 42}} '
+            "END {if (NR>thr) exit 42}' || _ip_rc=$?\n"
+            'echo "===ARODONATA_IP_ROUTE_END==="\n'
+            'if [ "$_ip_rc" -eq 42 ]; then\n'
+            f'  echo "{CLISH_SKIPPED_LARGE_TABLE_MARKER}"\n'
+            "else\n"
+            '  echo "===ARODONATA_CLISH_ROUTE_START==="\n'
+            f'  clish -c "show route" 2>/dev/null </dev/null | awk -v lim={eff_limit} '
+            f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
+            '  echo "===ARODONATA_CLISH_ROUTE_END==="\n'
+            "fi\n"
         )
     return (
         'echo "===ARODONATA_IP_ROUTE_START==="\n'
@@ -538,8 +574,12 @@ def parse_clish_show_route(output: str) -> list[ParsedCliRoute]:
     return routes
 
 
-def parse_combined_cli_routes(stdout: str) -> list[ParsedCliRoute]:
-    """Parse combined `ip -4 route show` and `clish -c "show route"` stdout, upgrading protocol specificity from clish when both report the same `(destination, interface)`."""
+def parse_combined_cli_routes_with_status(
+    stdout: str,
+    *,
+    max_routes: int | None = None,
+) -> tuple[list[ParsedCliRoute], bool]:
+    """Parse combined `ip -4 route show` and `clish -c "show route"` stdout and report whether `max_routes` truncated any entry."""
     ip_section = stdout
     clish_section = ""
 
@@ -550,21 +590,29 @@ def parse_combined_cli_routes(stdout: str) -> list[ParsedCliRoute]:
     if "===ARODONATA_CLISH_ROUTE_START===" in stdout:
         after_clish = stdout.split("===ARODONATA_CLISH_ROUTE_START===", 1)[1]
         clish_section = after_clish.split("===ARODONATA_CLISH_ROUTE_END===", 1)[0]
-    else:
+    elif "===ARODONATA_IP_ROUTE_START===" not in stdout:
         clish_section = stdout
 
     ip_routes = parse_ip_route_show(ip_section)
-    clish_routes = parse_clish_show_route(clish_section)
+    clish_routes = parse_clish_show_route(clish_section) if clish_section else []
 
     by_key: dict[tuple[str, str], ParsedCliRoute] = {}
+    eff_max = int(max_routes) if max_routes is not None and int(max_routes) > 0 else None
+    truncated = ROUTE_LIMIT_MARKER in stdout
     for r in ip_routes:
         key = (str(r.destination), r.interface_name)
+        if eff_max is not None and key not in by_key and len(by_key) >= eff_max:
+            truncated = True
+            break
         by_key[key] = r
 
     for cr in clish_routes:
         key = (str(cr.destination), cr.interface_name)
         existing = by_key.get(key)
         if existing is None:
+            if eff_max is not None and len(by_key) >= eff_max:
+                truncated = True
+                continue
             by_key[key] = cr
         elif existing.source_type == "gaia_static_route" and cr.source_type in (
             "bgp_route",
@@ -574,7 +622,17 @@ def parse_combined_cli_routes(stdout: str) -> list[ParsedCliRoute]:
             # Upgrade generic kernel/static route to specific dynamic protocol discovered by clish
             by_key[key] = cr
 
-    return list(by_key.values())
+    return list(by_key.values()), truncated
+
+
+def parse_combined_cli_routes(
+    stdout: str,
+    *,
+    max_routes: int | None = None,
+) -> list[ParsedCliRoute]:
+    """Parse combined `ip -4 route show` and `clish -c "show route"` stdout, upgrading protocol specificity from clish when both report the same `(destination, interface)`."""
+    routes, _ = parse_combined_cli_routes_with_status(stdout, max_routes=max_routes)
+    return routes
 
 
 def resolve_gateway_cli_targets(

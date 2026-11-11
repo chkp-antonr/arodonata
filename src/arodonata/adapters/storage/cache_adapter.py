@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
-from sqlalchemy import Table, delete, select
+from sqlalchemy import Table, delete, func, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -144,33 +144,37 @@ def _record_to_cp_object(rec: CPObjectRecord) -> CPObject:
     )
 
 
+def _cp_object_to_row(obj: CPObject) -> dict[str, Any]:
+    return {
+        "id": obj.id or f"{obj.mgmt_name}:{obj.domain_name}:{obj.uid}",
+        "object_id": obj.object_id or f"{obj.mgmt_name}:{obj.domain_name}:{obj.name}",
+        "uid": obj.uid,
+        "name": obj.name,
+        "type": obj.type,
+        "mgmt_name": obj.mgmt_name,
+        "domain_name": obj.domain_name,
+        "original_domain": obj.original_domain or obj.domain_name,
+        "ipv4_address": obj.ipv4_address,
+        "ipv6_address": obj.ipv6_address,
+        "subnet4": obj.subnet4,
+        "mask_length4": obj.mask_length4,
+        "subnet_mask": obj.subnet_mask,
+        "ipv4_address_first": obj.ipv4_address_first,
+        "ipv4_address_last": obj.ipv4_address_last,
+        "fqdn": obj.fqdn,
+        "is_sub_domain": obj.is_sub_domain,
+        "members": list(obj.members),
+        "comments": obj.comments,
+        "color": obj.color,
+        "tags": list(obj.tags),
+        "nat_settings": dict(obj.nat_settings),
+        "raw_data": dict(obj.raw_data),
+        "updated_at": _ensure_utc(obj.updated_at) or utc_now(),
+    }
+
+
 def _cp_object_to_record(obj: CPObject) -> CPObjectRecord:
-    return CPObjectRecord(
-        id=obj.id or f"{obj.mgmt_name}:{obj.domain_name}:{obj.uid}",
-        object_id=obj.object_id or f"{obj.mgmt_name}:{obj.domain_name}:{obj.name}",
-        uid=obj.uid,
-        name=obj.name,
-        type=obj.type,
-        mgmt_name=obj.mgmt_name,
-        domain_name=obj.domain_name,
-        original_domain=obj.original_domain or obj.domain_name,
-        ipv4_address=obj.ipv4_address,
-        ipv6_address=obj.ipv6_address,
-        subnet4=obj.subnet4,
-        mask_length4=obj.mask_length4,
-        subnet_mask=obj.subnet_mask,
-        ipv4_address_first=obj.ipv4_address_first,
-        ipv4_address_last=obj.ipv4_address_last,
-        fqdn=obj.fqdn,
-        is_sub_domain=obj.is_sub_domain,
-        members=list(obj.members),
-        comments=obj.comments,
-        color=obj.color,
-        tags=list(obj.tags),
-        nat_settings=dict(obj.nat_settings),
-        raw_data=dict(obj.raw_data),
-        updated_at=_ensure_utc(obj.updated_at) or utc_now(),
-    )
+    return CPObjectRecord(**_cp_object_to_row(obj))
 
 
 def _record_to_cp_service(rec: CPServiceRecord) -> CPService:
@@ -198,29 +202,33 @@ def _record_to_cp_service(rec: CPServiceRecord) -> CPService:
     )
 
 
+def _cp_service_to_row(svc: CPService) -> dict[str, Any]:
+    return {
+        "id": svc.id or f"{svc.mgmt_name}:{svc.domain_name}:{svc.uid}",
+        "service_id": svc.service_id or f"{svc.mgmt_name}:{svc.domain_name}:{svc.name}",
+        "uid": svc.uid,
+        "name": svc.name,
+        "type": svc.type,
+        "mgmt_name": svc.mgmt_name,
+        "domain_name": svc.domain_name,
+        "original_domain": svc.original_domain or svc.domain_name,
+        "port": svc.port,
+        "protocol": svc.protocol,
+        "icmp_type": svc.icmp_type,
+        "icmp_code": svc.icmp_code,
+        "members": list(svc.members),
+        "session_timeout": svc.session_timeout,
+        "match_for_any": svc.match_for_any,
+        "comments": svc.comments,
+        "color": svc.color,
+        "tags": list(svc.tags),
+        "raw_data": dict(svc.raw_data),
+        "updated_at": _ensure_utc(svc.updated_at) or utc_now(),
+    }
+
+
 def _cp_service_to_record(svc: CPService) -> CPServiceRecord:
-    return CPServiceRecord(
-        id=svc.id or f"{svc.mgmt_name}:{svc.domain_name}:{svc.uid}",
-        service_id=svc.service_id or f"{svc.mgmt_name}:{svc.domain_name}:{svc.name}",
-        uid=svc.uid,
-        name=svc.name,
-        type=svc.type,
-        mgmt_name=svc.mgmt_name,
-        domain_name=svc.domain_name,
-        original_domain=svc.original_domain or svc.domain_name,
-        port=svc.port,
-        protocol=svc.protocol,
-        icmp_type=svc.icmp_type,
-        icmp_code=svc.icmp_code,
-        members=list(svc.members),
-        session_timeout=svc.session_timeout,
-        match_for_any=svc.match_for_any,
-        comments=svc.comments,
-        color=svc.color,
-        tags=list(svc.tags),
-        raw_data=dict(svc.raw_data),
-        updated_at=_ensure_utc(svc.updated_at) or utc_now(),
-    )
+    return CPServiceRecord(**_cp_service_to_row(svc))
 
 
 def _record_to_asset(rec: AssetRecord) -> Asset:
@@ -255,36 +263,40 @@ def _record_to_asset(rec: AssetRecord) -> Asset:
     )
 
 
+def _asset_to_row(asset: Asset) -> dict[str, Any]:
+    return {
+        "id": asset.id or f"{asset.mgmt_name}:{asset.domain_name}:{asset.uid}",
+        "asset_id": asset.asset_id or f"{asset.mgmt_name}:{asset.domain_name}:{asset.name}",
+        "uid": asset.uid,
+        "name": asset.name,
+        "type": asset.type,
+        "mgmt_name": asset.mgmt_name,
+        "domain_name": asset.domain_name,
+        "ipv4_address": asset.ipv4_address,
+        "ipv6_address": asset.ipv6_address,
+        "version": asset.version,
+        "os_name": asset.os_name,
+        "hardware": asset.hardware,
+        "sic_status": asset.sic_status,
+        "parent_uid": asset.parent_uid,
+        "parent_name": asset.parent_name,
+        "parent_id": asset.parent_id,
+        "parent_asset_id": asset.parent_asset_id,
+        "member_uids": list(asset.member_uids),
+        "member_asset_ids": list(asset.member_asset_ids),
+        "virtual_system_uids": list(asset.virtual_system_uids),
+        "virtual_system_asset_ids": list(asset.virtual_system_asset_ids),
+        "interfaces": list(asset.interfaces),
+        "network_security_blades": dict(asset.network_security_blades),
+        "comments": asset.comments,
+        "color": asset.color,
+        "raw_data": dict(asset.raw_data),
+        "updated_at": _ensure_utc(asset.updated_at) or utc_now(),
+    }
+
+
 def _asset_to_record(asset: Asset) -> AssetRecord:
-    return AssetRecord(
-        id=asset.id or f"{asset.mgmt_name}:{asset.domain_name}:{asset.uid}",
-        asset_id=asset.asset_id or f"{asset.mgmt_name}:{asset.domain_name}:{asset.name}",
-        uid=asset.uid,
-        name=asset.name,
-        type=asset.type,
-        mgmt_name=asset.mgmt_name,
-        domain_name=asset.domain_name,
-        ipv4_address=asset.ipv4_address,
-        ipv6_address=asset.ipv6_address,
-        version=asset.version,
-        os_name=asset.os_name,
-        hardware=asset.hardware,
-        sic_status=asset.sic_status,
-        parent_uid=asset.parent_uid,
-        parent_name=asset.parent_name,
-        parent_id=asset.parent_id,
-        parent_asset_id=asset.parent_asset_id,
-        member_uids=list(asset.member_uids),
-        member_asset_ids=list(asset.member_asset_ids),
-        virtual_system_uids=list(asset.virtual_system_uids),
-        virtual_system_asset_ids=list(asset.virtual_system_asset_ids),
-        interfaces=list(asset.interfaces),
-        network_security_blades=dict(asset.network_security_blades),
-        comments=asset.comments,
-        color=asset.color,
-        raw_data=dict(asset.raw_data),
-        updated_at=_ensure_utc(asset.updated_at) or utc_now(),
-    )
+    return AssetRecord(**_asset_to_row(asset))
 
 
 def _record_to_topology_entry(rec: GatewayTopologyRecord) -> GatewayTopologyEntry:
@@ -313,30 +325,34 @@ def _record_to_topology_entry(rec: GatewayTopologyRecord) -> GatewayTopologyEntr
     )
 
 
+def _topology_entry_to_row(entry: GatewayTopologyEntry) -> dict[str, Any]:
+    return {
+        "id": entry.id,
+        "mgmt_name": entry.mgmt_name,
+        "domain_name": entry.domain_name,
+        "gateway_id": entry.gateway_id,
+        "gateway_asset_id": entry.gateway_asset_id,
+        "gateway_uid": entry.gateway_uid,
+        "gateway_name": entry.gateway_name,
+        "gateway_type": entry.gateway_type,
+        "interface_name": entry.interface_name,
+        "interface_ipv4": entry.interface_ipv4,
+        "interface_mask_length": entry.interface_mask_length,
+        "topology_zone": entry.topology_zone,
+        "leads_to_dmz": entry.leads_to_dmz,
+        "anti_spoofing_mode": entry.anti_spoofing_mode,
+        "source_type": entry.source_type,
+        "source_ref": entry.source_ref,
+        "cidr_or_range": entry.cidr_or_range,
+        "ip_first_int": int(entry.ip_first_int),
+        "ip_last_int": int(entry.ip_last_int),
+        "prefix_len": int(entry.prefix_len),
+        "updated_at": _ensure_utc(entry.updated_at) or utc_now(),
+    }
+
+
 def _topology_entry_to_record(entry: GatewayTopologyEntry) -> GatewayTopologyRecord:
-    return GatewayTopologyRecord(
-        id=entry.id,
-        mgmt_name=entry.mgmt_name,
-        domain_name=entry.domain_name,
-        gateway_id=entry.gateway_id,
-        gateway_asset_id=entry.gateway_asset_id,
-        gateway_uid=entry.gateway_uid,
-        gateway_name=entry.gateway_name,
-        gateway_type=entry.gateway_type,
-        interface_name=entry.interface_name,
-        interface_ipv4=entry.interface_ipv4,
-        interface_mask_length=entry.interface_mask_length,
-        topology_zone=entry.topology_zone,
-        leads_to_dmz=entry.leads_to_dmz,
-        anti_spoofing_mode=entry.anti_spoofing_mode,
-        source_type=entry.source_type,
-        source_ref=entry.source_ref,
-        cidr_or_range=entry.cidr_or_range,
-        ip_first_int=int(entry.ip_first_int),
-        ip_last_int=int(entry.ip_last_int),
-        prefix_len=int(entry.prefix_len),
-        updated_at=_ensure_utc(entry.updated_at) or utc_now(),
-    )
+    return GatewayTopologyRecord(**_topology_entry_to_row(entry))
 
 
 def _record_to_topology_annotation(rec: TopologyAnnotationRecord) -> TopologyAnnotation:
@@ -359,24 +375,205 @@ def _record_to_topology_annotation(rec: TopologyAnnotationRecord) -> TopologyAnn
     )
 
 
+def _topology_annotation_to_row(ann: TopologyAnnotation) -> dict[str, Any]:
+    return {
+        "id": ann.id,
+        "mgmt_name": ann.mgmt_name,
+        "domain_name": ann.domain_name,
+        "gateway_uid": ann.gateway_uid,
+        "gateway_name": ann.gateway_name,
+        "interface_name": ann.interface_name,
+        "cidr_or_range": ann.cidr_or_range,
+        "trust_static_topology": ann.trust_static_topology,
+        "disposition": ann.disposition,
+        "topology_zone": ann.topology_zone,
+        "zone": ann.zone,
+        "site": ann.site,
+        "comment": ann.comment,
+        "custom_metadata": dict(ann.custom_metadata),
+        "updated_at": _ensure_utc(ann.updated_at) or utc_now(),
+    }
+
+
 def _topology_annotation_to_record(ann: TopologyAnnotation) -> TopologyAnnotationRecord:
-    return TopologyAnnotationRecord(
-        id=ann.id,
-        mgmt_name=ann.mgmt_name,
-        domain_name=ann.domain_name,
-        gateway_uid=ann.gateway_uid,
-        gateway_name=ann.gateway_name,
-        interface_name=ann.interface_name,
-        cidr_or_range=ann.cidr_or_range,
-        trust_static_topology=ann.trust_static_topology,
-        disposition=ann.disposition,
-        topology_zone=ann.topology_zone,
-        zone=ann.zone,
-        site=ann.site,
-        comment=ann.comment,
-        custom_metadata=dict(ann.custom_metadata),
-        updated_at=_ensure_utc(ann.updated_at) or utc_now(),
-    )
+    return TopologyAnnotationRecord(**_topology_annotation_to_row(ann))
+
+
+def _package_layer_to_row(pkg_layer: RulebasePackageLayerEntry, mgmt: str, dom: str) -> dict[str, Any]:
+    return {
+        "id": pkg_layer.id,
+        "mgmt_name": mgmt,
+        "domain_name": dom,
+        "package_uid": pkg_layer.package_uid,
+        "package_name": pkg_layer.package_name,
+        "rulebase_type": pkg_layer.rulebase_type,
+        "layer_uid": pkg_layer.layer_uid,
+        "layer_name": pkg_layer.layer_name,
+        "position": pkg_layer.position,
+        "raw_data": dict(pkg_layer.raw_data),
+        "updated_at": _ensure_utc(pkg_layer.updated_at) or utc_now(),
+    }
+
+
+def _rulebase_layer_to_row(layer: RulebaseLayerEntry, mgmt: str, dom: str) -> dict[str, Any]:
+    return {
+        "id": layer.id,
+        "mgmt_name": mgmt,
+        "domain_name": dom,
+        "uid": layer.uid,
+        "name": layer.name,
+        "rulebase_type": layer.rulebase_type,
+        "parent_layer_uid": layer.parent_layer_uid,
+        "parent_rule_uid": layer.parent_rule_uid,
+        "is_global": layer.is_global,
+        "shared": layer.shared,
+        "implicit_cleanup_action": layer.implicit_cleanup_action,
+        "raw_data": dict(layer.raw_data),
+        "updated_at": _ensure_utc(layer.updated_at) or utc_now(),
+    }
+
+
+def _rulebase_section_to_row(sec: RulebaseSectionEntry, mgmt: str, dom: str) -> dict[str, Any]:
+    return {
+        "id": sec.id,
+        "mgmt_name": mgmt,
+        "domain_name": dom,
+        "layer_uid": sec.layer_uid,
+        "layer_name": sec.layer_name,
+        "rulebase_type": sec.rulebase_type,
+        "uid": sec.uid,
+        "name": sec.name,
+        "position": sec.position,
+        "from_rule": sec.from_rule,
+        "to_rule": sec.to_rule,
+        "rule_uids": list(sec.rule_uids),
+        "raw_data": dict(sec.raw_data),
+        "updated_at": _ensure_utc(sec.updated_at) or utc_now(),
+    }
+
+
+def _access_rule_to_row(rule: AccessRuleEntry, mgmt: str, dom: str) -> dict[str, Any]:
+    return {
+        "id": rule.id,
+        "mgmt_name": mgmt,
+        "domain_name": dom,
+        "layer_uid": rule.layer_uid,
+        "layer_name": rule.layer_name,
+        "section_uid": rule.section_uid,
+        "section_name": rule.section_name,
+        "uid": rule.uid,
+        "name": rule.name,
+        "rule_type": rule.rule_type,
+        "position": rule.position,
+        "rule_number": rule.rule_number,
+        "enabled": rule.enabled,
+        "action": rule.action,
+        "inline_layer_uid": rule.inline_layer_uid,
+        "inline_layer_name": rule.inline_layer_name,
+        "placeholder_domain_layer_uid": rule.placeholder_domain_layer_uid,
+        "source": list(rule.source),
+        "destination": list(rule.destination),
+        "service": list(rule.service),
+        "source_negate": rule.source_negate,
+        "destination_negate": rule.destination_negate,
+        "service_negate": rule.service_negate,
+        "track": rule.track,
+        "install_on": list(rule.install_on),
+        "comments": rule.comments,
+        "raw_data": dict(rule.raw_data),
+        "updated_at": _ensure_utc(rule.updated_at) or utc_now(),
+    }
+
+
+def _nat_rule_to_row(nat_rule: NatRuleEntry, mgmt: str, dom: str) -> dict[str, Any]:
+    return {
+        "id": nat_rule.id,
+        "mgmt_name": mgmt,
+        "domain_name": dom,
+        "package_uid": nat_rule.package_uid,
+        "package_name": nat_rule.package_name,
+        "section_uid": nat_rule.section_uid,
+        "section_name": nat_rule.section_name,
+        "uid": nat_rule.uid,
+        "name": nat_rule.name,
+        "rule_type": nat_rule.rule_type,
+        "position": nat_rule.position,
+        "rule_number": nat_rule.rule_number,
+        "enabled": nat_rule.enabled,
+        "method": nat_rule.method,
+        "auto_generated": nat_rule.auto_generated,
+        "original_source": nat_rule.original_source,
+        "original_destination": nat_rule.original_destination,
+        "original_service": nat_rule.original_service,
+        "translated_source": nat_rule.translated_source,
+        "translated_destination": nat_rule.translated_destination,
+        "translated_service": nat_rule.translated_service,
+        "install_on": list(nat_rule.install_on),
+        "comments": nat_rule.comments,
+        "raw_data": dict(nat_rule.raw_data),
+        "updated_at": _ensure_utc(nat_rule.updated_at) or utc_now(),
+    }
+
+
+def _https_rule_to_row(https_rule: HttpsRuleEntry, mgmt: str, dom: str) -> dict[str, Any]:
+    return {
+        "id": https_rule.id,
+        "mgmt_name": mgmt,
+        "domain_name": dom,
+        "layer_uid": https_rule.layer_uid,
+        "layer_name": https_rule.layer_name,
+        "section_uid": https_rule.section_uid,
+        "section_name": https_rule.section_name,
+        "uid": https_rule.uid,
+        "name": https_rule.name,
+        "rule_type": https_rule.rule_type,
+        "position": https_rule.position,
+        "rule_number": https_rule.rule_number,
+        "enabled": https_rule.enabled,
+        "action": https_rule.action,
+        "inline_layer_uid": https_rule.inline_layer_uid,
+        "source": list(https_rule.source),
+        "destination": list(https_rule.destination),
+        "service": list(https_rule.service),
+        "site_category": list(https_rule.site_category),
+        "certificate": https_rule.certificate,
+        "track": https_rule.track,
+        "install_on": list(https_rule.install_on),
+        "comments": https_rule.comments,
+        "raw_data": dict(https_rule.raw_data),
+        "updated_at": _ensure_utc(https_rule.updated_at) or utc_now(),
+    }
+
+
+def _threat_rule_to_row(threat_rule: ThreatRuleEntry, mgmt: str, dom: str) -> dict[str, Any]:
+    return {
+        "id": threat_rule.id,
+        "mgmt_name": mgmt,
+        "domain_name": dom,
+        "layer_uid": threat_rule.layer_uid,
+        "layer_name": threat_rule.layer_name,
+        "section_uid": threat_rule.section_uid,
+        "section_name": threat_rule.section_name,
+        "uid": threat_rule.uid,
+        "name": threat_rule.name,
+        "rule_type": threat_rule.rule_type,
+        "position": threat_rule.position,
+        "rule_number": threat_rule.rule_number,
+        "enabled": threat_rule.enabled,
+        "action": threat_rule.action,
+        "protected_scope": list(threat_rule.protected_scope),
+        "source": list(threat_rule.source),
+        "destination": list(threat_rule.destination),
+        "service": list(threat_rule.service),
+        "track": threat_rule.track,
+        "install_on": list(threat_rule.install_on),
+        "comments": threat_rule.comments,
+        "raw_data": dict(threat_rule.raw_data),
+        "updated_at": _ensure_utc(threat_rule.updated_at) or utc_now(),
+    }
+
+
+_BATCH_ROWS = 500
 
 
 class SqlCacheAdapter:
@@ -390,13 +587,29 @@ class SqlCacheAdapter:
         """Return the underlying `DatabaseManager`."""
         return self._db
 
+    async def _insert_rows_batched[T](
+        self,
+        session: AsyncSession,
+        model_cls: type[SQLModel],
+        items: Sequence[T],
+        mapper: Callable[[T], dict[str, Any]],
+    ) -> None:
+        """Execute Core multi-row `INSERT` in `_BATCH_ROWS` chunks without ORM identity-map bloat."""
+        if not items:
+            return
+        table: Table = model_cls.__table__  # type: ignore[attr-defined]
+        total = len(items)
+        for start in range(0, total, _BATCH_ROWS):
+            batch = [mapper(item) for item in items[start : start + _BATCH_ROWS]]
+            await session.execute(insert(table), batch)
+
     async def _dialect_upsert(
         self,
         session: AsyncSession,
         model_cls: type[SQLModel],
         values_list: Sequence[dict[str, Any]],
     ) -> None:
-        """Execute a dialect-aware `INSERT ... ON CONFLICT DO UPDATE` upsert (`W21`)."""
+        """Execute a batched dialect-aware `INSERT ... ON CONFLICT DO UPDATE` upsert (`W21`)."""
         if not values_list:
             return
         table: Table = model_cls.__table__  # type: ignore[attr-defined]
@@ -404,13 +617,22 @@ class SqlCacheAdapter:
         non_pk_cols = [c.name for c in table.columns if c.name not in pk_cols]
         dialect_name = self._db.engine.dialect.name
 
+        # Deduplicate by primary key preserving the last occurrence so PostgreSQL multi-row
+        # ON CONFLICT DO UPDATE never attempts to update the same target row twice in one statement.
+        deduped_map: dict[tuple[Any, ...], dict[str, Any]] = {}
         for row_vals in values_list:
+            pk_key = tuple(row_vals.get(col_name) for col_name in pk_cols)
+            deduped_map[pk_key] = row_vals
+        deduped_rows = list(deduped_map.values())
+
+        for start in range(0, len(deduped_rows), _BATCH_ROWS):
+            batch = deduped_rows[start : start + _BATCH_ROWS]
             if dialect_name == "postgresql":
-                pg_stmt = pg_insert(table).values(**row_vals)
+                pg_stmt = pg_insert(table).values(batch)
                 update_map = {col_name: getattr(pg_stmt.excluded, col_name) for col_name in non_pk_cols}
                 await session.execute(pg_stmt.on_conflict_do_update(index_elements=pk_cols, set_=update_map))
             else:
-                sq_stmt = sqlite_insert(table).values(**row_vals)
+                sq_stmt = sqlite_insert(table).values(batch)
                 update_map = {col_name: getattr(sq_stmt.excluded, col_name) for col_name in non_pk_cols}
                 await session.execute(sq_stmt.on_conflict_do_update(index_elements=pk_cols, set_=update_map))
 
@@ -730,7 +952,11 @@ class SqlCacheAdapter:
         if not type_list:
             return 0
         type_set = set(type_list)
-        filtered_objects = [o for o in objects if o.type in type_set]
+        deduped_objects: dict[str, CPObject] = {
+            (o.id or f"{o.mgmt_name}:{o.domain_name}:{o.uid}"): o for o in objects if o.type in type_set
+        }
+        unique_objects = list(deduped_objects.values())
+        del deduped_objects
 
         async with self._db.session() as session:
             await session.execute(
@@ -740,12 +966,11 @@ class SqlCacheAdapter:
                     CPObjectRecord.type.in_(type_list),  # type: ignore[attr-defined]
                 )
             )
-            for obj in filtered_objects:
-                session.add(_cp_object_to_record(obj))
+            await self._insert_rows_batched(session, CPObjectRecord, unique_objects, _cp_object_to_row)
             if sync_states:
                 await self._upsert_sync_states_in_session(session, sync_states)
             await session.commit()
-        return len(filtered_objects)
+        return len(unique_objects)
 
     @traced
     async def upsert_objects(
@@ -758,35 +983,7 @@ class SqlCacheAdapter:
         if not objects and not sync_states:
             return 0
         span_attrs(count=len(objects))
-        rows = [
-            {
-                "id": obj.id or f"{obj.mgmt_name}:{obj.domain_name}:{obj.uid}",
-                "object_id": obj.object_id or f"{obj.mgmt_name}:{obj.domain_name}:{obj.name}",
-                "uid": obj.uid,
-                "name": obj.name,
-                "type": obj.type,
-                "mgmt_name": obj.mgmt_name,
-                "domain_name": obj.domain_name,
-                "original_domain": obj.original_domain or obj.domain_name,
-                "ipv4_address": obj.ipv4_address,
-                "ipv6_address": obj.ipv6_address,
-                "subnet4": obj.subnet4,
-                "mask_length4": obj.mask_length4,
-                "subnet_mask": obj.subnet_mask,
-                "ipv4_address_first": obj.ipv4_address_first,
-                "ipv4_address_last": obj.ipv4_address_last,
-                "fqdn": obj.fqdn,
-                "is_sub_domain": obj.is_sub_domain,
-                "members": list(obj.members),
-                "comments": obj.comments,
-                "color": obj.color,
-                "tags": list(obj.tags),
-                "nat_settings": dict(obj.nat_settings),
-                "raw_data": dict(obj.raw_data),
-                "updated_at": _ensure_utc(obj.updated_at) or utc_now(),
-            }
-            for obj in objects
-        ]
+        rows = [_cp_object_to_row(obj) for obj in objects]
         async with self._db.session() as session:
             await self._dialect_upsert(session, CPObjectRecord, rows)
             if sync_states:
@@ -885,7 +1082,11 @@ class SqlCacheAdapter:
         if not type_list:
             return 0
         type_set = set(type_list)
-        filtered_services = [s for s in services if s.type in type_set]
+        deduped_services: dict[str, CPService] = {
+            (s.id or f"{s.mgmt_name}:{s.domain_name}:{s.uid}"): s for s in services if s.type in type_set
+        }
+        unique_services = list(deduped_services.values())
+        del deduped_services
 
         async with self._db.session() as session:
             await session.execute(
@@ -895,12 +1096,11 @@ class SqlCacheAdapter:
                     CPServiceRecord.type.in_(type_list),  # type: ignore[attr-defined]
                 )
             )
-            for svc in filtered_services:
-                session.add(_cp_service_to_record(svc))
+            await self._insert_rows_batched(session, CPServiceRecord, unique_services, _cp_service_to_row)
             if sync_states:
                 await self._upsert_sync_states_in_session(session, sync_states)
             await session.commit()
-        return len(filtered_services)
+        return len(unique_services)
 
     @traced
     async def upsert_services(
@@ -913,31 +1113,7 @@ class SqlCacheAdapter:
         if not services and not sync_states:
             return 0
         span_attrs(count=len(services))
-        rows = [
-            {
-                "id": svc.id or f"{svc.mgmt_name}:{svc.domain_name}:{svc.uid}",
-                "service_id": svc.service_id or f"{svc.mgmt_name}:{svc.domain_name}:{svc.name}",
-                "uid": svc.uid,
-                "name": svc.name,
-                "type": svc.type,
-                "mgmt_name": svc.mgmt_name,
-                "domain_name": svc.domain_name,
-                "original_domain": svc.original_domain or svc.domain_name,
-                "port": svc.port,
-                "protocol": svc.protocol,
-                "icmp_type": svc.icmp_type,
-                "icmp_code": svc.icmp_code,
-                "members": list(svc.members),
-                "session_timeout": svc.session_timeout,
-                "match_for_any": svc.match_for_any,
-                "comments": svc.comments,
-                "color": svc.color,
-                "tags": list(svc.tags),
-                "raw_data": dict(svc.raw_data),
-                "updated_at": _ensure_utc(svc.updated_at) or utc_now(),
-            }
-            for svc in services
-        ]
+        rows = [_cp_service_to_row(svc) for svc in services]
         async with self._db.session() as session:
             await self._dialect_upsert(session, CPServiceRecord, rows)
             if sync_states:
@@ -1007,6 +1183,10 @@ class SqlCacheAdapter:
     ) -> int:
         """Atomically replace all cached assets for `(mgmt_name, domain_name)`."""
         span_attrs(mgmt_name=mgmt_name, domain=domain_name, count=len(assets))
+        deduped_assets: dict[str, Asset] = {(a.id or f"{a.mgmt_name}:{a.domain_name}:{a.uid}"): a for a in assets}
+        unique_assets = list(deduped_assets.values())
+        del deduped_assets
+
         async with self._db.session() as session:
             await session.execute(
                 delete(AssetRecord).where(
@@ -1014,12 +1194,11 @@ class SqlCacheAdapter:
                     AssetRecord.domain_name == domain_name,  # type: ignore[arg-type]
                 )
             )
-            for asset in assets:
-                session.add(_asset_to_record(asset))
+            await self._insert_rows_batched(session, AssetRecord, unique_assets, _asset_to_row)
             if sync_states:
                 await self._upsert_sync_states_in_session(session, sync_states)
             await session.commit()
-        return len(assets)
+        return len(unique_assets)
 
     @traced
     async def upsert_assets(
@@ -1030,38 +1209,7 @@ class SqlCacheAdapter:
         if not assets:
             return 0
         span_attrs(count=len(assets))
-        rows = [
-            {
-                "id": asset.id or f"{asset.mgmt_name}:{asset.domain_name}:{asset.uid}",
-                "asset_id": asset.asset_id or f"{asset.mgmt_name}:{asset.domain_name}:{asset.name}",
-                "uid": asset.uid,
-                "name": asset.name,
-                "type": asset.type,
-                "mgmt_name": asset.mgmt_name,
-                "domain_name": asset.domain_name,
-                "ipv4_address": asset.ipv4_address,
-                "ipv6_address": asset.ipv6_address,
-                "version": asset.version,
-                "os_name": asset.os_name,
-                "hardware": asset.hardware,
-                "sic_status": asset.sic_status,
-                "parent_uid": asset.parent_uid,
-                "parent_name": asset.parent_name,
-                "parent_id": asset.parent_id,
-                "parent_asset_id": asset.parent_asset_id,
-                "member_uids": list(asset.member_uids),
-                "member_asset_ids": list(asset.member_asset_ids),
-                "virtual_system_uids": list(asset.virtual_system_uids),
-                "virtual_system_asset_ids": list(asset.virtual_system_asset_ids),
-                "interfaces": list(asset.interfaces),
-                "network_security_blades": dict(asset.network_security_blades),
-                "comments": asset.comments,
-                "color": asset.color,
-                "raw_data": dict(asset.raw_data),
-                "updated_at": _ensure_utc(asset.updated_at) or utc_now(),
-            }
-            for asset in assets
-        ]
+        rows = [_asset_to_row(asset) for asset in assets]
         async with self._db.session() as session:
             await self._dialect_upsert(session, AssetRecord, rows)
             await session.commit()
@@ -1179,8 +1327,8 @@ class SqlCacheAdapter:
                         )
                     )
 
-            for entry in deduped.values():
-                session.add(_topology_entry_to_record(entry))
+            deduped_entries = list(deduped.values())
+            await self._insert_rows_batched(session, GatewayTopologyRecord, deduped_entries, _topology_entry_to_row)
             if sync_states:
                 await self._upsert_sync_states_in_session(session, sync_states)
             await session.commit()
@@ -1197,7 +1345,7 @@ class SqlCacheAdapter:
         if not entries and not sync_states:
             return 0
         span_attrs(count=len(entries))
-        rows = [_topology_entry_to_record(entry).model_dump() for entry in entries]
+        rows = [_topology_entry_to_row(entry) for entry in entries]
         async with self._db.session() as session:
             await self._dialect_upsert(session, GatewayTopologyRecord, rows)
             if sync_states:
@@ -1247,7 +1395,7 @@ class SqlCacheAdapter:
         if not annotations:
             return 0
         span_attrs(count=len(annotations))
-        rows = [_topology_annotation_to_record(ann).model_dump() for ann in annotations]
+        rows = [_topology_annotation_to_row(ann) for ann in annotations]
         async with self._db.session() as session:
             await self._dialect_upsert(session, TopologyAnnotationRecord, rows)
             await session.commit()
@@ -1311,190 +1459,150 @@ class SqlCacheAdapter:
                     )
                 )
 
-            for pkg_layer in snapshot.package_layers:
-                session.add(
-                    RulebasePackageLayerRecord(
-                        id=pkg_layer.id,
-                        mgmt_name=mgmt,
-                        domain_name=dom,
-                        package_uid=pkg_layer.package_uid,
-                        package_name=pkg_layer.package_name,
-                        rulebase_type=pkg_layer.rulebase_type,
-                        layer_uid=pkg_layer.layer_uid,
-                        layer_name=pkg_layer.layer_name,
-                        position=pkg_layer.position,
-                        raw_data=dict(pkg_layer.raw_data),
-                        updated_at=_ensure_utc(pkg_layer.updated_at) or utc_now(),
-                    )
-                )
+            dedup_pkg = list({pkg_layer.id: pkg_layer for pkg_layer in snapshot.package_layers}.values())
+            await self._insert_rows_batched(
+                session,
+                RulebasePackageLayerRecord,
+                dedup_pkg,
+                lambda pkg_layer: _package_layer_to_row(pkg_layer, mgmt, dom),
+            )
+            del dedup_pkg
 
-            for layer in snapshot.layers:
-                session.add(
-                    RulebaseLayerRecord(
-                        id=layer.id,
-                        mgmt_name=mgmt,
-                        domain_name=dom,
-                        uid=layer.uid,
-                        name=layer.name,
-                        rulebase_type=layer.rulebase_type,
-                        parent_layer_uid=layer.parent_layer_uid,
-                        parent_rule_uid=layer.parent_rule_uid,
-                        is_global=layer.is_global,
-                        shared=layer.shared,
-                        implicit_cleanup_action=layer.implicit_cleanup_action,
-                        raw_data=dict(layer.raw_data),
-                        updated_at=_ensure_utc(layer.updated_at) or utc_now(),
-                    )
-                )
+            dedup_layers = list({layer.id: layer for layer in snapshot.layers}.values())
+            await self._insert_rows_batched(
+                session,
+                RulebaseLayerRecord,
+                dedup_layers,
+                lambda layer: _rulebase_layer_to_row(layer, mgmt, dom),
+            )
+            del dedup_layers
 
-            for sec in snapshot.sections:
-                session.add(
-                    RulebaseSectionRecord(
-                        id=sec.id,
-                        mgmt_name=mgmt,
-                        domain_name=dom,
-                        layer_uid=sec.layer_uid,
-                        layer_name=sec.layer_name,
-                        rulebase_type=sec.rulebase_type,
-                        uid=sec.uid,
-                        name=sec.name,
-                        position=sec.position,
-                        from_rule=sec.from_rule,
-                        to_rule=sec.to_rule,
-                        rule_uids=list(sec.rule_uids),
-                        raw_data=dict(sec.raw_data),
-                        updated_at=_ensure_utc(sec.updated_at) or utc_now(),
-                    )
-                )
+            dedup_secs = list({sec.id: sec for sec in snapshot.sections}.values())
+            await self._insert_rows_batched(
+                session,
+                RulebaseSectionRecord,
+                dedup_secs,
+                lambda sec: _rulebase_section_to_row(sec, mgmt, dom),
+            )
+            del dedup_secs
 
-            for rule in snapshot.access_rules:
-                session.add(
-                    AccessRuleRecord(
-                        id=rule.id,
-                        mgmt_name=mgmt,
-                        domain_name=dom,
-                        layer_uid=rule.layer_uid,
-                        layer_name=rule.layer_name,
-                        section_uid=rule.section_uid,
-                        section_name=rule.section_name,
-                        uid=rule.uid,
-                        name=rule.name,
-                        rule_type=rule.rule_type,
-                        position=rule.position,
-                        rule_number=rule.rule_number,
-                        enabled=rule.enabled,
-                        action=rule.action,
-                        inline_layer_uid=rule.inline_layer_uid,
-                        inline_layer_name=rule.inline_layer_name,
-                        placeholder_domain_layer_uid=rule.placeholder_domain_layer_uid,
-                        source=list(rule.source),
-                        destination=list(rule.destination),
-                        service=list(rule.service),
-                        source_negate=rule.source_negate,
-                        destination_negate=rule.destination_negate,
-                        service_negate=rule.service_negate,
-                        track=rule.track,
-                        install_on=list(rule.install_on),
-                        comments=rule.comments,
-                        raw_data=dict(rule.raw_data),
-                        updated_at=_ensure_utc(rule.updated_at) or utc_now(),
-                    )
-                )
+            dedup_access = list({r.id: r for r in snapshot.access_rules}.values())
+            await self._insert_rows_batched(
+                session,
+                AccessRuleRecord,
+                dedup_access,
+                lambda rule: _access_rule_to_row(rule, mgmt, dom),
+            )
+            del dedup_access
 
-            for nat_rule in snapshot.nat_rules:
-                session.add(
-                    NatRuleRecord(
-                        id=nat_rule.id,
-                        mgmt_name=mgmt,
-                        domain_name=dom,
-                        package_uid=nat_rule.package_uid,
-                        package_name=nat_rule.package_name,
-                        section_uid=nat_rule.section_uid,
-                        section_name=nat_rule.section_name,
-                        uid=nat_rule.uid,
-                        name=nat_rule.name,
-                        rule_type=nat_rule.rule_type,
-                        position=nat_rule.position,
-                        rule_number=nat_rule.rule_number,
-                        enabled=nat_rule.enabled,
-                        method=nat_rule.method,
-                        auto_generated=nat_rule.auto_generated,
-                        original_source=nat_rule.original_source,
-                        original_destination=nat_rule.original_destination,
-                        original_service=nat_rule.original_service,
-                        translated_source=nat_rule.translated_source,
-                        translated_destination=nat_rule.translated_destination,
-                        translated_service=nat_rule.translated_service,
-                        install_on=list(nat_rule.install_on),
-                        comments=nat_rule.comments,
-                        raw_data=dict(nat_rule.raw_data),
-                        updated_at=_ensure_utc(nat_rule.updated_at) or utc_now(),
-                    )
-                )
+            dedup_nat = list({r.id: r for r in snapshot.nat_rules}.values())
+            await self._insert_rows_batched(
+                session,
+                NatRuleRecord,
+                dedup_nat,
+                lambda nat_rule: _nat_rule_to_row(nat_rule, mgmt, dom),
+            )
+            del dedup_nat
 
-            for https_rule in snapshot.https_rules:
-                session.add(
-                    HttpsRuleRecord(
-                        id=https_rule.id,
-                        mgmt_name=mgmt,
-                        domain_name=dom,
-                        layer_uid=https_rule.layer_uid,
-                        layer_name=https_rule.layer_name,
-                        section_uid=https_rule.section_uid,
-                        section_name=https_rule.section_name,
-                        uid=https_rule.uid,
-                        name=https_rule.name,
-                        rule_type=https_rule.rule_type,
-                        position=https_rule.position,
-                        rule_number=https_rule.rule_number,
-                        enabled=https_rule.enabled,
-                        action=https_rule.action,
-                        inline_layer_uid=https_rule.inline_layer_uid,
-                        source=list(https_rule.source),
-                        destination=list(https_rule.destination),
-                        service=list(https_rule.service),
-                        site_category=list(https_rule.site_category),
-                        certificate=https_rule.certificate,
-                        track=https_rule.track,
-                        install_on=list(https_rule.install_on),
-                        comments=https_rule.comments,
-                        raw_data=dict(https_rule.raw_data),
-                        updated_at=_ensure_utc(https_rule.updated_at) or utc_now(),
-                    )
-                )
+            dedup_https = list({r.id: r for r in snapshot.https_rules}.values())
+            await self._insert_rows_batched(
+                session,
+                HttpsRuleRecord,
+                dedup_https,
+                lambda https_rule: _https_rule_to_row(https_rule, mgmt, dom),
+            )
+            del dedup_https
 
-            for threat_rule in snapshot.threat_rules:
-                session.add(
-                    ThreatRuleRecord(
-                        id=threat_rule.id,
-                        mgmt_name=mgmt,
-                        domain_name=dom,
-                        layer_uid=threat_rule.layer_uid,
-                        layer_name=threat_rule.layer_name,
-                        section_uid=threat_rule.section_uid,
-                        section_name=threat_rule.section_name,
-                        uid=threat_rule.uid,
-                        name=threat_rule.name,
-                        rule_type=threat_rule.rule_type,
-                        position=threat_rule.position,
-                        rule_number=threat_rule.rule_number,
-                        enabled=threat_rule.enabled,
-                        action=threat_rule.action,
-                        protected_scope=list(threat_rule.protected_scope),
-                        source=list(threat_rule.source),
-                        destination=list(threat_rule.destination),
-                        service=list(threat_rule.service),
-                        track=threat_rule.track,
-                        install_on=list(threat_rule.install_on),
-                        comments=threat_rule.comments,
-                        raw_data=dict(threat_rule.raw_data),
-                        updated_at=_ensure_utc(threat_rule.updated_at) or utc_now(),
-                    )
-                )
+            dedup_threat = list({r.id: r for r in snapshot.threat_rules}.values())
+            await self._insert_rows_batched(
+                session,
+                ThreatRuleRecord,
+                dedup_threat,
+                lambda threat_rule: _threat_rule_to_row(threat_rule, mgmt, dom),
+            )
+            del dedup_threat
 
             if sync_state is not None:
                 await self._upsert_sync_states_in_session(session, [sync_state])
             await session.commit()
+
+    @traced
+    async def get_domain_rulebase_packages(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+    ) -> DomainRulebaseSnapshot:
+        """Load only `package_layers` and distinct NAT package stubs for `(mgmt_name, domain_name)` without loading rule tables."""
+        span_attrs(mgmt_name=mgmt_name, domain=domain_name)
+        async with self._db.session() as session:
+            pkg_rows = (
+                (
+                    await session.execute(
+                        select(RulebasePackageLayerRecord)
+                        .where(
+                            RulebasePackageLayerRecord.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+                            RulebasePackageLayerRecord.domain_name == domain_name,  # type: ignore[arg-type]
+                        )
+                        .order_by(
+                            col(RulebasePackageLayerRecord.package_name),
+                            col(RulebasePackageLayerRecord.position),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            nat_pkg_rows = (
+                await session.execute(
+                    select(
+                        col(NatRuleRecord.package_uid),
+                        col(NatRuleRecord.package_name),
+                        func.max(col(NatRuleRecord.updated_at)),
+                    )
+                    .where(
+                        col(NatRuleRecord.mgmt_name) == mgmt_name,
+                        col(NatRuleRecord.domain_name) == domain_name,
+                    )
+                    .group_by(col(NatRuleRecord.package_uid), col(NatRuleRecord.package_name))
+                )
+            ).all()
+
+        package_layers = [
+            RulebasePackageLayerEntry(
+                id=r.id,
+                mgmt_name=r.mgmt_name,
+                domain_name=r.domain_name,
+                package_uid=r.package_uid,
+                package_name=r.package_name,
+                rulebase_type=r.rulebase_type,  # type: ignore[arg-type]
+                layer_uid=r.layer_uid,
+                layer_name=r.layer_name,
+                position=r.position,
+                raw_data=dict(r.raw_data or {}),
+                updated_at=_ensure_utc(r.updated_at) or utc_now(),
+            )
+            for r in pkg_rows
+        ]
+        nat_pkg_uids_in_layers = {pl.package_uid for pl in package_layers if pl.rulebase_type == "nat"}
+        nat_stubs = [
+            NatRuleEntry(
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                package_uid=str(p_uid),
+                package_name=str(p_name),
+                uid=f"pkg-stub:{p_uid}",
+                position=1,
+                updated_at=_ensure_utc(max_ts) or utc_now(),
+            )
+            for p_uid, p_name, max_ts in nat_pkg_rows
+            if p_uid and str(p_uid) not in nat_pkg_uids_in_layers
+        ]
+        return DomainRulebaseSnapshot(
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            package_layers=package_layers,
+            nat_rules=nat_stubs,
+        )
 
     @traced
     async def get_domain_rulebase(

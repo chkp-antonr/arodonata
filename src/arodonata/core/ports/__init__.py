@@ -398,6 +398,14 @@ class CachePort(Protocol):
         """Load the cached `DomainRulebaseSnapshot` for `(mgmt_name, domain_name)`."""
         ...
 
+    async def get_domain_rulebase_packages(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+    ) -> DomainRulebaseSnapshot:
+        """Load lightweight `package_layers` and NAT package metadata for `(mgmt_name, domain_name)` without loading rule rows."""
+        ...
+
 
 @runtime_checkable
 class ApiPort(Protocol):

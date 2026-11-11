@@ -20,7 +20,28 @@ def test_constructor_kwarg_overrides_env_var(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("ARODONATA_CONCURRENT_LIMIT", "4")
     settings = ArodonataSettings(concurrent_limit=8)
     assert settings.concurrent_limit == 8
-    assert settings.domain_sync_concurrency == 7
+    assert settings.domain_sync_concurrency == 2
+
+    low_settings = ArodonataSettings(concurrent_limit=2)
+    assert low_settings.domain_sync_concurrency == 1
+
+    monkeypatch.setenv("ARODONATA_DOMAIN_SYNC_CONCURRENCY", "4")
+    env_override_settings = ArodonataSettings(concurrent_limit=8)
+    assert env_override_settings.domain_sync_concurrency == 4
+
+    explicit_override = ArodonataSettings(concurrent_limit=8, domain_sync_concurrency=3)
+    assert explicit_override.domain_sync_concurrency == 3
+    assert explicit_override.route_collect_concurrency == 4
+    assert explicit_override.max_routes_per_gateway == 50000
+
+    low_route_settings = ArodonataSettings(concurrent_limit=4)
+    assert low_route_settings.route_collect_concurrency == 2
+
+    monkeypatch.setenv("ARODONATA_ROUTE_COLLECT_CONCURRENCY", "3")
+    monkeypatch.setenv("ARODONATA_MAX_ROUTES_PER_GATEWAY", "25000")
+    route_env_settings = ArodonataSettings(concurrent_limit=8)
+    assert route_env_settings.route_collect_concurrency == 3
+    assert route_env_settings.max_routes_per_gateway == 25000
 
 
 def test_env_var_populates_field_by_default(monkeypatch: pytest.MonkeyPatch) -> None:

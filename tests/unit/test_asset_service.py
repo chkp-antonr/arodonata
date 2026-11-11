@@ -468,4 +468,21 @@ async def test_vsx_slot_objects_cross_domain_reconciliation_and_route_merge() ->
     assert {i["officialname"] for i in vs_dom4.interfaces} == {"wrp128", "eth1.40"}
     assert len(vs_dom4.raw_data.get("routes_installed") or []) == 2
 
+    # Verify early exit (`break` / `aclose`) on `stream_refresh_assets` still reconciles cross-domain VSX links
+    await cache.replace_domain_assets(
+        "mds1",
+        "Domain4",
+        [],
+    )
+    stream = asset_service.stream_refresh_assets(mgmt_name="mds1", domains=["Domain4"], mode="force")
+    try:
+        async for ev in stream:
+            if ev.event_type == "domain_sync_completed":
+                break
+    finally:
+        await stream.aclose()
+
+    dom4_after_early_break = {a.uid: a for a in await asset_service.get_assets("mds1", "Domain4", cache_mode="cache")}
+    assert dom4_after_early_break["vs-dom4-uid"].parent_uid == "vsx-gw-uid"
+
     await db.close()

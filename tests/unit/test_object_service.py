@@ -458,4 +458,29 @@ async def test_object_service_from_date_utc_z_suffix_and_never_published_domain(
     assert st_never_pub.last_published_at is None
     assert st_never_pub.synced_at is not None
 
+    # Verify full reload does not clear/mutate a memoized ApiQueryResult returned across calls
+    memoized_hosts = ApiQueryResult(
+        success=True,
+        objects=[
+            {"uid": "h-memo-1", "name": "memo-host-1", "type": "host", "ipv4-address": "10.99.0.1"},
+            {"uid": "h-memo-2", "name": "memo-host-2", "type": "host", "ipv4-address": "10.99.0.2"},
+        ],
+        total=2,
+    )
+
+    async def memoized_api_query(
+        mgmt_name: str,
+        command: str,
+        **kwargs: Any,
+    ) -> ApiQueryResult:
+        _ = (mgmt_name, command, kwargs)
+        return memoized_hosts
+
+    api.api_query = memoized_api_query  # type: ignore[method-assign]
+    await obj_service.refresh_objects(mgmt_name="mds1", types=["host"], mode="force")
+    await obj_service.refresh_objects(mgmt_name="mds1", types=["host"], mode="force")
+    assert len(memoized_hosts.objects) == 2
+    cached_memo = await obj_service.get_objects("mds1", "Corp", types=["host"], cache_mode="cache")
+    assert {h.uid for h in cached_memo} == {"h-memo-1", "h-memo-2"}
+
     await db.close()

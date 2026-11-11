@@ -14,6 +14,8 @@ Provides:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Any
@@ -915,19 +917,37 @@ class AssetRefreshService:
         cache_ttl: float | None = None,
     ) -> AsyncIterator[SyncProgressEvent]:
         """Stream `SyncProgressEvent` items while refreshing gateway/cluster/VSX assets across domains."""
-        async for event in self._coordinator.stream_ensure(
-            scope="assets",
-            item_types=["*"],
-            handler=self._sync_domain_assets,
-            mgmt_name=mgmt_name,
-            domains=domains,
-            include_global=include_global,
-            mode=mode,
-            cache_ttl=cache_ttl,
-        ):
-            if event.event_type == "sync_completed":
-                await self._reconcile_cross_domain_vsx(mgmt_name)
-            yield event
+        wrote_any = False
+        reconciled = False
+
+        async def _handler(
+            probe: DomainProbeResult,
+            emit: Callable[[SyncProgressEvent], Awaitable[None]],
+        ) -> int:
+            nonlocal wrote_any
+            count = await self._sync_domain_assets(probe, emit)
+            wrote_any = True
+            return count
+
+        try:
+            async for event in self._coordinator.stream_ensure(
+                scope="assets",
+                item_types=["*"],
+                handler=_handler,
+                mgmt_name=mgmt_name,
+                domains=domains,
+                include_global=include_global,
+                mode=mode,
+                cache_ttl=cache_ttl,
+            ):
+                if event.event_type == "sync_completed":
+                    await self._reconcile_cross_domain_vsx(mgmt_name)
+                    reconciled = True
+                yield event
+        finally:
+            if wrote_any and not reconciled:
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    await asyncio.shield(self._reconcile_cross_domain_vsx(mgmt_name))
 
     @traced
     async def refresh_assets(
@@ -941,18 +961,36 @@ class AssetRefreshService:
     ) -> RefreshOutcome:
         """Refresh gateway/cluster/VSX assets across domains and return `RefreshOutcome`."""
         span_attrs(mgmt_name=mgmt_name, mode=mode, include_global=include_global)
-        outcome = await self._coordinator.ensure(
-            scope="assets",
-            item_types=["*"],
-            handler=self._sync_domain_assets,
-            mgmt_name=mgmt_name,
-            domains=domains,
-            include_global=include_global,
-            mode=mode,
-            cache_ttl=cache_ttl,
-        )
-        await self._reconcile_cross_domain_vsx(mgmt_name)
-        return outcome
+        wrote_any = False
+        reconciled = False
+
+        async def _handler(
+            probe: DomainProbeResult,
+            emit: Callable[[SyncProgressEvent], Awaitable[None]],
+        ) -> int:
+            nonlocal wrote_any
+            count = await self._sync_domain_assets(probe, emit)
+            wrote_any = True
+            return count
+
+        try:
+            outcome = await self._coordinator.ensure(
+                scope="assets",
+                item_types=["*"],
+                handler=_handler,
+                mgmt_name=mgmt_name,
+                domains=domains,
+                include_global=include_global,
+                mode=mode,
+                cache_ttl=cache_ttl,
+            )
+            await self._reconcile_cross_domain_vsx(mgmt_name)
+            reconciled = True
+            return outcome
+        finally:
+            if wrote_any and not reconciled:
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    await asyncio.shield(self._reconcile_cross_domain_vsx(mgmt_name))
 
     async def _sync_domain_assets(
         self,
@@ -1014,7 +1052,6 @@ class AssetRefreshService:
             fully_enriched,
             sync_states=[sync_state],
         )
-        await self._reconcile_cross_domain_vsx(mgmt_name)
         return len(fully_enriched)
 
     @traced

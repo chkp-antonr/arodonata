@@ -2984,4 +2984,325 @@ async def test_stage2_vpn_domain_policy_rule_evidence_one_arm_aci_inference_and_
         }
     ) == (None, None)
 
+    # Verify plain IPv4/CIDR `find_affected_gateways` on Domains without cached policy rules skips loading `arodonata_objects`
+    get_objects_calls = 0
+    orig_get_objects = client._cache.get_objects
+
+    async def _counting_get_objects(*args: Any, **kwargs: Any) -> list[CPObject]:
+        nonlocal get_objects_calls
+        get_objects_calls += 1
+        return await orig_get_objects(*args, **kwargs)
+
+    client._cache.get_objects = _counting_get_objects  # type: ignore[method-assign]
+    try:
+        # Clear cached rulebase snapshot on Corp so neither endpoints nor rulebase need CPObject expansion
+        await client._cache.replace_domain_rulebase(
+            DomainRulebaseSnapshot(mgmt_name="mds1", domain_name="Corp"),
+        )
+        get_objects_calls = 0
+
+        ip_only_hits = await client.find_affected_gateways(
+            sources=["10.77.5.10"],
+            destinations=["172.16.80.25"],
+            mgmt_name="mds1",
+            domain="Corp",
+            cache_mode="cache",
+        )
+        assert [c.gateway_name for c in ip_only_hits] == ["corp-vpn-gw"]
+        assert get_objects_calls == 0
+    finally:
+        client._cache.get_objects = orig_get_objects  # type: ignore[method-assign]
+
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_route_collection_vsx_node_serialization_coalescing_route_cap_and_package_snapshot() -> None:
+    """Verify `collect_gateway_routes` serializes CLI per physical VSX node while parallelizing independent gateways, coalesces duplicate calls, enforces `max_routes_per_gateway`, and avoids full `get_domain_rulebase` loads."""
+    import asyncio
+
+    from arodonata.core.services.route_collector import (
+        CLISH_SKIPPED_LARGE_TABLE_MARKER,
+        ROUTE_LIMIT_MARKER,
+        build_route_collection_script,
+        parse_combined_cli_routes,
+    )
+
+    # 1. Verify bash script and parser route cap + clish skip marker handling (single kernel dump pass)
+    capped_script = build_route_collection_script(vsid=None, max_routes=150)
+    assert capped_script.count("ip -4 route show") == 1
+    assert ROUTE_LIMIT_MARKER in capped_script
+    assert CLISH_SKIPPED_LARGE_TABLE_MARKER in capped_script
+
+    synthetic_stdout = (
+        "===ARODONATA_IP_ROUTE_START===\n"
+        + "\n".join(f"10.120.{i // 256}.{i % 256}/32 via 10.10.0.254 dev eth1 proto bgp" for i in range(120))
+        + f"\n{ROUTE_LIMIT_MARKER}=100\n"
+        + "===ARODONATA_IP_ROUTE_END===\n"
+        + f"===ARODONATA_CLISH_ROUTE_START===\n{CLISH_SKIPPED_LARGE_TABLE_MARKER}\n===ARODONATA_CLISH_ROUTE_END===\n"
+    )
+    parsed_capped = parse_combined_cli_routes(synthetic_stdout, max_routes=100)
+    assert len(parsed_capped) == 100
+
+    # 2. Seed a physical VSX host (`vsx-chassis-1`) with 3 Virtual Systems + 1 independent simple gateway (`gw-indep-1`)
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = TopologyFakeApi()
+
+    settings = ArodonataSettings(
+        mgmt_name="mds1",
+        mgmt_ip="10.0.0.1",
+        api_key="secret",
+        concurrent_limit=6,
+        route_collect_concurrency=3,
+        max_routes_per_gateway=100,
+    )
+    domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    coordinator = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=domain_service,
+    )
+    asset_service = AssetRefreshService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+    object_service = ObjectService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+    topology_service = TopologyService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+        asset_service=asset_service,
+        object_service=object_service,
+    )
+
+    vsx_parent = Asset.from_cp_dict(
+        "mds1",
+        "Corp",
+        {"uid": "uid-vsx-host-1", "name": "vsx-chassis-1", "type": "CpmiVsxNetobj", "ipv4-address": "192.0.2.10"},
+    )
+    vs_assets = [
+        Asset.from_cp_dict(
+            "mds1",
+            "Corp",
+            {
+                "uid": f"uid-vs-{idx}",
+                "name": f"corp-vs-{idx}",
+                "type": "CpmiVsNetobj",
+                "ipv4-address": f"10.10.{idx}.1",
+                "virtual-system-id": idx,
+                "interfaces": [{"name": "eth1", "ipv4-address": f"10.10.{idx}.1", "ipv4-mask-length": 24}],
+            },
+        ).model_copy(
+            update={
+                "parent_uid": vsx_parent.uid,
+                "parent_id": vsx_parent.id,
+                "parent_asset_id": vsx_parent.asset_id,
+            }
+        )
+        for idx in (1, 2, 3)
+    ]
+    indep_gw = Asset.from_cp_dict(
+        "mds1",
+        "Corp",
+        {
+            "uid": "uid-gw-indep",
+            "name": "gw-indep-1",
+            "type": "simple-gateway",
+            "ipv4-address": "192.0.2.50",
+            "interfaces": [{"name": "eth1", "ipv4-address": "10.90.0.1", "ipv4-mask-length": 24}],
+        },
+    )
+    await cache.replace_domain_assets("mds1", "Corp", [vsx_parent, *vs_assets, indep_gw])
+    await cache.replace_domain_rulebase(
+        DomainRulebaseSnapshot(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            package_layers=[
+                RulebasePackageLayerEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    package_uid="pkg-corp",
+                    package_name="Corp_Standard",
+                    rulebase_type="access",
+                    layer_uid="layer-1",
+                    layer_name="Network",
+                    position=0,
+                    raw_data={
+                        "installation-targets": [
+                            {"uid": "uid-vs-1", "name": "corp-vs-1"},
+                            {"uid": "uid-vs-2", "name": "corp-vs-2"},
+                            {"uid": "uid-vs-3", "name": "corp-vs-3"},
+                            {"uid": "uid-gw-indep", "name": "gw-indep-1"},
+                        ]
+                    },
+                )
+            ],
+        )
+    )
+
+    active_by_node: dict[str, int] = {"uid-vsx-host-1": 0, "uid-gw-indep": 0}
+    max_by_node: dict[str, int] = {"uid-vsx-host-1": 0, "uid-gw-indep": 0}
+    active_total = 0
+    max_total = 0
+    cli_invocations = 0
+
+    async def _fake_cli(target: Any, _script: str) -> str:
+        nonlocal active_total, max_total, cli_invocations
+        cli_invocations += 1
+        nk = str(target.node_uid)
+        active_by_node[nk] = active_by_node.get(nk, 0) + 1
+        active_total += 1
+        max_by_node[nk] = max(max_by_node.get(nk, 0), active_by_node[nk])
+        max_total = max(max_total, active_total)
+        try:
+            await asyncio.sleep(0.03)
+            if nk == "uid-gw-indep":
+                # Emit >100 routes + limit marker to verify truncation warning
+                many = "\n".join(
+                    f"172.20.{i // 256}.{i % 256}/32 via 10.90.0.254 dev eth1 proto bgp" for i in range(110)
+                )
+                return (
+                    f"===ARODONATA_IP_ROUTE_START===\n{many}\n{ROUTE_LIMIT_MARKER}=100\n===ARODONATA_IP_ROUTE_END===\n"
+                    f"===ARODONATA_CLISH_ROUTE_START===\n{CLISH_SKIPPED_LARGE_TABLE_MARKER}\n===ARODONATA_CLISH_ROUTE_END===\n"
+                )
+            vsid = target.vsid or 1
+            return (
+                f"===ARODONATA_IP_ROUTE_START===\n10.200.{vsid}.0/24 via 10.10.{vsid}.254 dev eth1 proto static\n"
+                f"===ARODONATA_IP_ROUTE_END===\n"
+            )
+        finally:
+            active_by_node[nk] -= 1
+            active_total -= 1
+
+    full_rulebase_calls = 0
+    pkg_rulebase_calls = 0
+    orig_full_rb = cache.get_domain_rulebase
+    orig_pkg_rb = cache.get_domain_rulebase_packages
+
+    async def _spy_full_rb(*args: Any, **kwargs: Any) -> DomainRulebaseSnapshot:
+        nonlocal full_rulebase_calls
+        full_rulebase_calls += 1
+        return await orig_full_rb(*args, **kwargs)
+
+    async def _spy_pkg_rb(*args: Any, **kwargs: Any) -> DomainRulebaseSnapshot:
+        nonlocal pkg_rulebase_calls
+        pkg_rulebase_calls += 1
+        return await orig_pkg_rb(*args, **kwargs)
+
+    cache.get_domain_rulebase = _spy_full_rb  # type: ignore[method-assign]
+    cache.get_domain_rulebase_packages = _spy_pkg_rb  # type: ignore[method-assign]
+    try:
+        # Fire two identical collect_gateway_routes calls concurrently -> coalesced into one flight!
+        out_a, out_b = await asyncio.gather(
+            topology_service.collect_gateway_routes(mgmt_name="mds1", domain="Corp", gateway_cli=_fake_cli),
+            topology_service.collect_gateway_routes(mgmt_name="mds1", domain="Corp", gateway_cli=_fake_cli),
+        )
+    finally:
+        cache.get_domain_rulebase = orig_full_rb  # type: ignore[method-assign]
+        cache.get_domain_rulebase_packages = orig_pkg_rb  # type: ignore[method-assign]
+
+    assert out_a.total_gateways == 4
+    assert out_b.total_gateways == 4
+    # Coalesced: 4 gateways total, NOT 8
+    assert cli_invocations == 4
+    # Physical VSX host serialized strictly to 1 command at a time, while independent gateway ran in parallel!
+    assert max_by_node["uid-vsx-host-1"] == 1
+    assert max_total == 2
+    # Zero full rulebase reloads, and lightweight package snapshot queried only once for "Corp"
+    assert full_rulebase_calls == 0
+    assert pkg_rulebase_calls == 1
+
+    by_gw = {g.gateway_name: g for g in out_a.gateways}
+    assert by_gw["gw-indep-1"].routes_collected == 100
+    assert any("max_routes_per_gateway=100" in w for w in by_gw["gw-indep-1"].warnings)
+    assert any("skipped clish" in w for w in by_gw["gw-indep-1"].warnings)
+
+    # 3. Exact `max_routes_per_gateway` (100 unique routes, no marker) must NOT emit a false truncation warning
+    async def _exact_100_cli(_target: Any, _script: str) -> str:
+        exact_100 = "\n".join(f"172.21.{i // 256}.{i % 256}/32 via 10.90.0.254 dev eth1 proto bgp" for i in range(100))
+        return f"===ARODONATA_IP_ROUTE_START===\n{exact_100}\n===ARODONATA_IP_ROUTE_END===\n"
+
+    exact_out = await topology_service.collect_gateway_routes(
+        mgmt_name="mds1",
+        domain="Corp",
+        gateways=["gw-indep-1"],
+        gateway_cli=_exact_100_cli,
+    )
+    assert exact_out.gateways[0].routes_collected == 100
+    assert not any("was truncated" in w for w in exact_out.gateways[0].warnings)
+
+    # 4. Single-flight waiter cancellation: `asyncio.timeout` around a coalesced waiter raises `TimeoutError`
+    # promptly while the in-flight owner finishes undisturbed; and cancelling the owner lets a live waiter take over.
+    owner_entered = asyncio.Event()
+    release_owner = asyncio.Event()
+
+    async def _slow_cli(_target: Any, _script: str) -> str:
+        owner_entered.set()
+        await release_owner.wait()
+        return "===ARODONATA_IP_ROUTE_START===\n10.222.0.0/24 via 10.90.0.254 dev eth1 proto static\n===ARODONATA_IP_ROUTE_END===\n"
+
+    owner_task = asyncio.create_task(
+        topology_service.collect_gateway_routes(
+            mgmt_name="mds1",
+            domain="Corp",
+            gateways=["gw-indep-1"],
+            gateway_cli=_slow_cli,
+        )
+    )
+    await asyncio.wait_for(owner_entered.wait(), timeout=2.0)
+
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.02):
+            await topology_service.collect_gateway_routes(
+                mgmt_name="mds1",
+                domain="Corp",
+                gateways=["gw-indep-1"],
+                gateway_cli=_slow_cli,
+            )
+
+    assert not owner_task.done()
+    release_owner.set()
+    completed_owner = await owner_task
+    assert completed_owner.succeeded_gateways == 1
+
+    # Owner cancelled -> uncancelled waiter takes over and completes
+    attempt = 0
+    first_owner_entered = asyncio.Event()
+
+    async def _takeover_cli(_target: Any, _script: str) -> str:
+        nonlocal attempt
+        attempt += 1
+        if attempt == 1:
+            first_owner_entered.set()
+            await asyncio.sleep(10.0)
+        return "===ARODONATA_IP_ROUTE_START===\n10.223.0.0/24 via 10.90.0.254 dev eth1 proto static\n===ARODONATA_IP_ROUTE_END===\n"
+
+    doomed_owner = asyncio.create_task(
+        topology_service.collect_gateway_routes(
+            mgmt_name="mds1",
+            domain="Corp",
+            gateways=["gw-indep-1"],
+            gateway_cli=_takeover_cli,
+        )
+    )
+    await asyncio.wait_for(first_owner_entered.wait(), timeout=2.0)
+    surviving_waiter = asyncio.create_task(
+        topology_service.collect_gateway_routes(
+            mgmt_name="mds1",
+            domain="Corp",
+            gateways=["gw-indep-1"],
+            gateway_cli=_takeover_cli,
+        )
+    )
+    await asyncio.sleep(0.01)
+    doomed_owner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await doomed_owner
+    takeover_out = await asyncio.wait_for(surviving_waiter, timeout=2.0)
+    assert takeover_out.succeeded_gateways == 1
+    assert attempt == 2
+
+    await db.close()

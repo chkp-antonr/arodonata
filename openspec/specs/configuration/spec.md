@@ -13,7 +13,7 @@ The library SHALL resolve configuration from explicit constructor keyword argume
 #### Scenario: Constructor keyword overrides environment variable
 
 - **WHEN** `ArodonataSettings` is instantiated with a constructor keyword argument (e.g., `concurrent_limit=8`) while `ARODONATA_CONCURRENT_LIMIT=4` is set in `os.environ`
-- **THEN** the resulting settings instance SHALL use `concurrent_limit == 8`
+- **THEN** the resulting settings instance SHALL use `concurrent_limit == 8`, cap default `domain_sync_concurrency` at `min(2, max(1, concurrent_limit - 1)) == 2` unless overridden via `domain_sync_concurrency` or `ARODONATA_DOMAIN_SYNC_CONCURRENCY`, cap default `route_collect_concurrency` at `min(4, max(1, concurrent_limit // 2)) == 4` unless overridden via `route_collect_concurrency` or `ARODONATA_ROUTE_COLLECT_CONCURRENCY`, and default `max_routes_per_gateway` to `50000` unless overridden via `max_routes_per_gateway` or `ARODONATA_MAX_ROUTES_PER_GATEWAY`
 
 #### Scenario: Environment variable populates field by default
 

@@ -27,13 +27,15 @@ import contextlib
 import ipaddress
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+from weakref import WeakKeyDictionary
 
 import arlogi
 
 from arodonata.core.config import ArodonataSettings, TopologyConfidenceWeights
+from arodonata.core.context import get_write_session
 from arodonata.core.errors import ServerIdentityError, ValidationError
 from arodonata.core.events import (
     DomainSyncCompletedEvent,
@@ -79,15 +81,21 @@ from arodonata.core.services.asset_service import (
 )
 from arodonata.core.services.object_service import ObjectService
 from arodonata.core.services.route_collector import (
+    CLISH_SKIPPED_LARGE_TABLE_MARKER,
     ParsedCliRoute,
     build_route_collection_script,
     execute_gateway_cli,
-    parse_combined_cli_routes,
+    parse_combined_cli_routes_with_status,
     resolve_gateway_cli_targets,
     routes_to_topology_entries,
 )
 from arodonata.core.services.search_service import classify_search_term
-from arodonata.core.services.sync_coordinator import DomainProbeResult, DomainSyncCoordinator
+from arodonata.core.services.sync_coordinator import (
+    DomainProbeResult,
+    DomainSyncCoordinator,
+    resolve_engine_registry,
+    resolve_loop_state,
+)
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.cpcrud.rule_identity import NAT_ANY_OBJECT_UID, NAT_ORIGINAL_OBJECT_UID
 from arodonata.rulebase.numbering import extract_policy_packages
@@ -845,6 +853,78 @@ def _extract_policy_candidates_from_raw(
     return candidates
 
 
+@dataclass(slots=True)
+class _LoopTopologyState:
+    """Event-loop-bound single-flight maps, semaphores, and physical node locks for `TopologyService`."""
+
+    refresh_flights: dict[tuple[Any, ...], asyncio.Future[RefreshOutcome]] = field(default_factory=dict)
+    route_collect_flights: dict[tuple[Any, ...], asyncio.Future[RouteCollectionOutcome]] = field(default_factory=dict)
+    route_collect_sems: dict[tuple[str, int], asyncio.Semaphore] = field(default_factory=dict)
+    route_node_locks: dict[tuple[str, str], asyncio.Lock] = field(default_factory=dict)
+
+
+class _ProcessTopologyRegistry:
+    """Process-wide synchronization state shared across `TopologyService` instances attached to the same DB engine."""
+
+    def __init__(self) -> None:
+        self._loop_states: WeakKeyDictionary[asyncio.AbstractEventLoop, _LoopTopologyState] = WeakKeyDictionary()
+        self._fallback_loop_states: dict[int, _LoopTopologyState] = {}
+
+    def state(self) -> _LoopTopologyState:
+        return resolve_loop_state(self._loop_states, self._fallback_loop_states, _LoopTopologyState)
+
+
+_PROCESS_TOPOLOGY_REGISTRIES: WeakKeyDictionary[Any, _ProcessTopologyRegistry] = WeakKeyDictionary()
+
+
+async def _run_single_flight[T](
+    flights: dict[tuple[Any, ...], asyncio.Future[T]],
+    flight_key: tuple[Any, ...],
+    *,
+    can_coalesce: bool,
+    is_reusable: Callable[[T], bool],
+    clone_result: Callable[[T], T],
+    work: Callable[[], Awaitable[T]],
+) -> T:
+    """Coalesce identical concurrent calls while preserving caller cancellation (`CancelledError`)."""
+    loop = asyncio.get_running_loop()
+    my_future: asyncio.Future[T] | None = None
+    if can_coalesce:
+        while True:
+            existing = flights.get(flight_key)
+            if existing is None:
+                my_future = loop.create_future()
+                flights[flight_key] = my_future
+                break
+            try:
+                shared_outcome = await asyncio.shield(existing)
+            except ServerIdentityError:
+                raise
+            except asyncio.CancelledError:
+                cur_task = asyncio.current_task()
+                if not existing.done() or (cur_task is not None and cur_task.cancelling() > 0):
+                    raise
+                continue
+            except Exception:
+                continue
+            if is_reusable(shared_outcome):
+                return clone_result(shared_outcome)
+
+    try:
+        outcome = await work()
+        if my_future is not None and not my_future.done():
+            my_future.set_result(outcome)
+        return outcome
+    except BaseException as exc:
+        if my_future is not None and not my_future.done():
+            my_future.set_exception(exc)
+            my_future.exception()  # Mark retrieved so asyncio does not log unhandled future warnings
+        raise
+    finally:
+        if my_future is not None and flights.get(flight_key) is my_future:
+            flights.pop(flight_key, None)
+
+
 class TopologyService:
     """Extracts, caches, reconciles, and matches gateway interface topology and live routes across domains."""
 
@@ -868,6 +948,92 @@ class TopologyService:
         self._object_service = object_service
         self._gateway_cli = gateway_cli
         self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
+        self._fallback_registry = _ProcessTopologyRegistry()
+
+    def _get_topology_registry(self) -> _ProcessTopologyRegistry:
+        return resolve_engine_registry(
+            self._cache,
+            _PROCESS_TOPOLOGY_REGISTRIES,
+            self._fallback_registry,
+            _ProcessTopologyRegistry,
+        )
+
+    def _get_refresh_flights(self) -> dict[tuple[Any, ...], asyncio.Future[RefreshOutcome]]:
+        return self._get_topology_registry().state().refresh_flights
+
+    def _get_route_collect_flights(self) -> dict[tuple[Any, ...], asyncio.Future[RouteCollectionOutcome]]:
+        return self._get_topology_registry().state().route_collect_flights
+
+    def _get_route_collect_semaphore(self, mgmt_key: str, limit: int) -> asyncio.Semaphore:
+        eff_limit = max(1, int(limit))
+        sem_key = (mgmt_key, eff_limit)
+        store = self._get_topology_registry().state().route_collect_sems
+        sem = store.get(sem_key)
+        if sem is None:
+            sem = asyncio.Semaphore(eff_limit)
+            store[sem_key] = sem
+        return sem
+
+    def _get_route_node_lock(self, mgmt_key: str, node_key: str) -> asyncio.Lock:
+        lock_key = (mgmt_key, node_key)
+        store = self._get_topology_registry().state().route_node_locks
+        lock = store.get(lock_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            store[lock_key] = lock
+        return lock
+
+    async def _load_domain_package_snapshot(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+    ) -> DomainRulebaseSnapshot:
+        """Load lightweight rulebase package metadata without reading rule tables."""
+        return await self._cache.get_domain_rulebase_packages(mgmt_name, domain_name)
+
+    async def _load_domain_scoped_objects(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        global_cache: dict[str, list[CPObject]] | None = None,
+        global_lock: asyncio.Lock | None = None,
+    ) -> list[CPObject]:
+        """Load cached objects for `(mgmt_name, domain_name)` plus `Global` with write-session overlay."""
+        raw_dom_objs = await self._cache.get_objects(mgmt_name=mgmt_name, domain_name=domain_name)
+        dom_objs = ObjectService.apply_context_overlay(
+            raw_dom_objs,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+        )
+        if domain_name == "Global":
+            return dom_objs
+
+        if global_cache is not None and mgmt_name in global_cache:
+            global_objs = global_cache[mgmt_name]
+        elif global_cache is not None and global_lock is not None:
+            async with global_lock:
+                if mgmt_name in global_cache:
+                    global_objs = global_cache[mgmt_name]
+                else:
+                    raw_global = await self._cache.get_objects(mgmt_name=mgmt_name, domain_name="Global")
+                    global_objs = ObjectService.apply_context_overlay(
+                        raw_global,
+                        mgmt_name=mgmt_name,
+                        domain_name="Global",
+                    )
+                    global_cache[mgmt_name] = global_objs
+        else:
+            raw_global = await self._cache.get_objects(mgmt_name=mgmt_name, domain_name="Global")
+            global_objs = ObjectService.apply_context_overlay(
+                raw_global,
+                mgmt_name=mgmt_name,
+                domain_name="Global",
+            )
+            if global_cache is not None:
+                global_cache[mgmt_name] = global_objs
+
+        return [*global_objs, *dom_objs]
 
     @property
     def gateway_cli(self) -> GatewayCliPort | GatewayCliCallable | None:
@@ -947,11 +1113,18 @@ class TopologyService:
             ):
                 yield event
 
+        global_obj_cache: dict[str, list[CPObject]] = {}
+        global_obj_lock = asyncio.Lock()
         refreshed_labels: list[str] = []
         async for event in self._coordinator.stream_ensure(
             scope="topology",
             item_types=["*"],
-            handler=self._sync_domain_topology,
+            handler=lambda probe, emit: self._sync_domain_topology(
+                probe,
+                emit,
+                global_cache=global_obj_cache,
+                global_lock=global_obj_lock,
+            ),
             mgmt_name=mgmt_name,
             domains=domains,
             include_global=include_global,
@@ -987,6 +1160,53 @@ class TopologyService:
         """Refresh gateway topology across domains (or targeted `gateways`) and return `RefreshOutcome`."""
         span_attrs(mgmt_name=mgmt_name, mode=mode, include_global=include_global, collect_routes=collect_routes)
         gw_tokens = self._normalize_gateway_filter_tokens(gateways)
+
+        if domains is None:
+            norm_domains: tuple[str, ...] | None = None
+        elif isinstance(domains, str):
+            norm_domains = tuple(sorted({d.strip() for d in domains.split(",") if d.strip()}))
+        else:
+            norm_domains = tuple(sorted({str(d).strip() for d in domains if str(d).strip()}))
+
+        can_coalesce = get_write_session() is None
+        flights = self._get_refresh_flights()
+        flight_key = (
+            mgmt_name or "",
+            norm_domains,
+            tuple(sorted(set(gw_tokens))),
+            bool(collect_routes),
+            bool(include_global),
+            mode,
+        )
+
+        return await _run_single_flight(
+            flights,
+            flight_key,
+            can_coalesce=can_coalesce,
+            is_reusable=lambda out: not out.failed_domains,
+            clone_result=lambda out: out.model_copy(deep=True),
+            work=lambda: self._refresh_topology_impl(
+                mgmt_name=mgmt_name,
+                domains=domains,
+                gw_tokens=gw_tokens,
+                collect_routes=collect_routes,
+                include_global=include_global,
+                mode=mode,
+                cache_ttl=cache_ttl,
+            ),
+        )
+
+    async def _refresh_topology_impl(
+        self,
+        *,
+        mgmt_name: str | None,
+        domains: Sequence[str] | str | None,
+        gw_tokens: list[str],
+        collect_routes: bool,
+        include_global: bool,
+        mode: CacheMode,
+        cache_ttl: float | None,
+    ) -> RefreshOutcome:
         if gw_tokens:
             refreshed_domains: list[str] = []
             skipped_domains: list[str] = []
@@ -1031,10 +1251,17 @@ class TopologyService:
                 cache_ttl=cache_ttl,
             )
 
+        global_obj_cache: dict[str, list[CPObject]] = {}
+        global_obj_lock = asyncio.Lock()
         outcome = await self._coordinator.ensure(
             scope="topology",
             item_types=["*"],
-            handler=self._sync_domain_topology,
+            handler=lambda probe, emit: self._sync_domain_topology(
+                probe,
+                emit,
+                global_cache=global_obj_cache,
+                global_lock=global_obj_lock,
+            ),
             mgmt_name=mgmt_name,
             domains=domains,
             include_global=include_global,
@@ -1146,6 +1373,7 @@ class TopologyService:
         skipped_domains: list[str] = []
         failed_domains: dict[str, str] = {}
         total_items = 0
+        global_obj_cache: dict[str, list[CPObject]] = {}
 
         for dom in target_domains:
             dom_label = f"{dom.mgmt_name}:{dom.name}"
@@ -1186,6 +1414,7 @@ class TopologyService:
                         mode="smart" if mode == "force" else mode,
                         cache_ttl=cache_ttl,
                     )
+                    global_obj_cache.pop(dom.mgmt_name, None)
                     # Force on-demand detail fetch for each targeted gateway so modified interface definitions are pulled
                     refreshed_gw_map: dict[str, Asset] = {}
                     for gw_asset in matched_gateways:
@@ -1196,16 +1425,10 @@ class TopologyService:
                         await self._cache.upsert_assets(list(refreshed_gw_map.values()))
                         domain_assets = [refreshed_gw_map.get(a.uid, a) for a in domain_assets]
 
-                domain_objects = await self._cache.get_objects(mgmt_name=dom.mgmt_name, domain_name=dom.name)
-                global_objects = (
-                    await self._cache.get_objects(mgmt_name=dom.mgmt_name, domain_name="Global")
-                    if dom.name != "Global"
-                    else []
-                )
-                all_objects = ObjectService.apply_context_overlay(
-                    [*domain_objects, *global_objects],
-                    mgmt_name=dom.mgmt_name,
-                    domain_name=dom.name,
+                all_objects = await self._load_domain_scoped_objects(
+                    dom.mgmt_name,
+                    dom.name,
+                    global_cache=global_obj_cache,
                 )
 
                 target_gw_uids = [g.uid for g in matched_gateways]
@@ -1279,6 +1502,9 @@ class TopologyService:
         self,
         probe: DomainProbeResult,
         emit: Callable[[SyncProgressEvent], Awaitable[None]],
+        *,
+        global_cache: dict[str, list[CPObject]] | None = None,
+        global_lock: asyncio.Lock | None = None,
     ) -> int:
         mgmt_name = probe.mgmt_name
         dom_name = probe.domain.name
@@ -1291,14 +1517,11 @@ class TopologyService:
                 cache_mode="smart",
             )
 
-        domain_objects = await self._cache.get_objects(mgmt_name=mgmt_name, domain_name=dom_name)
-        global_objects = (
-            await self._cache.get_objects(mgmt_name=mgmt_name, domain_name="Global") if dom_name != "Global" else []
-        )
-        all_objects = ObjectService.apply_context_overlay(
-            [*domain_objects, *global_objects],
-            mgmt_name=mgmt_name,
-            domain_name=dom_name,
+        all_objects = await self._load_domain_scoped_objects(
+            mgmt_name,
+            dom_name,
+            global_cache=global_cache,
+            global_lock=global_lock,
         )
 
         entries, updated_assets = await self._extract_domain_topology_entries(
@@ -1415,7 +1638,7 @@ class TopologyService:
             if is_policy_enforcing_gateway(a) and (target_gateway_uids is None or a.uid in target_gateway_uids)
         ]
         total_gateways = len(policy_gateways)
-        dom_snapshot = await self._cache.get_domain_rulebase(mgmt_name, domain_name) if policy_gateways else None
+        dom_snapshot = await self._load_domain_package_snapshot(mgmt_name, domain_name) if policy_gateways else None
 
         for gw_idx, asset in enumerate(policy_gateways, start=1):
             gw_entries: list[GatewayTopologyEntry] = []
@@ -1945,7 +2168,7 @@ class TopologyService:
                 gw_asset = assets_by_id.get(entry.gateway_id)
                 dom_key = (entry.mgmt_name, entry.domain_name)
                 if dom_key not in snapshots_by_dom:
-                    snapshots_by_dom[dom_key] = await self._cache.get_domain_rulebase(
+                    snapshots_by_dom[dom_key] = await self._load_domain_package_snapshot(
                         entry.mgmt_name,
                         entry.domain_name,
                     )
@@ -2071,8 +2294,6 @@ class TopologyService:
             )
 
         all_assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=domain)
-        all_objects = await self._cache.get_objects(mgmt_name=mgmt_name)
-        all_objects = ObjectService.apply_context_overlay(all_objects, mgmt_name=mgmt_name, domain_name=domain)
         topo_entries = await self._cache.get_gateway_topology(mgmt_name=mgmt_name, domain_name=domain)
 
         gw_tokens = set(self._normalize_gateway_filter_tokens(eff_gateways))
@@ -2080,11 +2301,9 @@ class TopologyService:
             a for a in all_assets if is_policy_enforcing_gateway(a) and self._matches_gateway_filter(a, gw_tokens)
         ]
 
-        objs_by_dom: dict[tuple[str, str], list[CPObject]] = defaultdict(list)
-        for obj in all_objects:
-            objs_by_dom[(obj.mgmt_name, obj.domain_name)].append(obj)
-
-        indexed_objs_by_dom: dict[tuple[str, str], tuple[dict[str, CPObject], dict[str, CPObject]]] = {}
+        global_obj_cache: dict[str, list[CPObject]] = {}
+        active_dom_key: tuple[str, str] | None = None
+        active_obj_index: tuple[dict[str, CPObject], dict[str, CPObject]] | None = None
 
         entries_by_gw_if: dict[tuple[str, str, str, str], list[GatewayTopologyEntry]] = defaultdict(list)
         for entry in topo_entries:
@@ -2154,13 +2373,21 @@ class TopologyService:
                 )
 
             dom_key = (asset.mgmt_name, asset.domain_name)
-            if dom_key not in indexed_objs_by_dom:
-                scoped_objs = [
-                    *objs_by_dom.get((asset.mgmt_name, "Global"), []),
-                    *(objs_by_dom.get(dom_key, []) if asset.domain_name != "Global" else []),
-                ]
-                indexed_objs_by_dom[dom_key] = self._index_objects(scoped_objs, domain_name=asset.domain_name)
-            obj_by_uid, obj_by_name = indexed_objs_by_dom[dom_key]
+            needs_specific_lookup = any(
+                not nif.is_external and "specific" in nif.behind_mode.lower() for nif in norm_ifs
+            )
+            if needs_specific_lookup:
+                if active_dom_key != dom_key or active_obj_index is None:
+                    scoped_objs = await self._load_domain_scoped_objects(
+                        asset.mgmt_name,
+                        asset.domain_name,
+                        global_cache=global_obj_cache,
+                    )
+                    active_obj_index = self._index_objects(scoped_objs, domain_name=asset.domain_name)
+                    active_dom_key = dom_key
+                obj_by_uid, obj_by_name = active_obj_index
+            else:
+                obj_by_uid, obj_by_name = {}, {}
 
             for nif in norm_ifs:
                 if_entries = entries_by_gw_if.get(
@@ -2311,11 +2538,20 @@ class TopologyService:
         gateway_cli: GatewayCliPort | GatewayCliCallable | None = None,
         fallback_to_cprid: bool = True,
         timeout: float = 30.0,
-        concurrency: int = 8,
+        concurrency: int | None = None,
     ) -> RouteCollectionOutcome:
         """Collect live IPv4 routing tables (`ip -4 route show` and `clish -c "show route"`) from gateways via SSH DI or `cprid` `run-script`."""
-        span_attrs(mgmt_name=mgmt_name, domain=domain, fallback_to_cprid=fallback_to_cprid, concurrency=concurrency)
-        eff_cli = gateway_cli if gateway_cli is not None else self._gateway_cli
+        eff_concurrency = (
+            max(1, int(concurrency))
+            if concurrency is not None
+            else max(1, int(self._settings.route_collect_concurrency))
+        )
+        span_attrs(
+            mgmt_name=mgmt_name,
+            domain=domain,
+            fallback_to_cprid=fallback_to_cprid,
+            concurrency=eff_concurrency,
+        )
 
         domain_set: set[str] | None = None
         if domains is not None:
@@ -2326,6 +2562,54 @@ class TopologyService:
         elif domain is not None and domain.strip():
             domain_set = {domain.strip()}
 
+        gw_tokens = set(self._normalize_gateway_filter_tokens(gateways))
+        eff_cli = gateway_cli if gateway_cli is not None else self._gateway_cli
+        can_coalesce = get_write_session() is None
+        flights = self._get_route_collect_flights()
+        flight_key = (
+            mgmt_name or "",
+            tuple(sorted(domain_set)) if domain_set is not None else None,
+            tuple(sorted(gw_tokens)),
+            bool(include_global),
+            bool(fallback_to_cprid),
+            id(eff_cli) if eff_cli is not None else None,
+        )
+
+        return await _run_single_flight(
+            flights,
+            flight_key,
+            can_coalesce=can_coalesce,
+            is_reusable=lambda out: out.failed_gateways == 0,
+            clone_result=lambda out: out.model_copy(deep=True),
+            work=lambda: self._collect_gateway_routes_impl(
+                mgmt_name=mgmt_name,
+                domain=domain,
+                domain_set=domain_set,
+                gw_tokens=gw_tokens,
+                include_global=include_global,
+                gateway_cli=gateway_cli,
+                fallback_to_cprid=fallback_to_cprid,
+                timeout=timeout,
+                eff_concurrency=eff_concurrency,
+            ),
+        )
+
+    async def _collect_gateway_routes_impl(
+        self,
+        *,
+        mgmt_name: str | None,
+        domain: str | None,
+        domain_set: set[str] | None,
+        gw_tokens: set[str],
+        include_global: bool,
+        gateway_cli: GatewayCliPort | GatewayCliCallable | None,
+        fallback_to_cprid: bool,
+        timeout: float,
+        eff_concurrency: int,
+    ) -> RouteCollectionOutcome:
+        eff_cli = gateway_cli if gateway_cli is not None else self._gateway_cli
+        max_routes = int(self._settings.max_routes_per_gateway)
+
         # Load all assets across the management server so VSX parents in other domains and cluster members are visible
         all_mgmt_assets = await self._cache.get_assets(mgmt_name=mgmt_name)
         if not all_mgmt_assets:
@@ -2335,7 +2619,6 @@ class TopologyService:
                 cache_mode="smart",
             )
 
-        gw_tokens = set(self._normalize_gateway_filter_tokens(gateways))
         target_gateways = [
             a
             for a in all_mgmt_assets
@@ -2346,12 +2629,23 @@ class TopologyService:
         ]
 
         now = self._now()
-        sem = asyncio.Semaphore(max(1, concurrency))
         sorted_gateways = sorted(target_gateways, key=lambda a: (a.mgmt_name, a.domain_name, a.name))
 
         dom_assets_by_key: dict[tuple[str, str], list[Asset]] = defaultdict(list)
         for a in all_mgmt_assets:
             dom_assets_by_key[(a.mgmt_name, a.domain_name)].append(a)
+
+        pkg_snapshots_by_dom: dict[tuple[str, str], DomainRulebaseSnapshot] = {}
+        pkg_snapshot_locks: dict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
+
+        async def _get_pkg_snapshot(m_name: str, d_name: str) -> DomainRulebaseSnapshot:
+            key = (m_name, d_name)
+            if key in pkg_snapshots_by_dom:
+                return pkg_snapshots_by_dom[key]
+            async with pkg_snapshot_locks[key]:
+                if key not in pkg_snapshots_by_dom:
+                    pkg_snapshots_by_dom[key] = await self._load_domain_package_snapshot(m_name, d_name)
+                return pkg_snapshots_by_dom[key]
 
         cprid_sessions: dict[tuple[str, str], tuple[str, str]] = {}
         cprid_session_locks: dict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -2368,8 +2662,17 @@ class TopologyService:
                 return cprid_sessions[key]
 
         async def _run_target(target: Any) -> tuple[Any, Any]:
-            async with sem:
-                script = build_route_collection_script(vsid=target.vsid, vs_name=target.vs_name)
+            node_key = str(target.node_uid or target.node_ipv4 or target.node_name or target.gateway_uid)
+            node_lock = self._get_route_node_lock(target.mgmt_name, node_key)
+            mgmt_sem = self._get_route_collect_semaphore(target.mgmt_name, eff_concurrency)
+            # Acquire per-node lock BEFORE management concurrency slot so multiple VSX Virtual Systems
+            # hosted on the same physical VSX chassis serialize cleanly without starving other gateways.
+            async with node_lock, mgmt_sem:
+                script = build_route_collection_script(
+                    vsid=target.vsid,
+                    vs_name=target.vs_name,
+                    max_routes=max_routes,
+                )
                 res = await execute_gateway_cli(
                     target,
                     script,
@@ -2387,6 +2690,7 @@ class TopologyService:
 
             parsed_by_node: dict[str, list[ParsedCliRoute]] = {}
             node_errors: list[str] = []
+            truncation_warnings: list[str] = []
             executors_used: list[str] = []
 
             for target, cli_res in target_results:
@@ -2397,7 +2701,21 @@ class TopologyService:
                         f"{target.node_name}: {cli_res.error_message or cli_res.stderr or 'CLI command failed'}"
                     )
                     continue
-                parsed_by_node[target.node_name] = parse_combined_cli_routes(cli_res.stdout)
+                raw_stdout = cli_res.stdout
+                parsed_routes, was_truncated = parse_combined_cli_routes_with_status(
+                    raw_stdout,
+                    max_routes=max_routes,
+                )
+                if was_truncated:
+                    truncation_warnings.append(
+                        f"Route table on {target.node_name} reached max_routes_per_gateway={max_routes} limit and was truncated"
+                    )
+                if CLISH_SKIPPED_LARGE_TABLE_MARKER in raw_stdout:
+                    truncation_warnings.append(
+                        f"Large routing table on {target.node_name}: skipped clish 'show route' enrichment and used kernel routes"
+                    )
+                parsed_by_node[target.node_name] = parsed_routes
+            target_results.clear()
 
             if not parsed_by_node:
                 return (
@@ -2429,6 +2747,7 @@ class TopologyService:
             }
 
             dom_assets = dom_assets_by_key.get((gw_asset.mgmt_name, gw_asset.domain_name), [])
+            dom_pkg_snapshot = await _get_pkg_snapshot(gw_asset.mgmt_name, gw_asset.domain_name)
             inst_pol, pkg_names, _ = await self._resolve_gateway_policy_metadata(
                 gw_asset.mgmt_name,
                 gw_asset.domain_name,
@@ -2436,6 +2755,7 @@ class TopologyService:
                 gw_asset.uid,
                 gw_asset.name,
                 all_assets=dom_assets,
+                snapshot=dom_pkg_snapshot,
             )
 
             route_entries, drift_detected, drift_map = routes_to_topology_entries(
@@ -2446,6 +2766,8 @@ class TopologyService:
                 policy_packages=pkg_names,
                 now=now,
             )
+            parsed_by_node.clear()
+            entry_count = len(route_entries)
 
             route_sync_state = DomainSyncState(
                 mgmt_name=gw_asset.mgmt_name,
@@ -2454,7 +2776,7 @@ class TopologyService:
                 item_type="routes",
                 synced_at=now,
                 status="ok",
-                object_count=len(route_entries),
+                object_count=entry_count,
                 last_error=None,
             )
             await self._cache.replace_domain_topology(
@@ -2465,6 +2787,7 @@ class TopologyService:
                 source_types=list(LIVE_ROUTE_SOURCES),
                 sync_states=[route_sync_state],
             )
+            route_entries.clear()
 
             gw_warnings: list[str] = []
             if drift_detected:
@@ -2473,6 +2796,8 @@ class TopologyService:
                         f"Cluster member route drift on {gw_asset.name} :: {d_if} ({d_cidr}): "
                         f"present only on {', '.join(present_nodes)}"
                     )
+            if truncation_warnings:
+                gw_warnings.extend(truncation_warnings)
             if node_errors:
                 gw_warnings.extend(node_errors)
 
@@ -2487,12 +2812,12 @@ class TopologyService:
                     gateway_type=gw_asset.type,
                     success=True,
                     executor=",".join(executors_used) if executors_used else "ssh",
-                    routes_collected=len(route_entries),
+                    routes_collected=entry_count,
                     member_drift_detected=drift_detected,
                     warnings=gw_warnings,
                     error=None,
                 ),
-                len(route_entries),
+                entry_count,
             )
 
         try:
@@ -2697,14 +3022,8 @@ class TopologyService:
         all_assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=domain)
         annotations = await self._cache.get_topology_annotations(mgmt_name=mgmt_name, domain_name=domain)
 
-        all_objects: list[CPObject] = []
-        objs_by_mgmt_dom: dict[tuple[str, str], list[CPObject]] = defaultdict(list)
-        if check_policy:
-            all_objects = await self._cache.get_objects(mgmt_name=mgmt_name)
-            all_objects = ObjectService.apply_context_overlay(all_objects, mgmt_name=mgmt_name, domain_name=domain)
-            for obj in all_objects:
-                objs_by_mgmt_dom[(obj.mgmt_name, obj.domain_name)].append(obj)
-
+        global_obj_cache: dict[str, list[CPObject]] = {}
+        active_dom_key: tuple[str, str] | None = None
         assets_by_dom: dict[tuple[str, str], list[Asset]] = defaultdict(list)
         for a in all_assets:
             assets_by_dom[(a.mgmt_name, a.domain_name)].append(a)
@@ -3019,15 +3338,11 @@ class TopologyService:
                 effective_internal = [e for e in eff_gw_entries if e.topology_zone == "internal"]
                 if effective_internal:
                     dom_key = (gw_asset.mgmt_name, gw_asset.domain_name)
-                    if dom_key not in indexed_objs_by_dom:
-                        scoped_objs = [
-                            *objs_by_mgmt_dom.get((gw_asset.mgmt_name, "Global"), []),
-                            *(objs_by_mgmt_dom.get(dom_key, []) if gw_asset.domain_name != "Global" else []),
-                        ]
-                        indexed_objs_by_dom[dom_key] = self._index_objects(
-                            scoped_objs, domain_name=gw_asset.domain_name
-                        )
-                    obj_by_uid, obj_by_name = indexed_objs_by_dom[dom_key]
+                    if active_dom_key != dom_key:
+                        indexed_objs_by_dom.clear()
+                        snapshots_by_dom.clear()
+                        expanded_rules_by_dom.clear()
+                        active_dom_key = dom_key
 
                     if dom_key not in snapshots_by_dom:
                         snapshots_by_dom[dom_key] = await self._cache.get_domain_rulebase(
@@ -3036,13 +3351,26 @@ class TopologyService:
                         )
                     dom_snapshot = snapshots_by_dom[dom_key]
                     if dom_key not in expanded_rules_by_dom:
-                        expanded_rules_by_dom[dom_key] = self._expand_domain_policy_rules(
-                            dom_snapshot,
-                            domain_assets=assets_by_dom.get(dom_key, []),
-                            obj_by_uid=obj_by_uid,
-                            obj_by_name=obj_by_name,
-                            for_reconciliation=True,
-                        )
+                        if not dom_snapshot.access_rules and not dom_snapshot.nat_rules:
+                            expanded_rules_by_dom[dom_key] = []
+                        else:
+                            if dom_key not in indexed_objs_by_dom:
+                                scoped_objs = await self._load_domain_scoped_objects(
+                                    gw_asset.mgmt_name,
+                                    gw_asset.domain_name,
+                                    global_cache=global_obj_cache,
+                                )
+                                indexed_objs_by_dom[dom_key] = self._index_objects(
+                                    scoped_objs, domain_name=gw_asset.domain_name
+                                )
+                            obj_by_uid, obj_by_name = indexed_objs_by_dom[dom_key]
+                            expanded_rules_by_dom[dom_key] = self._expand_domain_policy_rules(
+                                dom_snapshot,
+                                domain_assets=assets_by_dom.get(dom_key, []),
+                                obj_by_uid=obj_by_uid,
+                                obj_by_name=obj_by_name,
+                                for_reconciliation=True,
+                            )
 
                     inst_pol, pkg_names, _ = await self._resolve_gateway_policy_metadata(
                         gw_asset.mgmt_name,
@@ -3896,7 +4224,7 @@ class TopologyService:
             installed_policy = best[2]
 
         eff_snapshot = (
-            snapshot if snapshot is not None else await self._cache.get_domain_rulebase(mgmt_name, domain_name)
+            snapshot if snapshot is not None else await self._load_domain_package_snapshot(mgmt_name, domain_name)
         )
         packages = (
             extract_policy_packages(eff_snapshot) if (eff_snapshot.package_layers or eff_snapshot.nat_rules) else []
@@ -4408,8 +4736,7 @@ class TopologyService:
             domain_name=domain,
         )
         all_assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=domain)
-        all_objects = await self._cache.get_objects(mgmt_name=mgmt_name)
-        all_objects = ObjectService.apply_context_overlay(all_objects, mgmt_name=mgmt_name, domain_name=domain)
+        global_obj_cache: dict[str, list[CPObject]] = {}
 
         # Fallback: if cache_mode="cache" was used on a database with cached assets/objects but
         # topology has not been extracted yet, extract topology on the fly strictly from cached data
@@ -4420,7 +4747,11 @@ class TopologyService:
                 by_dom_assets[(a.mgmt_name, a.domain_name)].append(a)
             computed: list[GatewayTopologyEntry] = []
             for (m_name, d_name), dom_assets in by_dom_assets.items():
-                dom_objs = [o for o in all_objects if o.mgmt_name == m_name and o.domain_name in (d_name, "Global")]
+                dom_objs = await self._load_domain_scoped_objects(
+                    m_name,
+                    d_name,
+                    global_cache=global_obj_cache,
+                )
                 dom_entries, _ = await self._extract_domain_topology_entries(
                     mgmt_name=m_name,
                     domain_name=d_name,
@@ -4433,6 +4764,18 @@ class TopologyService:
 
         if not topo_entries and not annotations and not (include_policy_inferred and all_assets):
             return []
+
+        needs_endpoint_objects = any(
+            classify_search_term(raw_term).kind not in ("ipv4", "cidr", "range") for raw_term in (*src_list, *dst_list)
+        )
+        static_endpoints: tuple[list[_ResolvedEndpointInterval], list[_ResolvedEndpointInterval]] | None = None
+        if not needs_endpoint_objects:
+            static_endpoints = (
+                self._resolve_endpoint_intervals(src_list, obj_by_uid={}, obj_by_name={}),
+                self._resolve_endpoint_intervals(dst_list, obj_by_uid={}, obj_by_name={}),
+            )
+            if not static_endpoints[0] or not static_endpoints[1]:
+                return []
 
         assets_by_id: dict[str, Asset] = {a.id: a for a in all_assets}
         assets_by_uid: dict[tuple[str, str, str], Asset] = {(a.mgmt_name, a.domain_name, a.uid): a for a in all_assets}
@@ -4457,11 +4800,21 @@ class TopologyService:
         )
         all_gw_ids = list(dict.fromkeys([*entries_by_gw_id.keys(), *anns_by_gw_id.keys(), *policy_gw_asset_ids]))
 
-        # Pre-group objects by (mgmt_name, domain_name) and cache resolved endpoint intervals per domain
-        objs_by_mgmt_dom: dict[tuple[str, str], list[CPObject]] = defaultdict(list)
-        for obj in all_objects:
-            objs_by_mgmt_dom[(obj.mgmt_name, obj.domain_name)].append(obj)
+        def _gw_dom_sort_key(gid: str) -> tuple[str, str, str]:
+            g_entries = entries_by_gw_id.get(gid)
+            if g_entries:
+                return (g_entries[0].mgmt_name, g_entries[0].domain_name, gid)
+            g_asset = assets_by_id.get(gid)
+            if g_asset is not None:
+                return (g_asset.mgmt_name, g_asset.domain_name, gid)
+            g_anns = anns_by_gw_id.get(gid)
+            if g_anns:
+                return (g_anns[0].mgmt_name, g_anns[0].domain_name, gid)
+            return ("", "", gid)
 
+        all_gw_ids.sort(key=_gw_dom_sort_key)
+
+        active_dom_key: tuple[str, str] | None = None
         indexed_objs_by_dom: dict[tuple[str, str], tuple[dict[str, CPObject], dict[str, CPObject]]] = {}
         resolved_endpoints_by_dom: dict[
             tuple[str, str],
@@ -4470,6 +4823,20 @@ class TopologyService:
         snapshots_by_dom: dict[tuple[str, str], DomainRulebaseSnapshot] = {}
         expanded_rules_by_dom: dict[tuple[str, str], list[_ExpandedPolicyRule]] = {}
         norm_ifs_by_gw_id: dict[str, list[_NormalizedInterface]] = {}
+
+        async def _ensure_domain_index(
+            target_mgmt: str,
+            target_dom: str,
+        ) -> tuple[dict[str, CPObject], dict[str, CPObject]]:
+            d_key = (target_mgmt, target_dom)
+            if d_key not in indexed_objs_by_dom:
+                scoped_objs = await self._load_domain_scoped_objects(
+                    target_mgmt,
+                    target_dom,
+                    global_cache=global_obj_cache,
+                )
+                indexed_objs_by_dom[d_key] = self._index_objects(scoped_objs, domain_name=target_dom)
+            return indexed_objs_by_dom[d_key]
 
         weights = self._settings.topology_confidence_weights
         candidates: list[AffectedGatewayCandidate] = []
@@ -4514,31 +4881,31 @@ class TopologyService:
                 continue
 
             dom_key = (gw_mgmt, gw_dom)
+            if active_dom_key != dom_key:
+                indexed_objs_by_dom.clear()
+                resolved_endpoints_by_dom.clear()
+                snapshots_by_dom.clear()
+                expanded_rules_by_dom.clear()
+                active_dom_key = dom_key
 
-            if dom_key not in indexed_objs_by_dom:
-                scoped_objs = [
-                    *objs_by_mgmt_dom.get((gw_mgmt, "Global"), []),
-                    *(objs_by_mgmt_dom.get((gw_mgmt, gw_dom), []) if gw_dom != "Global" else []),
-                ]
-                indexed_objs_by_dom[dom_key] = self._index_objects(scoped_objs, domain_name=gw_dom)
-
-            obj_by_uid, obj_by_name = indexed_objs_by_dom[dom_key]
-
-            if dom_key not in resolved_endpoints_by_dom:
-                resolved_endpoints_by_dom[dom_key] = (
-                    self._resolve_endpoint_intervals(
-                        src_list,
-                        obj_by_uid=obj_by_uid,
-                        obj_by_name=obj_by_name,
-                    ),
-                    self._resolve_endpoint_intervals(
-                        dst_list,
-                        obj_by_uid=obj_by_uid,
-                        obj_by_name=obj_by_name,
-                    ),
-                )
-
-            src_intervals, dst_intervals = resolved_endpoints_by_dom[dom_key]
+            if static_endpoints is not None:
+                src_intervals, dst_intervals = static_endpoints
+            else:
+                if dom_key not in resolved_endpoints_by_dom:
+                    obj_by_uid, obj_by_name = await _ensure_domain_index(gw_mgmt, gw_dom)
+                    resolved_endpoints_by_dom[dom_key] = (
+                        self._resolve_endpoint_intervals(
+                            src_list,
+                            obj_by_uid=obj_by_uid,
+                            obj_by_name=obj_by_name,
+                        ),
+                        self._resolve_endpoint_intervals(
+                            dst_list,
+                            obj_by_uid=obj_by_uid,
+                            obj_by_name=obj_by_name,
+                        ),
+                    )
+                src_intervals, dst_intervals = resolved_endpoints_by_dom[dom_key]
             if not src_intervals or not dst_intervals:
                 continue
 
@@ -4684,12 +5051,16 @@ class TopologyService:
             )
 
             if dom_key not in expanded_rules_by_dom:
-                expanded_rules_by_dom[dom_key] = self._expand_domain_policy_rules(
-                    dom_snapshot,
-                    domain_assets=assets_by_dom.get(dom_key, []),
-                    obj_by_uid=obj_by_uid,
-                    obj_by_name=obj_by_name,
-                )
+                if not dom_snapshot.access_rules and not dom_snapshot.nat_rules:
+                    expanded_rules_by_dom[dom_key] = []
+                else:
+                    obj_by_uid, obj_by_name = await _ensure_domain_index(gw_mgmt, gw_dom)
+                    expanded_rules_by_dom[dom_key] = self._expand_domain_policy_rules(
+                        dom_snapshot,
+                        domain_assets=assets_by_dom.get(dom_key, []),
+                        obj_by_uid=obj_by_uid,
+                        obj_by_name=obj_by_name,
+                    )
             gw_rules = self._filter_rules_for_gateway(
                 expanded_rules_by_dom[dom_key],
                 gateway_uid=gw_uid,

@@ -99,6 +99,16 @@ Each persisted `GatewayTopologyEntry` in `arodonata_gateway_topology` SHALL carr
 - **WHEN** a host application provides an SSH `gateway_cli` callback that raises a connection error for a remote branch gateway while `fallback_to_cprid=True`
 - **THEN** `TopologyService` SHALL execute the route collection script on that gateway via Management API `run-script`, wait for the task via `TaskWaiter`, decode the Base64 output from `task-details[].responseMessage`, and parse the resulting routes
 
+#### Scenario: Per-physical-node VSX serialization, MDS concurrency cap, and single-flight route collection
+
+- **WHEN** `collect_gateway_routes()` runs across multiple VSX Virtual Systems sharing one physical VSX host (`VS0`) alongside independent gateways, or when two callers invoke `collect_gateway_routes()` concurrently with identical scope
+- **THEN** `TopologyService` SHALL serialize CLI/`cprid` execution per physical `node_uid` so at most one command runs at a time on `VS0` without blocking independent gateways up to `route_collect_concurrency`, and coalesce identical concurrent calls into a single in-flight collection
+
+#### Scenario: Large routing table cap and clish bypass protect gateways holding BGP full-view tables
+
+- **WHEN** `collect_gateway_routes()` runs on a gateway whose routing table exceeds `max_routes_per_gateway` (or `10000` kernel routes for `clish`)
+- **THEN** the collection script SHALL skip `clish -c "show route"` when kernel routes exceed `10000` lines, truncate collected routes at `max_routes_per_gateway`, and record a truncation warning in `GatewayRouteCollectionStatus.warnings`
+
 ### Requirement: Targeted Per-Gateway Topology and Route Refresh
 
 `TopologyService.refresh_topology()` and `TopologyService.collect_gateway_routes()` SHALL accept an optional `gateways: Sequence[str] | None` filter (matching gateway UID, name, `id`, or `asset_id`) that refreshes and replaces cached topology and route intervals strictly for the specified gateways without re-querying or deleting cached topology rows for other gateways in the domain.

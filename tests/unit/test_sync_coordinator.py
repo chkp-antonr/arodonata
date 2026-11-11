@@ -499,3 +499,156 @@ async def test_coordinator_lock_heartbeat_contention_skip_taskgroup_cancel_and_s
     assert sibling_cancelled is True
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_shared_mds_semaphore_and_single_flight_coalescing() -> None:
+    """Multiple coordinators sharing a `DatabaseManager` coalesce same-domain syncs and cap total MDS concurrency."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache1 = SqlCacheAdapter(db)
+    cache2 = SqlCacheAdapter(db)
+    lock1 = SqlLockAdapter(db)
+    lock2 = SqlLockAdapter(db)
+    api = CoordinatorFakeApi()
+
+    settings = ArodonataSettings(
+        mgmt_name="mds1",
+        mgmt_ip="10.0.0.1",
+        api_key="secret",
+        concurrent_limit=8,  # default domain_sync_concurrency == 2
+        cache_ttl=0,
+    )
+    ds1 = DomainService(settings=settings, api=api, cache=cache1, lock_port=lock1)
+    ds2 = DomainService(settings=settings, api=api, cache=cache2, lock_port=lock2)
+    ds1.tracker.mark_refreshed("mds1")
+    ds2.tracker.mark_refreshed("mds1")
+
+    await cache1.upsert_domains(
+        [
+            DomainInfo(mgmt_name="mds1", uid=f"d{i}", name=f"Dom{i}", active_ip=f"10.1.0.{i}", active_mds_ip="10.0.0.1")
+            for i in range(1, 5)
+        ]
+    )
+
+    c1 = DomainSyncCoordinator(settings=settings, api=api, cache=cache1, lock_port=lock1, domain_service=ds1)
+    c2 = DomainSyncCoordinator(settings=settings, api=api, cache=cache2, lock_port=lock2, domain_service=ds2)
+
+    active = 0
+    max_active = 0
+    calls_by_domain: dict[str, int] = {}
+
+    async def _handler(probe: DomainProbeResult, _emit: Any) -> int:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        calls_by_domain[probe.domain.name] = calls_by_domain.get(probe.domain.name, 0) + 1
+        await asyncio.sleep(0.05)
+        active -= 1
+        return 10
+
+    out1, out2 = await asyncio.gather(
+        c1.ensure(scope="objects", item_types=["host"], handler=_handler, mgmt_name="mds1", mode="force"),
+        c2.ensure(scope="objects", item_types=["host"], handler=_handler, mgmt_name="mds1", mode="force"),
+    )
+
+    # Across both coordinators running concurrently, total active syncs on 10.0.0.1 never exceeded 2,
+    # and each domain handler ran at most once thanks to in-process single-flight coalescing!
+    assert max_active <= 2
+    assert calls_by_domain == {"Dom1": 1, "Dom2": 1, "Dom3": 1, "Dom4": 1}
+    assert set(out1.refreshed_domains) | set(out2.refreshed_domains) == {
+        "mds1:Dom1",
+        "mds1:Dom2",
+        "mds1:Dom3",
+        "mds1:Dom4",
+    }
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_reentrant_nested_ensure_does_not_deadlock_or_leak_closed_loops() -> None:
+    """Nested `coordinator.ensure()` inside a domain handler reuses the active MDS permit without deadlocking, and closed loops are pruned."""
+    import gc
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = CoordinatorFakeApi()
+
+    settings = ArodonataSettings(
+        mgmt_name="mds1",
+        mgmt_ip="10.0.0.1",
+        api_key="secret",
+        domain_sync_concurrency=2,
+        cache_ttl=0,
+    )
+    ds = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    ds.tracker.mark_refreshed("mds1")
+    await cache.upsert_domains(
+        [
+            DomainInfo(mgmt_name="mds1", uid="d1", name="Dom1", active_ip="10.1.0.1", active_mds_ip="10.0.0.1"),
+            DomainInfo(mgmt_name="mds1", uid="d2", name="Dom2", active_ip="10.1.0.2", active_mds_ip="10.0.0.1"),
+        ]
+    )
+    coordinator = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=ds,
+    )
+
+    both_entered = asyncio.Event()
+    entered_count = 0
+
+    async def _nested_asset_handler(_probe: DomainProbeResult, _emit: Any) -> int:
+        return 3
+
+    async def _outer_topology_handler(probe: DomainProbeResult, _emit: Any) -> int:
+        nonlocal entered_count
+        entered_count += 1
+        if entered_count >= 2:
+            both_entered.set()
+        # Wait until BOTH outer tasks hold all 2 permits on mds_key="10.0.0.1"
+        await asyncio.wait_for(both_entered.wait(), timeout=2.0)
+        nested = await coordinator.ensure(
+            scope="assets",
+            item_types=["*"],
+            handler=_nested_asset_handler,
+            mgmt_name="mds1",
+            domains=[probe.domain.name],
+            mode="force",
+        )
+        assert nested.refreshed_domains == [f"mds1:{probe.domain.name}"]
+        return 5
+
+    outcome = await asyncio.wait_for(
+        coordinator.ensure(
+            scope="topology",
+            item_types=["*"],
+            handler=_outer_topology_handler,
+            mgmt_name="mds1",
+            mode="force",
+        ),
+        timeout=5.0,
+    )
+    assert set(outcome.refreshed_domains) == {"mds1:Dom1", "mds1:Dom2"}
+    assert outcome.total_items == 10
+
+    # Verify per-loop state is weakly keyed and automatically pruned when a transient loop is garbage-collected
+    registry = coordinator._get_sync_registry()
+
+    def _run_transient_loop() -> None:
+        async def _touch_registry() -> None:
+            _ = registry.get_mds_semaphore("10.0.0.1", 2)
+            assert asyncio.get_running_loop() in registry._loop_states
+
+        asyncio.run(_touch_registry())
+
+    await asyncio.to_thread(_run_transient_loop)
+    gc.collect()
+    assert len(registry._loop_states) == 1
+
+    await db.close()
