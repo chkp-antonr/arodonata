@@ -667,6 +667,29 @@ class EnterpriseScaleFakeApi:
             for gw in self.gateway_by_uid.values():
                 if gw["name"] == name:
                     return ApiCallResult(success=True, data=gw)
+        if command in ("show-object", "show-group", "show-network", "show-address-range", "show-host") and payload:
+            dom = domain or "Corp"
+            lookup = str(payload.get("uid") or payload.get("name") or "")
+            singular_map = {
+                "show-group": ("show-groups",),
+                "show-network": ("show-networks",),
+                "show-address-range": ("show-address-ranges",),
+                "show-host": ("show-hosts",),
+                "show-object": ("show-groups", "show-networks", "show-address-ranges", "show-hosts"),
+            }
+            for plural_cmd in singular_map[command]:
+                for obj in self.objects_by_domain_and_cmd.get((dom, plural_cmd), []):
+                    if obj.get("uid") == lookup or obj.get("name") == lookup:
+                        if command == "show-object":
+                            return ApiCallResult(success=True, data={"object": dict(obj)})
+                        return ApiCallResult(success=True, data=dict(obj))
+            return ApiCallResult(
+                success=False,
+                status_code=404,
+                error_code="generic_err_object_not_found",
+                error_message=f"Object [{lookup}] not found",
+                data={"code": "generic_err_object_not_found", "message": f"Object [{lookup}] not found"},
+            )
         return ApiCallResult(success=True, data={})
 
     async def api_query(
@@ -686,6 +709,21 @@ class EnterpriseScaleFakeApi:
         if command == "show-gateways-and-servers":
             objs = self.gateways_by_domain.get(dom, [])
             return ApiQueryResult(success=True, objects=objs, total=len(objs))
+        if command == "show-objects":
+            flt = str((payload or {}).get("filter") or "").strip().lower()
+            otype = str((payload or {}).get("type") or "").strip()
+            combined: list[dict[str, Any]] = []
+            for plural_cmd in ("show-groups", "show-networks", "show-address-ranges", "show-hosts"):
+                for obj in self.objects_by_domain_and_cmd.get((dom, plural_cmd), []):
+                    if otype and otype != "object" and obj.get("type") != otype:
+                        continue
+                    if flt and not any(
+                        flt in str(obj.get(field) or "").lower()
+                        for field in ("name", "ipv4-address", "subnet4", "ipv4-address-first", "ipv4-address-last")
+                    ):
+                        continue
+                    combined.append(dict(obj))
+            return ApiQueryResult(success=True, objects=combined, total=len(combined))
         objs = self.objects_by_domain_and_cmd.get((dom, command), [])
         return ApiQueryResult(success=True, objects=objs, total=len(objs))
 
@@ -1019,6 +1057,12 @@ async def test_enterprise_scale_260_gateways_multi_hop_transit_reconciliation_an
         ),
     )
 
+    await client.object_service.refresh_objects(
+        mgmt_name="mds-ent",
+        domains=["Corp"],
+        types=["network"],
+        mode="force",
+    )
     aci_inferred_cands = await client.find_affected_gateways(
         sources=["10.160.10.15"],
         destinations=["10.160.20.25"],

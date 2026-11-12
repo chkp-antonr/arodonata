@@ -13,7 +13,11 @@ from arodonata.adapters.storage import DatabaseManager, SqlCacheAdapter, SqlLock
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import AuthContext
 from arodonata.core.errors import InvalidCredentialsError, ServerIdentityError
-from arodonata.core.events import DomainSyncFailedEvent, DomainSyncSkippedEvent, SyncProgressEvent
+from arodonata.core.events import (
+    DomainSyncFailedEvent,
+    DomainSyncSkippedEvent,
+    SyncProgressEvent,
+)
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
 from arodonata.core.models.domains import DomainInfo, DomainSyncState, SIDCacheEntry
 from arodonata.core.models.objects import CPObject
@@ -53,7 +57,10 @@ class CoordinatorFakeApi:
                 domain,
                 {
                     "uid": f"sess-{domain}",
-                    "publish-time": {"iso-8601": "2026-10-23T12:00:00Z", "posix": 1792756800000},
+                    "publish-time": {
+                        "iso-8601": "2026-10-23T12:00:00Z",
+                        "posix": 1792756800000,
+                    },
                 },
             )
             return ApiCallResult(success=True, data=info)
@@ -122,11 +129,41 @@ async def test_coordinator_concurrency_per_mds_member() -> None:
     # 3 domains on MDS member 10.0.0.1, 2 domains on MDS member 10.0.0.2
     await cache.upsert_domains(
         [
-            DomainInfo(mgmt_name="mds1", uid="d1", name="Dom1", active_ip="10.1.0.1", active_mds_ip="10.0.0.1"),
-            DomainInfo(mgmt_name="mds1", uid="d2", name="Dom2", active_ip="10.1.0.2", active_mds_ip="10.0.0.1"),
-            DomainInfo(mgmt_name="mds1", uid="d3", name="Dom3", active_ip="10.1.0.3", active_mds_ip="10.0.0.1"),
-            DomainInfo(mgmt_name="mds1", uid="d4", name="Dom4", active_ip="10.2.0.1", active_mds_ip="10.0.0.2"),
-            DomainInfo(mgmt_name="mds1", uid="d5", name="Dom5", active_ip="10.2.0.2", active_mds_ip="10.0.0.2"),
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="d1",
+                name="Dom1",
+                active_ip="10.1.0.1",
+                active_mds_ip="10.0.0.1",
+            ),
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="d2",
+                name="Dom2",
+                active_ip="10.1.0.2",
+                active_mds_ip="10.0.0.1",
+            ),
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="d3",
+                name="Dom3",
+                active_ip="10.1.0.3",
+                active_mds_ip="10.0.0.1",
+            ),
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="d4",
+                name="Dom4",
+                active_ip="10.2.0.1",
+                active_mds_ip="10.0.0.2",
+            ),
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="d5",
+                name="Dom5",
+                active_ip="10.2.0.2",
+                active_mds_ip="10.0.0.2",
+            ),
         ]
     )
 
@@ -198,7 +235,13 @@ async def test_coordinator_timestamp_and_session_uid_staleness_check() -> None:
     domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port, now_fn=lambda: now)
     domain_service.tracker.mark_refreshed("mds1", now)
 
-    dom = DomainInfo(mgmt_name="mds1", uid="d1", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1")
+    dom = DomainInfo(
+        mgmt_name="mds1",
+        uid="d1",
+        name="Corp",
+        active_ip="10.1.0.1",
+        active_mds_ip="10.0.0.1",
+    )
     await cache.upsert_domains([dom])
 
     # "host" has matching timestamp AND matching session UID ("sess-v2") -> fresh!
@@ -266,8 +309,20 @@ async def test_coordinator_dirty_session_and_invalid_credentials_preserve_cache(
 
     await cache.upsert_domains(
         [
-            DomainInfo(mgmt_name="mds1", uid="d1", name="DirtyDom", active_ip="10.1.0.1", active_mds_ip="10.0.0.1"),
-            DomainInfo(mgmt_name="mds1", uid="d2", name="BadAuthDom", active_ip="10.1.0.2", active_mds_ip="10.0.0.1"),
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="d1",
+                name="DirtyDom",
+                active_ip="10.1.0.1",
+                active_mds_ip="10.0.0.1",
+            ),
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="d2",
+                name="BadAuthDom",
+                active_ip="10.1.0.2",
+                active_mds_ip="10.0.0.1",
+            ),
         ]
     )
 
@@ -275,18 +330,38 @@ async def test_coordinator_dirty_session_and_invalid_credentials_preserve_cache(
     await cache.replace_domain_objects(
         "mds1",
         "DirtyDom",
-        [CPObject(uid="h1", name="h-dirty", type="host", mgmt_name="mds1", domain_name="DirtyDom")],
+        [
+            CPObject(
+                uid="h1",
+                name="h-dirty",
+                type="host",
+                mgmt_name="mds1",
+                domain_name="DirtyDom",
+            )
+        ],
         types=["host"],
     )
     await cache.replace_domain_objects(
         "mds1",
         "BadAuthDom",
-        [CPObject(uid="h2", name="h-badauth", type="host", mgmt_name="mds1", domain_name="BadAuthDom")],
+        [
+            CPObject(
+                uid="h2",
+                name="h-badauth",
+                type="host",
+                mgmt_name="mds1",
+                domain_name="BadAuthDom",
+            )
+        ],
         types=["host"],
     )
 
     # DirtyDom has locks=1 on shared session; BadAuthDom raises InvalidCredentialsError on probe
-    api.session_info["DirtyDom"] = {"locks": 1, "changes": 2, "number-of-published-changes": 0}
+    api.session_info["DirtyDom"] = {
+        "locks": 1,
+        "changes": 2,
+        "number-of-published-changes": 0,
+    }
     api.fail_credentials_domains.add("BadAuthDom")
 
     coordinator = DomainSyncCoordinator(
@@ -356,7 +431,13 @@ async def test_coordinator_lock_heartbeat_contention_skip_taskgroup_cancel_and_s
     domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
     domain_service.tracker.mark_refreshed("mds1")
 
-    dom1 = DomainInfo(mgmt_name="mds1", uid="d1", name="DomLocked", active_ip="10.1.0.1", active_mds_ip="10.0.0.1")
+    dom1 = DomainInfo(
+        mgmt_name="mds1",
+        uid="d1",
+        name="DomLocked",
+        active_ip="10.1.0.1",
+        active_mds_ip="10.0.0.1",
+    )
     await cache.upsert_domains([dom1])
     await cache.upsert_sync_state(
         DomainSyncState(
@@ -389,7 +470,11 @@ async def test_coordinator_lock_heartbeat_contention_skip_taskgroup_cancel_and_s
     orig_lock = lock_port.lock
 
     def fast_failing_lock(
-        lock_key: str, *, ttl_seconds: float = 60.0, wait_timeout: float = 30.0, owner_id: str | None = None
+        lock_key: str,
+        *,
+        ttl_seconds: float = 60.0,
+        wait_timeout: float = 30.0,
+        owner_id: str | None = None,
     ) -> Any:
         return orig_lock(lock_key, ttl_seconds=ttl_seconds, wait_timeout=0.03, owner_id=owner_id)
 
@@ -472,7 +557,13 @@ async def test_coordinator_lock_heartbeat_contention_skip_taskgroup_cancel_and_s
     assert st_failed.last_error is not None and "short_sid_999" not in st_failed.last_error
 
     # 4. W15: ServerIdentityError cancels sibling domain tasks immediately via TaskGroup
-    dom2 = DomainInfo(mgmt_name="mds1", uid="d2", name="DomSibling", active_ip="10.2.0.1", active_mds_ip="10.0.0.2")
+    dom2 = DomainInfo(
+        mgmt_name="mds1",
+        uid="d2",
+        name="DomSibling",
+        active_ip="10.2.0.1",
+        active_mds_ip="10.0.0.2",
+    )
     await cache.upsert_domains([dom1, dom2])
     sibling_cancelled = False
 
@@ -526,7 +617,13 @@ async def test_coordinator_shared_mds_semaphore_and_single_flight_coalescing() -
 
     await cache1.upsert_domains(
         [
-            DomainInfo(mgmt_name="mds1", uid=f"d{i}", name=f"Dom{i}", active_ip=f"10.1.0.{i}", active_mds_ip="10.0.0.1")
+            DomainInfo(
+                mgmt_name="mds1",
+                uid=f"d{i}",
+                name=f"Dom{i}",
+                active_ip=f"10.1.0.{i}",
+                active_mds_ip="10.0.0.1",
+            )
             for i in range(1, 5)
         ]
     )
@@ -548,8 +645,20 @@ async def test_coordinator_shared_mds_semaphore_and_single_flight_coalescing() -
         return 10
 
     out1, out2 = await asyncio.gather(
-        c1.ensure(scope="objects", item_types=["host"], handler=_handler, mgmt_name="mds1", mode="force"),
-        c2.ensure(scope="objects", item_types=["host"], handler=_handler, mgmt_name="mds1", mode="force"),
+        c1.ensure(
+            scope="objects",
+            item_types=["host"],
+            handler=_handler,
+            mgmt_name="mds1",
+            mode="force",
+        ),
+        c2.ensure(
+            scope="objects",
+            item_types=["host"],
+            handler=_handler,
+            mgmt_name="mds1",
+            mode="force",
+        ),
     )
 
     # Across both coordinators running concurrently, total active syncs on 10.0.0.1 never exceeded 2,
@@ -588,8 +697,20 @@ async def test_coordinator_reentrant_nested_ensure_does_not_deadlock_or_leak_clo
     ds.tracker.mark_refreshed("mds1")
     await cache.upsert_domains(
         [
-            DomainInfo(mgmt_name="mds1", uid="d1", name="Dom1", active_ip="10.1.0.1", active_mds_ip="10.0.0.1"),
-            DomainInfo(mgmt_name="mds1", uid="d2", name="Dom2", active_ip="10.1.0.2", active_mds_ip="10.0.0.1"),
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="d1",
+                name="Dom1",
+                active_ip="10.1.0.1",
+                active_mds_ip="10.0.0.1",
+            ),
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="d2",
+                name="Dom2",
+                active_ip="10.1.0.2",
+                active_mds_ip="10.0.0.1",
+            ),
         ]
     )
     coordinator = DomainSyncCoordinator(
@@ -650,5 +771,125 @@ async def test_coordinator_reentrant_nested_ensure_does_not_deadlock_or_leak_clo
     await asyncio.to_thread(_run_transient_loop)
     gc.collect()
     assert len(registry._loop_states) == 1
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_partial_refresh_when_one_server_unreachable_cold_cache() -> None:
+    """When one configured server fails `show-domains` with `AuthenticationError` on cold cache, `stream_ensure` and `ensure` emit `DomainSyncFailedEvent` for that server and still refresh all reachable servers."""
+    from arodonata.core.errors import AuthenticationError
+    from arodonata.core.events import SyncCompletedEvent
+
+    class MultiServerApi(CoordinatorFakeApi):
+        async def api_call(
+            self,
+            mgmt_name: str,
+            command: str,
+            payload: dict[str, Any] | None = None,
+            *,
+            domain: str | None = None,
+            sid: str | None = None,
+            server_ip: str | None = None,
+            wait_for_task: bool = True,
+            timeout: float | None = None,
+        ) -> ApiCallResult:
+            if mgmt_name == "smsNP82":
+                raise AuthenticationError(
+                    "Login to 'smsNP82' ('System Data' at 10.192.11.138) timed out or failed: Connect call failed"
+                )
+            if mgmt_name == "mdsNP2" and command == "show-domains":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "objects": [
+                            {
+                                "uid": "dom-prod-1",
+                                "name": "ProdDom",
+                                "type": "domain",
+                                "servers": [
+                                    {
+                                        "ipv4-address": "10.192.20.11",
+                                        "active": True,
+                                        "multi-domain-server": {"ipv4-address": "10.192.20.1"},
+                                    }
+                                ],
+                            }
+                        ],
+                        "total": 1,
+                    },
+                )
+            return await super().api_call(
+                mgmt_name,
+                command,
+                payload,
+                domain=domain,
+                sid=sid,
+                server_ip=server_ip,
+                wait_for_task=wait_for_task,
+                timeout=timeout,
+            )
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = MultiServerApi()
+    api.published_sessions["ProdDom"] = {
+        "uid": "sess-prod-1",
+        "publish-time": {"iso-8601": "2026-11-12T10:00:00Z"},
+    }
+
+    settings = ArodonataSettings(
+        mgmt_names=["smsNP82", "mdsNP2"],
+        mgmt_servers=["10.192.11.138", "10.192.20.1"],
+        api_keys=["key-dead", "key-alive"],
+        cache_ttl=0,
+    )
+    ds = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    coordinator = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=ds,
+    )
+
+    async def _handler(_probe: DomainProbeResult, _emit: Any) -> int:
+        return 7
+
+    # 1. Multi-server stream_ensure: smsNP82 fails discovery, mdsNP2:ProdDom refreshes 7 items!
+    events: list[SyncProgressEvent] = []
+    async for ev in coordinator.stream_ensure(
+        scope="objects",
+        item_types=["host"],
+        handler=_handler,
+        mgmt_name=None,
+        mode="force",
+    ):
+        events.append(ev)
+
+    failed_events = [e for e in events if isinstance(e, DomainSyncFailedEvent)]
+    assert len(failed_events) == 1
+    assert failed_events[0].mgmt_name == "smsNP82"
+    assert failed_events[0].domain == "System Data"
+    assert "10.192.11.138" in (failed_events[0].error or "")
+
+    completed_ev = next(e for e in events if isinstance(e, SyncCompletedEvent))
+    assert completed_ev.details["refreshed_domains"] == ["mdsNP2:ProdDom"]
+    assert "smsNP82:System Data" in completed_ev.details["failed_domains"]
+    assert completed_ev.details["total_items"] == 7
+
+    # 2. Single-server ensure on the dead server alone: returns failed_domains without raising!
+    single_dead = await coordinator.ensure(
+        scope="objects",
+        item_types=["host"],
+        handler=_handler,
+        mgmt_name="smsNP82",
+        mode="force",
+    )
+    assert single_dead.refreshed_domains == []
+    assert "smsNP82:System Data" in single_dead.failed_domains
+    assert single_dead.total_items == 0
 
     await db.close()

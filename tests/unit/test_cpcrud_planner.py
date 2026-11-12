@@ -885,3 +885,141 @@ async def test_planner_application_site_create_unchanged_update_delete_and_error
     assert plan_dup_urls.actions[0].resolved_name == "Site_baidu.com"
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_planner_cold_cache_uses_show_objects_without_full_show_hosts_or_services() -> None:
+    """Cold-cache `Planner.decide()` queries `show-objects` with exact candidate verification and zero `show-hosts` / `show-services-*` calls."""
+    from arodonata.testing.replay_mock import FileReplayApiMock
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api_mock = FileReplayApiMock()
+
+    branch_files = api_mock._domain_data["Branch"]
+    branch_files["show-hosts"] = {
+        "objects": [
+            {
+                "uid": "h-existing-10",
+                "name": "Host_Existing_10_20_30_40",
+                "type": "host",
+                "ipv4-address": "10.20.30.40",
+            },
+            {
+                "uid": "h-prefix-collision",
+                "name": "Host_Prefix_10_20_30_400_Fake",
+                "type": "host",
+                "ipv4-address": "10.20.30.41",
+                "comments": "mentions 10.20.30.40 in comments",
+            },
+        ]
+    }
+    branch_files["show-networks"] = {
+        "objects": [
+            {
+                "uid": "net-16",
+                "name": "Net_10_10_0_0_16",
+                "type": "network",
+                "subnet4": "10.10.0.0",
+                "mask-length4": 16,
+            },
+            {
+                "uid": "net-24",
+                "name": "Net_10_10_0_0_24",
+                "type": "network",
+                "subnet4": "10.10.0.0",
+                "mask-length4": 24,
+            },
+        ]
+    }
+    branch_files["show-address-ranges"] = {
+        "objects": [
+            {
+                "uid": "rng-wide",
+                "name": "Range_10_50_0_100_120",
+                "type": "address-range",
+                "ipv4-address-first": "10.50.0.100",
+                "ipv4-address-last": "10.50.0.120",
+            },
+            {
+                "uid": "rng-exact",
+                "name": "Range_10_50_0_10_20",
+                "type": "address-range",
+                "ipv4-address-first": "10.50.0.10",
+                "ipv4-address-last": "10.50.0.20",
+            },
+        ]
+    }
+    branch_files["show-services-tcp"] = {
+        "objects": [
+            {
+                "uid": "svc-8080",
+                "name": "TCP_8080",
+                "type": "service-tcp",
+                "port": "8080",
+            },
+            {
+                "uid": "svc-80",
+                "name": "TCP_80",
+                "type": "service-tcp",
+                "port": "80",
+            },
+        ]
+    }
+    branch_files["show-services-icmp"] = {
+        "objects": [
+            {
+                "uid": "icmp-8",
+                "name": "echo-request",
+                "type": "service-icmp",
+                "icmp-type": 8,
+                "icmp-code": 0,
+            }
+        ]
+    }
+    api_mock.reset_counters()
+
+    planner = Planner(api=api_mock, cache=cache)
+    plan_res = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "domain": "Branch",
+            "on_ip_conflict": "reuse",
+            "objects": [
+                {"type": "host", "name": "New_Host_Alias", "ipv4-address": "10.20.30.40"},
+                {"type": "host", "name": "Brand_New_Host", "ipv4-address": "10.99.88.77"},
+                {"type": "host", "name": "Intra_Plan_Dup_Host", "ipv4-address": "10.99.88.77"},
+                {"type": "network", "name": "New_Net_24_Alias", "subnet4": "10.10.0.0", "mask-length4": 24},
+                {
+                    "type": "address-range",
+                    "name": "New_Range_Alias",
+                    "ipv4-address-first": "10.50.0.10",
+                    "ipv4-address-last": "10.50.0.20",
+                },
+            ],
+            "services": [
+                {"type": "service-tcp", "name": "New_HTTP_Alias", "port": "80"},
+                {"type": "service-icmp", "name": "New_ICMP_Alias", "icmp-type": 8, "icmp-code": 0},
+            ],
+        }
+    )
+
+    outcomes_by_name = {a.requested_name: (a.outcome, a.resolved_name) for a in plan_res.actions}
+    assert outcomes_by_name["New_Host_Alias"] == (Outcome.REUSE, "Host_Existing_10_20_30_40")
+    assert outcomes_by_name["Brand_New_Host"] == (Outcome.CREATE, "Brand_New_Host")
+    assert outcomes_by_name["Intra_Plan_Dup_Host"] == (Outcome.REUSE, "Brand_New_Host")
+    assert outcomes_by_name["New_Net_24_Alias"] == (Outcome.REUSE, "Net_10_10_0_0_24")
+    assert outcomes_by_name["New_Range_Alias"] == (Outcome.REUSE, "Range_10_50_0_10_20")
+    assert outcomes_by_name["New_HTTP_Alias"] == (Outcome.REUSE, "TCP_80")
+    assert outcomes_by_name["New_ICMP_Alias"] == (Outcome.REUSE, "echo-request")
+
+    # Verify targeted `show-objects` was used for IP/subnet/range/port and single-page `show-services-icmp` for ICMP
+    assert api_mock.api_call_counts.get(("Branch", "show-objects"), 0) == 5
+    assert api_mock.api_call_counts.get(("Branch", "show-hosts"), 0) == 0
+    assert api_mock.api_call_counts.get(("Branch", "show-networks"), 0) == 0
+    assert api_mock.api_call_counts.get(("Branch", "show-address-ranges"), 0) == 0
+    assert api_mock.api_call_counts.get(("Branch", "show-services-tcp"), 0) == 0
+    assert api_mock.api_call_counts.get(("Branch", "show-services-icmp"), 0) == 1
+
+    await db.close()

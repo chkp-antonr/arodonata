@@ -31,7 +31,12 @@ import arlogi
 from arodonata.adapters.checkpoint.rate_limiter import LoginGate, RateLimiter
 from arodonata.adapters.checkpoint.transport import ApiTransport
 from arodonata.core.config import ArodonataSettings, ServerEndpointConfig
-from arodonata.core.context import AuthContext, UserContext, get_auth_context, get_user_context
+from arodonata.core.context import (
+    AuthContext,
+    UserContext,
+    get_auth_context,
+    get_user_context,
+)
 from arodonata.core.errors import (
     ApiTimeoutError,
     AuthenticationError,
@@ -380,7 +385,12 @@ class LoginCoordinator:
                     trusted_ips.add(_canonicalize_host(st_ip))
             for srv in dom.servers:
                 if isinstance(srv, dict):
-                    for key in ("ipv4-address", "ipv6-address", "ip", "multi-domain-server-ip"):
+                    for key in (
+                        "ipv4-address",
+                        "ipv6-address",
+                        "ip",
+                        "multi-domain-server-ip",
+                    ):
                         val = srv.get(key)
                         if isinstance(val, str) and val.strip():
                             trusted_ips.add(_canonicalize_host(val))
@@ -678,7 +688,12 @@ class LoginCoordinator:
             # Handle transport / timeout errors OUTSIDE LoginGate so refresh_domain_active_ip
             # and backoff sleep never hold or deadlock LoginGate(mds_ip) (C7, W4, W5)
             if transport_exc is not None:
-                if not failover_attempted and dom_key != SYSTEM_DOMAIN_SENTINEL and explicit_server_ip is None:
+                if (
+                    not failover_attempted
+                    and dom_key != SYSTEM_DOMAIN_SENTINEL
+                    and explicit_server_ip is None
+                    and target_ip != self.get_server_endpoint(mgmt_name).host
+                ):
                     failover_attempted = True
                     refreshed = await self.refresh_domain_active_ip(mgmt_name, dom_key)
                     if refreshed is not None and refreshed.active_ip and refreshed.active_ip != target_ip:
@@ -1271,13 +1286,22 @@ class SessionCleaner:
 
         # Open a dedicated session to inspect/discard stale sessions
         try:
-            sid, server_ip, session_uid = await self._login_coordinator.create_dedicated_session(
+            (
+                sid,
+                server_ip,
+                session_uid,
+            ) = await self._login_coordinator.create_dedicated_session(
                 mgmt_name,
                 domain,
                 auth=auth,
                 session_name="arodonata-session-cleaner",
             )
-        except (AuthenticationError, TransportError, ApiTimeoutError, ServerIdentityError) as exc:
+        except (
+            AuthenticationError,
+            TransportError,
+            ApiTimeoutError,
+            ServerIdentityError,
+        ) as exc:
             logger.warning(
                 f"Session cleanup skipped for '{mgmt_name}:{dom_key}': {exc}",
                 mgmt_name=mgmt_name,
@@ -1291,7 +1315,11 @@ class SessionCleaner:
                 res = await self._transport.execute(
                     server_ip,
                     "show-sessions",
-                    {"details-level": "standard", "limit": 100, "view-published-sessions": False},
+                    {
+                        "details-level": "standard",
+                        "limit": 100,
+                        "view-published-sessions": False,
+                    },
                     port=endpoint.port,
                     sid=sid,
                     timeout=self._settings.api_timeout,

@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from datetime import datetime
 from typing import Any, Literal
 
+import arlogi
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from arodonata.adapters.checkpoint import AMgmtClient
@@ -48,7 +49,7 @@ from arodonata.core.context import (
 from arodonata.core.context import (
     user_context as _ctx_user_context,
 )
-from arodonata.core.errors import AmbiguousObjectError, SessionError, ValidationError
+from arodonata.core.errors import AmbiguousObjectError, SessionError, ValidationError, redact_sid
 from arodonata.core.events import CPCRUDEvent, SyncProgressEvent
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
@@ -58,9 +59,10 @@ from arodonata.core.models.common import (
     CacheMode,
     SyncScope,
     normalize_any_type,
+    normalize_object_type,
     utc_now,
 )
-from arodonata.core.models.domains import DomainInfo, RefreshOutcome
+from arodonata.core.models.domains import DomainInfo, RefreshOutcome, WarmupStatusEntry
 from arodonata.core.models.objects import CPObject, SearchResult
 from arodonata.core.models.rulebase import (
     AccessRuleEntry,
@@ -123,6 +125,11 @@ from arodonata.rulebase import (
     RuleFormat,
     RuleLocations,
 )
+
+logger = arlogi.get_logger(__name__)
+
+_MAX_WARMUP_STATUS_ENTRIES = 128
+_WarmupFlightKey = tuple[str, tuple[str, ...], tuple[str, ...], bool, bool, bool]
 
 
 class ArodonataClient:
@@ -240,6 +247,13 @@ class ArodonataClient:
             asset_service=self._asset_service,
             now_fn=now_fn,
         )
+        self._rulebase_refresh = RulebaseRefreshService(
+            settings=self._settings,
+            api=self._api,
+            cache=self._cache,
+            coordinator=self._sync_coordinator,
+            now_fn=now_fn,
+        )
         self._topology_service = TopologyService(
             settings=self._settings,
             api=self._api,
@@ -247,14 +261,8 @@ class ArodonataClient:
             coordinator=self._sync_coordinator,
             asset_service=self._asset_service,
             object_service=self._object_service,
+            rulebase_refresh=self._rulebase_refresh,
             gateway_cli=gateway_cli,
-            now_fn=now_fn,
-        )
-        self._rulebase_refresh = RulebaseRefreshService(
-            settings=self._settings,
-            api=self._api,
-            cache=self._cache,
-            coordinator=self._sync_coordinator,
             now_fn=now_fn,
         )
         self._rulebase_source = CachedRulebaseSource(
@@ -273,6 +281,8 @@ class ArodonataClient:
             now_fn=now_fn,
         )
         self._warmup_tasks: set[asyncio.Task[Any]] = set()
+        self._warmup_flights: dict[_WarmupFlightKey, asyncio.Task[RefreshOutcome]] = {}
+        self._warmup_status: dict[_WarmupFlightKey, WarmupStatusEntry] = {}
         self._api_reference: ApiReferenceEngine | None = None
 
     async def _ensure_db_initialized(self) -> None:
@@ -412,6 +422,7 @@ class ArodonataClient:
         if active_warmups:
             await asyncio.gather(*active_warmups, return_exceptions=True)
         self._warmup_tasks.clear()
+        self._warmup_flights.clear()
 
         # 2. Determine automatic logout policy: True if client auto-created in-memory DB, False if persistent DB or external engine
         is_ephemeral_db = self._owns_engine and ":memory:" in (self._settings.database_url or "")
@@ -436,6 +447,36 @@ class ArodonataClient:
         if self._amgmt is not None and (mgmt_name, normalize_domain_key(domain)) not in self._amgmt.invalidated_domains:
             self._amgmt._invalidated_domains.add((mgmt_name, normalize_domain_key(domain)))
 
+    def _resolve_warmup_mgmt_key(self, mgmt_name: str | None) -> str:
+        clean = (mgmt_name or "").strip()
+        if clean:
+            return clean
+        if self._settings.mgmt_name:
+            return self._settings.mgmt_name
+        if len(self._settings.mgmt_names) == 1:
+            return self._settings.mgmt_names[0]
+        return "*"
+
+    def _evict_warmup_status_if_needed(self) -> None:
+        while len(self._warmup_status) > _MAX_WARMUP_STATUS_ENTRIES:
+            evict_key: _WarmupFlightKey | None = None
+            for k, entry in self._warmup_status.items():
+                if entry.status != "running":
+                    evict_key = k
+                    break
+            if evict_key is None:
+                break
+            self._warmup_status.pop(evict_key, None)
+
+    def get_warmup_status(self, mgmt_name: str | None = None) -> list[WarmupStatusEntry]:
+        """Return structured status entries for active and recent background warm-up flights."""
+        filter_mgmt = mgmt_name.strip() if isinstance(mgmt_name, str) and mgmt_name.strip() else None
+        return [
+            entry.model_copy(deep=True)
+            for entry in self._warmup_status.values()
+            if filter_mgmt is None or entry.mgmt_name == filter_mgmt
+        ]
+
     def start_object_cache_warmup(
         self,
         *,
@@ -446,30 +487,131 @@ class ArodonataClient:
         include_services: bool = False,
         mode: CacheMode = "smart",
     ) -> asyncio.Task[RefreshOutcome]:
-        """Explicitly schedule background object (and optional service) cache warm-up."""
+        """Explicitly schedule single-flight deduplicated background object (and optional service) cache warm-up."""
+        eff_mgmt = self._resolve_warmup_mgmt_key(mgmt_name)
+        raw_domains: Sequence[str] = [domains] if isinstance(domains, str) else (domains or ())
+        norm_domains = tuple(sorted({d.strip() for d in raw_domains if d and d.strip()}))
+        norm_types = (
+            tuple(sorted({normalize_object_type(str(t)) for t in types if t and str(t).strip()}))
+            if types is not None
+            else ()
+        )
+        flight_key: _WarmupFlightKey = (
+            eff_mgmt,
+            norm_domains,
+            norm_types,
+            bool(include_global),
+            bool(include_services),
+            bool(mode == "force"),
+        )
+
+        existing = self._warmup_flights.get(flight_key)
+        if existing is not None and not existing.done():
+            return existing
+
+        status_entry = WarmupStatusEntry(
+            mgmt_name=eff_mgmt,
+            domains=list(norm_domains),
+            types=list(norm_types),
+            include_global=bool(include_global),
+            include_services=bool(include_services),
+            status="running",
+            started_at=self._now(),
+        )
+        self._warmup_status[flight_key] = status_entry
+        self._evict_warmup_status_if_needed()
 
         async def _run_warmup() -> RefreshOutcome:
-            if not self._db.is_initialized:
-                await self._db.initialize()
-            obj_outcome = await self.refresh_objects(
-                mgmt_name=mgmt_name,
-                domains=domains,
-                types=types,
-                include_global=include_global,
-                mode=mode,
-            )
-            if include_services:
-                await self.refresh_services(
+            try:
+                if not self._db.is_initialized:
+                    await self._db.initialize()
+                obj_outcome = await self.refresh_objects(
                     mgmt_name=mgmt_name,
                     domains=domains,
+                    types=types,
                     include_global=include_global,
                     mode=mode,
                 )
-            return obj_outcome
+                merged_refreshed = list(obj_outcome.refreshed_domains)
+                merged_skipped = list(obj_outcome.skipped_domains)
+                merged_failed = {k: redact_sid(str(v)) for k, v in obj_outcome.failed_domains.items()}
+                total_items = obj_outcome.total_items
+
+                if include_services:
+                    svc_outcome = await self.refresh_services(
+                        mgmt_name=mgmt_name,
+                        domains=domains,
+                        include_global=include_global,
+                        mode=mode,
+                    )
+                    for d in svc_outcome.refreshed_domains:
+                        if d not in merged_refreshed:
+                            merged_refreshed.append(d)
+                    for d in svc_outcome.skipped_domains:
+                        if d not in merged_skipped and d not in merged_refreshed:
+                            merged_skipped.append(d)
+                    for k, v in svc_outcome.failed_domains.items():
+                        merged_failed[k] = redact_sid(str(v))
+                    total_items += svc_outcome.total_items
+
+                status_entry.refreshed_domains = merged_refreshed
+                status_entry.failed_domains = merged_failed
+                status_entry.completed_at = self._now()
+                if merged_failed:
+                    err_summary = "; ".join(f"{k}: {v}" for k, v in merged_failed.items())
+                    status_entry.error = err_summary
+                    if not merged_refreshed:
+                        status_entry.status = "failed"
+                        logger.warning(
+                            "background_object_cache_warmup_failed",
+                            mgmt_name=eff_mgmt,
+                            domains=list(norm_domains),
+                            error=err_summary,
+                        )
+                    else:
+                        status_entry.status = "completed"
+                else:
+                    status_entry.status = "completed"
+
+                return RefreshOutcome(
+                    scope="objects",
+                    refreshed_domains=merged_refreshed,
+                    skipped_domains=merged_skipped,
+                    failed_domains=merged_failed,
+                    total_items=total_items,
+                )
+            except asyncio.CancelledError:
+                status_entry.status = "cancelled"
+                status_entry.completed_at = self._now()
+                raise
+            except Exception as exc:
+                err_msg = redact_sid(str(exc))
+                failed_map = {f"{eff_mgmt}:{d}": err_msg for d in norm_domains} if norm_domains else {eff_mgmt: err_msg}
+                status_entry.status = "failed"
+                status_entry.error = err_msg
+                status_entry.failed_domains = dict(failed_map)
+                status_entry.completed_at = self._now()
+                logger.warning(
+                    "background_object_cache_warmup_failed",
+                    mgmt_name=eff_mgmt,
+                    domains=list(norm_domains),
+                    error=err_msg,
+                )
+                return RefreshOutcome(scope="objects", failed_domains=dict(failed_map))
 
         task = asyncio.create_task(_run_warmup())
         self._warmup_tasks.add(task)
-        task.add_done_callback(self._warmup_tasks.discard)
+        self._warmup_flights[flight_key] = task
+
+        def _on_warmup_done(done_task: asyncio.Task[RefreshOutcome]) -> None:
+            self._warmup_tasks.discard(done_task)
+            if self._warmup_flights.get(flight_key) is done_task:
+                self._warmup_flights.pop(flight_key, None)
+            if not done_task.cancelled():
+                with suppress(BaseException):
+                    _ = done_task.exception()
+
+        task.add_done_callback(_on_warmup_done)
         return task
 
     # ------------------------------------------------------------------
@@ -922,6 +1064,84 @@ class ArodonataClient:
             yield ev
 
     @traced
+    async def refresh_policy_packages(
+        self,
+        *,
+        mgmt_name: str | None = None,
+        domains: Sequence[str] | str | None = None,
+        include_global: bool = False,
+        mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> RefreshOutcome:
+        """Synchronize lightweight policy package catalogs (`item_type='packages'`) without downloading rulebases."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        return await self._rulebase_refresh.refresh_policy_packages(
+            mgmt_name=mgmt_name,
+            domains=domains,
+            include_global=include_global,
+            mode=mode,
+            cache_ttl=cache_ttl,
+        )
+
+    async def stream_refresh_policy_packages(
+        self,
+        *,
+        mgmt_name: str | None = None,
+        domains: Sequence[str] | str | None = None,
+        include_global: bool = False,
+        mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> AsyncIterator[SyncProgressEvent]:
+        """Stream `SyncProgressEvent` items while synchronizing lightweight policy package catalogs."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        async for ev in self._rulebase_refresh.stream_refresh_policy_packages(
+            mgmt_name=mgmt_name,
+            domains=domains,
+            include_global=include_global,
+            mode=mode,
+            cache_ttl=cache_ttl,
+        ):
+            yield ev
+
+    @traced
+    async def refresh_package_rulebase(
+        self,
+        mgmt_name: str,
+        domain_name: str | None,
+        package: str,
+        *,
+        rulebase_type: RulebaseType = "access",
+        mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> RefreshOutcome:
+        """Synchronize only the layers belonging to `(package, rulebase_type)` without pulling other packages or rulebase types."""
+        if not self._db.is_initialized:
+            await self._db.initialize()
+        resolved_dom = (
+            domain_name.strip()
+            if domain_name is not None and domain_name.strip()
+            else await self._rulebase_source.resolve_domain_for_target(
+                mgmt_name,
+                domain_name,
+                package,
+                kind="package",
+                rulebase_type=rulebase_type,
+                cache_mode=mode,
+                cache_ttl=cache_ttl,
+            )
+        )
+        return await self._rulebase_refresh.refresh_package_rulebase(
+            mgmt_name,
+            resolved_dom,
+            package,
+            rulebase_type=rulebase_type,
+            mode=mode,
+            cache_ttl=cache_ttl,
+        )
+
+    @traced
     async def refresh_topology(
         self,
         *,
@@ -1056,6 +1276,8 @@ class ArodonataClient:
         min_confidence: float = 0.0,
         include_standby: bool = True,
         include_policy_inferred: bool = True,
+        source_types: Sequence[TopologySourceType | str] | None = None,
+        include_annotations: bool = True,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
     ) -> list[AffectedGatewayCandidate]:
@@ -1070,6 +1292,8 @@ class ArodonataClient:
             min_confidence=min_confidence,
             include_standby=include_standby,
             include_policy_inferred=include_policy_inferred,
+            source_types=source_types,
+            include_annotations=include_annotations,
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
         )

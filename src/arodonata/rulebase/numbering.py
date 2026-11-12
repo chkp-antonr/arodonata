@@ -177,6 +177,7 @@ def number_layer_rulebase(
     package_name: str | None = None,
     parent_rule_uid: str | None = None,
     fallback_domain_layer_uid: str | None = None,
+    allowed_domain_layer_uids: set[str] | None = None,
     expand_placeholders: bool = False,
     expand_inline_layers: bool = True,
     snapshot_session_uid: str | None = None,
@@ -229,9 +230,18 @@ def number_layer_rulebase(
             nested_sections: list[NumberedSection] = []
 
             # 1. Global placeholder expansion in package context
-            target_dom_layer_uid = entry.placeholder_domain_layer_uid or (
-                fallback_domain_layer_uid if entry.rule_type == "place-holder" else None
-            )
+            raw_ph_uid = entry.placeholder_domain_layer_uid
+            if (
+                raw_ph_uid
+                and allowed_domain_layer_uids
+                and raw_ph_uid not in allowed_domain_layer_uids
+                and fallback_domain_layer_uid
+            ):
+                target_dom_layer_uid: str | None = fallback_domain_layer_uid
+            else:
+                target_dom_layer_uid = raw_ph_uid or (
+                    fallback_domain_layer_uid if entry.rule_type == "place-holder" else None
+                )
             if expand_placeholders and entry.rule_type == "place-holder" and target_dom_layer_uid:
                 if target_dom_layer_uid not in visited:
                     sub_rb = number_layer_rulebase(
@@ -242,6 +252,7 @@ def number_layer_rulebase(
                         package_uid=package_uid,
                         package_name=package_name,
                         parent_rule_uid=entry.uid,
+                        allowed_domain_layer_uids=allowed_domain_layer_uids,
                         expand_placeholders=True,
                         expand_inline_layers=expand_inline_layers,
                         snapshot_session_uid=snapshot_session_uid,
@@ -467,11 +478,20 @@ def number_package_rulebase(
             candidate_domain_layers.append(pl)
 
     fallback_dom_layer_uid = candidate_domain_layers[0].layer_uid if candidate_domain_layers else None
+    allowed_dom_uids = {pl.layer_uid for pl in candidate_domain_layers}
 
     for pl in pkg_layers:
         for ar in snapshot.access_rules:
             if (ar.layer_uid == pl.layer_uid or ar.layer_name == pl.layer_name) and ar.rule_type == "place-holder":
-                resolved_dom_uid = ar.placeholder_domain_layer_uid or fallback_dom_layer_uid
+                if (
+                    ar.placeholder_domain_layer_uid
+                    and allowed_dom_uids
+                    and ar.placeholder_domain_layer_uid not in allowed_dom_uids
+                    and fallback_dom_layer_uid
+                ):
+                    resolved_dom_uid: str | None = fallback_dom_layer_uid
+                else:
+                    resolved_dom_uid = ar.placeholder_domain_layer_uid or fallback_dom_layer_uid
                 if resolved_dom_uid and resolved_dom_uid != pl.layer_uid:
                     embedded_domain_layer_uids.add(resolved_dom_uid)
 
@@ -492,6 +512,7 @@ def number_package_rulebase(
             package_uid=pkg_uid,
             package_name=pkg_name,
             fallback_domain_layer_uid=fallback_dom_layer_uid,
+            allowed_domain_layer_uids=allowed_dom_uids or None,
             expand_placeholders=True,
             expand_inline_layers=True,
             snapshot_session_uid=snapshot_session_uid,

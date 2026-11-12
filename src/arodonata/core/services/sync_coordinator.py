@@ -51,7 +51,7 @@ from arodonata.core.events import (
 from arodonata.core.models.common import CacheMode, SyncScope, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainInfo, DomainSyncState, RefreshOutcome
 from arodonata.core.ports import ApiPort, CachePort, LockPort
-from arodonata.core.services.domain_service import DomainService
+from arodonata.core.services.domain_service import SYSTEM_DOMAIN_KEY, DomainService
 from arodonata.core.telemetry import span_attrs, traced
 
 logger = arlogi.get_logger(__name__)
@@ -289,8 +289,20 @@ class DomainSyncCoordinator:
         else:
             self._invalidated_domains.add((mgmt_name, domain_name.strip()))
 
+    def is_domain_invalidated(self, mgmt_name: str, domain_name: str | None = None) -> bool:
+        """Return `True` if the freshness memo for `(mgmt_name, domain_name)` was explicitly invalidated."""
+        if domain_name is None or not domain_name.strip():
+            return (mgmt_name, "*") in self._invalidated_domains or any(
+                m == mgmt_name for m, _ in self._invalidated_domains
+            )
+        clean_dom = domain_name.strip()
+        return (mgmt_name, clean_dom) in self._invalidated_domains or (
+            mgmt_name,
+            "*",
+        ) in self._invalidated_domains
+
     def _is_domain_invalidated(self, mgmt_name: str, domain_name: str) -> bool:
-        return (mgmt_name, domain_name) in self._invalidated_domains or (mgmt_name, "*") in self._invalidated_domains
+        return self.is_domain_invalidated(mgmt_name, domain_name)
 
     def _clear_domain_invalidation(self, mgmt_name: str, domain_name: str) -> None:
         self._invalidated_domains.discard((mgmt_name, domain_name))
@@ -348,13 +360,27 @@ class DomainSyncCoordinator:
             name_set = set(domain_names)
             matched = [d for d in all_domains if d.name in name_set]
             if len(matched) < len(name_set) and mode != "cache":
-                # Refresh domain list once if any requested domain was not in cache
-                all_domains = await self._domain_service.get_domains(
-                    mgmt_name=mgmt_name,
-                    include_global=want_global,
-                    cache_mode="force",
-                )
-                matched = [d for d in all_domains if d.name in name_set]
+                target_mgmts = self._domain_service.resolve_mgmt_names(mgmt_name)
+                now = self._now()
+                should_force_retry = False
+                for m_name in target_mgmts:
+                    dom_sync = await self._cache.get_sync_state(m_name, SYSTEM_DOMAIN_KEY, "domains", "*")
+                    if (
+                        dom_sync is None
+                        or dom_sync.status != "failed"
+                        or dom_sync.synced_at is None
+                        or abs((now - dom_sync.synced_at).total_seconds()) > 5.0
+                    ):
+                        should_force_retry = True
+                        break
+                if should_force_retry:
+                    # Refresh domain list once if any requested domain was not in cache
+                    all_domains = await self._domain_service.get_domains(
+                        mgmt_name=mgmt_name,
+                        include_global=want_global,
+                        cache_mode="force",
+                    )
+                    matched = [d for d in all_domains if d.name in name_set]
             return matched
 
         return all_domains
@@ -417,7 +443,13 @@ class DomainSyncCoordinator:
         mgmt_name = domain.mgmt_name
         dom_name = domain.name
         type_list = list(item_types)
-        span_attrs(mgmt_name=mgmt_name, domain=dom_name, scope=scope, mode=mode, item_types=type_list)
+        span_attrs(
+            mgmt_name=mgmt_name,
+            domain=dom_name,
+            scope=scope,
+            mode=mode,
+            item_types=type_list,
+        )
 
         existing_states: dict[str, DomainSyncState] = {}
         for item_type in type_list:
@@ -624,18 +656,69 @@ class DomainSyncCoordinator:
             mgmt_name=mgmt_name,
             message=started_msg,
             total=len(target_domains),
-            details={"mode": mode, "item_types": type_list, "domain_count": len(target_domains)},
+            details={
+                "mode": mode,
+                "item_types": type_list,
+                "domain_count": len(target_domains),
+            },
         )
 
+        failed_domains: dict[str, str] = {}
+        if mode != "cache":
+            explicit_dom_names: set[str] | None = None
+            if isinstance(domains, str):
+                parsed_doms = {d.strip() for d in domains.split(",") if d.strip()}
+                explicit_dom_names = parsed_doms or None
+            elif domains is not None:
+                parsed_doms = {str(d).strip() for d in domains if str(d).strip()}
+                explicit_dom_names = parsed_doms or None
+            matched_dom_names = {d.name for d in target_domains}
+            all_explicit_resolved = (
+                mgmt_name is None and explicit_dom_names is not None and explicit_dom_names.issubset(matched_dom_names)
+            )
+            if not all_explicit_resolved:
+                target_mgmts = self._domain_service.resolve_mgmt_names(mgmt_name)
+                mgmts_with_domains = {d.mgmt_name for d in target_domains}
+                for m_name in target_mgmts:
+                    if m_name in mgmts_with_domains:
+                        continue
+                    dom_sync = await self._cache.get_sync_state(m_name, SYSTEM_DOMAIN_KEY, "domains", "*")
+                    if dom_sync is not None and dom_sync.status == "failed":
+                        known_sids = await self._collect_known_sids(m_name)
+                        err_str = redact_sid(
+                            dom_sync.last_error or f"Domain discovery failed on {m_name}",
+                            known_sids=known_sids,
+                        )
+                        dom_label = f"{m_name}:{SYSTEM_DOMAIN_KEY}"
+                        failed_domains[dom_label] = err_str
+                        fail_ev = DomainSyncFailedEvent(
+                            scope=scope,
+                            mgmt_name=m_name,
+                            domain=SYSTEM_DOMAIN_KEY,
+                            error=err_str,
+                            message=f"Failed to synchronize {dom_label}: {err_str}",
+                        )
+                        logger.warning(
+                            fail_ev.message,
+                            scope=scope,
+                            mgmt_name=m_name,
+                            domain=SYSTEM_DOMAIN_KEY,
+                            error=err_str,
+                        )
+                        yield fail_ev
+
         if not target_domains:
-            empty_msg = f"Completed {scope} sync: 0 domains targeted."
+            if failed_domains:
+                empty_msg = f"Completed {scope} sync: 0 refreshed, 0 skipped, {len(failed_domains)} failed."
+            else:
+                empty_msg = f"Completed {scope} sync: 0 domains targeted."
             logger.debug(
                 empty_msg,
                 scope=scope,
                 mgmt_name=mgmt_name,
                 refreshed=0,
                 skipped=0,
-                failed=0,
+                failed=len(failed_domains),
             )
             yield SyncCompletedEvent(
                 scope=scope,
@@ -643,7 +726,12 @@ class DomainSyncCoordinator:
                 message=empty_msg,
                 processed=0,
                 total=0,
-                details={"refreshed_domains": [], "skipped_domains": [], "failed_domains": {}, "total_items": 0},
+                details={
+                    "refreshed_domains": [],
+                    "skipped_domains": [],
+                    "failed_domains": dict(failed_domains),
+                    "total_items": 0,
+                },
             )
             return
 
@@ -662,7 +750,6 @@ class DomainSyncCoordinator:
 
         refreshed_domains: list[str] = []
         skipped_domains: list[str] = []
-        failed_domains: dict[str, str] = {}
         total_items = 0
         state_lock = asyncio.Lock()
 

@@ -22,8 +22,10 @@ from arodonata.core.context import get_write_session
 from arodonata.core.errors import ServerIdentityError
 from arodonata.core.events import DomainSyncProgressEvent, SyncProgressEvent
 from arodonata.core.models.common import (
+    CANONICAL_ASSET_TYPES,
     DEFAULT_OBJECT_TYPES,
     CacheMode,
+    normalize_any_type,
     normalize_object_type,
     to_naive_utc,
     utc_now,
@@ -169,12 +171,19 @@ class ObjectService:
     def _normalize_types(self, types: Sequence[str] | None) -> list[str]:
         if types is None:
             return list(DEFAULT_OBJECT_TYPES)
+        non_blank = [str(t).strip() for t in types if str(t).strip()]
+        if not non_blank:
+            return list(DEFAULT_OBJECT_TYPES)
+        canonical_assets_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
         seen: list[str] = []
-        for t in types:
-            clean = normalize_object_type(str(t))
+        for t in non_blank:
+            any_clean = normalize_any_type(t)
+            if any_clean.startswith("service-") or any_clean.lower() in canonical_assets_lower:
+                continue
+            clean = normalize_object_type(t)
             if clean and clean not in seen:
                 seen.append(clean)
-        return seen or list(DEFAULT_OBJECT_TYPES)
+        return seen
 
     async def stream_refresh_objects(
         self,
@@ -188,6 +197,8 @@ class ObjectService:
     ) -> AsyncIterator[SyncProgressEvent]:
         """Stream `SyncProgressEvent` items while refreshing network objects across domains."""
         target_types = self._normalize_types(types)
+        if not target_types:
+            return
 
         async def _sync_domain_objects(
             probe: DomainProbeResult,
@@ -226,6 +237,8 @@ class ObjectService:
         """Refresh network objects across domains and return `RefreshOutcome`."""
         target_types = self._normalize_types(types)
         span_attrs(mgmt_name=mgmt_name, mode=mode, types=target_types, include_global=include_global)
+        if not target_types:
+            return RefreshOutcome(scope="objects")
 
         async def _sync_domain_objects(
             probe: DomainProbeResult,

@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import ipaddress
+import re
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -36,7 +37,7 @@ import arlogi
 
 from arodonata.core.config import ArodonataSettings, TopologyConfidenceWeights
 from arodonata.core.context import get_write_session
-from arodonata.core.errors import ServerIdentityError, ValidationError
+from arodonata.core.errors import ServerIdentityError, ValidationError, redact_sid
 from arodonata.core.events import (
     DomainSyncCompletedEvent,
     DomainSyncFailedEvent,
@@ -47,8 +48,8 @@ from arodonata.core.events import (
     SyncStartedEvent,
 )
 from arodonata.core.models.assets import Asset
-from arodonata.core.models.common import DEFAULT_OBJECT_TYPES, CacheMode, to_naive_utc, utc_now
-from arodonata.core.models.domains import DomainSyncState, RefreshOutcome
+from arodonata.core.models.common import CacheMode, to_naive_utc, utc_now
+from arodonata.core.models.domains import DomainInfo, DomainSyncState, RefreshOutcome
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import DomainRulebaseSnapshot
 from arodonata.core.models.topology import (
@@ -99,10 +100,14 @@ from arodonata.core.services.sync_coordinator import (
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.cpcrud.rule_identity import NAT_ANY_OBJECT_UID, NAT_ORIGINAL_OBJECT_UID
 from arodonata.rulebase.numbering import extract_policy_packages
+from arodonata.rulebase.refresh import RulebaseRefreshService
 
 logger = arlogi.get_logger(__name__)
 
 MAX_IPV4_INT = 4294967295
+TOPOLOGY_OBJECT_LOOKUP_CONCURRENCY = 8
+_TOPOLOGY_OBJECT_SYNC_TYPES: tuple[str, ...] = ("group", "network", "host", "address-range")
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 POLICY_GATEWAY_TYPES: frozenset[str] = frozenset(
     {
@@ -937,6 +942,7 @@ class TopologyService:
         coordinator: DomainSyncCoordinator,
         asset_service: AssetRefreshService,
         object_service: ObjectService,
+        rulebase_refresh: RulebaseRefreshService | None = None,
         gateway_cli: GatewayCliPort | GatewayCliCallable | None = None,
         now_fn: Callable[[], datetime] = utc_now,
     ) -> None:
@@ -946,6 +952,13 @@ class TopologyService:
         self._coordinator = coordinator
         self._asset_service = asset_service
         self._object_service = object_service
+        self._rulebase_refresh = rulebase_refresh or RulebaseRefreshService(
+            settings=settings,
+            api=api,
+            cache=cache,
+            coordinator=coordinator,
+            now_fn=now_fn,
+        )
         self._gateway_cli = gateway_cli
         self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
         self._fallback_registry = _ProcessTopologyRegistry()
@@ -987,9 +1000,37 @@ class TopologyService:
         self,
         mgmt_name: str,
         domain_name: str,
+        *,
+        allow_refresh: bool = False,
+        cache_ttl: float | None = None,
     ) -> DomainRulebaseSnapshot:
-        """Load lightweight rulebase package metadata without reading rule tables."""
-        return await self._cache.get_domain_rulebase_packages(mgmt_name, domain_name)
+        """Load lightweight rulebase package metadata without reading rule tables, refreshing `show-packages` if cold."""
+        snap = await self._cache.get_domain_rulebase_packages(mgmt_name, domain_name)
+        if snap.package_layers or not allow_refresh:
+            return snap
+        full_st = await self._cache.get_sync_state(mgmt_name, domain_name, "rulebase", "*")
+        pkg_st = await self._cache.get_sync_state(mgmt_name, domain_name, "rulebase", "packages")
+        if (full_st is not None and full_st.status == "ok") or (pkg_st is not None and pkg_st.status == "ok"):
+            return snap
+        try:
+            await self._rulebase_refresh.refresh_policy_packages(
+                mgmt_name=mgmt_name,
+                domains=[domain_name],
+                include_global=(domain_name == "Global"),
+                mode="smart",
+                cache_ttl=cache_ttl,
+            )
+            snap = await self._cache.get_domain_rulebase_packages(mgmt_name, domain_name)
+        except ServerIdentityError:
+            raise
+        except Exception as exc:
+            logger.debug(
+                f"Lightweight package refresh skipped during topology extraction on {mgmt_name}:{domain_name}: "
+                f"{redact_sid(str(exc))}",
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+            )
+        return snap
 
     async def _load_domain_scoped_objects(
         self,
@@ -1103,17 +1144,8 @@ class TopologyService:
             ):
                 yield event
 
-            async for event in self._object_service.stream_refresh_objects(
-                mgmt_name=mgmt_name,
-                domains=domains,
-                types=list(DEFAULT_OBJECT_TYPES),
-                include_global=True,
-                mode=mode,
-                cache_ttl=cache_ttl,
-            ):
-                yield event
-
         global_obj_cache: dict[str, list[CPObject]] = {}
+        global_trusted_cache: dict[str, bool] = {}
         global_obj_lock = asyncio.Lock()
         refreshed_labels: list[str] = []
         async for event in self._coordinator.stream_ensure(
@@ -1123,7 +1155,10 @@ class TopologyService:
                 probe,
                 emit,
                 global_cache=global_obj_cache,
+                global_trusted_cache=global_trusted_cache,
                 global_lock=global_obj_lock,
+                force_object_refresh=(mode == "force"),
+                cache_ttl=cache_ttl,
             ),
             mgmt_name=mgmt_name,
             domains=domains,
@@ -1242,16 +1277,9 @@ class TopologyService:
                 mode=mode,
                 cache_ttl=cache_ttl,
             )
-            await self._object_service.refresh_objects(
-                mgmt_name=mgmt_name,
-                domains=domains,
-                types=list(DEFAULT_OBJECT_TYPES),
-                include_global=True,
-                mode=mode,
-                cache_ttl=cache_ttl,
-            )
 
         global_obj_cache: dict[str, list[CPObject]] = {}
+        global_trusted_cache: dict[str, bool] = {}
         global_obj_lock = asyncio.Lock()
         outcome = await self._coordinator.ensure(
             scope="topology",
@@ -1260,7 +1288,10 @@ class TopologyService:
                 probe,
                 emit,
                 global_cache=global_obj_cache,
+                global_trusted_cache=global_trusted_cache,
                 global_lock=global_obj_lock,
+                force_object_refresh=(mode == "force"),
+                cache_ttl=cache_ttl,
             ),
             mgmt_name=mgmt_name,
             domains=domains,
@@ -1319,7 +1350,7 @@ class TopologyService:
             if (dom.mgmt_name, dom.name) not in domains_with_gateways:
                 continue
             dom_label = f"{dom.mgmt_name}:{dom.name}"
-            if dom_label in refreshed_set or self._coordinator._is_domain_invalidated(dom.mgmt_name, dom.name):
+            if dom_label in refreshed_set or self._coordinator.is_domain_invalidated(dom.mgmt_name, dom.name):
                 domains_to_collect[dom.mgmt_name].append(dom.name)
                 continue
             route_state = await self._cache.get_sync_state(
@@ -1374,6 +1405,8 @@ class TopologyService:
         failed_domains: dict[str, str] = {}
         total_items = 0
         global_obj_cache: dict[str, list[CPObject]] = {}
+        global_trusted_cache: dict[str, bool] = {}
+        global_obj_lock = asyncio.Lock()
 
         for dom in target_domains:
             dom_label = f"{dom.mgmt_name}:{dom.name}"
@@ -1404,19 +1437,9 @@ class TopologyService:
                     message=f"Refreshing {len(matched_gateways)} targeted gateway(s) in {dom_label}.",
                 )
 
+                refreshed_gw_map: dict[str, Asset] = {}
                 if mode != "cache":
-                    # Refresh objects with smart caching so newly added group members are picked up if domain was published
-                    await self._object_service.refresh_objects(
-                        mgmt_name=dom.mgmt_name,
-                        domains=[dom.name],
-                        types=list(DEFAULT_OBJECT_TYPES),
-                        include_global=True,
-                        mode="smart" if mode == "force" else mode,
-                        cache_ttl=cache_ttl,
-                    )
-                    global_obj_cache.pop(dom.mgmt_name, None)
                     # Force on-demand detail fetch for each targeted gateway so modified interface definitions are pulled
-                    refreshed_gw_map: dict[str, Asset] = {}
                     for gw_asset in matched_gateways:
                         enriched = await self._fetch_asset_detail_on_demand(dom.mgmt_name, dom.name, gw_asset)
                         if enriched is not None:
@@ -1429,6 +1452,21 @@ class TopologyService:
                     dom.mgmt_name,
                     dom.name,
                     global_cache=global_obj_cache,
+                    global_lock=global_obj_lock,
+                )
+                trusted_domains = (
+                    await self._compute_trusted_object_domains(
+                        dom.mgmt_name,
+                        dom.name,
+                        dom_info=dom,
+                        mode=mode,
+                        cache_ttl=cache_ttl,
+                        force_object_refresh=(mode == "force"),
+                        global_trusted_cache=global_trusted_cache,
+                        global_lock=global_obj_lock,
+                    )
+                    if mode != "cache"
+                    else None
                 )
 
                 target_gw_uids = [g.uid for g in matched_gateways]
@@ -1439,6 +1477,11 @@ class TopologyService:
                     objects=all_objects,
                     target_gateway_uids=set(target_gw_uids),
                     allow_live_detail=mode != "cache",
+                    force_object_refresh=(mode == "force"),
+                    trusted_object_domains=trusted_domains,
+                    already_detailed_uids=set(refreshed_gw_map),
+                    global_cache=global_obj_cache,
+                    global_lock=global_obj_lock,
                 )
                 if updated_assets:
                     await self._cache.upsert_assets(updated_assets)
@@ -1498,13 +1541,114 @@ class TopologyService:
             },
         )
 
+    @staticmethod
+    def _does_sync_state_match_head(
+        st: DomainSyncState | None,
+        remote_published_at: datetime | None,
+        remote_session_uid: str | None,
+    ) -> bool:
+        if st is None or st.status != "ok":
+            return False
+        if remote_published_at is not None:
+            if st.last_published_at is None or st.last_published_at != remote_published_at:
+                return False
+            return not (remote_session_uid is not None and st.last_session_uid != remote_session_uid)
+        if remote_session_uid is not None:
+            return st.last_session_uid == remote_session_uid
+        return st.synced_at is not None and st.last_published_at is None and st.last_session_uid is None
+
+    async def _has_complete_object_sync_states(self, mgmt_name: str, domain_name: str) -> list[DomainSyncState] | None:
+        states: list[DomainSyncState] = []
+        for item_type in _TOPOLOGY_OBJECT_SYNC_TYPES:
+            st = await self._cache.get_sync_state(mgmt_name, domain_name, "objects", item_type)
+            if st is None or st.status != "ok":
+                return None
+            states.append(st)
+        return states
+
+    async def _compute_trusted_object_domains(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        probe: DomainProbeResult | None = None,
+        dom_info: DomainInfo | None = None,
+        mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+        force_object_refresh: bool = False,
+        global_trusted_cache: dict[str, bool] | None = None,
+        global_lock: asyncio.Lock | None = None,
+    ) -> set[str]:
+        """Return the subset of `{domain_name, 'Global'}` whose full object cache matches the current published head."""
+        if force_object_refresh:
+            return set()
+        trusted: set[str] = set()
+
+        dom_states = await self._has_complete_object_sync_states(mgmt_name, domain_name)
+        if dom_states is not None:
+            if probe is not None:
+                if not self._coordinator.is_domain_invalidated(mgmt_name, domain_name) and all(
+                    self._does_sync_state_match_head(st, probe.remote_published_at, probe.remote_session_uid)
+                    for st in dom_states
+                ):
+                    trusted.add(domain_name)
+            elif dom_info is not None:
+                obj_probe = await self._coordinator.probe_domain_staleness(
+                    dom_info,
+                    scope="objects",
+                    item_types=_TOPOLOGY_OBJECT_SYNC_TYPES,
+                    mode=mode,
+                    cache_ttl=cache_ttl,
+                )
+                if not obj_probe.is_stale:
+                    trusted.add(domain_name)
+
+        if domain_name != "Global":
+
+            async def _check_global_fresh() -> bool:
+                if global_trusted_cache is not None and mgmt_name in global_trusted_cache:
+                    return global_trusted_cache[mgmt_name]
+                g_states = await self._has_complete_object_sync_states(mgmt_name, "Global")
+                if g_states is None:
+                    if global_trusted_cache is not None:
+                        global_trusted_cache[mgmt_name] = False
+                    return False
+                global_dom = await self._cache.get_domain(mgmt_name, "Global")
+                if global_dom is None:
+                    if global_trusted_cache is not None:
+                        global_trusted_cache[mgmt_name] = False
+                    return False
+                g_probe = await self._coordinator.probe_domain_staleness(
+                    global_dom,
+                    scope="objects",
+                    item_types=_TOPOLOGY_OBJECT_SYNC_TYPES,
+                    mode="smart",
+                    cache_ttl=cache_ttl,
+                )
+                is_fresh = not g_probe.is_stale
+                if global_trusted_cache is not None:
+                    global_trusted_cache[mgmt_name] = is_fresh
+                return is_fresh
+
+            if global_lock is not None:
+                async with global_lock:
+                    if await _check_global_fresh():
+                        trusted.add("Global")
+            elif await _check_global_fresh():
+                trusted.add("Global")
+
+        return trusted
+
     async def _sync_domain_topology(
         self,
         probe: DomainProbeResult,
         emit: Callable[[SyncProgressEvent], Awaitable[None]],
         *,
         global_cache: dict[str, list[CPObject]] | None = None,
+        global_trusted_cache: dict[str, bool] | None = None,
         global_lock: asyncio.Lock | None = None,
+        force_object_refresh: bool = False,
+        cache_ttl: float | None = None,
     ) -> int:
         mgmt_name = probe.mgmt_name
         dom_name = probe.domain.name
@@ -1523,12 +1667,25 @@ class TopologyService:
             global_cache=global_cache,
             global_lock=global_lock,
         )
+        trusted_domains = await self._compute_trusted_object_domains(
+            mgmt_name,
+            dom_name,
+            probe=probe,
+            cache_ttl=cache_ttl,
+            force_object_refresh=force_object_refresh,
+            global_trusted_cache=global_trusted_cache,
+            global_lock=global_lock,
+        )
 
         entries, updated_assets = await self._extract_domain_topology_entries(
             mgmt_name=mgmt_name,
             domain_name=dom_name,
             assets=domain_assets,
             objects=all_objects,
+            force_object_refresh=force_object_refresh,
+            trusted_object_domains=trusted_domains,
+            global_cache=global_cache,
+            global_lock=global_lock,
             emit=emit,
         )
         if updated_assets:
@@ -1615,6 +1772,379 @@ class TopologyService:
 
         return None
 
+    async def _enrich_group_raw_if_needed(
+        self,
+        mgmt_name: str,
+        search_dom: str,
+        raw_item: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Ensure a `group` or `group-with-exclusion` dict includes `members` / `include`."""
+        enriched = dict(raw_item)
+        uid_val = str(enriched.get("uid") or "")
+        if not uid_val:
+            return enriched
+        o_type = str(enriched.get("type") or "")
+        if o_type == "group" and "members" not in enriched:
+            with contextlib.suppress(Exception):
+                g_res = await self._api.api_call(
+                    mgmt_name,
+                    "show-group",
+                    {"uid": uid_val, "details-level": "full"},
+                    domain=search_dom,
+                )
+                if g_res.success and isinstance(g_res.data, dict) and g_res.data.get("uid"):
+                    enriched.update(g_res.data)
+        elif o_type == "group-with-exclusion" and "include" not in enriched:
+            with contextlib.suppress(Exception):
+                ge_res = await self._api.api_call(
+                    mgmt_name,
+                    "show-group-with-exclusion",
+                    {"uid": uid_val, "details-level": "full"},
+                    domain=search_dom,
+                )
+                if ge_res.success and isinstance(ge_res.data, dict) and ge_res.data.get("uid"):
+                    enriched.update(ge_res.data)
+        return enriched
+
+    async def _fetch_single_topology_object_raw(
+        self,
+        mgmt_name: str,
+        search_dom: str,
+        ref_uid: str | None,
+        ref_name: str | None,
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Fetch a single network/group object dictionary from `search_dom` by UID or name."""
+        uid_target = ref_uid or (ref_name if ref_name and _UUID_RE.match(ref_name) else None)
+        if uid_target:
+            try:
+                res = await self._api.api_call(
+                    mgmt_name,
+                    "show-object",
+                    {"uid": uid_target, "details-level": "full"},
+                    domain=search_dom,
+                )
+            except ServerIdentityError:
+                raise
+            except Exception:
+                res = None
+            if res is not None and res.success and isinstance(res.data, dict):
+                raw_obj = res.data.get("object") if isinstance(res.data.get("object"), dict) else res.data
+                if isinstance(raw_obj, dict) and raw_obj.get("uid"):
+                    enriched_uid_obj = await self._enrich_group_raw_if_needed(mgmt_name, search_dom, raw_obj)
+                    return search_dom, enriched_uid_obj
+
+        name_target = ref_name or (ref_uid if ref_uid and not _UUID_RE.match(ref_uid) else None)
+        if not name_target:
+            return None
+
+        try:
+            q_res = await self._api.api_query(
+                mgmt_name,
+                "show-objects",
+                domain=search_dom,
+                details_level="full",
+                payload={"filter": name_target},
+            )
+        except ServerIdentityError:
+            raise
+        except Exception:
+            q_res = None
+
+        if q_res is not None and q_res.success:
+            if q_res.objects:
+                matched_item: dict[str, Any] | None = None
+                for item in q_res.objects:
+                    if isinstance(item, dict) and str(item.get("name") or "") == name_target:
+                        matched_item = dict(item)
+                        break
+                if matched_item is None:
+                    lower_target = name_target.lower()
+                    for item in q_res.objects:
+                        if isinstance(item, dict) and str(item.get("name") or "").lower() == lower_target:
+                            matched_item = dict(item)
+                            break
+                if matched_item is not None and matched_item.get("uid"):
+                    enriched_match = await self._enrich_group_raw_if_needed(mgmt_name, search_dom, matched_item)
+                    return search_dom, enriched_match
+            return None
+
+        for cmd in ("show-group", "show-network", "show-address-range", "show-host", "show-group-with-exclusion"):
+            try:
+                res = await self._api.api_call(
+                    mgmt_name,
+                    cmd,
+                    {"name": name_target, "details-level": "full"},
+                    domain=search_dom,
+                )
+            except ServerIdentityError:
+                raise
+            except Exception:
+                continue
+            if res.success and isinstance(res.data, dict) and res.data.get("uid"):
+                return search_dom, dict(res.data)
+
+        return None
+
+    @staticmethod
+    def _unpack_topology_raw_object(
+        mgmt_name: str,
+        fallback_dom: str,
+        raw_obj: dict[str, Any],
+    ) -> tuple[list[CPObject], list[tuple[str | None, str | None]]]:
+        """Hydrate `CPObject` plus any complete inline member dicts, returning `(objects, incomplete_child_refs)`."""
+        hydrated: list[CPObject] = []
+        incomplete_refs: list[tuple[str | None, str | None]] = []
+        seen_raw_uids: set[str] = set()
+        raw_queue: deque[tuple[str, dict[str, Any]]] = deque([(fallback_dom, raw_obj)])
+
+        while raw_queue:
+            cur_dom_hint, cur_raw = raw_queue.popleft()
+            cur_uid = str(cur_raw.get("uid") or "")
+            if not cur_uid or cur_uid in seen_raw_uids:
+                continue
+            seen_raw_uids.add(cur_uid)
+
+            eff_dom = cur_dom_hint
+            dom_meta = cur_raw.get("domain")
+            if isinstance(dom_meta, dict):
+                d_name = str(dom_meta.get("name") or "")
+                d_type = str(dom_meta.get("domain-type") or dom_meta.get("type") or "").lower()
+                if d_name == "Global" or "global" in d_type:
+                    eff_dom = "Global"
+
+            cp_obj = CPObject.from_cp_dict(mgmt_name, eff_dom, cur_raw)
+            if cp_obj.type == "group-with-exclusion":
+                inc = cur_raw.get("include")
+                if isinstance(inc, dict) and isinstance(inc.get("uid"), str) and inc["uid"]:
+                    if inc["uid"] not in cp_obj.members:
+                        cp_obj = cp_obj.model_copy(update={"members": [*cp_obj.members, inc["uid"]]})
+                elif isinstance(inc, str) and inc and inc not in cp_obj.members:
+                    cp_obj = cp_obj.model_copy(update={"members": [*cp_obj.members, inc]})
+            hydrated.append(cp_obj)
+
+            child_items: list[Any] = []
+            raw_members = cur_raw.get("members")
+            if isinstance(raw_members, list):
+                child_items.extend(raw_members)
+            if cp_obj.type == "group-with-exclusion" and cur_raw.get("include") is not None:
+                child_items.append(cur_raw.get("include"))
+
+            for item in child_items:
+                if isinstance(item, str) and item:
+                    incomplete_refs.append((item, None))
+                elif isinstance(item, dict):
+                    m_uid = str(item.get("uid") or "") or None
+                    m_name = str(item.get("name") or "") or None
+                    m_type = str(item.get("type") or "")
+                    has_host_ip = bool(item.get("ipv4-address") or item.get("ipv4_address") or item.get("ipv6-address"))
+                    has_net = bool(
+                        item.get("subnet4")
+                        and (item.get("mask-length4") is not None or item.get("subnet-mask") is not None)
+                    )
+                    has_range = bool(item.get("ipv4-address-first") and item.get("ipv4-address-last"))
+                    has_inline_group = m_type == "group" and isinstance(item.get("members"), list)
+                    if m_uid and (has_host_ip or has_net or has_range or has_inline_group):
+                        raw_queue.append((eff_dom, item))
+                    elif m_uid or m_name:
+                        incomplete_refs.append((m_uid, m_name))
+
+        return hydrated, incomplete_refs
+
+    async def _resolve_topology_objects_on_demand(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        seed_refs: Sequence[tuple[str | None, str | None]],
+        existing_objects: Sequence[CPObject],
+        force_refresh: bool = False,
+        trusted_object_domains: set[str] | None = None,
+        global_cache: dict[str, list[CPObject]] | None = None,
+        global_lock: asyncio.Lock | None = None,
+    ) -> list[CPObject]:
+        """Cycle-safe bounded BFS resolution of referenced topology objects/groups across `domain_name` and `Global`."""
+        merged_objects = list(existing_objects)
+        obj_by_uid, obj_by_name = self._index_objects(merged_objects, domain_name=domain_name)
+
+        def _is_trusted_cached(obj: CPObject) -> bool:
+            return not force_refresh and (trusted_object_domains is None or obj.domain_name in trusted_object_domains)
+
+        pending_wave: list[tuple[str | None, str | None]] = []
+        checked_cached_uids: set[str] = set()
+
+        for r_uid, r_name in seed_refs:
+            clean_uid = r_uid.strip() if isinstance(r_uid, str) and r_uid.strip() else None
+            clean_name = r_name.strip() if isinstance(r_name, str) and r_name.strip() else None
+            if not clean_uid and not clean_name:
+                continue
+            if force_refresh:
+                pending_wave.append((clean_uid, clean_name))
+                continue
+
+            root = (
+                (obj_by_uid.get(clean_uid) if clean_uid else None)
+                or (obj_by_name.get(clean_name) if clean_name else None)
+                or (obj_by_name.get(clean_uid) if clean_uid else None)
+                or (obj_by_uid.get(clean_name) if clean_name else None)
+            )
+            if root is None or not _is_trusted_cached(root):
+                pending_wave.append((clean_uid, clean_name))
+                continue
+
+            walk_q: deque[CPObject] = deque([root])
+            while walk_q:
+                cur_obj = walk_q.popleft()
+                if cur_obj.uid in checked_cached_uids:
+                    continue
+                checked_cached_uids.add(cur_obj.uid)
+                for m_ref in cur_obj.members:
+                    child = obj_by_uid.get(m_ref) or obj_by_name.get(m_ref)
+                    if child is None:
+                        pending_wave.append((m_ref, None))
+                    elif not _is_trusted_cached(child):
+                        pending_wave.append((child.uid, child.name))
+                    elif child.uid not in checked_cached_uids:
+                        walk_q.append(child)
+
+        if not pending_wave:
+            return merged_objects
+
+        search_domains = [domain_name] if domain_name == "Global" else [domain_name, "Global"]
+        sem = asyncio.Semaphore(TOPOLOGY_OBJECT_LOOKUP_CONCURRENCY)
+        attempted_keys: set[str] = set()
+        resolved_uids: set[str] = set()
+        fetched_by_dom_uid: dict[tuple[str, str], CPObject] = {}
+
+        async def _lookup_across_domains(
+            q_uid: str | None,
+            q_name: str | None,
+        ) -> tuple[str, dict[str, Any]] | None:
+            async with sem:
+                for s_dom in search_domains:
+                    found = await self._fetch_single_topology_object_raw(mgmt_name, s_dom, q_uid, q_name)
+                    if found is not None:
+                        return found
+                return None
+
+        while pending_wave:
+            dedup_wave: list[tuple[str | None, str | None]] = []
+            for q_uid, q_name in pending_wave:
+                key = f"uid:{q_uid.lower()}" if q_uid else f"name:{(q_name or '').lower()}"
+                if key in attempted_keys:
+                    continue
+                if not force_refresh:
+                    already = (
+                        (obj_by_uid.get(q_uid) if q_uid else None)
+                        or (obj_by_name.get(q_name) if q_name else None)
+                        or (obj_by_name.get(q_uid) if q_uid else None)
+                    )
+                    if (
+                        already is not None
+                        and not already.members
+                        and (_is_trusted_cached(already) or already.uid in resolved_uids)
+                    ):
+                        continue
+                if q_uid and q_uid in resolved_uids:
+                    continue
+                attempted_keys.add(key)
+                dedup_wave.append((q_uid, q_name))
+
+            if not dedup_wave:
+                break
+
+            wave_results = await asyncio.gather(*(_lookup_across_domains(u, n) for u, n in dedup_wave))
+            next_wave: list[tuple[str | None, str | None]] = []
+
+            for item_res in wave_results:
+                if item_res is None:
+                    continue
+                found_dom, raw_dict = item_res
+                unpacked_objs, child_refs = self._unpack_topology_raw_object(mgmt_name, found_dom, raw_dict)
+                for cp_obj in unpacked_objs:
+                    resolved_uids.add(cp_obj.uid)
+                    fetched_by_dom_uid[(cp_obj.domain_name, cp_obj.uid)] = cp_obj
+                if unpacked_objs:
+                    merged_objects.extend(unpacked_objs)
+                    self._index_objects_into(obj_by_uid, obj_by_name, unpacked_objs, domain_name=domain_name)
+
+                for c_uid, c_name in child_refs:
+                    if force_refresh:
+                        if not (c_uid and c_uid in resolved_uids):
+                            next_wave.append((c_uid, c_name))
+                    else:
+                        cached_child = (
+                            (obj_by_uid.get(c_uid) if c_uid else None)
+                            or (obj_by_name.get(c_name) if c_name else None)
+                            or (obj_by_name.get(c_uid) if c_uid else None)
+                        )
+                        if cached_child is None or (
+                            not _is_trusted_cached(cached_child) and cached_child.uid not in resolved_uids
+                        ):
+                            next_wave.append((c_uid, c_name))
+                        else:
+                            # Walk any already-cached child group to catch deeper missing or untrusted members
+                            walk_q2: deque[CPObject] = deque([cached_child])
+                            while walk_q2:
+                                cur2 = walk_q2.popleft()
+                                if cur2.uid in checked_cached_uids:
+                                    continue
+                                checked_cached_uids.add(cur2.uid)
+                                for m_ref2 in cur2.members:
+                                    ch2 = obj_by_uid.get(m_ref2) or obj_by_name.get(m_ref2)
+                                    if ch2 is None:
+                                        next_wave.append((m_ref2, None))
+                                    elif not _is_trusted_cached(ch2) and ch2.uid not in resolved_uids:
+                                        next_wave.append((ch2.uid, ch2.name))
+                                    elif ch2.uid not in checked_cached_uids:
+                                        walk_q2.append(ch2)
+
+            pending_wave = next_wave
+
+        if not fetched_by_dom_uid:
+            return merged_objects
+
+        newly_fetched = list(fetched_by_dom_uid.values())
+        await self._cache.upsert_objects(newly_fetched, sync_states=None)
+
+        new_global = [o for o in newly_fetched if o.domain_name == "Global"]
+        if new_global and global_cache is not None:
+            if global_lock is not None:
+                async with global_lock:
+                    cur_glob = {o.uid: o for o in global_cache.get(mgmt_name, [])}
+                    for g_obj in new_global:
+                        cur_glob[g_obj.uid] = g_obj
+                    global_cache[mgmt_name] = ObjectService.apply_context_overlay(
+                        list(cur_glob.values()),
+                        mgmt_name=mgmt_name,
+                        domain_name="Global",
+                    )
+            else:
+                cur_glob = {o.uid: o for o in global_cache.get(mgmt_name, [])}
+                for g_obj in new_global:
+                    cur_glob[g_obj.uid] = g_obj
+                global_cache[mgmt_name] = ObjectService.apply_context_overlay(
+                    list(cur_glob.values()),
+                    mgmt_name=mgmt_name,
+                    domain_name="Global",
+                )
+
+        # Deduplicate merged_objects by (domain_name, uid) with newly fetched objects applied, then write-session overlay
+        by_dom_uid: dict[tuple[str, str], CPObject] = {(o.domain_name, o.uid): o for o in existing_objects}
+        by_dom_uid.update(fetched_by_dom_uid)
+        dom_list = ObjectService.apply_context_overlay(
+            [o for o in by_dom_uid.values() if o.domain_name == domain_name],
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+        )
+        if domain_name == "Global":
+            return dom_list
+        glob_list = ObjectService.apply_context_overlay(
+            [o for o in by_dom_uid.values() if o.domain_name == "Global"],
+            mgmt_name=mgmt_name,
+            domain_name="Global",
+        )
+        return [*glob_list, *dom_list]
+
     async def _extract_domain_topology_entries(
         self,
         *,
@@ -1624,10 +2154,14 @@ class TopologyService:
         objects: Sequence[CPObject],
         target_gateway_uids: set[str] | None = None,
         allow_live_detail: bool = True,
+        force_object_refresh: bool = False,
+        trusted_object_domains: set[str] | None = None,
+        already_detailed_uids: set[str] | None = None,
+        global_cache: dict[str, list[CPObject]] | None = None,
+        global_lock: asyncio.Lock | None = None,
         emit: Callable[[SyncProgressEvent], Awaitable[None]] | None = None,
     ) -> tuple[list[GatewayTopologyEntry], list[Asset]]:
         """Extract `GatewayTopologyEntry` rows for all policy-enforcing gateways in `(mgmt_name, domain_name)`."""
-        obj_by_uid, obj_by_name = self._index_objects(objects, domain_name=domain_name)
         entries: list[GatewayTopologyEntry] = []
         updated_assets: list[Asset] = []
         now = self._now()
@@ -1638,23 +2172,38 @@ class TopologyService:
             if is_policy_enforcing_gateway(a) and (target_gateway_uids is None or a.uid in target_gateway_uids)
         ]
         total_gateways = len(policy_gateways)
-        dom_snapshot = await self._load_domain_package_snapshot(mgmt_name, domain_name) if policy_gateways else None
+        dom_snapshot = (
+            await self._load_domain_package_snapshot(mgmt_name, domain_name, allow_refresh=allow_live_detail)
+            if policy_gateways
+            else None
+        )
 
-        for gw_idx, asset in enumerate(policy_gateways, start=1):
-            gw_entries: list[GatewayTopologyEntry] = []
+        pre_by_uid, pre_by_name = (
+            self._index_objects(objects, domain_name=domain_name)
+            if allow_live_detail and objects and trusted_object_domains is not None
+            else ({}, {})
+        )
+
+        prepared_gateways: list[tuple[Asset, bool, list[dict[str, Any]], list[_NormalizedInterface]]] = []
+        seed_object_refs: list[tuple[str | None, str | None]] = []
+
+        for asset in policy_gateways:
             is_vs = asset.type in VSX_CHILD_TYPES or "virtual-system" in asset.type.lower()
             raw_ifs = list(asset.interfaces) or _extract_interfaces_from_generic(asset.raw_data)
             raw_routes = _extract_raw_routes(asset.raw_data)
 
-            # Check if we need an on-demand detail call (missing interfaces or missing explicit topology on non-VS)
-            needs_detail = allow_live_detail and (
-                not raw_ifs
-                or (
-                    not is_vs
-                    and not any(
-                        isinstance(i.get("topology"), (dict, str)) or isinstance(i.get("topology-settings"), dict)
-                        for i in raw_ifs
-                        if isinstance(i, dict)
+            needs_detail = (
+                allow_live_detail
+                and (already_detailed_uids is None or asset.uid not in already_detailed_uids)
+                and (
+                    not raw_ifs
+                    or (
+                        not is_vs
+                        and not any(
+                            isinstance(i.get("topology"), (dict, str)) or isinstance(i.get("topology-settings"), dict)
+                            for i in raw_ifs
+                            if isinstance(i, dict)
+                        )
                     )
                 )
             )
@@ -1665,6 +2214,47 @@ class TopologyService:
                     updated_assets.append(asset)
                     raw_routes = _extract_raw_routes(asset.raw_data)
 
+            norm_ifs = _normalize_gateway_interfaces(asset)
+            if allow_live_detail:
+                for nif in norm_ifs:
+                    has_untrusted_cached = False
+                    if not force_object_refresh and nif.specific_inline_cidr and trusted_object_domains is not None:
+                        cached_spec = (
+                            pre_by_uid.get(nif.specific_network_uid) if nif.specific_network_uid else None
+                        ) or (pre_by_name.get(nif.specific_network_ref) if nif.specific_network_ref else None)
+                        if cached_spec is not None and cached_spec.domain_name not in trusted_object_domains:
+                            has_untrusted_cached = True
+                    if (
+                        not nif.is_external
+                        and "specific" in nif.behind_mode.lower()
+                        and (nif.specific_network_uid or nif.specific_network_ref)
+                        and (force_object_refresh or not nif.specific_inline_cidr or has_untrusted_cached)
+                    ):
+                        seed_object_refs.append((nif.specific_network_uid, nif.specific_network_ref))
+                vpn_uid, vpn_name = _extract_vpn_domain_refs(asset.raw_data)
+                if vpn_uid or vpn_name:
+                    seed_object_refs.append((vpn_uid, vpn_name))
+
+            prepared_gateways.append((asset, is_vs, raw_routes, norm_ifs))
+
+        eff_objects: Sequence[CPObject] = objects
+        if allow_live_detail and seed_object_refs:
+            eff_objects = await self._resolve_topology_objects_on_demand(
+                mgmt_name,
+                domain_name,
+                seed_refs=seed_object_refs,
+                existing_objects=objects,
+                force_refresh=force_object_refresh,
+                trusted_object_domains=trusted_object_domains,
+                global_cache=global_cache,
+                global_lock=global_lock,
+            )
+
+        obj_by_uid, obj_by_name = self._index_objects(eff_objects, domain_name=domain_name)
+
+        for gw_idx, (asset, is_vs, raw_routes, norm_ifs) in enumerate(prepared_gateways, start=1):
+            gw_entries: list[GatewayTopologyEntry] = []
+
             installed_pol, pkg_names, _ = await self._resolve_gateway_policy_metadata(
                 mgmt_name,
                 domain_name,
@@ -1674,8 +2264,6 @@ class TopologyService:
                 all_assets=assets,
                 snapshot=dom_snapshot,
             )
-
-            norm_ifs = _normalize_gateway_interfaces(asset)
 
             # Map connected subnets per interface so VS static routes can resolve next-hop IPs
             connected_by_if: dict[str, tuple[_NormalizedInterface, ipaddress.IPv4Network]] = {}
@@ -1988,7 +2576,37 @@ class TopologyService:
         return entries, updated_assets
 
     @staticmethod
+    def _index_objects_into(
+        by_uid: dict[str, CPObject],
+        by_name: dict[str, CPObject],
+        objects: Sequence[CPObject],
+        *,
+        domain_name: str | None = None,
+    ) -> None:
+        """Incrementally insert `objects` into `(by_uid, by_name)` while preserving local-over-Global precedence."""
+        for obj in objects:
+            if domain_name is not None and obj.domain_name not in (domain_name, "Global"):
+                continue
+            is_local = bool(domain_name and obj.domain_name == domain_name)
+            for u_key in (obj.uid, obj.uid.lower()):
+                existing_u = by_uid.get(u_key)
+                if is_local or existing_u is None or not (domain_name and existing_u.domain_name == domain_name):
+                    by_uid[u_key] = obj
+            for n_key in (
+                obj.name,
+                obj.name.lower(),
+                obj.object_id,
+                obj.object_id.lower(),
+                obj.id,
+                obj.id.lower(),
+            ):
+                existing_n = by_name.get(n_key)
+                if is_local or existing_n is None or not (domain_name and existing_n.domain_name == domain_name):
+                    by_name[n_key] = obj
+
+    @classmethod
     def _index_objects(
+        cls,
         objects: Sequence[CPObject],
         *,
         domain_name: str | None = None,
@@ -1996,25 +2614,7 @@ class TopologyService:
         """Index `CPObject` records by `uid` and `name`, restricted to `domain_name` and `"Global"` (local winning over Global)."""
         by_uid: dict[str, CPObject] = {}
         by_name: dict[str, CPObject] = {}
-        scoped = (
-            [o for o in objects if o.domain_name in (domain_name, "Global")]
-            if domain_name is not None
-            else list(objects)
-        )
-        # Insert Global first, then domain_name last so local objects win on name collisions
-        sorted_objs = sorted(
-            scoped,
-            key=lambda o: 1 if (domain_name and o.domain_name == domain_name) else 0,
-        )
-        for obj in sorted_objs:
-            by_uid[obj.uid] = obj
-            by_uid[obj.uid.lower()] = obj
-            by_name[obj.name] = obj
-            by_name[obj.name.lower()] = obj
-            by_name[obj.object_id] = obj
-            by_name[obj.object_id.lower()] = obj
-            by_name[obj.id] = obj
-            by_name[obj.id.lower()] = obj
+        cls._index_objects_into(by_uid, by_name, objects, domain_name=domain_name)
         return by_uid, by_name
 
     def _expand_specific_reference(
@@ -4685,6 +5285,8 @@ class TopologyService:
         *,
         mgmt_name: str | None = None,
         domain: str | None = None,
+        source_types: Sequence[TopologySourceType | str] | None = None,
+        include_annotations: bool = True,
         min_confidence: float = 0.0,
         include_standby: bool = True,
         include_policy_inferred: bool = True,
@@ -4707,11 +5309,16 @@ class TopologyService:
         if not dst_list:
             raise ValidationError("destinations must contain at least one IPv4 address, subnet, range, or object name")
 
+        allowed_source_types: set[str] | None = (
+            {str(st).strip() for st in source_types if str(st).strip()} if source_types is not None else None
+        )
+
         span_attrs(
             mgmt_name=mgmt_name,
             domain=domain,
             source_count=len(src_list),
             destination_count=len(dst_list),
+            include_annotations=include_annotations,
             min_confidence=min_confidence,
             include_standby=include_standby,
             include_policy_inferred=include_policy_inferred,
@@ -4730,13 +5337,19 @@ class TopologyService:
         topo_entries = await self._cache.get_gateway_topology(
             mgmt_name=mgmt_name,
             domain_name=domain,
+            source_types=list(allowed_source_types) if allowed_source_types is not None else None,
         )
-        annotations = await self._cache.get_topology_annotations(
-            mgmt_name=mgmt_name,
-            domain_name=domain,
+        annotations: list[TopologyAnnotation] = (
+            await self._cache.get_topology_annotations(
+                mgmt_name=mgmt_name,
+                domain_name=domain,
+            )
+            if include_annotations
+            else []
         )
         all_assets = await self._cache.get_assets(mgmt_name=mgmt_name, domain_name=domain)
         global_obj_cache: dict[str, list[CPObject]] = {}
+        global_obj_lock = asyncio.Lock()
 
         # Fallback: if cache_mode="cache" was used on a database with cached assets/objects but
         # topology has not been extracted yet, extract topology on the fly strictly from cached data
@@ -4751,6 +5364,7 @@ class TopologyService:
                     m_name,
                     d_name,
                     global_cache=global_obj_cache,
+                    global_lock=global_obj_lock,
                 )
                 dom_entries, _ = await self._extract_domain_topology_entries(
                     mgmt_name=m_name,
@@ -4760,14 +5374,19 @@ class TopologyService:
                     allow_live_detail=False,
                 )
                 computed.extend(dom_entries)
+            if allowed_source_types is not None:
+                computed = [e for e in computed if e.source_type in allowed_source_types]
             topo_entries = computed
 
         if not topo_entries and not annotations and not (include_policy_inferred and all_assets):
             return []
 
-        needs_endpoint_objects = any(
-            classify_search_term(raw_term).kind not in ("ipv4", "cidr", "range") for raw_term in (*src_list, *dst_list)
-        )
+        endpoint_object_terms = [
+            raw_term
+            for raw_term in (*src_list, *dst_list)
+            if classify_search_term(raw_term).kind not in ("ipv4", "cidr", "range")
+        ]
+        needs_endpoint_objects = bool(endpoint_object_terms)
         static_endpoints: tuple[list[_ResolvedEndpointInterval], list[_ResolvedEndpointInterval]] | None = None
         if not needs_endpoint_objects:
             static_endpoints = (
@@ -4827,6 +5446,8 @@ class TopologyService:
         async def _ensure_domain_index(
             target_mgmt: str,
             target_dom: str,
+            *,
+            resolve_endpoints: bool = False,
         ) -> tuple[dict[str, CPObject], dict[str, CPObject]]:
             d_key = (target_mgmt, target_dom)
             if d_key not in indexed_objs_by_dom:
@@ -4834,7 +5455,18 @@ class TopologyService:
                     target_mgmt,
                     target_dom,
                     global_cache=global_obj_cache,
+                    global_lock=global_obj_lock,
                 )
+                if resolve_endpoints and cache_mode != "cache" and endpoint_object_terms:
+                    scoped_objs = await self._resolve_topology_objects_on_demand(
+                        target_mgmt,
+                        target_dom,
+                        seed_refs=[(t if _UUID_RE.match(t) else None, t) for t in endpoint_object_terms],
+                        existing_objects=scoped_objs,
+                        force_refresh=(cache_mode == "force"),
+                        global_cache=global_obj_cache,
+                        global_lock=global_obj_lock,
+                    )
                 indexed_objs_by_dom[d_key] = self._index_objects(scoped_objs, domain_name=target_dom)
             return indexed_objs_by_dom[d_key]
 
@@ -4857,6 +5489,9 @@ class TopologyService:
                 gw_anns,
                 gateway_asset=gw_asset,
             )
+            if allowed_source_types is not None:
+                gw_entries = [e for e in gw_entries if e.source_type in allowed_source_types]
+                has_live_routes = any(e.source_type in LIVE_ROUTE_SOURCES for e in gw_entries)
             if not gw_entries and not (include_policy_inferred and gw_asset is not None):
                 continue
 
@@ -4892,7 +5527,11 @@ class TopologyService:
                 src_intervals, dst_intervals = static_endpoints
             else:
                 if dom_key not in resolved_endpoints_by_dom:
-                    obj_by_uid, obj_by_name = await _ensure_domain_index(gw_mgmt, gw_dom)
+                    obj_by_uid, obj_by_name = await _ensure_domain_index(
+                        gw_mgmt,
+                        gw_dom,
+                        resolve_endpoints=True,
+                    )
                     resolved_endpoints_by_dom[dom_key] = (
                         self._resolve_endpoint_intervals(
                             src_list,
@@ -5037,7 +5676,17 @@ class TopologyService:
                 continue
 
             if dom_key not in snapshots_by_dom:
-                snapshots_by_dom[dom_key] = await self._cache.get_domain_rulebase(gw_mgmt, gw_dom)
+                dom_snap = await self._cache.get_domain_rulebase(gw_mgmt, gw_dom)
+                if cache_mode != "cache" and not dom_snap.package_layers:
+                    pkg_snap = await self._load_domain_package_snapshot(
+                        gw_mgmt,
+                        gw_dom,
+                        allow_refresh=True,
+                        cache_ttl=cache_ttl,
+                    )
+                    if pkg_snap.package_layers:
+                        dom_snap = dom_snap.model_copy(update={"package_layers": pkg_snap.package_layers})
+                snapshots_by_dom[dom_key] = dom_snap
             dom_snapshot = snapshots_by_dom[dom_key]
 
             installed_pol, pkg_names, layer_names = await self._resolve_gateway_policy_metadata(

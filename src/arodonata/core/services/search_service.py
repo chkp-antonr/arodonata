@@ -32,6 +32,7 @@ from arodonata.core.models.common import (
     CacheMode,
     SyncScope,
     normalize_any_type,
+    normalize_object_type,
     to_naive_utc,
     utc_now,
 )
@@ -149,6 +150,12 @@ def matches_classified_term(
     if term.kind == "ipv4" and term.ip is not None:
         target_int = int(term.ip)
         bounds = _object_ipv4_bounds(obj)
+        if exact_match:
+            if bounds is not None:
+                lo, hi = bounds
+                if lo == target_int and hi == target_int:
+                    return True
+            return term.raw == (obj.ipv4_address or "")
         if bounds is not None:
             lo, hi = bounds
             if lo <= target_int <= hi:
@@ -161,6 +168,9 @@ def matches_classified_term(
         bounds = _object_ipv4_bounds(obj)
         if bounds is not None:
             o_lo, o_hi = bounds
+            if exact_match:
+                # Match exact subnet or narrower subnets/hosts inside it; exclude wider supernets
+                return o_lo >= q_lo and o_hi <= q_hi
             # Match if object is contained in query subnet, contains query subnet, or overlaps it
             return not (o_hi < q_lo or o_lo > q_hi)
         return False
@@ -269,47 +279,165 @@ class SearchService:
 
         want_global = include_global or (domain_list is not None and "Global" in domain_list)
 
-        # Ensure objects (including "group" for membership resolution) are refreshed when cache_mode != "cache"
-        sync_types = list(types) if types is not None else list(DEFAULT_OBJECT_TYPES)
-        if max_depth > 0 and "group" not in sync_types:
-            sync_types.append("group")
+        canonical_assets_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
+        raw_non_blank = [str(t).strip() for t in types if str(t).strip()] if types is not None else []
+        obj_types: list[str] | None = None
+        asset_types_lower: set[str] = set()
+        if types is not None and raw_non_blank:
+            obj_types = []
+            for raw_t in raw_non_blank:
+                any_t = normalize_any_type(raw_t)
+                if any_t.lower() in canonical_assets_lower:
+                    asset_types_lower.add(any_t.lower())
+                    if raw_t.lower() == "gateway":
+                        asset_types_lower.update(
+                            {
+                                "simple-gateway",
+                                "simple-cluster",
+                                "vsx-gateway",
+                                "vsx-cluster",
+                                "virtual-system",
+                                "cpmigatewayplain",
+                                "cpmigatewaycluster",
+                                "cpmivsxnetobj",
+                                "cpmivsxclusternetobj",
+                                "cpmivsnetobj",
+                            }
+                        )
+                elif not any_t.startswith("service-"):
+                    norm_obj_t = normalize_object_type(raw_t)
+                    if norm_obj_t and norm_obj_t not in obj_types:
+                        obj_types.append(norm_obj_t)
 
-        if cache_mode != "cache":
-            await self._object_service.refresh_objects(
+        want_objects = types is None or not raw_non_blank or bool(obj_types)
+        want_assets = bool(asset_types_lower)
+
+        # Ensure objects (including "group" for membership resolution) are refreshed when cache_mode != "cache"
+        all_objects: list[CPObject] = []
+        matched_objects: list[CPObject] = []
+
+        if want_objects:
+            sync_types = list(obj_types) if obj_types is not None else list(DEFAULT_OBJECT_TYPES)
+            if max_depth > 0 and "group" not in sync_types:
+                sync_types.append("group")
+
+            if cache_mode != "cache":
+                await self._object_service.refresh_objects(
+                    mgmt_name=mgmt_name,
+                    domains=domain_list,
+                    types=sync_types,
+                    include_global=want_global,
+                    mode=cache_mode,
+                    cache_ttl=cache_ttl,
+                )
+
+            # Load all objects in target scope (including groups for membership resolution)
+            all_cached = await self._cache.get_objects(mgmt_name=mgmt_name)
+            if domain_list is not None:
+                dom_set = set(domain_list)
+                all_cached = [o for o in all_cached if o.domain_name in dom_set]
+            elif not want_global:
+                all_cached = [o for o in all_cached if o.domain_name != "Global"]
+
+            # Apply active WriteSession overlay from contextvars
+            single_dom = domain_list[0] if domain_list and len(domain_list) == 1 else None
+            all_objects = ObjectService.apply_context_overlay(
+                all_cached,
                 mgmt_name=mgmt_name,
-                domains=domain_list,
-                types=sync_types,
-                include_global=want_global,
-                mode=cache_mode,
-                cache_ttl=cache_ttl,
+                domain_name=single_dom,
             )
 
-        # Load all objects in target scope (including groups for membership resolution)
-        all_cached = await self._cache.get_objects(mgmt_name=mgmt_name)
-        if domain_list is not None:
-            dom_set = set(domain_list)
-            all_cached = [o for o in all_cached if o.domain_name in dom_set]
-        elif not want_global:
-            all_cached = [o for o in all_cached if o.domain_name != "Global"]
+            allowed_match_types = set(obj_types) if obj_types is not None else None
+            for obj in all_objects:
+                if allowed_match_types is not None and obj.type not in allowed_match_types:
+                    continue
+                if any(matches_classified_term(obj, term, exact_match=exact_match) for term in classified_terms):
+                    matched_objects.append(obj)
 
-        # Apply active WriteSession overlay from contextvars
-        single_dom = domain_list[0] if domain_list and len(domain_list) == 1 else None
-        all_objects = ObjectService.apply_context_overlay(
-            all_cached,
-            mgmt_name=mgmt_name,
-            domain_name=single_dom,
-        )
+        if want_assets:
+            if cache_mode != "cache" and self._asset_service is not None:
+                await self._asset_service.refresh_assets(
+                    mgmt_name=mgmt_name,
+                    domains=domain_list,
+                    include_global=want_global,
+                    mode=cache_mode,
+                    cache_ttl=cache_ttl,
+                )
+            cached_assets = await self._cache.get_assets(mgmt_name=mgmt_name)
+            if domain_list is not None:
+                dom_set = set(domain_list)
+                cached_assets = [a for a in cached_assets if a.domain_name in dom_set]
+            elif not want_global:
+                cached_assets = [a for a in cached_assets if a.domain_name != "Global"]
 
-        allowed_match_types = set(types) if types is not None else None
-        matched_objects: list[CPObject] = []
-        for obj in all_objects:
-            if allowed_match_types is not None and obj.type not in allowed_match_types:
-                continue
-            if any(matches_classified_term(obj, term, exact_match=exact_match) for term in classified_terms):
-                matched_objects.append(obj)
+            seen_keys = {(o.mgmt_name, o.domain_name, o.uid) for o in matched_objects}
+            for asset in cached_assets:
+                if asset.type.lower() not in asset_types_lower:
+                    continue
+                key = (asset.mgmt_name, asset.domain_name, asset.uid)
+                if key in seen_keys:
+                    continue
+                as_obj = CPObject(
+                    id=asset.id,
+                    object_id=asset.asset_id,
+                    uid=asset.uid,
+                    name=asset.name,
+                    type=asset.type,
+                    mgmt_name=asset.mgmt_name,
+                    domain_name=asset.domain_name,
+                    ipv4_address=asset.ipv4_address,
+                    ipv6_address=asset.ipv6_address,
+                    comments=asset.comments,
+                    color=asset.color,
+                    raw_data=asset.raw_data,
+                    updated_at=asset.updated_at,
+                )
+                asset_matched = any(
+                    matches_classified_term(as_obj, term, exact_match=exact_match) for term in classified_terms
+                )
+                if not asset_matched and asset.interfaces:
+                    for iface in asset.interfaces:
+                        iface_ip = str(iface.get("ipv4-address") or iface.get("ipv4_address") or "").strip()
+                        if not iface_ip:
+                            continue
+                        probe_obj = as_obj.model_copy(update={"ipv4_address": iface_ip})
+                        if any(
+                            matches_classified_term(probe_obj, term, exact_match=exact_match)
+                            for term in classified_terms
+                        ):
+                            asset_matched = True
+                            break
+                if asset_matched:
+                    seen_keys.add(key)
+                    matched_objects.append(as_obj)
 
         memberships: dict[str, list[GroupMembershipNode]] = {}
         if max_depth > 0 and matched_objects:
+            if not want_objects:
+                if cache_mode != "cache":
+                    await self._object_service.refresh_objects(
+                        mgmt_name=mgmt_name,
+                        domains=domain_list,
+                        types=["group"],
+                        include_global=want_global,
+                        mode=cache_mode,
+                        cache_ttl=cache_ttl,
+                    )
+                cached_groups = await self._cache.get_objects(
+                    mgmt_name=mgmt_name,
+                    types=["group", "group-with-exclusion"],
+                )
+                if domain_list is not None:
+                    dom_set = set(domain_list)
+                    cached_groups = [o for o in cached_groups if o.domain_name in dom_set]
+                elif not want_global:
+                    cached_groups = [o for o in cached_groups if o.domain_name != "Global"]
+                single_dom = domain_list[0] if domain_list and len(domain_list) == 1 else None
+                all_objects = ObjectService.apply_context_overlay(
+                    cached_groups,
+                    mgmt_name=mgmt_name,
+                    domain_name=single_dom,
+                )
             memberships = self._resolve_group_memberships(
                 matched_objects,
                 all_objects,
@@ -830,6 +958,31 @@ class SearchService:
         )
 
         if aggregate == "describe":
+            if (
+                cache_mode != "cache"
+                and not await self._cache.list_sync_states(
+                    mgmt_name=mgmt_name,
+                    domain_name=domain_name,
+                    scope="objects",
+                )
+                and (
+                    bool(
+                        await self._cache.list_sync_states(
+                            mgmt_name=mgmt_name,
+                            domain_name=domain_name,
+                            scope="topology",
+                        )
+                    )
+                    or not await self._cache.get_objects(mgmt_name=mgmt_name, domain_name=domain_name)
+                )
+            ):
+                await self._object_service.refresh_objects(
+                    mgmt_name=mgmt_name,
+                    domains=target_domains,
+                    include_global=want_global_dom,
+                    mode=cache_mode,
+                    cache_ttl=cache_ttl,
+                )
             return await self.describe_objects(
                 mgmt_name=mgmt_name,
                 domain_name=domain_name,

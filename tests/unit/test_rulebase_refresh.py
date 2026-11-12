@@ -26,6 +26,8 @@ class RulebaseRefreshFakeApi:
         self.published_uid = "sess-rb-100"
         self.published_iso = "2026-10-24T06:00:00Z"
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.query_calls: list[tuple[str, dict[str, Any]]] = []
+        self.include_branch_package = False
 
     async def api_call(
         self,
@@ -109,8 +111,10 @@ class RulebaseRefreshFakeApi:
                 }
                 obj_dict: list[dict[str, Any]] = []
                 if pkg_ctx:
-                    ph_rule["domain-layer"] = "layer-corp-net"
-                    obj_dict.append({"uid": "layer-corp-net", "name": "Corp Network", "type": "access-layer"})
+                    dom_uid = "layer-branch-net" if pkg_ctx in ("Branch_Pkg", "pkg-branch") else "layer-corp-net"
+                    dom_name = "Branch Network" if dom_uid == "layer-branch-net" else "Corp Network"
+                    ph_rule["domain-layer"] = dom_uid
+                    obj_dict.append({"uid": dom_uid, "name": dom_name, "type": "access-layer"})
                 return ApiCallResult(
                     success=True,
                     data={
@@ -192,6 +196,59 @@ class RulebaseRefreshFakeApi:
                     },
                 )
 
+            if target_uid == "layer-branch-net":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "uid": "layer-branch-net",
+                        "name": "Branch Network",
+                        "total": 1,
+                        "to": 1,
+                        "objects-dictionary": [
+                            {"uid": "layer-branch-inline", "name": "Branch Inline", "type": "access-layer"},
+                        ],
+                        "rulebase": [
+                            {
+                                "uid": "sec-branch-1",
+                                "name": "Branch Access",
+                                "type": "access-section",
+                                "from": 1,
+                                "to": 1,
+                                "rulebase": [
+                                    {
+                                        "uid": "r-branch-1",
+                                        "name": "Branch Inline Jump",
+                                        "type": "access-rule",
+                                        "rule-number": 1,
+                                        "action": "Apply Layer",
+                                        "inline-layer": "layer-branch-inline",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                )
+
+            if target_uid == "layer-branch-inline":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "uid": "layer-branch-inline",
+                        "name": "Branch Inline",
+                        "total": 1,
+                        "to": 1,
+                        "rulebase": [
+                            {
+                                "uid": "r-branch-inline-1",
+                                "name": "Allow Branch DNS",
+                                "type": "access-rule",
+                                "rule-number": 1,
+                                "action": "Accept",
+                            }
+                        ],
+                    },
+                )
+
         if command == "show-https-rulebase":
             return ApiCallResult(
                 success=True,
@@ -249,13 +306,39 @@ class RulebaseRefreshFakeApi:
         server_ip: str | None = None,
         limit: int = 300,
     ) -> ApiQueryResult:
+        self.query_calls.append((command, dict(payload or {})))
         if command == "show-packages":
-            return ApiQueryResult(
-                success=True,
-                objects=[
+            pkgs: list[dict[str, Any]] = [
+                {
+                    "uid": "pkg-corp",
+                    "name": "Corp_Standard",
+                    "nat-policy": True,
+                    "access-layers": [
+                        {
+                            "uid": "layer-global-acc",
+                            "name": "Global Access",
+                            "position": 1,
+                            "domain": {"name": "Global", "domain-type": "global domain"},
+                        },
+                        {
+                            "uid": "layer-corp-net",
+                            "name": "Corp Network",
+                            "position": 2,
+                        },
+                    ],
+                    "https-layers": [
+                        {"uid": "layer-https-1", "name": "Corp HTTPS", "position": 1},
+                    ],
+                    "threat-layers": [
+                        {"uid": "layer-threat-1", "name": "Corp Threat", "position": 1},
+                    ],
+                }
+            ]
+            if self.include_branch_package:
+                pkgs.append(
                     {
-                        "uid": "pkg-corp",
-                        "name": "Corp_Standard",
+                        "uid": "pkg-branch",
+                        "name": "Branch_Pkg",
                         "nat-policy": True,
                         "access-layers": [
                             {
@@ -265,8 +348,8 @@ class RulebaseRefreshFakeApi:
                                 "domain": {"name": "Global", "domain-type": "global domain"},
                             },
                             {
-                                "uid": "layer-corp-net",
-                                "name": "Corp Network",
+                                "uid": "layer-branch-net",
+                                "name": "Branch Network",
                                 "position": 2,
                             },
                         ],
@@ -277,8 +360,11 @@ class RulebaseRefreshFakeApi:
                             {"uid": "layer-threat-1", "name": "Corp Threat", "position": 1},
                         ],
                     }
-                ],
-                total=1,
+                )
+            return ApiQueryResult(
+                success=True,
+                objects=pkgs,
+                total=len(pkgs),
             )
         return ApiQueryResult(success=True, objects=[], total=0)
 
@@ -510,3 +596,220 @@ async def test_rulebase_refresh_atomic_transaction_rollback_on_sync_state_failur
     assert [r.uid for r in snap_after.access_rules] == ["r-base-1"]
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_refresh_policy_packages_and_targeted_package_rulebase_slices() -> None:
+    """`refresh_policy_packages` and `refresh_package_rulebase` honor `verify_session_clean`, skip unrelated rulebases/sibling packages, and never stamp `item_type='*'`."""
+    db = DatabaseManager()
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        lock_port = SqlLockAdapter(db)
+        api = RulebaseRefreshFakeApi()
+        api.include_branch_package = True
+
+        settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=0)
+        domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+        domain_service.tracker.mark_refreshed("mds1")
+        await cache.upsert_domains(
+            [DomainInfo(mgmt_name="mds1", uid="dom1", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1")]
+        )
+        coordinator = DomainSyncCoordinator(
+            settings=settings,
+            api=api,
+            cache=cache,
+            lock_port=lock_port,
+            domain_service=domain_service,
+        )
+        refresh_svc = RulebaseRefreshService(
+            settings=settings,
+            api=api,
+            cache=cache,
+            coordinator=coordinator,
+        )
+
+        # 1. Cold refresh_policy_packages fetches ONLY show-packages
+        pkg_out = await refresh_svc.refresh_policy_packages(mgmt_name="mds1", domains=["Corp"], mode="smart")
+        assert pkg_out.refreshed_domains == ["mds1:Corp"]
+        called_cmds = [cmd for cmd, _ in api.calls]
+        assert "show-session" in called_cmds
+        assert not any(
+            cmd in called_cmds
+            for cmd in (
+                "show-access-rulebase",
+                "show-nat-rulebase",
+                "show-https-rulebase",
+                "show-threat-rulebase",
+                "show-access-layers",
+                "show-https-layers",
+                "show-threat-layers",
+            )
+        )
+        assert [cmd for cmd, _ in api.query_calls] == ["show-packages"]
+        assert await cache.get_sync_state("mds1", "Corp", "rulebase", "*") is None
+        st_pkgs = await cache.get_sync_state("mds1", "Corp", "rulebase", "packages")
+        assert st_pkgs is not None and st_pkgs.status == "ok" and st_pkgs.object_count == 2
+
+        # 2. Targeted refresh_package_rulebase for Branch_Pkg (access) skips NAT, HTTPS, Threat, and Corp_Standard
+        api.calls.clear()
+        api.query_calls.clear()
+        branch_out = await refresh_svc.refresh_package_rulebase(
+            "mds1",
+            "Corp",
+            "Branch_Pkg",
+            rulebase_type="access",
+            mode="smart",
+        )
+        assert branch_out.refreshed_domains == ["mds1:Corp"]
+        # Package catalog was already fresh -> zero extra show-packages calls!
+        assert api.query_calls == []
+        rb_calls = [(cmd, req) for cmd, req in api.calls if cmd.endswith("-rulebase") or cmd.endswith("-layers")]
+        assert all(cmd == "show-access-rulebase" for cmd, _ in rb_calls)
+        fetched_layers = {req.get("uid") or req.get("name") for _, req in rb_calls}
+        assert fetched_layers == {"layer-global-acc", "layer-branch-net", "layer-branch-inline"}
+        assert "layer-corp-net" not in fetched_layers
+
+        assert await cache.get_sync_state("mds1", "Corp", "rulebase", "*") is None
+        st_branch = await cache.get_sync_state("mds1", "Corp", "rulebase", "package:access:pkg-branch")
+        assert st_branch is not None and st_branch.status == "ok" and st_branch.object_count == 4
+
+        # 3. Dirty session on partial sync refuses and preserves cached rows
+        api.session_locks = 1
+        dirty_out = await refresh_svc.refresh_package_rulebase(
+            "mds1",
+            "Corp",
+            "Branch_Pkg",
+            rulebase_type="access",
+            mode="force",
+        )
+        assert "mds1:Corp" in dirty_out.failed_domains
+        snap = await cache.get_domain_rulebase("mds1", "Corp")
+        assert len(snap.access_rules) == 4
+
+        # 4. Full refresh_rulebases stamps item_type="*", which satisfies subsequent smart refresh_policy_packages without show-packages
+        api.session_locks = 0
+        await refresh_svc.refresh_rulebases(mgmt_name="mds1", domains=["Corp"], mode="force")
+        api.calls.clear()
+        api.query_calls.clear()
+        skip_out = await refresh_svc.refresh_policy_packages(mgmt_name="mds1", domains=["Corp"], mode="smart")
+        assert skip_out.skipped_domains == ["mds1:Corp"]
+        assert api.query_calls == []
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_collect_snapshot_degrades_gracefully_when_show_packages_fails_while_package_refresh_fails_strict() -> (
+    None
+):
+    """`refresh_policy_packages` fails strictly when `show-packages` errors, whereas full `refresh_rulebases` falls back to standalone layers."""
+    db = DatabaseManager()
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        lock_port = SqlLockAdapter(db)
+        api = RulebaseRefreshFakeApi()
+        orig_call = api.api_call
+        orig_query = api.api_query
+
+        async def _no_pkgs_query(
+            mgmt_name: str,
+            command: str,
+            *,
+            domain: str | None = None,
+            details_level: str = "standard",
+            payload: dict[str, Any] | None = None,
+            sid: str | None = None,
+            server_ip: str | None = None,
+            limit: int = 300,
+        ) -> ApiQueryResult:
+            if command == "show-packages":
+                return ApiQueryResult(success=False, error_message="Permissions denied for show-packages")
+            if command == "show-access-layers":
+                return ApiQueryResult(
+                    success=True,
+                    objects=[{"uid": "layer-corp-net", "name": "Corp Network", "type": "access-layer"}],
+                    total=1,
+                )
+            return await orig_query(
+                mgmt_name,
+                command,
+                domain=domain,
+                details_level=details_level,
+                payload=payload,
+                sid=sid,
+                server_ip=server_ip,
+                limit=limit,
+            )
+
+        async def _no_pkgs_call(
+            mgmt_name: str,
+            command: str,
+            payload: dict[str, Any] | None = None,
+            *,
+            domain: str | None = None,
+            sid: str | None = None,
+            server_ip: str | None = None,
+            wait_for_task: bool = True,
+            timeout: float | None = None,
+        ) -> ApiCallResult:
+            if command == "show-packages":
+                return ApiCallResult(
+                    success=False,
+                    status_code=403,
+                    error_code="err_permissions",
+                    error_message="Permissions denied for show-packages",
+                )
+            if command == "show-access-layers":
+                return ApiCallResult(
+                    success=True,
+                    data={"access-layers": [{"uid": "layer-corp-net", "name": "Corp Network"}]},
+                )
+            return await orig_call(
+                mgmt_name,
+                command,
+                payload,
+                domain=domain,
+                sid=sid,
+                server_ip=server_ip,
+                wait_for_task=wait_for_task,
+                timeout=timeout,
+            )
+
+        api.api_query = _no_pkgs_query  # type: ignore[method-assign]
+        api.api_call = _no_pkgs_call  # type: ignore[method-assign]
+
+        settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=0)
+        domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+        domain_service.tracker.mark_refreshed("mds1")
+        await cache.upsert_domains(
+            [DomainInfo(mgmt_name="mds1", uid="dom1", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1")]
+        )
+        coordinator = DomainSyncCoordinator(
+            settings=settings,
+            api=api,
+            cache=cache,
+            lock_port=lock_port,
+            domain_service=domain_service,
+        )
+        refresh_svc = RulebaseRefreshService(
+            settings=settings,
+            api=api,
+            cache=cache,
+            coordinator=coordinator,
+        )
+
+        # 1. `refresh_policy_packages` surfaces the error in `failed_domains` (`strict=True`)
+        pkg_fail = await refresh_svc.refresh_policy_packages(mgmt_name="mds1", domains=["Corp"], mode="force")
+        assert "mds1:Corp" in pkg_fail.failed_domains
+
+        # 2. Full `refresh_rulebases` degrades gracefully to standalone `show-access-layers` (`strict=False`)
+        full_ok = await refresh_svc.refresh_rulebases(mgmt_name="mds1", domains=["Corp"], mode="force")
+        assert full_ok.refreshed_domains == ["mds1:Corp"]
+        assert not full_ok.failed_domains
+        snap = await cache.get_domain_rulebase("mds1", "Corp")
+        assert any(l_entry.uid == "layer-corp-net" for l_entry in snap.layers)
+        assert len(snap.access_rules) >= 1
+    finally:
+        await db.close()

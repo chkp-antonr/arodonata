@@ -97,11 +97,17 @@ async def test_enterprise_topology_raw_replay_scale_pipeline(tmp_path: Path) -> 
         assert len(cold_outcome.refreshed_domains) == 10
         assert not cold_outcome.failed_domains
 
-        # Verify SQL cache population: 284 total assets (276 policy-enforcing gateways) & 2,950+ objects
+        # Verify SQL cache population: 284 total assets (276 policy-enforcing gateways) & ONLY gateway-referenced
+        # `"specific"` / `vpn-domain` objects resolved on demand (ZERO bulk `show-hosts` or `show-dns-domains`!)
         cached_assets = await client.cache.get_assets(mgmt_name="mds")
         assert len(cached_assets) == 284
+        assert api_mock.command_counts["show-hosts"] == 0
+        assert api_mock.command_counts["show-dns-domains"] == 0
+        assert api_mock.command_counts["show-networks"] == 0
+        assert api_mock.command_counts["show-groups"] == 0
         cached_objects = await client.cache.get_objects(mgmt_name="mds")
-        assert len(cached_objects) >= 2950
+        assert 0 < len(cached_objects) < 250
+        assert await client.cache.list_sync_states(mgmt_name="mds", scope="objects") == []
 
         # Verify on-demand `show-simple-cluster` fallback was triggered for `perim-edge-cluster`
         assert ("Perimeter", "show-simple-cluster", "uid-perim-edge-cluster") in api_mock.gateway_detail_queries
@@ -407,6 +413,8 @@ async def test_enterprise_topology_raw_replay_scale_pipeline(tmp_path: Path) -> 
             assert flow.dst_matched_cidr == expected_cidr
 
         # 5C. High-cardinality 22 x 22 batch query (nested groups, address ranges, networks, and IPs)
+        # Warm `address-range` in `Branch` for `cache_mode="cache"` (`R_Branch_001_DHCP` is not attached to a gateway interface)
+        await client.object_service.refresh_objects(mgmt_name="mds", domains=["Branch"], types=["address-range"])
         batch_sources = [
             "G_Reg_NW_L1_Root",  # 7-level nested group in Regional
             "R_Branch_001_DHCP",  # Address range 10.11.1.100-10.11.1.199

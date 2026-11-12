@@ -22,8 +22,10 @@ class ReaderFakeApi:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, Any] | None, str | None]] = []
         self.queries: list[tuple[str, str, str | None]] = []
+        self.query_payloads: list[dict[str, Any] | None] = []
         self.fail_api_call: bool = False
         self.paging_inconsistent: bool = False
+        self.unrecognized_show_objects: bool = False
 
     async def api_call(
         self,
@@ -98,12 +100,50 @@ class ReaderFakeApi:
         limit: int = 300,
     ) -> ApiQueryResult:
         self.queries.append((mgmt_name, command, domain))
+        self.query_payloads.append(payload)
         if self.paging_inconsistent:
             return ApiQueryResult(
                 success=False,
                 code="paging_inconsistent",
                 error_message="Concurrent publish detected during pagination",
             )
+        if command == "show-objects":
+            if self.unrecognized_show_objects:
+                return ApiQueryResult(
+                    success=False,
+                    code="generic_err_command_not_recognized",
+                    error_message="Command [show-objects] not recognized",
+                )
+            req_type = str((payload or {}).get("type") or "")
+            filter_needle = str((payload or {}).get("filter") or "")
+            if req_type == "host" and filter_needle in "10.20.1.1":
+                return ApiQueryResult(
+                    success=True,
+                    objects=[
+                        {
+                            "uid": "h-live-1",
+                            "name": "live-host-1",
+                            "type": "host",
+                            "ipv4-address": "10.20.1.1",
+                        }
+                    ],
+                    total=1,
+                )
+            if req_type == "service-tcp" and filter_needle in "9000":
+                return ApiQueryResult(
+                    success=True,
+                    objects=[
+                        {
+                            "uid": "s-live-9000",
+                            "name": "live-tcp-9000",
+                            "type": "service-tcp",
+                            "port": "9000",
+                            "protocol": "tcp",
+                        }
+                    ],
+                    total=1,
+                )
+            return ApiQueryResult(success=True, objects=[], total=0)
         if command == "show-hosts":
             return ApiQueryResult(
                 success=True,
@@ -241,7 +281,8 @@ async def test_hybrid_state_reader_uses_cache_when_stamp_matches_and_falls_back_
 
     svcs_by_port = await reader.find_service_by_port("mds1", "Corp", "service-tcp", "9000")
     assert [s.name for s in svcs_by_port] == ["live-tcp-9000"]
-    assert len(api.queries) == 1 and api.queries[0][1] == "show-services-tcp"
+    assert len(api.queries) == 1 and api.queries[0][1] == "show-objects"
+    assert api.query_payloads[0] == {"type": "service-tcp", "filter": "9000"}
 
     await db.close()
 
@@ -324,5 +365,50 @@ async def test_hybrid_state_reader_application_site_lookup_and_find_objects_by_v
         urls_defined_as_regular_expression=False,
     )
     assert no_matches == []
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_hybrid_state_reader_cold_show_objects_overlay_and_unrecognized_fallback() -> None:
+    """Cold-cache value lookups merge intra-plan virtual overlays and fall back cleanly on `generic_err_command_not_recognized`."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = ReaderFakeApi()
+    reader = HybridStateReader(api=api, cache=cache)
+
+    # Virtual creation before server lookup is visible to cold `find_host_by_ip` and `find_service_by_port`
+    reader.record_virtual_object(
+        CPObject(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            uid="",
+            name="virt-host-99",
+            type="host",
+            ipv4_address="192.0.2.99",
+        )
+    )
+    virt_hosts = await reader.find_host_by_ip("mds1", "Corp", "192.0.2.99")
+    assert [h.name for h in virt_hosts] == ["virt-host-99"]
+    assert api.queries == [("mds1", "show-objects", "Corp")]
+    assert api.query_payloads[0] == {"type": "host", "filter": "192.0.2.99", "ip-only": True}
+
+    # Virtual deletion suppresses a live `show-objects` match
+    reader.record_virtual_object_delete("mds1", "Corp", obj_type="host", uid="h-live-1", name="live-host-1")
+    deleted_hosts = await reader.find_host_by_ip("mds1", "Corp", "10.20.1.1")
+    assert deleted_hosts == []
+
+    # Legacy/custom adapter returning `generic_err_command_not_recognized` falls back to `show-hosts` / `show-services-tcp`
+    api2 = ReaderFakeApi()
+    api2.unrecognized_show_objects = True
+    reader2 = HybridStateReader(api=api2, cache=cache)
+    fallback_hosts = await reader2.find_host_by_ip("mds1", "Corp", "10.20.1.1")
+    assert [h.name for h in fallback_hosts] == ["live-host-1"]
+    assert [q[1] for q in api2.queries] == ["show-objects", "show-hosts"]
+
+    fallback_svcs = await reader2.find_service_by_port("mds1", "Corp", "service-tcp", "9000")
+    assert [s.name for s in fallback_svcs] == ["live-tcp-9000"]
+    assert [q[1] for q in api2.queries] == ["show-objects", "show-hosts", "show-objects", "show-services-tcp"]
 
     await db.close()

@@ -14,7 +14,16 @@ from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult, SyncScope
 from arodonata.core.models.domains import DomainInfo, DomainSyncState, SIDCacheEntry
 from arodonata.core.models.objects import CPObject
-from arodonata.core.models.rulebase import DomainRulebaseSnapshot
+from arodonata.core.models.rulebase import (
+    AccessRuleEntry,
+    DomainRulebaseSnapshot,
+    HttpsRuleEntry,
+    NatRuleEntry,
+    RulebaseLayerEntry,
+    RulebasePackageLayerEntry,
+    RulebaseSectionEntry,
+    ThreatRuleEntry,
+)
 from arodonata.core.models.services import CPService
 from arodonata.core.models.topology import (
     GatewayCliResult,
@@ -388,6 +397,36 @@ class CachePort(Protocol):
         sync_state: DomainSyncState | None = None,
     ) -> None:
         """Atomically replace all `arodonata_rulebase_*` snapshot tables for `(snapshot.mgmt_name, snapshot.domain_name)`."""
+        ...
+
+    async def replace_domain_package_catalog(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        package_layers: Sequence[RulebasePackageLayerEntry],
+        *,
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
+        """Atomically replace `arodonata_rulebase_package_layer` rows for `(mgmt_name, domain_name)` without touching layer, section, or rule tables."""
+        ...
+
+    async def upsert_domain_rulebase_layers(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        layers: Sequence[RulebaseLayerEntry] = (),
+        sections: Sequence[RulebaseSectionEntry] = (),
+        access_rules: Sequence[AccessRuleEntry] = (),
+        nat_rules: Sequence[NatRuleEntry] = (),
+        https_rules: Sequence[HttpsRuleEntry] = (),
+        threat_rules: Sequence[ThreatRuleEntry] = (),
+        package_layers: Sequence[RulebasePackageLayerEntry] = (),
+        replaced_layer_uids: Sequence[str] = (),
+        replaced_nat_package_uids: Sequence[str] = (),
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
+        """Atomically replace rulebase layers, sections, and rules strictly for `replaced_layer_uids` (and NAT packages) in `(mgmt_name, domain_name)`."""
         ...
 
     async def get_domain_rulebase(

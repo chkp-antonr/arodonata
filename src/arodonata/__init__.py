@@ -94,6 +94,8 @@ from arodonata.core.models import (
     TopologySourceType,
     TopologyZone,
     TrafficFlowMatch,
+    WarmupStatusEntry,
+    WarmupTaskStatus,
     to_naive_utc,
     utc_now,
 )
@@ -317,6 +319,8 @@ __all__ = [
     "UserContext",
     "VSXRelationshipManager",
     "ValidationError",
+    "WarmupStatusEntry",
+    "WarmupTaskStatus",
     "WriteSession",
     "__version__",
     "auth_context",
