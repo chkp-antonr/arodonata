@@ -150,6 +150,12 @@ def _sync_state_matches_stamp(
     return stamp.last_session_uid is not None or stamp.last_published_at is not None
 
 
+def _is_command_not_recognized(code: str | None, error_message: str | None) -> bool:
+    """Return `True` when an adapter reports Check Point `generic_err_command_not_recognized`."""
+    haystack = f"{code or ''} {error_message or ''}".lower()
+    return "command_not_recognized" in haystack
+
+
 class HybridStateReader:
     """Isolated per-plan state reader combining `DomainStamp`-gated cache lookups with live API fallback."""
 
@@ -170,6 +176,9 @@ class HybridStateReader:
         # Memoized live listings per (mgmt_name, domain_name, item_type) to avoid redundant full queries in one plan
         self._live_objects_memo: dict[tuple[str, str, str], list[CPObject]] = {}
         self._live_services_memo: dict[tuple[str, str, str], list[CPService]] = {}
+
+        # Memoized targeted `show-objects` queries per (mgmt_name, domain_name, obj_type, filter_text, ip_only)
+        self._filtered_objects_memo: dict[tuple[str, str, str, str, bool], list[dict[str, Any]]] = {}
 
         # Memoized rulebases per (mgmt_name, domain_name, rulebase_type, layer_or_pkg)
         self._rulebase_memo: dict[tuple[str, str, str, str], PagedRulebaseResult] = {}
@@ -438,6 +447,127 @@ class HybridStateReader:
             return None
         return CPObject.from_cp_dict(mgmt_name, domain_name, res.data)
 
+    @staticmethod
+    def _merge_entity_overlay[T: (CPObject, CPService)](
+        entity_type: str,
+        base_list: list[T],
+        del_set: set[str],
+        virt_map: dict[str, T],
+    ) -> list[T]:
+        """Merge intra-plan virtual creations, updates, and deletions onto `base_list`."""
+        result: list[T] = []
+        seen_names: set[str] = set()
+        for item in base_list:
+            if f"uid:{item.uid}" in del_set or f"name:{entity_type}:{item.name}" in del_set:
+                continue
+            override = virt_map.get(f"uid:{item.uid}") or virt_map.get(f"name:{entity_type}:{item.name}")
+            if override is not None:
+                if override.name not in seen_names:
+                    result.append(override)
+                    seen_names.add(override.name)
+            elif item.name not in seen_names:
+                result.append(item)
+                seen_names.add(item.name)
+
+        for key, virt_item in virt_map.items():
+            if key.startswith(f"name:{entity_type}:") and virt_item.name not in seen_names:
+                result.append(virt_item)
+                seen_names.add(virt_item.name)
+
+        return result
+
+    def _merge_object_overlay(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        obj_type: str,
+        base_list: list[CPObject],
+    ) -> list[CPObject]:
+        """Merge intra-plan virtual creations, updates, and deletions onto `base_list`."""
+        dom_key = (mgmt_name, domain_name)
+        return self._merge_entity_overlay(
+            obj_type,
+            base_list,
+            self._deleted_objects.get(dom_key, set()),
+            self._virtual_objects.get(dom_key, {}),
+        )
+
+    async def _query_filtered_objects(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        obj_type: str,
+        filter_text: str,
+        ip_only: bool = False,
+    ) -> list[dict[str, Any]] | None:
+        """Query `show-objects` for cold-cache value lookups; returns `None` on `command_not_recognized`."""
+        memo_key = (mgmt_name, domain_name, obj_type, filter_text, ip_only)
+        if memo_key in self._filtered_objects_memo:
+            return list(self._filtered_objects_memo[memo_key])
+
+        query_payload: dict[str, Any] = {"type": obj_type, "filter": filter_text}
+        if ip_only:
+            query_payload["ip-only"] = True
+
+        try:
+            q_res = await self._api.api_query(
+                mgmt_name,
+                "show-objects",
+                domain=domain_name or None,
+                details_level="standard",
+                payload=query_payload,
+            )
+        except ServerIdentityError:
+            raise
+        except Exception as exc:
+            raise StateLookupError(f"Live API query (show-objects) failed in {mgmt_name}:{domain_name}: {exc}") from exc
+
+        if not q_res.success:
+            if _is_command_not_recognized(q_res.code, q_res.error_message):
+                return None
+            reason = q_res.error_message or q_res.code or "show-objects query failed"
+            raise StateLookupError(f"Live API query (show-objects) failed in {mgmt_name}:{domain_name}: {reason}")
+
+        if q_res.code == "paging_inconsistent":
+            reason = q_res.error_message or q_res.code
+            raise StateLookupError(f"Live API query (show-objects) failed in {mgmt_name}:{domain_name}: {reason}")
+
+        raw_items = [raw for raw in q_res.objects if isinstance(raw, dict)]
+        self._filtered_objects_memo[memo_key] = list(raw_items)
+        return raw_items
+
+    async def _candidates_for_object_value_lookup(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        obj_type: str,
+        filter_text: str,
+        ip_only: bool = False,
+    ) -> list[CPObject]:
+        """Return candidate `CPObject` entries from fresh cache, live memo, or targeted `show-objects`."""
+        if obj_type not in OBJECT_ITEM_TYPES:
+            raise ValidationError(f"Unsupported CPCRUD object type: {obj_type!r}")
+        if (
+            await self.is_slice_cache_fresh(mgmt_name, domain_name, "objects", obj_type)
+            or (mgmt_name, domain_name, obj_type) in self._live_objects_memo
+        ):
+            return await self.list_objects_of_type(mgmt_name, domain_name, obj_type)
+
+        raw_items = await self._query_filtered_objects(
+            mgmt_name,
+            domain_name,
+            obj_type=obj_type,
+            filter_text=filter_text,
+            ip_only=ip_only,
+        )
+        if raw_items is None:
+            return await self.list_objects_of_type(mgmt_name, domain_name, obj_type)
+
+        base_list = [CPObject.from_cp_dict(mgmt_name, domain_name, raw) for raw in raw_items]
+        return self._merge_object_overlay(mgmt_name, domain_name, obj_type, base_list)
+
     async def list_objects_of_type(
         self,
         mgmt_name: str,
@@ -447,9 +577,6 @@ class HybridStateReader:
         """Return all objects of `obj_type` in `(mgmt_name, domain_name)` from fresh cache or live `api_query`."""
         if obj_type not in OBJECT_ITEM_TYPES:
             raise ValidationError(f"Unsupported CPCRUD object type: {obj_type!r}")
-        dom_key = (mgmt_name, domain_name)
-        del_set = self._deleted_objects.get(dom_key, set())
-        virt_map = self._virtual_objects.get(dom_key, {})
 
         base_list: list[CPObject]
         if await self.is_slice_cache_fresh(mgmt_name, domain_name, "objects", obj_type):
@@ -494,28 +621,7 @@ class HybridStateReader:
                 ]
                 self._live_objects_memo[memo_key] = list(base_list)
 
-        # Merge intra-plan virtual overlay
-        result: list[CPObject] = []
-        seen_names: set[str] = set()
-        for item in base_list:
-            if f"uid:{item.uid}" in del_set or f"name:{obj_type}:{item.name}" in del_set:
-                continue
-            override = virt_map.get(f"uid:{item.uid}") or virt_map.get(f"name:{obj_type}:{item.name}")
-            if override is not None:
-                if override.name not in seen_names:
-                    result.append(override)
-                    seen_names.add(override.name)
-            else:
-                if item.name not in seen_names:
-                    result.append(item)
-                    seen_names.add(item.name)
-
-        for key, virt_obj in virt_map.items():
-            if key.startswith(f"name:{obj_type}:") and virt_obj.name not in seen_names:
-                result.append(virt_obj)
-                seen_names.add(virt_obj.name)
-
-        return result
+        return self._merge_object_overlay(mgmt_name, domain_name, obj_type, base_list)
 
     async def find_host_by_ip(
         self,
@@ -525,7 +631,13 @@ class HybridStateReader:
     ) -> list[CPObject]:
         """Find all existing `host` objects matching `ip_address` (IPv4 or IPv6)."""
         target = ip_address.strip()
-        hosts = await self.list_objects_of_type(mgmt_name, domain_name, "host")
+        hosts = await self._candidates_for_object_value_lookup(
+            mgmt_name,
+            domain_name,
+            obj_type="host",
+            filter_text=target,
+            ip_only=True,
+        )
         matches: list[CPObject] = []
         for h in hosts:
             if h.ipv4_address == target or h.ipv6_address == target:
@@ -541,7 +653,13 @@ class HybridStateReader:
     ) -> list[CPObject]:
         """Find all existing `network` objects matching `(subnet4, mask_length4)`."""
         target_sub = subnet4.strip()
-        networks = await self.list_objects_of_type(mgmt_name, domain_name, "network")
+        networks = await self._candidates_for_object_value_lookup(
+            mgmt_name,
+            domain_name,
+            obj_type="network",
+            filter_text=target_sub,
+            ip_only=True,
+        )
         matches: list[CPObject] = []
         for net in networks:
             net_mask = normalize_mask_length(net.mask_length4, net.subnet_mask)
@@ -559,7 +677,13 @@ class HybridStateReader:
         """Find all existing `address-range` objects matching `(first_ip, last_ip)`."""
         f_clean = first_ip.strip()
         l_clean = last_ip.strip()
-        ranges = await self.list_objects_of_type(mgmt_name, domain_name, "address-range")
+        ranges = await self._candidates_for_object_value_lookup(
+            mgmt_name,
+            domain_name,
+            obj_type="address-range",
+            filter_text=f_clean,
+            ip_only=True,
+        )
         matches: list[CPObject] = []
         for r in ranges:
             if r.ipv4_address_first == f_clean and r.ipv4_address_last == l_clean:
@@ -739,6 +863,52 @@ class HybridStateReader:
             return None
         return CPService.from_cp_dict(mgmt_name, domain_name, res.data)
 
+    def _merge_service_overlay(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        svc_type: str,
+        base_list: list[CPService],
+    ) -> list[CPService]:
+        """Merge intra-plan virtual service creations, updates, and deletions onto `base_list`."""
+        dom_key = (mgmt_name, domain_name)
+        return self._merge_entity_overlay(
+            svc_type,
+            base_list,
+            self._deleted_services.get(dom_key, set()),
+            self._virtual_services.get(dom_key, {}),
+        )
+
+    async def _candidates_for_service_value_lookup(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        svc_type: str,
+        filter_text: str,
+    ) -> list[CPService]:
+        """Return candidate `CPService` entries from fresh cache, live memo, or targeted `show-objects`."""
+        if svc_type not in SERVICE_ITEM_TYPES:
+            raise ValidationError(f"Unsupported CPCRUD service type: {svc_type!r}")
+        if (
+            await self.is_slice_cache_fresh(mgmt_name, domain_name, "services", svc_type)
+            or (mgmt_name, domain_name, svc_type) in self._live_services_memo
+        ):
+            return await self.list_services_of_type(mgmt_name, domain_name, svc_type)
+
+        raw_items = await self._query_filtered_objects(
+            mgmt_name,
+            domain_name,
+            obj_type=svc_type,
+            filter_text=filter_text,
+            ip_only=False,
+        )
+        if raw_items is None:
+            return await self.list_services_of_type(mgmt_name, domain_name, svc_type)
+
+        base_list = [CPService.from_cp_dict(mgmt_name, domain_name, raw) for raw in raw_items]
+        return self._merge_service_overlay(mgmt_name, domain_name, svc_type, base_list)
+
     async def list_services_of_type(
         self,
         mgmt_name: str,
@@ -748,9 +918,6 @@ class HybridStateReader:
         """Return all services of `svc_type` in `(mgmt_name, domain_name)` from fresh cache or live `api_query`."""
         if svc_type not in SERVICE_ITEM_TYPES:
             raise ValidationError(f"Unsupported CPCRUD service type: {svc_type!r}")
-        dom_key = (mgmt_name, domain_name)
-        del_set = self._deleted_services.get(dom_key, set())
-        virt_map = self._virtual_services.get(dom_key, {})
 
         base_list: list[CPService]
         if await self.is_slice_cache_fresh(mgmt_name, domain_name, "services", svc_type):
@@ -797,27 +964,7 @@ class HybridStateReader:
                 ]
                 self._live_services_memo[memo_key] = list(base_list)
 
-        result: list[CPService] = []
-        seen_names: set[str] = set()
-        for item in base_list:
-            if f"uid:{item.uid}" in del_set or f"name:{svc_type}:{item.name}" in del_set:
-                continue
-            override = virt_map.get(f"uid:{item.uid}") or virt_map.get(f"name:{svc_type}:{item.name}")
-            if override is not None:
-                if override.name not in seen_names:
-                    result.append(override)
-                    seen_names.add(override.name)
-            else:
-                if item.name not in seen_names:
-                    result.append(item)
-                    seen_names.add(item.name)
-
-        for key, virt_svc in virt_map.items():
-            if key.startswith(f"name:{svc_type}:") and virt_svc.name not in seen_names:
-                result.append(virt_svc)
-                seen_names.add(virt_svc.name)
-
-        return result
+        return self._merge_service_overlay(mgmt_name, domain_name, svc_type, base_list)
 
     async def find_service_by_port(
         self,
@@ -830,7 +977,12 @@ class HybridStateReader:
         """Find existing TCP/UDP services matching `(svc_type, port, protocol)`."""
         target_port = str(port).strip()
         target_proto = str(protocol).strip().upper() if protocol else None
-        services = await self.list_services_of_type(mgmt_name, domain_name, svc_type)
+        services = await self._candidates_for_service_value_lookup(
+            mgmt_name,
+            domain_name,
+            svc_type=svc_type,
+            filter_text=target_port,
+        )
         matches: list[CPService] = []
         for s in services:
             if s.port != target_port:
@@ -848,7 +1000,12 @@ class HybridStateReader:
         icmp_type: int,
         icmp_code: int | None = None,
     ) -> list[CPService]:
-        """Find existing ICMP services matching `(icmp_type, icmp_code)`."""
+        """Find existing ICMP services matching `(icmp_type, icmp_code)`.
+
+        Note: Check Point `show-objects` `filter` does not match numeric `icmp-type` fields (e.g. built-in
+        `echo-request` has `icmp-type=8` without `'8'` in its name), whereas `show-services-icmp` /
+        `show-services-icmp6` fits in a single page (~50-60 objects) and is memoized per domain.
+        """
         services = await self.list_services_of_type(mgmt_name, domain_name, svc_type)
         matches: list[CPService] = []
         for s in services:

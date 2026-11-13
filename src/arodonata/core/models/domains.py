@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -112,3 +112,28 @@ class RefreshOutcome(BaseModel):
     skipped_domains: list[str] = Field(default_factory=list)
     failed_domains: dict[str, str] = Field(default_factory=dict)
     total_items: int = 0
+
+
+WarmupTaskStatus = Literal["running", "completed", "failed", "cancelled"]
+
+
+class WarmupStatusEntry(BaseModel):
+    """Structured status record for background object/service cache warm-up flights."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    mgmt_name: str
+    domains: list[str] = Field(default_factory=list)
+    types: list[str] = Field(default_factory=list)
+    include_global: bool = False
+    include_services: bool = False
+    status: WarmupTaskStatus = "running"
+    started_at: datetime = Field(default_factory=utc_now)
+    completed_at: datetime | None = None
+    refreshed_domains: list[str] = Field(default_factory=list)
+    failed_domains: dict[str, str] = Field(default_factory=dict)
+    error: str | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        self.started_at = to_naive_utc(self.started_at) or utc_now()
+        self.completed_at = to_naive_utc(self.completed_at)

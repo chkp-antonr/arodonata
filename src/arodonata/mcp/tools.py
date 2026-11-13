@@ -134,9 +134,50 @@ def _normalize_cache_mode(mode: str | None, *, default: CacheMode = "smart") -> 
     raise ToolFailure(f"Invalid cache_mode {mode!r}. Expected one of: 'cache', 'smart', 'smart-fast', 'force', 'live'.")
 
 
+def _get_v2_cache(client: ArodonataClient) -> Any:
+    """Return the underlying `CachePort` even when a host adapter overrides `client.cache`."""
+    return getattr(client, "_cache", client.cache)
+
+
+async def _upgrade_uninitialized_cache_mode(
+    client: ArodonataClient,
+    mgmt_name: str | None,
+    domain: str | None,
+    scope: Literal["objects", "services", "assets"],
+    mode: CacheMode,
+) -> CacheMode:
+    """Upgrade `cache_mode='cache'` to `'smart'` when `scope` has never been synced and holds zero rows."""
+    if mode != "cache":
+        return mode
+    v2_cache = _get_v2_cache(client)
+    states = await v2_cache.list_sync_states(
+        mgmt_name=mgmt_name,
+        domain_name=domain if domain else None,
+        scope=scope,
+    )
+    if states:
+        return mode
+    if scope == "objects":
+        topo_states = await v2_cache.list_sync_states(
+            mgmt_name=mgmt_name,
+            domain_name=domain if domain else None,
+            scope="topology",
+        )
+        if topo_states:
+            return "smart"
+        existing = await v2_cache.get_objects(mgmt_name=mgmt_name, domain_name=domain if domain else None)
+    elif scope == "services":
+        existing = await v2_cache.get_services(mgmt_name=mgmt_name, domain_name=domain if domain else None)
+    else:
+        existing = await v2_cache.get_assets(mgmt_name=mgmt_name, domain_name=domain if domain else None)
+    if existing:
+        return mode
+    return "smart"
+
+
 async def _compute_cache_age(
     client: ArodonataClient,
-    mgmt_name: str,
+    mgmt_name: str | None,
     domain: str | None,
     scope: SyncScope,
     item_type: str = "*",
@@ -144,7 +185,8 @@ async def _compute_cache_age(
     now_fn: Callable[[], datetime] = utc_now,
 ) -> float | None:
     """Compute `cache_age_seconds` from `domain_sync_state` for `(mgmt_name, domain, scope, item_type)`."""
-    states = await client.cache.list_sync_states(
+    v2_cache = _get_v2_cache(client)
+    states = await v2_cache.list_sync_states(
         mgmt_name=mgmt_name,
         domain_name=domain if domain else None,
         scope=scope,
@@ -156,9 +198,9 @@ async def _compute_cache_age(
 
     synced_times = [s.synced_at for s in states if s.synced_at is not None]
     if not synced_times:
-        return 0.0
+        return None
     latest = max(synced_times)
-    return max(0.0, round((now_fn() - latest).total_seconds(), 3))
+    return float(max(0.0, round((now_fn() - latest).total_seconds(), 3)))
 
 
 async def _raise_if_sync_failed(
@@ -454,7 +496,7 @@ def register_mcp_tools(
             include_global=include_global,
             cache_mode="force" if is_live else mode,
         )
-        age = None if is_live else await _compute_cache_age(client, eff_mgmt, "__root__", "domains", "*")
+        age = None if is_live else await _compute_cache_age(client, eff_mgmt, None, "domains", "*")
         serialized = [_serialize_domain(d, details_level=details_level) for d in domains]
         envelope = _build_page_envelope(
             serialized,
@@ -542,6 +584,7 @@ def register_mcp_tools(
                 )
             )
 
+        mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "objects", mode)
         objs = await client.get_objects(
             mgmt_name=eff_mgmt,
             domain=eff_domain,
@@ -643,6 +686,7 @@ def register_mcp_tools(
                 )
             )
 
+        mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "services", mode)
         svcs = await client.get_services(
             mgmt_name=eff_mgmt,
             domain=eff_domain,
@@ -732,6 +776,7 @@ def register_mcp_tools(
             )
 
         # When filtering by `parent`, load all domain assets first so parent -> member_uids can be resolved
+        mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "assets", mode)
         all_assets = await client.get_gateways(
             mgmt_name=eff_mgmt,
             domain=eff_domain,
@@ -1184,7 +1229,11 @@ def register_mcp_tools(
 
     @server.tool(
         name="search_objects",
-        description="Search cached objects across IPv4, CIDR, range, wildcard, UID, or name with recursive parent group memberships.",
+        description=(
+            "Search Check Point objects across IPv4, CIDR, range, wildcard, UID, or name with recursive parent "
+            "group memberships across all configured management servers and domains. Defaults to cache_mode='smart' "
+            "(auto-syncing uncached or stale domains); leave cache_mode='smart' unless offline-only inspection is required."
+        ),
     )
     @mcp_tool_guard("search_objects", client_getter)
     async def search_objects(
@@ -1201,26 +1250,28 @@ def register_mcp_tools(
         cache_mode: str = "smart",
     ) -> CallToolResult:
         client = client_getter()
-        eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
+        eff_mgmt = resolve_mgmt_name(client, mgmt_name) if (mgmt_name or domain or domains) else None
+        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain) if eff_mgmt else None
         target_domains = domains if domains is not None else ([eff_domain] if eff_domain else None)
-        if target_domains:
+        if eff_mgmt and target_domains:
             for d in target_domains:
                 await validate_domain_or_fail(client, eff_mgmt, d)
 
-        normalized_types = [normalize_object_type(t) for t in types if t and t.strip()] if types else None
+        raw_types = [t.strip() for t in types if t and t.strip()] if types else None
         mode, _ = _normalize_cache_mode(cache_mode, default="smart")
+        mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "objects", mode)
         result = await client.search_objects(
             query,
             mgmt_name=eff_mgmt,
             domains=target_domains,
-            types=normalized_types,
+            types=raw_types,
             include_global=include_global,
             max_depth=max_depth,
             exact_match=exact_match,
             cache_mode=mode,
         )
         age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "*")
+        envelope_mgmt = eff_mgmt or (client.settings.mgmt_names[0] if len(client.settings.mgmt_names) == 1 else None)
         serialized_matches = [_serialize_object(o, details_level="standard") for o in result.matches]
         envelope = _build_page_envelope(
             serialized_matches,
@@ -1230,7 +1281,7 @@ def register_mcp_tools(
             cache_age_seconds=age,
             extra={
                 "query": result.query,
-                "mgmt_name": eff_mgmt,
+                "mgmt_name": envelope_mgmt,
                 "domain": eff_domain,
                 "memberships": {
                     uid: [node.model_dump(mode="json") for node in nodes] for uid, nodes in result.memberships.items()
@@ -1319,8 +1370,9 @@ def register_mcp_tools(
         name="query_objects",
         description=(
             "Execute structured cross-domain filtering, grouping (group_by), counting (aggregate='count'|'list'), "
-            "or progressive-disclosure schema introspection (aggregate='describe') over cached arodonata_objects, "
-            "arodonata_services, and arodonata_assets, distinguishing local vs Global objects via original_domain."
+            "or progressive-disclosure schema introspection (aggregate='describe') over arodonata_objects, "
+            "arodonata_services, and arodonata_assets, distinguishing local vs Global objects via original_domain. "
+            "Defaults to cache_mode='smart' (auto-syncing uncached or stale domains)."
         ),
     )
     @mcp_tool_guard("query_objects", client_getter)
@@ -1340,7 +1392,7 @@ def register_mcp_tools(
         aggregate: Literal["count", "list", "describe"] = "list",
         limit: int = 100,
         offset: int = 0,
-        cache_mode: str = "cache",
+        cache_mode: str = "smart",
     ) -> CallToolResult:
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name) if mgmt_name else None
@@ -1353,7 +1405,8 @@ def register_mcp_tools(
             for d in domains:
                 await validate_domain_or_fail(client, eff_mgmt, d)
 
-        mode, _ = _normalize_cache_mode(cache_mode, default="cache")
+        mode, _ = _normalize_cache_mode(cache_mode, default="smart")
+        mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "objects", mode)
         result = await client.query_objects(
             mgmt_name=eff_mgmt,
             domain_name=eff_domain,
@@ -1374,7 +1427,7 @@ def register_mcp_tools(
         )
         age = await _compute_cache_age(
             client,
-            eff_mgmt or (client.settings.mgmt_names[0] if client.settings.mgmt_names else "default"),
+            eff_mgmt,
             eff_domain,
             "objects",
             "*",

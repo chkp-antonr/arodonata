@@ -717,5 +717,47 @@ async def test_cross_domain_get_group_members_cache_only_global_visibility_and_a
         # 3. Disambiguating via composite ID (mds1:Corp:SharedGroup) succeeds even when domain=None
         corp_members = await search_service.get_group_members("mds1", None, "mds1:Corp:SharedGroup", cache_mode="cache")
         assert [m.name for m in corp_members] == ["corp-srv"]
+
+        # 4. Asset-only search (`types=["gateway"]`, `max_depth=2`) still resolves group memberships from cached groups
+        from arodonata.core.models.assets import Asset
+
+        await cache.replace_domain_assets(
+            "mds1",
+            "Corp",
+            [
+                Asset(
+                    uid="gw-corp-01",
+                    name="corp-fw-01",
+                    type="simple-gateway",
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    ipv4_address="10.1.0.254",
+                )
+            ],
+        )
+        await cache.upsert_objects(
+            [
+                CPObject(
+                    uid="grp-corp-firewalls",
+                    name="G_Corp_Firewalls",
+                    type="group",
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    members=["gw-corp-01"],
+                )
+            ]
+        )
+        gw_search = await search_service.search_objects(
+            "corp-fw-01",
+            mgmt_name="mds1",
+            domains=["Corp"],
+            types=["gateway"],
+            max_depth=2,
+            cache_mode="cache",
+        )
+        assert [m.name for m in gw_search.matches] == ["corp-fw-01"]
+        gw_match_uid = gw_search.matches[0].uid
+        assert gw_match_uid in gw_search.memberships
+        assert [g.name for g in gw_search.memberships[gw_match_uid]] == ["G_Corp_Firewalls"]
     finally:
         await db.close()

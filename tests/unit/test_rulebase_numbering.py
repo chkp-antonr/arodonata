@@ -483,3 +483,109 @@ async def test_rule_to_cpcrud_operation_and_filter_rulebase_cpcrud_format() -> N
     )
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_cached_rulebase_source_cold_package_catalog_targeted_package_and_locate_rules_gate() -> None:
+    """`get_policy_packages` and `get_package_rulebase` perform lightweight/targeted syncs without NAT/HTTPS/Threat/sibling queries, while `locate_rules` still gates on `item_type='*'`."""
+    from arodonata.adapters.storage import SqlLockAdapter
+    from arodonata.core.config import ArodonataSettings
+    from arodonata.core.services import DomainService, DomainSyncCoordinator
+    from arodonata.rulebase.refresh import RulebaseRefreshService
+    from tests.unit.test_rulebase_refresh import RulebaseRefreshFakeApi
+
+    db = DatabaseManager()
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        lock_port = SqlLockAdapter(db)
+        api = RulebaseRefreshFakeApi()
+        api.include_branch_package = True
+
+        settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=0)
+        domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+        domain_service.tracker.mark_refreshed("mds1")
+        await cache.upsert_domains(
+            [DomainInfo(mgmt_name="mds1", uid="d-corp", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1")]
+        )
+        coordinator = DomainSyncCoordinator(
+            settings=settings,
+            api=api,
+            cache=cache,
+            lock_port=lock_port,
+            domain_service=domain_service,
+        )
+        refresh_svc = RulebaseRefreshService(
+            settings=settings,
+            api=api,
+            cache=cache,
+            coordinator=coordinator,
+        )
+        source = CachedRulebaseSource(cache=cache, refresh_service=refresh_svc)
+
+        # 1. Cold get_policy_packages(cache_mode="smart") queries show-packages only
+        pkgs = await source.get_policy_packages("mds1", "Corp", cache_mode="smart")
+        assert sorted(p.name for p in pkgs) == ["Branch_Pkg", "Corp_Standard"]
+        called_cmds = [cmd for cmd, _ in api.calls]
+        assert not any(
+            cmd in called_cmds
+            for cmd in (
+                "show-access-rulebase",
+                "show-nat-rulebase",
+                "show-https-rulebase",
+                "show-threat-rulebase",
+                "show-access-layers",
+                "show-https-layers",
+                "show-threat-layers",
+            )
+        )
+        assert await cache.get_sync_state("mds1", "Corp", "rulebase", "*") is None
+
+        # 2. Cold get_package_rulebase for Branch_Pkg fetches only Branch_Pkg's access layers
+        api.calls.clear()
+        api.query_calls.clear()
+        branch_rb = await source.get_package_rulebase(
+            "mds1",
+            "Corp",
+            "Branch_Pkg",
+            rulebase_type="access",
+            cache_mode="smart",
+        )
+        assert api.query_calls == []
+        rb_calls = [(cmd, req) for cmd, req in api.calls if cmd.endswith("-rulebase") or cmd.endswith("-layers")]
+        assert all(cmd == "show-access-rulebase" for cmd, _ in rb_calls)
+        fetched_layers = {req.get("uid") or req.get("name") for _, req in rb_calls}
+        assert fetched_layers == {"layer-global-acc", "layer-branch-net", "layer-branch-inline"}
+        assert "layer-corp-net" not in fetched_layers
+
+        assert {r.uid: r.rule_number for r in branch_rb.flat_rules} == {
+            "r-global-1": "1",
+            "r-global-ph": "2",
+            "r-branch-1": "2.1",
+            "r-branch-inline-1": "2.1.1",
+        }
+        assert branch_rb.sync_status == "ok"
+        assert branch_rb.snapshot_session_uid == "sess-rb-100"
+        assert await cache.get_sync_state("mds1", "Corp", "rulebase", "*") is None
+
+        # 3. locate_rules(cache_mode="smart") still requires item_type="*" and triggers full snapshot so Corp_Standard is not omitted!
+        locs = await source.locate_rules(
+            "mds1",
+            "Corp",
+            rule_uids=["r-corp-1", "r-branch-inline-1"],
+            cache_mode="smart",
+        )
+        assert await cache.get_sync_state("mds1", "Corp", "rulebase", "*") is not None
+        assert locs.rule_locations["r-corp-1"][0].package_name == "Corp_Standard"
+        assert locs.rule_locations["r-corp-1"][0].rule_number == "2.1"
+        assert locs.rule_locations["r-branch-inline-1"][0].package_name == "Branch_Pkg"
+        assert locs.rule_locations["r-branch-inline-1"][0].rule_number == "2.1.1"
+
+        # 4. Subsequent get_policy_packages(cache_mode="smart") reuses fresh item_type="*" with zero show-packages calls
+        api.calls.clear()
+        api.query_calls.clear()
+        pkgs_cached = await source.get_policy_packages("mds1", "Corp", cache_mode="smart")
+        assert len(pkgs_cached) == 2
+        assert api.query_calls == []
+    finally:
+        await db.close()

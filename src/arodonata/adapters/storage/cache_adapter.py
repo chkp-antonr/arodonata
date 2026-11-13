@@ -1527,6 +1527,167 @@ class SqlCacheAdapter:
             await session.commit()
 
     @traced
+    async def replace_domain_package_catalog(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        package_layers: Sequence[RulebasePackageLayerEntry],
+        *,
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
+        """Atomically replace `arodonata_rulebase_package_layer` rows for `(mgmt_name, domain_name)` without touching layer, section, or rule tables."""
+        dedup_pkg = list({pkg_layer.id: pkg_layer for pkg_layer in package_layers}.values())
+        span_attrs(mgmt_name=mgmt_name, domain=domain_name, package_layers=len(dedup_pkg))
+        async with self._db.session() as session:
+            await session.execute(
+                delete(RulebasePackageLayerRecord).where(
+                    RulebasePackageLayerRecord.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+                    RulebasePackageLayerRecord.domain_name == domain_name,  # type: ignore[arg-type]
+                )
+            )
+            await self._insert_rows_batched(
+                session,
+                RulebasePackageLayerRecord,
+                dedup_pkg,
+                lambda pkg_layer: _package_layer_to_row(pkg_layer, mgmt_name, domain_name),
+            )
+            if sync_states:
+                await self._upsert_sync_states_in_session(session, sync_states)
+            await session.commit()
+        return len(dedup_pkg)
+
+    @traced
+    async def upsert_domain_rulebase_layers(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        layers: Sequence[RulebaseLayerEntry] = (),
+        sections: Sequence[RulebaseSectionEntry] = (),
+        access_rules: Sequence[AccessRuleEntry] = (),
+        nat_rules: Sequence[NatRuleEntry] = (),
+        https_rules: Sequence[HttpsRuleEntry] = (),
+        threat_rules: Sequence[ThreatRuleEntry] = (),
+        package_layers: Sequence[RulebasePackageLayerEntry] = (),
+        replaced_layer_uids: Sequence[str] = (),
+        replaced_nat_package_uids: Sequence[str] = (),
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
+        """Atomically replace rulebase layers, sections, and rules strictly for `replaced_layer_uids` (and NAT packages) in `(mgmt_name, domain_name)`."""
+        nat_from_layers = {
+            u.removeprefix("nat:") for u in replaced_layer_uids if u.startswith("nat:") and u.removeprefix("nat:")
+        }
+        target_nat_pkg_uids = sorted(
+            {u for u in replaced_nat_package_uids if u}
+            | nat_from_layers
+            | {nr.package_uid for nr in nat_rules if nr.package_uid}
+        )
+        nat_section_layer_uids = {f"nat:{u}" for u in target_nat_pkg_uids}
+        target_layer_uids = sorted(
+            {u for u in replaced_layer_uids if u}
+            | {layer.uid for layer in layers if layer.uid}
+            | {sec.layer_uid for sec in sections if sec.layer_uid}
+            | nat_section_layer_uids
+        )
+
+        dedup_layers = list({layer.id: layer for layer in layers}.values())
+        dedup_secs = list({sec.id: sec for sec in sections}.values())
+        dedup_access = list({r.id: r for r in access_rules}.values())
+        dedup_nat = list({r.id: r for r in nat_rules}.values())
+        dedup_https = list({r.id: r for r in https_rules}.values())
+        dedup_threat = list({r.id: r for r in threat_rules}.values())
+
+        span_attrs(
+            mgmt_name=mgmt_name,
+            domain=domain_name,
+            replaced_layers=len(target_layer_uids),
+            replaced_nat_packages=len(target_nat_pkg_uids),
+            access_rules=len(dedup_access),
+            nat_rules=len(dedup_nat),
+        )
+
+        async with self._db.session() as session:
+            if package_layers:
+                pkg_rows = [_package_layer_to_row(pl, mgmt_name, domain_name) for pl in package_layers]
+                await self._dialect_upsert(session, RulebasePackageLayerRecord, pkg_rows)
+
+            for start in range(0, len(target_layer_uids), _BATCH_ROWS):
+                chunk = target_layer_uids[start : start + _BATCH_ROWS]
+                await session.execute(
+                    delete(RulebaseLayerRecord).where(
+                        RulebaseLayerRecord.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+                        RulebaseLayerRecord.domain_name == domain_name,  # type: ignore[arg-type]
+                        col(RulebaseLayerRecord.uid).in_(chunk),
+                    )
+                )
+                for layer_scoped_cls in (
+                    RulebaseSectionRecord,
+                    AccessRuleRecord,
+                    HttpsRuleRecord,
+                    ThreatRuleRecord,
+                ):
+                    await session.execute(
+                        delete(layer_scoped_cls).where(
+                            layer_scoped_cls.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+                            layer_scoped_cls.domain_name == domain_name,  # type: ignore[arg-type]
+                            col(layer_scoped_cls.layer_uid).in_(chunk),
+                        )
+                    )
+
+            for start in range(0, len(target_nat_pkg_uids), _BATCH_ROWS):
+                nat_chunk = target_nat_pkg_uids[start : start + _BATCH_ROWS]
+                await session.execute(
+                    delete(NatRuleRecord).where(
+                        NatRuleRecord.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+                        NatRuleRecord.domain_name == domain_name,  # type: ignore[arg-type]
+                        col(NatRuleRecord.package_uid).in_(nat_chunk),
+                    )
+                )
+
+            await self._insert_rows_batched(
+                session,
+                RulebaseLayerRecord,
+                dedup_layers,
+                lambda layer: _rulebase_layer_to_row(layer, mgmt_name, domain_name),
+            )
+            await self._insert_rows_batched(
+                session,
+                RulebaseSectionRecord,
+                dedup_secs,
+                lambda sec: _rulebase_section_to_row(sec, mgmt_name, domain_name),
+            )
+            await self._insert_rows_batched(
+                session,
+                AccessRuleRecord,
+                dedup_access,
+                lambda rule: _access_rule_to_row(rule, mgmt_name, domain_name),
+            )
+            await self._insert_rows_batched(
+                session,
+                NatRuleRecord,
+                dedup_nat,
+                lambda nat_rule: _nat_rule_to_row(nat_rule, mgmt_name, domain_name),
+            )
+            await self._insert_rows_batched(
+                session,
+                HttpsRuleRecord,
+                dedup_https,
+                lambda https_rule: _https_rule_to_row(https_rule, mgmt_name, domain_name),
+            )
+            await self._insert_rows_batched(
+                session,
+                ThreatRuleRecord,
+                dedup_threat,
+                lambda threat_rule: _threat_rule_to_row(threat_rule, mgmt_name, domain_name),
+            )
+
+            if sync_states:
+                await self._upsert_sync_states_in_session(session, sync_states)
+            await session.commit()
+
+        return len(dedup_access) + len(dedup_nat) + len(dedup_https) + len(dedup_threat)
+
+    @traced
     async def get_domain_rulebase_packages(
         self,
         mgmt_name: str,

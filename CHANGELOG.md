@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Lightweight Policy Package Catalog & Targeted Single-Package Rulebase Synchronization (`RulebaseRefreshService`, `CachedRulebaseSource`, `CachePort`, `SqlCacheAdapter`, `ArodonataClient`):
+  - Added `RulebaseRefreshService.refresh_policy_packages()` and `ArodonataClient.refresh_policy_packages()` (`scope="rulebase"`, `item_type="packages"`), synchronizing `PolicyPackageInfo` metadata via `show-packages` and `CachePort.replace_domain_rulebase_packages()` without downloading NAT, HTTPS, threat-prevention, or access rulebases when `get_policy_packages(..., cache_mode="smart")` runs on a cold domain.
+  - Added `RulebaseRefreshService.refresh_package_rulebase()` and `ArodonataClient.refresh_package_rulebase()` (`scope="rulebase"`, `item_type="package:<rulebase_type>:<package_uid>"`), synchronizing only the target package's catalog metadata, ordered layers for the requested `rulebase_type`, Global placeholder expansions, and referenced inline sub-layers via `CachePort.upsert_domain_rulebase_layers()` without stamping `item_type="*"` or fetching sibling packages, while keeping `locate_rules()` gated on a full `item_type="*"` domain snapshot.
+- Single-Flight Background Cache Warm-Up Status & Static Topology Candidate Filtering (`ArodonataClient`, `WarmupStatusEntry`, `TopologyService`, `STATIC_TOPOLOGY_SOURCES`):
+  - Coalesced concurrent `ArodonataClient.start_object_cache_warmup()` calls by `(mgmt_name, domains, types, include_global, include_services, force)`, suppressed unretrieved `asyncio.Task` exception warnings for fire-and-forget callers with SID-redacted structured warning logs, and added `ArodonataClient.get_warmup_status()` returning `WarmupStatusEntry` (`running`, `completed`, `failed`, `cancelled`).
+  - Added `STATIC_TOPOLOGY_SOURCES`, `source_types: Sequence[TopologySourceType] | None = None`, and `include_annotations: bool = True` parameters to `TopologyService.find_affected_gateways()` and `ArodonataClient.find_affected_gateways()` so callers can restrict candidate matching to static SmartConsole topology intervals without mutating cached route or annotation rows.
+- Check Point `show-objects` Replay Support (`FileReplayApiMock`): Implemented `show-objects` (`type`, `filter`, `ip-only`, `details-level`, `limit`, `offset`) across `objects_raw.json`, `services_raw.json`, and `gateways_and_servers.json` in `arodonata.testing.replay_mock.FileReplayApiMock`.
+
+### Changed
+
+- Replaced full-domain `DEFAULT_OBJECT_TYPES` (`show-hosts`, `show-dns-domains`) refreshes during cold `TopologyService.refresh_topology()` and `stream_refresh_topology()` with targeted on-demand `show-objects` / `show-group` / `show-object` resolution across the target domain and `"Global"` persisted via `CachePort.upsert_objects()` without stamping whole-domain `"objects"` sync slices, while re-validating cached groups/objects whenever `"objects"` sync states lag behind a newer domain `publish` (`src/arodonata/core/services/topology_service.py`).
+- Switched cold-cache CPCRUD value-conflict lookups (`find_host_by_ip`, `find_network_by_subnet`, `find_range_by_bounds`, `find_tcp_udp_service` in `HybridStateReader`) to targeted `show-objects` queries with exact attribute verification, intra-plan virtual overlays, and `generic_err_command_not_recognized` fallback instead of paginating full-domain `show-hosts`, `show-networks`, or `show-services-tcp` / `show-services-udp`, while retaining single-page `show-services-icmp` / `show-services-icmp6` listing for `find_icmp_service` (`src/arodonata/cpcrud/state_reader.py`).
+
+### Fixed
+
+- Hardened multi-server (`mgmt_name=None`) domain discovery and scoped synchronization against unreachable management servers (`DomainService.get_domains()`, `DomainSyncCoordinator`, `LoginCoordinator`): caught transport/authentication errors during `show-domains` discovery and pagination without redundant RBAC `details-level="standard"` retries on transport failure or pointless MDS self-failover, continued syncing reachable management servers while recording unreachable servers in `RefreshOutcome.failed_domains`, and suppressed unrelated server failures when all explicit `domains` resolved on reachable servers.
+- Refined `SearchService.search_objects()` and `ObjectService` so `exact_match=True` excludes wider containing supernets on IPv4/CIDR queries, mixed `types=["host", "network", "gateway"]` filters strip non-object types before `ObjectService` API calls while refreshing and matching gateway/VSX assets from `arodonata_assets`, and asset-only `search_objects(..., max_depth > 0)` still loads group hierarchy nodes (`src/arodonata/core/services/search_service.py`, `src/arodonata/core/services/object_service.py`).
+- Updated MCP listing/search and `query_objects(..., aggregate="describe")` cold-cache handling (`src/arodonata/mcp/tools.py`) to report `cache_age_seconds: null` when no `synced_at` timestamp exists, search across all configured `mgmt_names` when `mgmt_name` is omitted, and auto-upgrade `cache_mode="cache"` to `"smart"` whenever a scope has `0` sync state stamps (including when `arodonata_objects` holds only partial topology-hydrated rows).
+
 ## v2.5.0 (2026-11-11)
 
 ### Feat

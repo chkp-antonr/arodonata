@@ -25,6 +25,8 @@ from arodonata.core.models.domains import (
     DomainSyncState,
     RefreshOutcome,
     SIDCacheEntry,
+    WarmupStatusEntry,
+    WarmupTaskStatus,
 )
 from arodonata.core.models.objects import (
     CPObject,
@@ -124,6 +126,8 @@ __all__ = [
     "TopologySourceType",
     "TopologyZone",
     "TrafficFlowMatch",
+    "WarmupStatusEntry",
+    "WarmupTaskStatus",
     "normalize_any_type",
     "normalize_asset_type",
     "normalize_object_type",

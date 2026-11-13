@@ -37,6 +37,73 @@ from arodonata.testing.dataset_generator import (
 _VSID_SCRIPT_RE = re.compile(r"(?:^|\n)vsid=(\d+)\b")
 _VS_NAME_SCRIPT_RE = re.compile(r"(?:^|\n)vs_name=([^\n]+)")
 
+_SHOW_OBJECTS_TYPE_TO_CMD: dict[str, str] = {
+    "host": "show-hosts",
+    "network": "show-networks",
+    "address-range": "show-address-ranges",
+    "multicast-address-range": "show-multicast-address-ranges",
+    "group": "show-groups",
+    "group-with-exclusion": "show-groups-with-exclusion",
+    "dns-domain": "show-dns-domains",
+    "application-site": "show-application-sites",
+    "security-zone": "show-security-zones",
+    "dynamic-object": "show-dynamic-objects",
+    "service-tcp": "show-services-tcp",
+    "service-udp": "show-services-udp",
+    "service-icmp": "show-services-icmp",
+    "service-icmp6": "show-services-icmp6",
+    "service-other": "show-services-other",
+    "service-sctp": "show-services-sctp",
+    "service-dce-rpc": "show-services-dce-rpc",
+    "service-rpc": "show-services-rpc",
+    "service-gtp": "show-services-gtp",
+    "service-citrix-tcp": "show-services-citrix-tcp",
+    "service-compound-tcp": "show-services-compound-tcp",
+    "service-group": "show-service-groups",
+}
+
+_SHOW_OBJECTS_IP_FIELDS: tuple[str, ...] = (
+    "ipv4-address",
+    "ipv6-address",
+    "subnet4",
+    "subnet6",
+    "ipv4-address-first",
+    "ipv4-address-last",
+    "ipv6-address-first",
+    "ipv6-address-last",
+)
+
+_SHOW_OBJECTS_TEXT_FIELDS: tuple[str, ...] = (
+    "name",
+    "comments",
+    *_SHOW_OBJECTS_IP_FIELDS,
+    "port",
+    "protocol",
+    "ip-protocol",
+    "fqdn",
+)
+
+
+def _matches_show_objects_filter(item: dict[str, Any], *, filter_needle: str, ip_only: bool) -> bool:
+    """Evaluate Check Point `show-objects` substring filtering (`filter` and `ip-only`)."""
+    if not filter_needle:
+        if not ip_only:
+            return True
+        return any(item.get(field) not in (None, "") for field in _SHOW_OBJECTS_IP_FIELDS)
+
+    candidate_fields = _SHOW_OBJECTS_IP_FIELDS if ip_only else _SHOW_OBJECTS_TEXT_FIELDS
+    for field in candidate_fields:
+        val = item.get(field)
+        if val is not None and filter_needle in str(val).lower():
+            return True
+    if not ip_only:
+        url_list = item.get("url-list")
+        if isinstance(url_list, list):
+            for entry in url_list:
+                if entry is not None and filter_needle in str(entry).lower():
+                    return True
+    return False
+
 
 def _project_details_level(item: dict[str, Any], details_level: str) -> dict[str, Any]:
     """Project an object dictionary according to Check Point `details-level` (`uid`, `standard`, `full`)."""
@@ -52,13 +119,26 @@ def _project_details_level(item: dict[str, Any], details_level: str) -> dict[str
             "type",
             "domain",
             "ipv4-address",
+            "ipv6-address",
             "ipv4-address-first",
             "ipv4-address-last",
+            "ipv6-address-first",
+            "ipv6-address-last",
             "subnet4",
+            "subnet6",
             "mask-length4",
+            "mask-length6",
             "subnet-mask",
             "port",
             "protocol",
+            "icmp-type",
+            "icmp-code",
+            "ip-protocol",
+            "fqdn",
+            "is-sub-domain",
+            "url-list",
+            "urls-defined-as-regular-expression",
+            "primary-category",
             "members",
             "color",
             "comments",
@@ -988,6 +1068,70 @@ class FileReplayApiMock(ApiPort):
                 error_code="generic_err_object_not_found",
                 error_message=f"Object [{lookup_uid}] not found",
                 data={"code": "generic_err_object_not_found", "message": f"Object [{lookup_uid}] not found"},
+            )
+
+        if clean_cmd == "show-objects":
+            req_type = str(req.get("type") or "object").strip()
+            filter_raw = req.get("filter")
+            filter_needle = str(filter_raw).strip().lower() if filter_raw is not None else ""
+            ip_only = bool(req.get("ip-only", False))
+
+            candidates: list[dict[str, Any]] = []
+            seen_uids: set[str] = set()
+            if req_type in _SHOW_OBJECTS_TYPE_TO_CMD:
+                plural_payload = dom_files.get(_SHOW_OBJECTS_TYPE_TO_CMD[req_type], {})
+                raw_items = plural_payload.get("objects", []) if isinstance(plural_payload, dict) else []
+                for item in raw_items:
+                    if not isinstance(item, dict):
+                        continue
+                    item_type = item.get("type")
+                    if item_type is not None and str(item_type) != req_type:
+                        continue
+                    uid_key = str(item.get("uid") or "")
+                    if uid_key and uid_key in seen_uids:
+                        continue
+                    if uid_key:
+                        seen_uids.add(uid_key)
+                    candidates.append(item)
+            elif req_type == "object":
+                for plural_cmd in _SHOW_OBJECTS_TYPE_TO_CMD.values():
+                    plural_payload = dom_files.get(plural_cmd, {})
+                    raw_items = plural_payload.get("objects", []) if isinstance(plural_payload, dict) else []
+                    for item in raw_items:
+                        if not isinstance(item, dict):
+                            continue
+                        uid_key = str(item.get("uid") or "")
+                        if uid_key and uid_key in seen_uids:
+                            continue
+                        if uid_key:
+                            seen_uids.add(uid_key)
+                        candidates.append(item)
+            else:
+                for file_val in dom_files.values():
+                    if not isinstance(file_val, dict):
+                        continue
+                    raw_items = file_val.get("objects", [])
+                    if not isinstance(raw_items, list):
+                        continue
+                    for item in raw_items:
+                        if not isinstance(item, dict) or str(item.get("type") or "") != req_type:
+                            continue
+                        uid_key = str(item.get("uid") or "")
+                        if uid_key and uid_key in seen_uids:
+                            continue
+                        if uid_key:
+                            seen_uids.add(uid_key)
+                        candidates.append(item)
+
+            matched = [
+                item
+                for item in candidates
+                if _matches_show_objects_filter(item, filter_needle=filter_needle, ip_only=ip_only)
+            ]
+            return ApiCallResult(
+                success=True,
+                status_code=200,
+                data=self._paginate_list(matched, req, collection_key="objects"),
             )
 
         # Singular object lookups (`show-host`, `show-network`, `show-group`, `show-package`, etc.)

@@ -483,3 +483,90 @@ async def test_domain_service_falls_back_to_standard_details_level_on_rbac_rejec
     assert any("Domain discovery via show-domains failed" in m for m, _ in warning_logs)
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_domain_service_catches_authentication_and_transport_errors_and_preserves_cached_domains() -> None:
+    """`DomainService` catches `AuthenticationError` / `TransportError` from `api_call('show-domains')`, skips standard retry, records failed sync state, and preserves cached domains (while re-raising `ServerIdentityError`)."""
+    from arodonata.core.errors import (
+        AuthenticationError,
+        ServerIdentityError,
+        TransportError,
+    )
+    from arodonata.core.models.domains import DomainInfo
+    from arodonata.core.services.domain_service import SYSTEM_DOMAIN_KEY
+
+    class RaisingApiPort(FakeApiPort):
+        def __init__(self) -> None:
+            super().__init__()
+            self.exc_to_raise: Exception | None = None
+
+        async def api_call(
+            self,
+            mgmt_name: str,
+            command: str,
+            payload: dict[str, Any] | None = None,
+            *,
+            domain: str | None = None,
+            sid: str | None = None,
+            server_ip: str | None = None,
+            wait_for_task: bool = True,
+            timeout: float | None = None,
+        ) -> ApiCallResult:
+            self.calls.append((mgmt_name, command, dict(payload or {}), domain))
+            if self.exc_to_raise is not None:
+                raise self.exc_to_raise
+            return await super().api_call(
+                mgmt_name,
+                command,
+                payload,
+                domain=domain,
+                sid=sid,
+                server_ip=server_ip,
+                wait_for_task=wait_for_task,
+                timeout=timeout,
+            )
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = RaisingApiPort()
+    settings = ArodonataSettings(mgmt_name="smsNP82", mgmt_ip="10.192.11.138", api_key="secret")
+    service = DomainService(settings=settings, api=api, cache=cache)
+
+    # 1. Cold cache + AuthenticationError on login during show-domains -> returns [], records failed, 1 call only
+    api.exc_to_raise = AuthenticationError(
+        "Login to 'smsNP82' ('System Data' at 10.192.11.138) timed out or failed: Connect call failed"
+    )
+    cold_domains = await service.get_domains("smsNP82", cache_mode="force")
+    assert cold_domains == []
+    assert len([c for c in api.calls if c[1] == "show-domains"]) == 1
+    st = await cache.get_sync_state("smsNP82", SYSTEM_DOMAIN_KEY, "domains", "*")
+    assert st is not None
+    assert st.status == "failed"
+    assert "10.192.11.138" in (st.last_error or "")
+
+    # 2. Warm cache + TransportError -> preserves previously cached domains!
+    await cache.upsert_domains(
+        [
+            DomainInfo(
+                mgmt_name="smsNP82",
+                uid="dom-warm-1",
+                name="WarmDom",
+                active_ip="10.192.11.138",
+                active_mds_ip="10.192.11.138",
+            )
+        ]
+    )
+    api.calls.clear()
+    api.exc_to_raise = TransportError("Connection reset by peer")
+    warm_domains = await service.get_domains("smsNP82", cache_mode="force")
+    assert [d.name for d in warm_domains] == ["WarmDom"]
+    assert len([c for c in api.calls if c[1] == "show-domains"]) == 1
+
+    # 3. TLS ServerIdentityError MUST still propagate immediately (fail-closed security rule)
+    api.exc_to_raise = ServerIdentityError("Fingerprint mismatch on 10.192.11.138")
+    with pytest.raises(ServerIdentityError):
+        await service.get_domains("smsNP82", cache_mode="force")
+
+    await db.close()

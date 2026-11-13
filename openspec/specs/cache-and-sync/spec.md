@@ -53,10 +53,10 @@ Defines the database-backed cache layer (`DatabaseManager`, `SqlCacheAdapter`, `
 - **WHEN** `await client.refresh_objects(mode="smart-fast")` or a read helper with `cache_mode="smart-fast"` detects stale `item_type` rows with a known baseline in `arodonata_domain_sync_state`
 - **THEN** the service SHALL query `show-changes` preferring `from-session` (`last_session_uid`) over `from-date` (formatting `from-date` as an explicit UTC ISO-8601 string with `Z` suffix when used), unwrap `new-object` / `old-object` change entries, delete removed objects, upsert added/modified objects via dialect `ON CONFLICT`, and update `arodonata_domain_sync_state` atomically; if changes exceed `max_incremental_changes` (default 500) or any error occurs, it SHALL fall back automatically to an atomic type-scoped reload
 
-#### Scenario: Refresh failure visibility and InvalidCredentialsError handling
+#### Scenario: Refresh failure visibility, unreachable server resilience, and InvalidCredentialsError handling
 
-- **WHEN** a domain's staleness probe or refresh fails with an API/authentication error (`InvalidCredentialsError`, etc.) versus encountering `LockAcquisitionError` because another worker is actively refreshing that domain
-- **THEN** genuine errors SHALL be recorded in `RefreshOutcome.failed_domains`, `arodonata_domain_sync_state.last_error`, and `DomainSyncFailedEvent` (logged at `WARNING` level) with `redact_sid(..., known_sids=...)` applied while keeping previously cached objects intact, whereas `LockAcquisitionError` SHALL NOT overwrite `arodonata_domain_sync_state.status` as `"failed"` or emit a false failure event over the active worker's sync
+- **WHEN** a domain's staleness probe or refresh fails with an API/authentication error (`InvalidCredentialsError`, etc.), when one management server in a multi-server refresh (`mgmt_name=None`) fails during domain discovery (`get_domains`), or when a domain encounters `LockAcquisitionError` because another worker is actively refreshing that domain
+- **THEN** genuine errors (including a server whose domain discovery failed) SHALL be recorded in `RefreshOutcome.failed_domains`, `arodonata_domain_sync_state.last_error` (where applicable), and `DomainSyncFailedEvent` (logged at `WARNING` level) with `redact_sid(..., known_sids=...)` applied while keeping previously cached objects intact and continuing synchronization on all reachable servers, whereas `LockAcquisitionError` SHALL NOT overwrite `arodonata_domain_sync_state.status` as `"failed"` or emit a false failure event over the active worker's sync
 
 #### Scenario: Parallel domain refresh per MDS member and background first-use warm-up
 
@@ -124,10 +124,15 @@ Defines the database-backed cache layer (`DatabaseManager`, `SqlCacheAdapter`, `
 - **WHEN** `await client.search_objects("10.1.10.50", max_depth=2)` or `await client.search_objects("mds:General:hWebHost", max_depth=2)` is called
 - **THEN** it SHALL return a `SearchResult` containing both the matching host/network objects (reflecting any uncommitted `WriteSession` overlay in the current context) and the hierarchy of groups (`memberships`) that directly or transitively contain those objects, with each `GroupMembershipNode` populated with `id`, `object_id`, `parent_uids`, and `parent_object_ids`
 
-#### Scenario: Exact-match name search avoids partial substring matches
+#### Scenario: Exact-match search avoids partial name matches and wider supernets
 
-- **WHEN** `await client.search_objects(".example.com", exact_match=True)` is called on a domain containing `.example.com` and `sub.example.com`
-- **THEN** it SHALL return only `.example.com` (and its parent groups) without matching `sub.example.com`, while wildcard terms (`*.example.com`) continue to match via anchored `fnmatchcase`
+- **WHEN** `await client.search_objects(".example.com", exact_match=True)` is called on a domain containing `.example.com` and `sub.example.com`, or `await client.search_objects("10.192.13.0/24, 192.168.1.10", exact_match=True)` is called on a domain also containing a wider supernet (`10.0.0.0/8`)
+- **THEN** name search SHALL return only `.example.com` without matching `sub.example.com` (while wildcard terms `*.example.com` continue to match via anchored `fnmatchcase`), and IPv4/CIDR search SHALL match only exact hosts/subnets (or narrower subnets contained within a CIDR query) while excluding wider containing supernets such as `10.0.0.0/8`
+
+#### Scenario: Mixed object and gateway type filters partition cleanly between objects and assets
+
+- **WHEN** `await client.search_objects(query, types=["host", "network", "gateway"], cache_mode="smart")` is called
+- **THEN** `ObjectService` SHALL strip asset/service types (`"gateway"`, etc.) before calling Check Point `show-*` object endpoints so `arodonata_objects` refreshes cleanly without `Requested API type: not found`, and `SearchService.search_objects()` SHALL additionally refresh and match gateway/cluster/VSX assets (both primary `ipv4_address` and interface IPv4 addresses) from `arodonata_assets`
 
 ### Requirement: Cluster and Cross-Domain VSX Parent-Child Topology Enrichment
 

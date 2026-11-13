@@ -593,3 +593,255 @@ async def test_standalone_mutation_helpers_auto_wrap_in_isolated_write_session()
         assert len(pub_calls) == 1
         assert pub_calls[0][4] == "ws-sid-123"
         assert "ws-sid-123" in fake_api.logged_out_sids
+
+
+@pytest.mark.asyncio
+async def test_client_single_flight_warmup_coalescing_and_status_tracking() -> None:
+    """Concurrent `start_object_cache_warmup` calls for the same scope coalesce into a single task and report status via `get_warmup_status`."""
+    fake_api = FacadeFakeApi()
+    fake_api.slow_query_delay = 0.03
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        t1 = client.start_object_cache_warmup(mgmt_name="mds1", domains=["Corp"], include_services=True)
+        t2 = client.start_object_cache_warmup(mgmt_name="mds1", domains="Corp", include_services=True)
+        t3 = client.start_object_cache_warmup(domains=["Corp"], include_services=True)
+        assert t1 is t2
+        assert t1 is t3
+
+        running_status = client.get_warmup_status(mgmt_name="mds1")
+        assert len(running_status) == 1
+        assert running_status[0].status == "running"
+        assert running_status[0].domains == ["Corp"]
+        assert running_status[0].include_services is True
+
+        outcome = await t1
+        assert "mds1:Corp" in outcome.refreshed_domains
+        # Only one `show-hosts` query ran despite 3 concurrent warm-up calls
+        host_queries = [q for q in fake_api.queries if q[1] == "show-hosts"]
+        assert len(host_queries) == 1
+
+        completed_status = client.get_warmup_status(mgmt_name="mds1")
+        assert len(completed_status) == 1
+        assert completed_status[0].status == "completed"
+        assert "mds1:Corp" in completed_status[0].refreshed_domains
+        assert completed_status[0].completed_at is not None
+
+        # After completion, a subsequent call spawns a new task
+        fake_api.slow_query_delay = 0.0
+        t4 = client.start_object_cache_warmup(mgmt_name="mds1", domains=["Corp"], include_services=True)
+        assert t4 is not t1
+        await t4
+
+
+@pytest.mark.asyncio
+async def test_client_fire_and_forget_warmup_failure_redacts_sid_without_unretrieved_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fire-and-forget `start_object_cache_warmup` failures record SID-redacted status without emitting unretrieved task warnings."""
+    import gc
+
+    fake_api = FacadeFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    loop = asyncio.get_running_loop()
+    loop_exceptions: list[dict[str, Any]] = []
+    prev_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _lp, ctx: loop_exceptions.append(ctx))
+
+    try:
+        async with ArodonataClient(settings, api=fake_api) as client:
+
+            async def _boom(**kwargs: Any) -> Any:
+                await asyncio.sleep(0.01)
+                raise RuntimeError("CMA unreachable (X-chkp-sid: SuperSecretSidToken999999)")
+
+            monkeypatch.setattr(client, "refresh_objects", _boom)
+
+            # Intentionally drop returned task reference without awaiting (fire-and-forget)
+            client.start_object_cache_warmup(mgmt_name="mds1", domains=["UnreachableCMA"])
+            await asyncio.sleep(0.05)
+            gc.collect()
+            await asyncio.sleep(0.01)
+
+            statuses = client.get_warmup_status(mgmt_name="mds1")
+            assert len(statuses) == 1
+            assert statuses[0].status == "failed"
+            assert statuses[0].error is not None
+            assert "SuperSecretSidToken999999" not in statuses[0].error
+            assert "***REDACTED***" in statuses[0].error
+            for err_val in statuses[0].failed_domains.values():
+                assert "SuperSecretSidToken999999" not in err_val
+    finally:
+        loop.set_exception_handler(prev_handler)
+
+    assert loop_exceptions == []
+
+
+@pytest.mark.asyncio
+async def test_client_lightweight_package_rulebase_and_static_gateway_facade_methods() -> None:
+    """`ArodonataClient` exposes `refresh_policy_packages`, `refresh_package_rulebase`, and static-filtered `find_affected_gateways` without full NAT/HTTPS/Threat or `show-hosts` syncs."""
+    from arodonata import STATIC_TOPOLOGY_SOURCES, TopologyAnnotation
+
+    fake_api = FacadeFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        pkg_out = await client.refresh_policy_packages(mgmt_name="mds1", domains=["Corp"])
+        assert "mds1:Corp" in pkg_out.refreshed_domains
+
+        streamed_events = [
+            ev async for ev in client.stream_refresh_policy_packages(mgmt_name="mds1", domains=["Corp"], mode="force")
+        ]
+        assert streamed_events
+
+        pkgs = await client.get_policy_packages("mds1", "Corp", cache_mode="smart")
+        assert [p.name for p in pkgs] == ["Standard"]
+
+        rb_out = await client.refresh_package_rulebase("mds1", "Corp", "Standard", rulebase_type="access", mode="force")
+        assert "mds1:Corp" in rb_out.refreshed_domains
+
+        pkg_rb = await client.get_package_rulebase(
+            "mds1", "Corp", "Standard", rulebase_type="access", cache_mode="smart"
+        )
+        assert pkg_rb.package_name == "Standard"
+        assert len(pkg_rb.layers) == 1
+
+        # Add a manual annotation override that would widen eth2 to 10.99.0.0/16 if annotations were enabled
+        await client.upsert_topology_annotations(
+            TopologyAnnotation(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                gateway_uid="gw-1",
+                gateway_name="corp-fw-01",
+                interface_name="eth2",
+                disposition="manual",
+                cidr_or_range="10.99.0.0/16",
+            )
+        )
+
+        # With include_annotations=True (default), 10.99.1.5 resolves to eth2 via the manual annotation;
+        # with include_annotations=False, the manual annotation on eth2 is ignored and 10.99.1.5 falls back to external eth0
+        with_ann_candidates = await client.find_affected_gateways(
+            "10.1.1.10",
+            "10.99.1.5",
+            mgmt_name="mds1",
+            domain="Corp",
+            include_annotations=True,
+            cache_mode="smart",
+        )
+        assert len(with_ann_candidates) == 1
+        assert with_ann_candidates[0].matched_flows[0].dst_interface == "eth2"
+
+        no_ann_candidates = await client.find_affected_gateways(
+            "10.1.1.10",
+            "10.99.1.5",
+            mgmt_name="mds1",
+            domain="Corp",
+            source_types=STATIC_TOPOLOGY_SOURCES,
+            include_annotations=False,
+            cache_mode="smart",
+        )
+        assert len(no_ann_candidates) == 1
+        assert no_ann_candidates[0].matched_flows[0].dst_interface == "eth0"
+
+        static_candidates = await client.find_affected_gateways(
+            "10.1.1.10",
+            "10.2.2.20",
+            mgmt_name="mds1",
+            domain="Corp",
+            source_types=STATIC_TOPOLOGY_SOURCES,
+            include_annotations=False,
+            cache_mode="smart",
+        )
+        assert [c.gateway_name for c in static_candidates] == ["corp-fw-01"]
+        assert static_candidates[0].policy_packages == ["Standard"]
+
+        # Verify zero full-domain NAT/HTTPS/Threat rulebase calls and zero bulk show-hosts queries
+        called_cmds = {c[1] for c in fake_api.calls}
+        queried_cmds = {q[1] for q in fake_api.queries}
+        assert "show-nat-rulebase" not in called_cmds
+        assert "show-https-rulebase" not in called_cmds
+        assert "show-threat-rulebase" not in called_cmds
+        assert "show-hosts" not in queried_cmds
+
+
+@pytest.mark.asyncio
+async def test_client_refresh_package_rulebase_none_domain_and_force_warmup_separation() -> None:
+    """`refresh_package_rulebase` resolves `domain_name=None` across MDS domains (including `Global`) and `start_object_cache_warmup` separates `mode='force'` from `mode='smart'`."""
+    fake_api = FacadeFakeApi()
+    orig_api_call = fake_api.api_call
+
+    async def _mds_api_call(
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        domain: str | None = None,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        wait_for_task: bool = True,
+        timeout: float | None = None,
+    ) -> ApiCallResult:
+        if command == "show-packages":
+            if domain == "Global":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "packages": [
+                            {
+                                "uid": "p-glob",
+                                "name": "Global_Base_Policy",
+                                "access": True,
+                                "access-layers": [{"uid": "l1", "name": "Global Network", "position": 1}],
+                            }
+                        ],
+                        "to": 1,
+                        "total": 1,
+                    },
+                )
+            if domain == "Corp":
+                return await orig_api_call(
+                    mgmt_name,
+                    command,
+                    payload,
+                    domain=domain,
+                    sid=sid,
+                    server_ip=server_ip,
+                    wait_for_task=wait_for_task,
+                    timeout=timeout,
+                )
+            return ApiCallResult(success=True, data={"packages": [], "to": 0, "total": 0})
+        return await orig_api_call(
+            mgmt_name,
+            command,
+            payload,
+            domain=domain,
+            sid=sid,
+            server_ip=server_ip,
+            wait_for_task=wait_for_task,
+            timeout=timeout,
+        )
+
+    fake_api.api_call = _mds_api_call  # type: ignore[method-assign]
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        # 1. `domain_name=None` discovers "Corp" for "Standard" (never "System Data")
+        corp_out = await client.refresh_package_rulebase("mds1", None, "Standard", rulebase_type="access", mode="smart")
+        assert corp_out.refreshed_domains == ["mds1:Corp"]
+
+        # 2. `domain_name=None` also discovers "Global" for "Global_Base_Policy"
+        glob_out = await client.refresh_package_rulebase(
+            "mds1", None, "Global_Base_Policy", rulebase_type="access", mode="smart"
+        )
+        assert glob_out.refreshed_domains == ["mds1:Global"]
+
+        # 3. Concurrent `mode="smart"` coalesces, while `mode="force"` starts an independent flight
+        fake_api.slow_query_delay = 0.05
+        t_smart_1 = client.start_object_cache_warmup(mgmt_name="mds1", domains=["Corp"], mode="smart")
+        t_smart_2 = client.start_object_cache_warmup(mgmt_name="mds1", domains=["Corp"], mode="smart")
+        t_force = client.start_object_cache_warmup(mgmt_name="mds1", domains=["Corp"], mode="force")
+        assert t_smart_1 is t_smart_2
+        assert t_force is not t_smart_1
+        await asyncio.gather(t_smart_1, t_force)

@@ -46,8 +46,8 @@ The `arodonata[mcp]` server SHALL expose a structured query and schema-introspec
 
 #### Scenario: Progressive-disclosure schema description via query_objects
 
-- **WHEN** `query_objects(mgmt_name=..., domain=..., aggregate="describe")` is called
-- **THEN** it SHALL return available domains, management servers, per-type object/service/asset counts, and the list of filterable and groupable fields from the cached tables
+- **WHEN** `query_objects(mgmt_name=..., domain=..., aggregate="describe")` is called (defaulting to `cache_mode="smart"`)
+- **THEN** if the object cache for the target scope has not been synchronized (`0` `scope="objects"` sync states, even if partial on-demand topology objects exist), it SHALL warm `arodonata_objects` first when `cache_mode != "cache"`, and return available domains, management servers, per-type object/service/asset counts, and the list of filterable and groupable fields from the cached tables
 
 #### Scenario: Cache status inspection across scopes
 
@@ -58,10 +58,10 @@ The `arodonata[mcp]` server SHALL expose a structured query and schema-introspec
 
 The MCP server SHALL expose a consolidated cache-aligned tool surface (`list_domains`, `list_objects`, `list_services`, `list_assets`, `show_object`, `show_rulebase`, `locate_rules`, `search_objects`, `get_group_members`, `query_objects`, `cache_control`, `change_report`, `api_call`, and opt-in CPCRUD tools), pre-validating explicit `domain` names against `arodonata_domains` and normalizing short and canonical object/service/asset types.
 
-#### Scenario: List tool response envelope includes source and cache age
+#### Scenario: List and search tool response envelope includes source, accurate cache age, and cold-cache auto-upgrade
 
-- **WHEN** a collection listing tool (`list_domains`, `list_objects`, `list_services`, or `list_assets`) returns a page of objects (including with short or canonical `types` filters such as `types=["tcp", "udp"]` on `list_services` or `parent="..."` on `list_assets`)
-- **THEN** the JSON text response SHALL include `from`, `to`, `total`, `source` (`"cache"` or `"live"`), `cache_age_seconds`, and `objects` sliced by `limit` and `offset`
+- **WHEN** a collection listing or search tool (`list_domains`, `list_objects`, `list_services`, `list_assets`, `search_objects`, or `query_objects`) executes
+- **THEN** the JSON text response SHALL include `from`, `to`, `total`, `source` (`"cache"` or `"live"`), `cache_age_seconds` (`null` when no `synced_at` timestamp exists in `arodonata_domain_sync_state` rather than `0.0`), and `objects` sliced by `limit` and `offset`; when `cache_mode="cache"` is passed on an uninitialized scope (`0` sync states for that scope, or `0` cached domain rows for `domains`), the tool SHALL automatically upgrade to `"smart"` so cold caches are populated on first query; and when `mgmt_name` is omitted in `search_objects`, the search SHALL span all configured `mgmt_names` rather than only `mgmt_names[0]`
 
 #### Scenario: Single-entity show_object resolves across objects, services, assets, and layers with wildcard and substring fallback
 

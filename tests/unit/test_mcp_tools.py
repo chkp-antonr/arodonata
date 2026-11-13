@@ -1541,3 +1541,182 @@ async def test_single_domain_smc_implicit_domain_refresh_and_async_api_reference
         grp_data = _parse_tool_json(grp_res)
         assert grp_data["domain"] == "Corp"
         assert grp_data["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cold_cache_search_and_query_objects_gateway_types_multiserver_and_exact_cidr() -> None:
+    """Verify cold-cache search/query behavior after domain-only discovery (e.g. Build Inventory):
+    - `search_objects` with `types=['host', 'network', 'gateway']` strips `'gateway'` from `show-objects`,
+      refreshes `arodonata_assets` for gateway matches, searches across all `mgmt_names` when `mgmt_name` is omitted,
+      and auto-upgrades `cache_mode='cache'` -> `'smart'` when `arodonata_objects` has never been synced.
+    - `query_objects` defaults to `cache_mode='smart'` and populates a cold object cache.
+    - `exact_match=True` on IPv4 and CIDR excludes wider containing supernets (e.g. `10.0.0.0/8`).
+    """
+    fake_api = MCPFakeApi()
+    orig_api_query = fake_api.api_query
+
+    async def _strict_api_query(
+        mgmt_name: str,
+        command: str,
+        *,
+        domain: str | None = None,
+        details_level: str = "standard",
+        payload: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ApiQueryResult:
+        if command == "show-objects" and (payload or {}).get("type") == "gateway":
+            return ApiQueryResult(success=False, error_message="Requested API type: not found")
+        if mgmt_name == "sms2" and command == "show-hosts":
+            return ApiQueryResult(
+                success=True,
+                objects=[
+                    {
+                        "uid": "h-sms2-1",
+                        "name": "sms2-web-01",
+                        "type": "host",
+                        "ipv4-address": "10.10.1.99",
+                        "domain": {"name": domain or "Corp"},
+                    }
+                ],
+                total=1,
+            )
+        return await orig_api_query(
+            mgmt_name,
+            command,
+            domain=domain,
+            details_level=details_level,
+            payload=payload,
+            **kwargs,
+        )
+
+    fake_api.api_query = _strict_api_query  # type: ignore[method-assign]
+    settings = ArodonataSettings(
+        mgmt_names=["mds1", "sms2"],
+        mgmt_servers=["10.0.0.1", "10.0.0.2"],
+        api_keys=["secret-1", "secret-2"],
+    )
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        # Simulate post-Build-Inventory state: domains cached, objects cache completely uninitialized
+        await client.get_domains("mds1", include_global=True)
+        await client.get_domains("sms2", include_global=True)
+        assert await client.cache.get_objects() == []
+
+        server = create_mcp_server(client, auth_mode="host")
+
+        # 1. Even if caller passes cache_mode="cache" on an uninitialized cache with types=["host", "network", "gateway"]
+        # and mgmt_name omitted, search_objects warms both servers without failing on show-objects(type="gateway")
+        res = await server.call_tool(
+            "search_objects",
+            {
+                "query": "10.10.1.0/24",
+                "types": ["host", "network", "gateway"],
+                "include_global": True,
+                "cache_mode": "cache",
+            },
+        )
+        assert res.is_error is False
+        data = _parse_tool_json(res)
+        assert data["mgmt_name"] is None
+        assert isinstance(data["cache_age_seconds"], float)
+        matched_names = {(o["mgmt_name"], o["name"]) for o in data["objects"]}
+        assert ("mds1", "web-srv-1") in matched_names
+        assert ("mds1", "net-web") in matched_names
+        assert ("mds1", "corp-gw-01") in matched_names
+        assert ("sms2", "sms2-web-01") in matched_names
+
+        # 2. Seed a wider supernet 10.0.0.0/8 and verify exact_match=True excludes it on CIDR and IPv4
+        await client.cache.upsert_objects(
+            [
+                CPObject(
+                    uid="n-super-10",
+                    name="n10",
+                    type="network",
+                    mgmt_name="mds1",
+                    domain_name="Global",
+                    original_domain="Global",
+                    subnet4="10.0.0.0",
+                    mask_length4=8,
+                )
+            ]
+        )
+        broad_cidr = _parse_tool_json(
+            await server.call_tool(
+                "search_objects",
+                {"query": "10.10.1.0/24", "mgmt_name": "mds1", "include_global": True, "exact_match": False},
+            )
+        )
+        assert any(o["name"] == "n10" for o in broad_cidr["objects"])
+
+        narrow_cidr = _parse_tool_json(
+            await server.call_tool(
+                "search_objects",
+                {"query": "10.10.1.0/24", "mgmt_name": "mds1", "include_global": True, "exact_match": True},
+            )
+        )
+        assert all(o["name"] != "n10" for o in narrow_cidr["objects"])
+        assert any(o["name"] == "net-web" for o in narrow_cidr["objects"])
+        assert any(o["name"] == "web-srv-1" for o in narrow_cidr["objects"])
+
+        narrow_ip = _parse_tool_json(
+            await server.call_tool(
+                "search_objects",
+                {"query": "10.10.1.10", "mgmt_name": "mds1", "include_global": True, "exact_match": True},
+            )
+        )
+        assert all(o["name"] != "n10" for o in narrow_ip["objects"])
+        assert all(o["name"] != "net-web" for o in narrow_ip["objects"])
+        assert any(o["name"] == "web-srv-1" for o in narrow_ip["objects"])
+
+    # 3. Fresh client: query_objects defaults to cache_mode="smart" and populates cold object cache
+    async with ArodonataClient(settings, api=fake_api) as cold_client:
+        await cold_client.get_domains("mds1", include_global=True)
+        cold_server = create_mcp_server(cold_client, auth_mode="host")
+        q_res = await cold_server.call_tool(
+            "query_objects",
+            {"mgmt_name": "mds1", "types": ["network"], "ip_subnet": "10.10.1.0/24"},
+        )
+        assert q_res.is_error is False
+        q_data = _parse_tool_json(q_res)
+        assert q_data["total"] >= 1
+        assert any(o["name"] == "net-web" for o in q_data["objects"])
+
+    # 4. Partial topology-hydrated objects (`scope="topology"` synced, `scope="objects"` empty) must still auto-upgrade `list_objects(cache_mode="cache")` to `"smart"`
+    from arodonata.core.models.domains import DomainSyncState
+
+    async with ArodonataClient(settings, api=fake_api) as partial_client:
+        await partial_client.get_domains("mds1", include_global=True)
+        await partial_client.cache.upsert_objects(
+            [
+                CPObject(
+                    uid="partial-topo-net",
+                    name="N_Partial_Specific",
+                    type="network",
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    subnet4="10.250.0.0",
+                    mask_length4=24,
+                )
+            ],
+            sync_states=None,
+        )
+        await partial_client.cache.upsert_sync_state(
+            DomainSyncState(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                scope="topology",
+                item_type="*",
+                status="ok",
+                object_count=1,
+            )
+        )
+        assert await partial_client.cache.list_sync_states(mgmt_name="mds1", domain_name="Corp", scope="objects") == []
+        partial_server = create_mcp_server(partial_client, auth_mode="host")
+        list_res = await partial_server.call_tool(
+            "list_objects",
+            {"mgmt_name": "mds1", "domain": "Corp", "cache_mode": "cache"},
+        )
+        assert list_res.is_error is False
+        list_data = _parse_tool_json(list_res)
+        returned_names = {o["name"] for o in list_data["objects"]}
+        assert "web-srv-1" in returned_names

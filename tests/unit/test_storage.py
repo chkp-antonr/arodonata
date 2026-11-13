@@ -1008,3 +1008,201 @@ async def test_batched_replace_domain_rulebase_and_package_only_snapshot() -> No
         assert pkg_only.nat_rules[0].package_name == "NatOnlyPkg"
     finally:
         await db.close()
+
+
+async def test_sql_cache_adapter_package_catalog_and_targeted_rulebase_layers() -> None:
+    """Verify `replace_domain_package_catalog` and `upsert_domain_rulebase_layers` preserve sibling layers and sync slices."""
+    from arodonata.core.models.rulebase import (
+        AccessRuleEntry,
+        NatRuleEntry,
+        RulebaseLayerEntry,
+        RulebasePackageLayerEntry,
+        RulebaseSectionEntry,
+    )
+
+    db = DatabaseManager(engine=None)
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        assert isinstance(cache, CachePort)
+
+        # 1. Replace package catalog with two packages
+        pkg_links = [
+            RulebasePackageLayerEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                package_uid="pkg-a",
+                package_name="PkgA",
+                rulebase_type="access",
+                layer_uid="layer-a",
+                layer_name="LayerA",
+                position=1,
+            ),
+            RulebasePackageLayerEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                package_uid="pkg-b",
+                package_name="PkgB",
+                rulebase_type="access",
+                layer_uid="layer-b",
+                layer_name="LayerB",
+                position=1,
+            ),
+        ]
+        pkg_sync = DomainSyncState(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            scope="rulebase",
+            item_type="packages",
+            status="ok",
+            object_count=2,
+            synced_at=utc_now(),
+        )
+        inserted_links = await cache.replace_domain_package_catalog(
+            "mds1",
+            "Corp",
+            pkg_links,
+            sync_states=[pkg_sync],
+        )
+        assert inserted_links == 2
+        assert await cache.get_sync_state("mds1", "Corp", "rulebase", "*") is None
+        st_pkgs = await cache.get_sync_state("mds1", "Corp", "rulebase", "packages")
+        assert st_pkgs is not None and st_pkgs.status == "ok"
+
+        # 2. Upsert layers for PkgA and PkgB separately
+        await cache.upsert_domain_rulebase_layers(
+            "mds1",
+            "Corp",
+            layers=[
+                RulebaseLayerEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    uid="layer-a",
+                    name="LayerA",
+                    rulebase_type="access",
+                )
+            ],
+            sections=[
+                RulebaseSectionEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    layer_uid="layer-a",
+                    layer_name="LayerA",
+                    rulebase_type="access",
+                    uid="sec-a",
+                    name="SecA",
+                    position=1,
+                    rule_uids=["r-a1", "r-a2"],
+                )
+            ],
+            access_rules=[
+                AccessRuleEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    layer_uid="layer-a",
+                    layer_name="LayerA",
+                    section_uid="sec-a",
+                    uid="r-a1",
+                    name="RuleA1",
+                    position=1,
+                ),
+                AccessRuleEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    layer_uid="layer-a",
+                    layer_name="LayerA",
+                    section_uid="sec-a",
+                    uid="r-a2",
+                    name="RuleA2",
+                    position=2,
+                ),
+            ],
+            replaced_layer_uids=["layer-a"],
+            sync_states=[
+                DomainSyncState(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    scope="rulebase",
+                    item_type="package:access:pkg-a",
+                    status="ok",
+                    object_count=2,
+                    synced_at=utc_now(),
+                )
+            ],
+        )
+        await cache.upsert_domain_rulebase_layers(
+            "mds1",
+            "Corp",
+            layers=[
+                RulebaseLayerEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    uid="layer-b",
+                    name="LayerB",
+                    rulebase_type="access",
+                )
+            ],
+            access_rules=[
+                AccessRuleEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    layer_uid="layer-b",
+                    layer_name="LayerB",
+                    uid="r-b1",
+                    name="RuleB1",
+                    position=1,
+                )
+            ],
+            nat_rules=[
+                NatRuleEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    package_uid="pkg-b",
+                    package_name="PkgB",
+                    uid="nat-b1",
+                    name="NatB1",
+                    position=1,
+                )
+            ],
+            replaced_layer_uids=["layer-b"],
+            replaced_nat_package_uids=["pkg-b"],
+        )
+
+        # 3. Re-upserting layer-a with 1 rule deletes r-a2 without touching layer-b or nat-b1 or package_layers
+        count_a = await cache.upsert_domain_rulebase_layers(
+            "mds1",
+            "Corp",
+            layers=[
+                RulebaseLayerEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    uid="layer-a",
+                    name="LayerA",
+                    rulebase_type="access",
+                )
+            ],
+            access_rules=[
+                AccessRuleEntry(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    layer_uid="layer-a",
+                    layer_name="LayerA",
+                    uid="r-a1",
+                    name="RuleA1-Updated",
+                    position=1,
+                )
+            ],
+            replaced_layer_uids=["layer-a"],
+        )
+        assert count_a == 1
+
+        # 4. Replacing package catalog alone preserves existing layer/rule rows
+        await cache.replace_domain_package_catalog("mds1", "Corp", pkg_links[:1])
+        snap = await cache.get_domain_rulebase("mds1", "Corp")
+        assert len(snap.package_layers) == 1
+        assert sorted(r.uid for r in snap.access_rules) == ["r-a1", "r-b1"]
+        assert snap.sections == []  # sec-a was replaced when layer-a re-upserted with sections=[]
+        assert [r.uid for r in snap.nat_rules] == ["nat-b1"]
+        assert await cache.get_sync_state("mds1", "Corp", "rulebase", "*") is None
+    finally:
+        await db.close()

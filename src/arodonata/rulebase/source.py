@@ -73,6 +73,28 @@ class CachedRulebaseSource:
                 seen.append(st.domain_name)
         return seen
 
+    async def resolve_domain_for_target(
+        self,
+        mgmt_name: str,
+        domain_name: str | None,
+        target_name_or_uid: str,
+        *,
+        kind: Literal["package", "layer"],
+        rulebase_type: RulebaseType | None = None,
+        cache_mode: CacheMode = "cache",
+        cache_ttl: float | None = None,
+    ) -> str:
+        """Resolve `domain_name` when `None` or `""`, raising `AmbiguousLayerName` if multiple domains match."""
+        return await self._resolve_domain_for_target(
+            mgmt_name,
+            domain_name,
+            target_name_or_uid,
+            kind=kind,
+            rulebase_type=rulebase_type,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
+
     async def _resolve_domain_for_target(
         self,
         mgmt_name: str,
@@ -81,6 +103,8 @@ class CachedRulebaseSource:
         *,
         kind: Literal["package", "layer"],
         rulebase_type: RulebaseType | None = None,
+        cache_mode: CacheMode = "cache",
+        cache_ttl: float | None = None,
     ) -> str:
         """Resolve `domain_name` when `None` or `""`, raising `AmbiguousLayerName` if multiple domains match."""
         if domain_name is not None and domain_name.strip():
@@ -90,40 +114,55 @@ class CachedRulebaseSource:
         non_global = [d for d in candidate_domains if d != "Global"]
 
         target = target_name_or_uid.strip()
-        matches: list[tuple[str, str]] = []
 
-        for dom in candidate_domains:
-            snap = await self._cache.get_domain_rulebase(mgmt_name, dom)
-            if kind == "package":
-                pkg_uid_found: str | None = None
-                for pl in snap.package_layers:
-                    if pl.package_uid == target or pl.package_name == target:
-                        pkg_uid_found = pl.package_uid
-                        break
-                if pkg_uid_found is None:
-                    for nr in snap.nat_rules:
-                        if nr.package_uid == target or nr.package_name == target:
-                            pkg_uid_found = nr.package_uid
+        async def _find_matches(dom_list: list[str]) -> list[tuple[str, str]]:
+            found: list[tuple[str, str]] = []
+            for dom in dom_list:
+                if kind == "package":
+                    pkg_snap = await self._cache.get_domain_rulebase_packages(mgmt_name, dom)
+                    pkg_uid_found: str | None = None
+                    for pl in pkg_snap.package_layers:
+                        if pl.package_uid == target or pl.package_name == target:
+                            pkg_uid_found = pl.package_uid
                             break
-                if pkg_uid_found is not None:
-                    matches.append((dom, pkg_uid_found))
-            else:
-                layer_uid_found: str | None = None
-                for l_entry in snap.layers:
-                    if rulebase_type is not None and l_entry.rulebase_type != rulebase_type:
-                        continue
-                    if l_entry.uid == target or l_entry.name == target:
-                        layer_uid_found = l_entry.uid
-                        break
-                if layer_uid_found is None:
-                    for pl in snap.package_layers:
-                        if rulebase_type is not None and pl.rulebase_type != rulebase_type:
+                    if pkg_uid_found is None:
+                        for nr in pkg_snap.nat_rules:
+                            if nr.package_uid == target or nr.package_name == target:
+                                pkg_uid_found = nr.package_uid
+                                break
+                    if pkg_uid_found is not None:
+                        found.append((dom, pkg_uid_found))
+                else:
+                    snap = await self._cache.get_domain_rulebase(mgmt_name, dom)
+                    layer_uid_found: str | None = None
+                    for l_entry in snap.layers:
+                        if rulebase_type is not None and l_entry.rulebase_type != rulebase_type:
                             continue
-                        if pl.layer_uid == target or pl.layer_name == target:
-                            layer_uid_found = pl.layer_uid
+                        if l_entry.uid == target or l_entry.name == target:
+                            layer_uid_found = l_entry.uid
                             break
-                if layer_uid_found is not None:
-                    matches.append((dom, layer_uid_found))
+                    if layer_uid_found is None:
+                        for pl in snap.package_layers:
+                            if rulebase_type is not None and pl.rulebase_type != rulebase_type:
+                                continue
+                            if pl.layer_uid == target or pl.layer_name == target:
+                                layer_uid_found = pl.layer_uid
+                                break
+                    if layer_uid_found is not None:
+                        found.append((dom, layer_uid_found))
+            return found
+
+        matches = await _find_matches(candidate_domains)
+        if not matches and kind == "package" and cache_mode != "cache" and self._refresh_service is not None:
+            await self._refresh_service.refresh_policy_packages(
+                mgmt_name=mgmt_name,
+                include_global=True,
+                mode=cache_mode,
+                cache_ttl=cache_ttl,
+            )
+            candidate_domains = await self._list_candidate_domains(mgmt_name)
+            non_global = [d for d in candidate_domains if d != "Global"]
+            matches = await _find_matches(candidate_domains)
 
         if len(matches) == 1:
             return matches[0][0]
@@ -146,7 +185,7 @@ class CachedRulebaseSource:
         cache_mode: CacheMode = "cache",
         cache_ttl: float | None = None,
     ) -> tuple[DomainRulebaseSnapshot, str | None, datetime | None, SyncStatus, float | None]:
-        """Optionally refresh rulebase for `(mgmt_name, domain_name)` and return snapshot + sync metadata."""
+        """Optionally refresh full rulebase for `(mgmt_name, domain_name)` and return snapshot + sync metadata."""
         if cache_mode != "cache" and self._refresh_service is not None:
             await self._refresh_service.refresh_rulebases(
                 mgmt_name=mgmt_name,
@@ -158,6 +197,63 @@ class CachedRulebaseSource:
 
         snapshot = await self._cache.get_domain_rulebase(mgmt_name, domain_name)
         st = await self._cache.get_sync_state(mgmt_name, domain_name, "rulebase", "*")
+        if st is None:
+            return snapshot, None, None, "idle", None
+
+        age: float | None = None
+        if st.synced_at is not None:
+            age = max(0.0, (self._now() - st.synced_at).total_seconds())
+        return snapshot, st.last_session_uid, st.last_published_at, st.status, age
+
+    async def _ensure_and_load_package_snapshot(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        package: str,
+        *,
+        rulebase_type: RulebaseType = "access",
+        cache_mode: CacheMode = "cache",
+        cache_ttl: float | None = None,
+    ) -> tuple[DomainRulebaseSnapshot, str | None, datetime | None, SyncStatus, float | None]:
+        """Refresh only `(package, rulebase_type)` when `item_type='*'` is not fresh and return snapshot + sync metadata."""
+        if cache_mode != "cache" and self._refresh_service is not None:
+            await self._refresh_service.refresh_package_rulebase(
+                mgmt_name,
+                domain_name,
+                package,
+                rulebase_type=rulebase_type,
+                mode=cache_mode,
+                cache_ttl=cache_ttl,
+            )
+
+        snapshot = await self._cache.get_domain_rulebase(mgmt_name, domain_name)
+        target = package.strip()
+        pkg_uid = target
+        for pl in snapshot.package_layers:
+            if pl.package_uid == target or pl.package_name == target:
+                pkg_uid = pl.package_uid
+                break
+        else:
+            for nr in snapshot.nat_rules:
+                if nr.package_uid == target or nr.package_name == target:
+                    pkg_uid = nr.package_uid
+                    break
+
+        st_slice = await self._cache.get_sync_state(
+            mgmt_name,
+            domain_name,
+            "rulebase",
+            f"package:{rulebase_type}:{pkg_uid}",
+        )
+        st_full = await self._cache.get_sync_state(mgmt_name, domain_name, "rulebase", "*")
+
+        st = st_slice or st_full
+        if st_slice is not None and st_full is not None:
+            if st_full.synced_at is not None and (st_slice.synced_at is None or st_full.synced_at > st_slice.synced_at):
+                st = st_full
+            else:
+                st = st_slice
+
         if st is None:
             return snapshot, None, None, "idle", None
 
@@ -188,14 +284,18 @@ class CachedRulebaseSource:
             domains = await self._list_candidate_domains(mgmt_name)
             non_global = [d for d in domains if d != "Global"]
             target_domains = non_global or domains
-            if cache_mode != "cache" and self._refresh_service is not None and target_domains:
-                await self._refresh_service.refresh_rulebases(
+            if cache_mode != "cache" and self._refresh_service is not None:
+                await self._refresh_service.refresh_policy_packages(
                     mgmt_name=mgmt_name,
-                    domains=target_domains,
+                    domains=target_domains or None,
                     include_global=("Global" in target_domains),
                     mode=cache_mode,
                     cache_ttl=cache_ttl,
                 )
+                if not target_domains:
+                    domains = await self._list_candidate_domains(mgmt_name)
+                    non_global = [d for d in domains if d != "Global"]
+                    target_domains = non_global or domains
             results: list[PolicyPackageInfo] = []
             for dom in target_domains:
                 snap = await self._load_package_only_snapshot(mgmt_name, dom)
@@ -204,7 +304,7 @@ class CachedRulebaseSource:
 
         clean_dom = domain_name.strip()
         if cache_mode != "cache" and self._refresh_service is not None:
-            await self._refresh_service.refresh_rulebases(
+            await self._refresh_service.refresh_policy_packages(
                 mgmt_name=mgmt_name,
                 domains=[clean_dom],
                 include_global=(clean_dom == "Global"),
@@ -232,6 +332,8 @@ class CachedRulebaseSource:
             package,
             kind="package",
             rulebase_type=rulebase_type,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
         )
         span_attrs(
             mgmt_name=mgmt_name,
@@ -240,9 +342,11 @@ class CachedRulebaseSource:
             rulebase_type=rulebase_type,
             cache_mode=cache_mode,
         )
-        snap, session_uid, published_at, status, _ = await self._ensure_and_load_snapshot(
+        snap, session_uid, published_at, status, _ = await self._ensure_and_load_package_snapshot(
             mgmt_name,
             resolved_domain,
+            package,
+            rulebase_type=rulebase_type,
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
         )
@@ -371,10 +475,14 @@ class CachedRulebaseSource:
                 package,
                 kind="package",
                 rulebase_type=rulebase_type,
+                cache_mode=cache_mode,
+                cache_ttl=cache_ttl,
             )
-            snap, session_uid, published_at, status, age = await self._ensure_and_load_snapshot(
+            snap, session_uid, published_at, status, age = await self._ensure_and_load_package_snapshot(
                 mgmt_name,
                 resolved_domain,
+                package,
+                rulebase_type=rulebase_type,
                 cache_mode=cache_mode,
                 cache_ttl=cache_ttl,
             )

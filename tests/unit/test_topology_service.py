@@ -362,6 +362,29 @@ class TopologyFakeApi:
             uid = str(payload.get("uid") or "")
             if uid in self.cluster_details_by_uid:
                 return ApiCallResult(success=True, data=self.cluster_details_by_uid[uid])
+        if command in ("show-object", "show-group", "show-network", "show-address-range", "show-host") and payload:
+            dom = domain or "Corp"
+            lookup = str(payload.get("uid") or payload.get("name") or "")
+            singular_map = {
+                "show-group": ("show-groups",),
+                "show-network": ("show-networks",),
+                "show-address-range": ("show-address-ranges",),
+                "show-host": ("show-hosts",),
+                "show-object": ("show-groups", "show-networks", "show-address-ranges", "show-hosts"),
+            }
+            for plural_cmd in singular_map[command]:
+                for obj in self.objects_by_domain_and_cmd.get((dom, plural_cmd), []):
+                    if obj.get("uid") == lookup or obj.get("name") == lookup:
+                        if command == "show-object":
+                            return ApiCallResult(success=True, data={"object": dict(obj)})
+                        return ApiCallResult(success=True, data=dict(obj))
+            return ApiCallResult(
+                success=False,
+                status_code=404,
+                error_code="generic_err_object_not_found",
+                error_message=f"Object [{lookup}] not found",
+                data={"code": "generic_err_object_not_found", "message": f"Object [{lookup}] not found"},
+            )
         return ApiCallResult(success=True, data={})
 
     async def api_query(
@@ -384,6 +407,21 @@ class TopologyFakeApi:
             cls_name = str(payload.get("class-name") or "")
             objs = self.generic_objects_by_class.get((dom, cls_name), [])
             return ApiQueryResult(success=True, objects=objs, total=len(objs))
+        if command == "show-objects":
+            flt = str((payload or {}).get("filter") or "").strip().lower()
+            otype = str((payload or {}).get("type") or "").strip()
+            combined: list[dict[str, Any]] = []
+            for plural_cmd in ("show-groups", "show-networks", "show-address-ranges", "show-hosts"):
+                for obj in self.objects_by_domain_and_cmd.get((dom, plural_cmd), []):
+                    if otype and otype != "object" and obj.get("type") != otype:
+                        continue
+                    if flt and not any(
+                        flt in str(obj.get(field) or "").lower()
+                        for field in ("name", "ipv4-address", "subnet4", "ipv4-address-first", "ipv4-address-last")
+                    ):
+                        continue
+                    combined.append(dict(obj))
+            return ApiQueryResult(success=True, objects=combined, total=len(combined))
         objs = self.objects_by_domain_and_cmd.get((dom, command), [])
         return ApiQueryResult(success=True, objects=objs, total=len(objs))
 
@@ -671,6 +709,12 @@ async def test_topology_extraction_group_expansion_vs_routes_and_candidate_match
     assert vs_cand.matched_flows[0].dst_source_type == "vs_static_route"
 
     # 9. Test resolving by Check Point object/group name ("H_Corp_Workstation_1" -> "N_Global_DMZ_Sub")
+    # Confirm cold `refresh_topology` did NOT bulk-fetch unreferenced `H_Corp_Workstation_1` into `arodonata_objects`,
+    # while `H_App_Server_1` (in `G_DC_Apps`) and `N_Global_DMZ_Sub` (in `G_Global_DMZ`) WERE resolved on-demand!
+    corp_cached_objs = await cache.get_objects(mgmt_name="mds1", domain_name="Corp")
+    assert {o.name for o in corp_cached_objs} == set()
+    await object_service.refresh_objects(mgmt_name="mds1", domains=["Corp"], types=["host"], mode="force")
+
     # Also verify domain-scoped name isolation (T7): "H_App_Server_1" is defined only in "DC", so it must
     # NOT resolve on "Corp" gateways!
     named_candidates = await topology_service.find_affected_gateways(
@@ -1499,7 +1543,7 @@ async def test_stream_refresh_topology_emits_assets_objects_and_per_gateway_prog
     ]
 
     scopes = {ev.scope for ev in events}
-    assert scopes == {"assets", "objects", "topology"}
+    assert scopes == {"assets", "topology"}
 
     gw_progress_events = [
         ev
@@ -2183,6 +2227,7 @@ async def test_live_route_collection_reconciliation_annotations_and_confidence_s
 
     # 6. Export prefixes for IPAM comparison and verify annotations survive topology resync
     await client.refresh_topology(mgmt_name="mds1", domains=["Corp"], mode="force")
+    await client.object_service.refresh_objects(mgmt_name="mds1", domains=["Corp"], types=["network"], mode="force")
     exported = await client.export_topology_prefixes(
         mgmt_name="mds1",
         domain="Corp",
@@ -2497,6 +2542,7 @@ async def test_claude_review_regression_fixes() -> None:
     # Verify orphan `LIVE_ROUTE_SOURCES` pruning when `old-branch-gw` is removed from `Corp`
     api.gateways_by_domain["Corp"] = [api.gateways_by_domain["Corp"][0]]
     await client.refresh_topology(mgmt_name="mds1", domains=["Corp"], mode="force")
+    await client.object_service.refresh_objects(mgmt_name="mds1", domains=["Corp"], types=["network"], mode="force")
     remaining_entries = await client.get_gateway_topology(mgmt_name="mds1", domain="Corp", cache_mode="cache")
     assert all(e.gateway_uid != "gw-decommissioned" for e in remaining_entries)
     # While `lpm-core-gw` still retains its live routes!
@@ -2831,6 +2877,7 @@ async def test_stage2_vpn_domain_policy_rule_evidence_one_arm_aci_inference_and_
     )
 
     await client.refresh_topology(mgmt_name="mds1", domains=["Corp"], mode="force")
+    await client.object_service.refresh_objects(mgmt_name="mds1", domains=["Corp"], types=["network"], mode="force")
 
     # 1. Verify `vpn_domain` entry was extracted and persisted on `corp-vpn-gw` `eth1`
     vpn_entries = await client.get_gateway_topology(
@@ -3306,3 +3353,393 @@ async def test_route_collection_vsx_node_serialization_coalescing_route_cap_and_
     assert attempt == 2
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_cold_refresh_topology_via_file_replay_mock_zero_show_hosts_and_nested_group_expansion(
+    tmp_path: Any,
+) -> None:
+    """Verify cold `refresh_topology` via `FileReplayApiMock` executes zero `show-hosts` / `show-dns-domains` while expanding nested groups."""
+    import ipaddress
+
+    from arodonata.client import ArodonataClient
+    from arodonata.core.models.topology import (
+        STATIC_TOPOLOGY_SOURCES,
+        GatewayTopologyEntry,
+        TopologyAnnotation,
+    )
+    from arodonata.testing.dataset_generator import ensure_enterprise_raw_dataset
+    from arodonata.testing.replay_mock import FileReplayApiMock
+
+    dataset_dir = ensure_enterprise_raw_dataset()
+    api_mock = FileReplayApiMock(dataset_dir)
+
+    # Plant a specific group `G_App_Subnets` on `Branch` containing a `host` (`10.20.1.5`),
+    # a `network` (`10.20.2.0/24`), and a nested `Global` group (`G_App_Nested`, with a cycle back
+    # to `G_App_Subnets` + `address-range` `10.20.3.10-10.20.3.20`), and attach it to `br-spb-gw-01` `eth2`.
+    api_mock._domain_data["Global"]["show-address-ranges"]["objects"].append(
+        {
+            "uid": "uid-r-app-pool",
+            "name": "R_App_Pool",
+            "type": "address-range",
+            "ipv4-address-first": "10.20.3.10",
+            "ipv4-address-last": "10.20.3.20",
+            "domain": {"name": "Global", "domain-type": "global domain"},
+        }
+    )
+    api_mock._domain_data["Global"]["show-groups"]["objects"].append(
+        {
+            "uid": "uid-g-app-nested",
+            "name": "G_App_Nested",
+            "type": "group",
+            "members": ["uid-r-app-pool", "uid-g-app-subnets"],
+            "domain": {"name": "Global", "domain-type": "global domain"},
+        }
+    )
+    api_mock._domain_data["Branch"]["show-hosts"]["objects"].append(
+        {
+            "uid": "uid-h-app-1",
+            "name": "H_App_Leaf",
+            "type": "host",
+            "ipv4-address": "10.20.1.5",
+        }
+    )
+    api_mock._domain_data["Branch"]["show-networks"]["objects"].append(
+        {
+            "uid": "uid-n-app-sub",
+            "name": "N_App_Sub",
+            "type": "network",
+            "subnet4": "10.20.2.0",
+            "mask-length4": 24,
+        }
+    )
+    api_mock._domain_data["Branch"]["show-groups"]["objects"].append(
+        {
+            "uid": "uid-g-app-subnets",
+            "name": "G_App_Subnets",
+            "type": "group",
+            "members": ["uid-h-app-1", "uid-n-app-sub", "uid-g-app-nested"],
+        }
+    )
+    api_mock.update_gateway_interfaces(
+        "Branch",
+        "br-spb-gw-01",
+        [
+            {
+                "name": "eth0",
+                "ipv4-address": "198.51.100.1",
+                "ipv4-mask-length": 24,
+                "topology": {"leads-to-internet": True},
+            },
+            {
+                "name": "eth1",
+                "ipv4-address": "10.11.1.1",
+                "ipv4-mask-length": 24,
+                "topology": "internal",
+                "topology-settings": {
+                    "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+                },
+            },
+            {
+                "name": "eth2",
+                "ipv4-address": "10.20.0.1",
+                "ipv4-mask-length": 24,
+                "topology": "internal",
+                "topology-settings": {
+                    "ip-address-behind-this-interface": "specific",
+                    "specific-network": "G_App_Subnets",
+                },
+                "anti-spoofing": True,
+                "anti-spoofing-settings": {"action": "prevent"},
+            },
+        ],
+    )
+
+    # Confirm Branch + Global fixtures contain hundreds of `host` and `dns-domain` objects
+    assert len(api_mock._domain_data["Branch"]["show-hosts"]["objects"]) > 100
+    assert len(api_mock._domain_data["Branch"]["show-dns-domains"]["objects"]) > 0
+
+    settings = ArodonataSettings(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'cold_topo.sqlite'}",
+        mgmt_name="mds",
+        mgmt_ip="127.0.0.1",
+        api_key="mock-key",
+    )
+
+    async with ArodonataClient(settings=settings, api=api_mock) as client:
+        await client.get_domains(mgmt_name="mds", include_global=True, cache_mode="force")
+        api_mock.reset_counters()
+
+        outcome = await client.topology_service.refresh_topology(
+            mgmt_name="mds",
+            domains=["Branch"],
+            mode="smart",
+        )
+        assert outcome.refreshed_domains == ["mds:Branch"]
+        assert not outcome.failed_domains
+
+        # Zero bulk paginated object/rulebase calls!
+        assert api_mock.command_counts["show-hosts"] == 0
+        assert api_mock.command_counts["show-dns-domains"] == 0
+        assert api_mock.command_counts["show-networks"] == 0
+        assert api_mock.command_counts["show-groups"] == 0
+        assert api_mock.command_counts["show-access-rulebase"] == 0
+        assert api_mock.command_counts["show-nat-rulebase"] == 0
+
+        # Whole-domain `objects` sync state MUST remain empty so partial rows never masquerade as full sync!
+        assert await client.cache.list_sync_states(mgmt_name="mds", scope="objects") == []
+
+        # Verify all 3 expanded intervals (`host` + `network` + nested Global `address-range`) on `br-spb-gw-01` `eth2`
+        eth2_entries = [
+            e
+            for e in await client.topology_service.get_gateway_topology(
+                mgmt_name="mds",
+                domain="Branch",
+                gateway="br-spb-gw-01",
+                cache_mode="cache",
+            )
+            if e.interface_name == "eth2"
+        ]
+        assert {e.cidr_or_range for e in eth2_entries} == {
+            "10.20.1.5/32",
+            "10.20.2.0/24",
+            "10.20.3.10-10.20.3.20",
+        }
+        assert all(e.source_type == "interface_specific" for e in eth2_entries)
+        assert all(e.anti_spoofing_mode == "prevent" for e in eth2_entries)
+
+        spb_asset = next(
+            a for a in await client.cache.get_assets(mgmt_name="mds", domain_name="Branch") if a.name == "br-spb-gw-01"
+        )
+
+        # Inject a live `bgp_route` (`eth1` -> `10.99.0.0/16`) and `manual` (`eth2` -> `10.240.0.0/24`) + `ignore` (`eth1` `10.11.1.0/24`) annotations
+        await client.cache.replace_domain_topology(
+            "mds",
+            "Branch",
+            [
+                GatewayTopologyEntry(
+                    mgmt_name="mds",
+                    domain_name="Branch",
+                    gateway_uid=spb_asset.uid,
+                    gateway_name="br-spb-gw-01",
+                    gateway_type=spb_asset.type,
+                    interface_name="eth1",
+                    topology_zone="internal",
+                    source_type="bgp_route",
+                    source_ref="bgp",
+                    cidr_or_range="10.99.0.0/16",
+                    ip_first_int=int(ipaddress.IPv4Address("10.99.0.0")),
+                    ip_last_int=int(ipaddress.IPv4Address("10.99.255.255")),
+                    prefix_len=16,
+                )
+            ],
+            gateway_uids=[spb_asset.uid],
+            source_types=["bgp_route"],
+        )
+        await client.upsert_topology_annotations(
+            [
+                TopologyAnnotation(
+                    mgmt_name="mds",
+                    domain_name="Branch",
+                    gateway_uid=spb_asset.uid,
+                    gateway_name="br-spb-gw-01",
+                    interface_name="eth2",
+                    cidr_or_range="10.240.0.0/24",
+                    disposition="manual",
+                ),
+                TopologyAnnotation(
+                    mgmt_name="mds",
+                    domain_name="Branch",
+                    gateway_uid=spb_asset.uid,
+                    gateway_name="br-spb-gw-01",
+                    interface_name="eth1",
+                    cidr_or_range="10.11.1.0/24",
+                    disposition="ignore",
+                ),
+            ]
+        )
+
+        # Default `find_affected_gateways` evaluates `bgp_route` + `manual` (`eth1` -> `eth2`, internal_to_internal)
+        default_cands = await client.topology_service.find_affected_gateways(
+            sources=["10.99.1.10"],
+            destinations=["10.240.0.10"],
+            mgmt_name="mds",
+            domain="Branch",
+            cache_mode="cache",
+        )
+        assert any(
+            c.gateway_name == "br-spb-gw-01" and c.matched_flows[0].match_type == "internal_to_internal"
+            for c in default_cands
+        )
+
+        # With `source_types=STATIC_TOPOLOGY_SOURCES, include_annotations=False`:
+        # - `10.99.1.10 -> 10.240.0.10` falls back to `eth0 == eth0` (`external == external`) on `br-spb-gw-01` -> excluded!
+        static_only_excluded = await client.topology_service.find_affected_gateways(
+            sources=["10.99.1.10"],
+            destinations=["10.240.0.10"],
+            mgmt_name="mds",
+            domain="Branch",
+            source_types=STATIC_TOPOLOGY_SOURCES,
+            include_annotations=False,
+            cache_mode="cache",
+        )
+        assert not any(c.gateway_name == "br-spb-gw-01" for c in static_only_excluded)
+
+        # - `10.11.1.25 -> 10.20.3.15` evaluates static `eth1` (ignoring the `ignore` annotation!) -> `eth2`,
+        #   and populates `policy_packages` + `access_layers` from the lightweight `show-packages` catalog!
+        static_only_match = await client.topology_service.find_affected_gateways(
+            sources=["10.11.1.25"],
+            destinations=["10.20.3.15"],
+            mgmt_name="mds",
+            domain="Branch",
+            source_types=STATIC_TOPOLOGY_SOURCES,
+            include_annotations=False,
+            cache_mode="cache",
+        )
+        spb_match = next(c for c in static_only_match if c.gateway_name == "br-spb-gw-01")
+        assert spb_match.matched_flows[0].src_interface == "eth1"
+        assert spb_match.matched_flows[0].dst_interface == "eth2"
+        assert spb_match.installed_access_policy == "Branch_Standard_Pkg"
+        assert "Branch_Standard_Pkg" in spb_match.policy_packages
+        assert spb_match.access_layers == ["Branch_Standard_Pkg Network"]
+
+        # Verify cached `bgp_route` and `TopologyAnnotation` rows were NOT mutated
+        assert len(await client.cache.get_gateway_topology(mgmt_name="mds", source_types=["bgp_route"])) == 1
+        assert len(await client.cache.get_topology_annotations(mgmt_name="mds", domain_name="Branch")) == 2
+
+
+@pytest.mark.asyncio
+async def test_smart_refresh_topology_revalidates_cached_group_after_publish_and_uses_show_objects_first(
+    tmp_path: Any,
+) -> None:
+    """`refresh_topology(mode='smart')` re-fetches topology-cached groups after a new publish and queries `show-objects` first for name-only lookups."""
+    from arodonata import ArodonataClient
+    from arodonata.testing.replay_mock import FileReplayApiMock
+
+    api_mock = FileReplayApiMock()
+    api_mock._domain_data["Branch"]["show-networks"]["objects"].append(
+        {
+            "uid": "uid-n-initial",
+            "name": "N_Initial_Sub",
+            "type": "network",
+            "subnet4": "10.220.1.0",
+            "mask-length4": 24,
+        }
+    )
+    api_mock._domain_data["Branch"]["show-groups"]["objects"].append(
+        {
+            "uid": "uid-g-dyn",
+            "name": "G_Dynamic_Apps",
+            "type": "group",
+            "members": ["uid-n-initial"],
+        }
+    )
+    api_mock.update_gateway_interfaces(
+        "Branch",
+        "br-spb-gw-01",
+        [
+            {
+                "name": "eth0",
+                "ipv4-address": "198.51.100.1",
+                "ipv4-mask-length": 24,
+                "topology": {"leads-to-internet": True},
+            },
+            {
+                "name": "eth2",
+                "ipv4-address": "10.220.0.1",
+                "ipv4-mask-length": 24,
+                "topology": "internal",
+                "topology-settings": {
+                    "ip-address-behind-this-interface": "specific",
+                    "specific-network": "G_Dynamic_Apps",
+                },
+            },
+            {
+                "name": "eth3",
+                "ipv4-address": "10.221.0.1",
+                "ipv4-mask-length": 24,
+                "topology": "internal",
+                "topology-settings": {
+                    "ip-address-behind-this-interface": "specific",
+                    "specific-network": "Nonexistent_Missing_Topology_Group",
+                },
+            },
+        ],
+    )
+
+    settings = ArodonataSettings(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'reval_topo.sqlite'}",
+        mgmt_name="mds",
+        mgmt_ip="127.0.0.1",
+        api_key="mock-key",
+        cache_ttl=0,
+    )
+
+    async with ArodonataClient(settings=settings, api=api_mock) as client:
+        await client.get_domains(mgmt_name="mds", include_global=True, cache_mode="force")
+        api_mock.reset_counters()
+
+        first_out = await client.topology_service.refresh_topology(
+            mgmt_name="mds",
+            domains=["Branch"],
+            mode="smart",
+        )
+        assert first_out.refreshed_domains == ["mds:Branch"]
+        assert api_mock.command_counts["show-hosts"] == 0
+        # Unresolvable name-only reference queries `show-objects` instead of 5 singular `show-*` calls per domain
+        assert api_mock.command_counts["show-network"] == 0
+        assert api_mock.command_counts["show-address-range"] == 0
+        assert api_mock.command_counts["show-host"] == 0
+
+        eth2_before = [
+            e.cidr_or_range
+            for e in await client.topology_service.get_gateway_topology(
+                mgmt_name="mds",
+                domain="Branch",
+                gateway="br-spb-gw-01",
+                cache_mode="cache",
+            )
+            if e.interface_name == "eth2"
+        ]
+        assert eth2_before == ["10.220.1.0/24"]
+
+        # Simulate an admin adding `N_Post_Publish_Sub` (`10.220.2.0/24`) to `G_Dynamic_Apps` and publishing!
+        api_mock._domain_data["Branch"]["show-networks"]["objects"].append(
+            {
+                "uid": "uid-n-post-pub",
+                "name": "N_Post_Publish_Sub",
+                "type": "network",
+                "subnet4": "10.220.2.0",
+                "mask-length4": 24,
+            }
+        )
+        for grp in api_mock._domain_data["Branch"]["show-groups"]["objects"]:
+            if grp.get("uid") == "uid-g-dyn":
+                grp["members"] = ["uid-n-initial", "uid-n-post-pub"]
+        api_mock.bump_published_session(
+            "Branch",
+            new_session_uid="sess-branch-post-publish-2",
+            new_iso_time="2026-11-12T18:00:00Z",
+            new_posix_time=1794506400000,
+        )
+        api_mock.reset_counters()
+
+        second_out = await client.topology_service.refresh_topology(
+            mgmt_name="mds",
+            domains=["Branch"],
+            mode="smart",
+        )
+        assert second_out.refreshed_domains == ["mds:Branch"]
+        assert api_mock.command_counts["show-hosts"] == 0
+
+        eth2_after = {
+            e.cidr_or_range
+            for e in await client.topology_service.get_gateway_topology(
+                mgmt_name="mds",
+                domain="Branch",
+                gateway="br-spb-gw-01",
+                cache_mode="cache",
+            )
+            if e.interface_name == "eth2"
+        }
+        assert eth2_after == {"10.220.1.0/24", "10.220.2.0/24"}

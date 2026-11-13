@@ -19,7 +19,12 @@ from typing import Any
 import arlogi
 
 from arodonata.core.config import ArodonataSettings
-from arodonata.core.errors import ConfigurationError, DomainNotFoundError, ServerIdentityError
+from arodonata.core.errors import (
+    ConfigurationError,
+    DomainNotFoundError,
+    LockAcquisitionError,
+    ServerIdentityError,
+)
 from arodonata.core.models.common import ApiCallResult, CacheMode, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainInfo, DomainSyncState
 from arodonata.core.ports import ApiPort, CachePort, LockPort
@@ -375,8 +380,15 @@ class DomainService:
 
             if self._lock_port is not None:
                 lock_key = f"sync:{mgmt_name}:{SYSTEM_DOMAIN_KEY}:domains"
-                async with self._lock_port.lock(lock_key, ttl_seconds=60.0):
-                    await self._discover_server_domains(mgmt_name)
+                try:
+                    async with self._lock_port.lock(lock_key, ttl_seconds=60.0):
+                        await self._discover_server_domains(mgmt_name)
+                except LockAcquisitionError as exc:
+                    logger.debug(
+                        f"Domain discovery lock busy for '{mgmt_name}', using cached domains: {exc}",
+                        mgmt_name=mgmt_name,
+                    )
+                    return
             else:
                 await self._discover_server_domains(mgmt_name)
 
@@ -395,19 +407,32 @@ class DomainService:
         existing_domains = await self._cache.get_domains(mgmt_name, include_global=True)
         existing_by_name: dict[str, DomainInfo] = {d.name: d for d in existing_domains}
 
-        res = await self._api.api_call(
-            mgmt_name,
-            "show-domains",
-            {"details-level": "full", "limit": 500, "offset": 0},
-            domain=None,
-        )
+        transport_or_auth_failed = False
+        try:
+            res = await self._api.api_call(
+                mgmt_name,
+                "show-domains",
+                {"details-level": "full", "limit": 500, "offset": 0},
+                domain=None,
+            )
+        except ServerIdentityError:
+            raise
+        except Exception as exc:
+            transport_or_auth_failed = True
+            res = ApiCallResult(
+                success=False,
+                status_code=0,
+                error_code=type(exc).__name__,
+                error_message=str(exc),
+            )
+
         details_level = "full"
         is_single_domain = False
         fallback_failed_res: ApiCallResult | None = None
 
         if not res.success:
             is_single_domain = _is_single_domain_unsupported(res)
-            if not is_single_domain and _is_rbac_or_details_level_rejected(res):
+            if not is_single_domain and not transport_or_auth_failed and _is_rbac_or_details_level_rejected(res):
                 logger.warning(
                     f"show-domains (details-level=full) on '{mgmt_name}' rejected "
                     f"({res.error_code or res.status_code}: {res.error_message}); retrying with details-level=standard.",
@@ -415,12 +440,22 @@ class DomainService:
                     error_code=res.error_code or str(res.status_code),
                     error_message=res.error_message,
                 )
-                fallback_res = await self._api.api_call(
-                    mgmt_name,
-                    "show-domains",
-                    {"details-level": "standard", "limit": 500, "offset": 0},
-                    domain=None,
-                )
+                try:
+                    fallback_res = await self._api.api_call(
+                        mgmt_name,
+                        "show-domains",
+                        {"details-level": "standard", "limit": 500, "offset": 0},
+                        domain=None,
+                    )
+                except ServerIdentityError:
+                    raise
+                except Exception as exc:
+                    fallback_res = ApiCallResult(
+                        success=False,
+                        status_code=0,
+                        error_code=type(exc).__name__,
+                        error_message=str(exc),
+                    )
                 if fallback_res.success:
                     res = fallback_res
                     details_level = "standard"
@@ -438,12 +473,27 @@ class DomainService:
             total_domains = int(res.data.get("total") or len(raw_objs))
             page_offset = len(raw_objs)
             while page_offset < total_domains and isinstance(first_page, list) and len(first_page) > 0:
-                page_res = await self._api.api_call(
-                    mgmt_name,
-                    "show-domains",
-                    {"details-level": details_level, "limit": 500, "offset": page_offset},
-                    domain=None,
-                )
+                try:
+                    page_res = await self._api.api_call(
+                        mgmt_name,
+                        "show-domains",
+                        {
+                            "details-level": details_level,
+                            "limit": 500,
+                            "offset": page_offset,
+                        },
+                        domain=None,
+                    )
+                except ServerIdentityError:
+                    raise
+                except Exception as exc:
+                    logger.warning(
+                        f"Pagination of show-domains on '{mgmt_name}' interrupted at offset {page_offset}: {exc}",
+                        mgmt_name=mgmt_name,
+                        offset=page_offset,
+                        error=str(exc),
+                    )
+                    break
                 if not page_res.success:
                     break
                 next_objs = page_res.data.get("objects")
@@ -627,7 +677,13 @@ class DomainService:
                     mds_ip_by_name=eff_mds_ips,
                     now_fn=self._now,
                 )
-                return dom.model_copy(update={"name": "Global", "is_global": True, "domain_type": "global"})
+                return dom.model_copy(
+                    update={
+                        "name": "Global",
+                        "is_global": True,
+                        "domain_type": "global",
+                    }
+                )
         except ServerIdentityError:
             raise
         except Exception:

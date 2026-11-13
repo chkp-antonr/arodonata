@@ -17,12 +17,17 @@ Defines Check Point gateway interface topology extraction (`TopologyService`), s
 
 ### Requirement: Static Interface Topology Extraction and Group Expansion
 
-`TopologyService` SHALL normalize interface definitions across `show-gateways-and-servers`, `show-simple-gateway`, `show-simple-cluster`, and `show-generic-object` payloads, extracting Anti-Spoofing enforcement mode (`"prevent"`, `"detect"`, `"off"`, or `"unknown"`), expanding connected subnets (`"network defined by the interface ip and net mask"`), recursively resolving `"specific"` network/group objects from `arodonata_objects` (with `"Global"` fallback), recording `"external"` interfaces (`leads-to-internet: true`), and logging a warning on unresolvable route-based interfaces.
+`TopologyService` SHALL normalize interface definitions across `show-gateways-and-servers`, `show-simple-gateway`, `show-simple-cluster`, and `show-generic-object` payloads, extracting Anti-Spoofing enforcement mode (`"prevent"`, `"detect"`, `"off"`, or `"unknown"`), expanding connected subnets (`"network defined by the interface ip and net mask"`), recursively resolving `"specific"` network/group objects from fresh cached objects or via targeted single-object/group API lookups across the domain and `"Global"` without refreshing full `DEFAULT_OBJECT_TYPES` (`show-hosts`, `show-dns-domains`), recording `"external"` interfaces (`leads-to-internet: true`), and logging a warning on unresolvable route-based interfaces.
 
 #### Scenario: Connected subnet and specific group behind interfaces expand into IPv4 intervals
 
 - **WHEN** a gateway has `eth0` configured with `leads-to-internet: true`, `eth1` (`10.10.1.1/24`) configured with `"network defined by the interface ip and net mask"`, and `eth2` configured with `"specific"` referencing group `"G_App_Subnets"` (which contains a host `10.20.1.5`, a subnet `10.20.2.0/24`, and a nested group with range `10.20.3.10-10.20.3.20`) and Anti-Spoofing action `"prevent"`
 - **THEN** `TopologyService` SHALL persist an `"external"` entry (`source_type="external_interface"`, `0.0.0.0/0`) for `eth0`, a connected interval (`10.10.1.0/24`, `source_type="interface_connected"`) for `eth1`, and three expanded intervals (`10.20.1.5/32`, `10.20.2.0/24`, `10.20.3.10-10.20.3.20`, `source_type="interface_specific"`, `anti_spoofing_mode="prevent"`) for `eth2`
+
+#### Scenario: Cold topology refresh resolves specific and VPN domain references on demand without bulk show-hosts
+
+- **WHEN** `refresh_topology` or `stream_refresh_topology` runs on a cold database across domains containing thousands of `host` and `dns-domain` objects, where gateways use connected/external interfaces and a `"specific"` or `vpn-domain` group `"G_App_Subnets"`
+- **THEN** the refresh SHALL synchronize gateway assets and resolve `"G_App_Subnets"` and its transitive member UIDs via targeted object/group lookups (persisting resolved objects without marking whole-domain `"host"` or `"group"` slices as fully synced), and SHALL perform zero full-domain `show-hosts` or `show-dns-domains` paginated queries
 
 #### Scenario: Interface with routing-defined or undefined topology logs a warning and is skipped
 
@@ -54,7 +59,7 @@ Each persisted `GatewayTopologyEntry` in `arodonata_gateway_topology` SHALL carr
 
 ### Requirement: Affected Gateway and Policy Package Candidate Matching
 
-`TopologyService.find_affected_gateways()` SHALL resolve `sources` and `destinations` against each gateway's internal intervals first (longest-prefix match) and external interface second (`0.0.0.0/0` fallback), apply `TopologyAnnotation` overrides, compute delta-based `confidence` scores (`0.0..1.0`) with `confidence_factors` and `is_standby_path` flags, exclude any gateway where `Source` and `Destination` resolve to the same interface (`src_interface == dst_interface`), both fall back to `external`, or fall below `min_confidence`, and return affected gateways with their domain, policy packages, `matched_flows`, and input-ordered `matched_sources` and `matched_destinations`.
+`TopologyService.find_affected_gateways()` SHALL resolve `sources` and `destinations` against each gateway's internal intervals first (longest-prefix match) and external interface second (`0.0.0.0/0` fallback), optionally filter evaluated intervals by `source_types` and toggle `TopologyAnnotation` overrides via `include_annotations`, compute delta-based `confidence` scores (`0.0..1.0`) with `confidence_factors` and `is_standby_path` flags, exclude any gateway where `Source` and `Destination` resolve to the same interface (`src_interface == dst_interface`), both fall back to `external`, or fall below `min_confidence`, and return affected gateways with their domain, policy packages, `matched_flows`, and input-ordered `matched_sources` and `matched_destinations`.
 
 #### Scenario: Traffic between two internal interfaces or between internal and external interfaces matches
 
@@ -74,7 +79,12 @@ Each persisted `GatewayTopologyEntry` in `arodonata_gateway_topology` SHALL carr
 #### Scenario: Policy package resolution combines asset policy metadata and rulebase installation targets
 
 - **WHEN** an affected gateway has `raw_data["policy"]["access-policy-name"] = "Standard_Policy"` and/or is listed in `installation-targets` of a cached `PolicyPackageInfo` in `arodonata_rulebase_package_layer`
-- **THEN** the returned `AffectedGatewayCandidate` SHALL populate `installed_access_policy="Standard_Policy"`, `policy_packages` with all matching package names, and `access_layers` with the ordered access layer names when the domain's rulebase snapshot is cached
+- **THEN** the returned `AffectedGatewayCandidate` SHALL populate `installed_access_policy="Standard_Policy"`, `policy_packages` with all matching package names, and `access_layers` with the ordered access layer names when the domain's rulebase package catalog or snapshot is cached
+
+#### Scenario: Static-only source_types and disabled annotations filter out live route and manual intervals
+
+- **WHEN** `find_affected_gateways(sources, destinations, source_types=STATIC_TOPOLOGY_SOURCES, include_annotations=False)` runs on a cache containing static interface topology, live `bgp_route` entries, and `manual` annotations
+- **THEN** candidate matching SHALL evaluate strictly the intervals matching `source_types` and ignore `TopologyAnnotation` overrides without mutating cached rows
 
 ### Requirement: Static Topology Health Diagnostics and One-Arm Classification
 
