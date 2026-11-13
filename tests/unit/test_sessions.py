@@ -17,6 +17,8 @@ from arodonata.adapters.checkpoint import (
     PooledSocketEntry,
     RawHttpResponse,
     TrustPolicy,
+    VerifiedConnectionPool,
+    derive_session_pool_scope,
 )
 from arodonata.core.errors import (
     AuthenticationError,
@@ -1042,3 +1044,126 @@ async def test_unreachable_server_fails_fast_and_startup_cleanup_handles_error_c
     assert results is False
 
     await client.close()
+
+
+async def test_write_session_reuses_keepalive_connection_and_closes_on_publish_and_logout(tmp_path: Path) -> None:
+    """Verify WriteSession reuses a dedicated keep-alive socket across mutations and closes on publish/logout."""
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    der, fp = _make_der()
+    cfg = ArodonataSettings(
+        mgmt_name="mds1",
+        mgmt_ip="10.0.0.1",
+        api_key="static-secret-key",
+        tls_trust="pinned",
+        tls_fingerprints=f"10.0.0.1:443={fp}",
+    )
+    policy = TrustPolicy(
+        mode="pinned",
+        known_hosts_path=tmp_path / "known.json",
+        pinned_fingerprints=f"10.0.0.1:443={fp}",
+    )
+
+    cert_checks = 0
+
+    def counting_cert_getter(_h: str, _p: int) -> bytes:
+        nonlocal cert_checks
+        cert_checks += 1
+        return der
+
+    async def pooling_sender(
+        *,
+        host: str,
+        port: int,
+        command: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes,
+        connect_timeout: float,
+        read_timeout: float,
+        reused_entry: PooledSocketEntry | None,
+    ) -> tuple[RawHttpResponse, PooledSocketEntry | None]:
+        raw_resp, _ = await server.sender(
+            host=host,
+            port=port,
+            command=command,
+            url=url,
+            headers=headers,
+            body=body,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            reused_entry=reused_entry,
+        )
+        if reused_entry is not None:
+            return raw_resp, reused_entry
+
+        class _Proto:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def is_connected(self) -> bool:
+                return not self.closed
+
+            def close(self) -> None:
+                self.closed = True
+
+        entry = PooledSocketEntry(
+            host=host,
+            port=port,
+            fingerprint=fp,
+            protocol=_Proto(),
+            last_used_at=rig.monotonic(),
+        )
+        return raw_resp, entry
+
+    transport = ApiTransport(
+        settings=cfg,
+        trust_policy=policy,
+        connection_pool=VerifiedConnectionPool(monotonic_fn=rig.monotonic),
+        peer_cert_getter=counting_cert_getter,
+        request_sender=pooling_sender,
+    )
+    client = AMgmtClient(
+        settings=cfg,
+        engine=None,
+        transport=transport,
+        trust_policy=policy,
+        monotonic_fn=rig.monotonic,
+        now_fn=rig.now,
+        sleep_fn=rig.sleep,
+    )
+    await client.db.initialize()
+
+    recorded_sid = ""
+    try:
+        async with client.write_session("mds1", session_name="bulk-test") as ws:
+            recorded_sid = ws.sid
+            assert cert_checks == 1
+            assert server.calls[0]["command"] == "login"
+            assert server.calls[0]["headers"].get("Connection") == "close"
+
+            r_show = await client.api_call("mds1", "show-session", {})
+            assert r_show.success is True
+            assert cert_checks == 2
+            assert "Connection" not in server.calls[-1]["headers"]
+
+            r_h1 = await client.api_call("mds1", "add-host", {"name": "h1", "ip-address": "10.1.1.1"})
+            r_h2 = await client.api_call("mds1", "add-host", {"name": "h2", "ip-address": "10.1.1.2"})
+            r_s1 = await client.api_call("mds1", "set-host", {"name": "h1", "comments": "ok"})
+            assert r_h1.success and r_h2.success and r_s1.success
+            # All 3 mutations reused the exact verified connection opened by show-session
+            assert cert_checks == 2
+            for call in server.calls[-3:]:
+                assert "Connection" not in call["headers"]
+
+        # Exit: publish (Connection: close, cert=3) -> show-task poll (session-scoped, cert=4) -> logout (Connection: close, cert=5)
+        publish_call = next(c for c in server.calls if c["command"] == "publish")
+        show_task_call = next(c for c in server.calls if c["command"] == "show-task")
+        logout_call = next(c for c in server.calls if c["command"] == "logout")
+        assert publish_call["headers"].get("Connection") == "close"
+        assert "Connection" not in show_task_call["headers"]
+        assert logout_call["headers"].get("Connection") == "close"
+        assert cert_checks == 5
+        assert client.connection_pool.pooled_count(session_scope=derive_session_pool_scope(recorded_sid)) == 0
+    finally:
+        await client.close()

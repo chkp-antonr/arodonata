@@ -9,6 +9,7 @@ pooling restricted to read-only `show-*` commands.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import ssl
@@ -16,6 +17,7 @@ import time
 import weakref
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -40,6 +42,20 @@ from arodonata.core.models.common import ApiCallResult
 from arodonata.core.telemetry import span_attrs, traced
 
 KEEPALIVE_IDLE_LIMIT_SECONDS: float = 10.0
+MAX_KEEPALIVE_REQUESTS_PER_SOCKET: int = 95
+NON_POOLABLE_SESSION_COMMANDS: frozenset[str] = frozenset(
+    {
+        "login",
+        "logout",
+        "keepalive",
+        "publish",
+        "discard",
+        "continue-session",
+        "switch-session",
+        "take-over-session",
+        "disconnect",
+    }
+)
 _COMMAND_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
@@ -67,6 +83,40 @@ def is_readonly_poolable_command(command: str) -> bool:
     """Return `True` if `command` is a read-only `show-*` command eligible for connection reuse."""
     normalized = command.strip().lower()
     return normalized.startswith("show-")
+
+
+def derive_session_pool_scope(sid: str) -> str:
+    """Derive a non-reversible pool scope tag from `sid` so raw SIDs never appear in memory keys or repr()."""
+    if not sid:
+        return ""
+    digest = hashlib.sha256(sid.encode("utf-8")).hexdigest()[:16]
+    return f"s:{digest}"
+
+
+def is_poolable_command(command: str, *, session_scope: str | None = None) -> bool:
+    """Return `True` if `command` is eligible for keep-alive connection reuse in `VerifiedConnectionPool`."""
+    normalized = command.strip().lower()
+    if not normalized or normalized in NON_POOLABLE_SESSION_COMMANDS:
+        return False
+    if normalized.startswith("show-"):
+        return True
+    return bool(session_scope)
+
+
+def _create_checkpoint_ssl_context() -> ssl.SSLContext:
+    """Create a lightweight TLS 1.2+ client context without blocking disk CA loads (pinned via TrustPolicy)."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.options |= ssl.OP_NO_COMPRESSION
+    if hasattr(ssl, "OP_NO_RENEGOTIATION"):
+        ctx.options |= ssl.OP_NO_RENEGOTIATION
+    ctx.set_alpn_protocols(("http/1.1",))
+    return ctx
+
+
+_DEFAULT_CHECKPOINT_SSL_CONTEXT: ssl.SSLContext = _create_checkpoint_ssl_context()
 
 
 def extract_peer_der_cert(transport: asyncio.BaseTransport | None) -> bytes | None:
@@ -121,12 +171,15 @@ class PooledSocketEntry:
     protocol: Any
     last_used_at: float
     request_count: int = 1
+    pool_scope: str = ""
 
     def is_usable(self, now: float, max_idle_seconds: float = KEEPALIVE_IDLE_LIMIT_SECONDS) -> bool:
-        """Return `True` if the connection is still open and within the idle window."""
+        """Return `True` if the connection is still open and within the idle and request limits."""
         if now - self.last_used_at > max_idle_seconds:
             return False
-        if self.request_count >= 95:
+        if self.request_count >= MAX_KEEPALIVE_REQUESTS_PER_SOCKET:
+            return False
+        if bool(getattr(self.protocol, "should_close", False)):
             return False
         is_conn = getattr(self.protocol, "is_connected", None)
         if callable(is_conn):
@@ -148,11 +201,11 @@ class PooledSocketEntry:
 
 
 class VerifiedConnectionPool:
-    """Pools fingerprint-verified keep-alive connections per `(server_ip, port)` for up to 10s idle.
+    """Pools fingerprint-verified keep-alive connections per `(server_ip, port, scope)` for up to 10s idle.
 
-    Exclusively reuses connections for read-only `show-*` commands; mutating commands,
-    logins, logouts, keepalives, publish, and discard bypass pooling and close any
-    expired idle sockets.
+    Reuses connections for read-only `show-*` commands under shared scope (`""`) and for
+    non-boundary commands under dedicated `session_scope` tags; session-boundary commands
+    and un-scoped mutations bypass pooling and close idle sockets before connecting.
     """
 
     def __init__(
@@ -163,7 +216,7 @@ class VerifiedConnectionPool:
     ) -> None:
         self._max_idle_seconds = float(max_idle_seconds)
         self._monotonic = monotonic_fn
-        self._pool: dict[tuple[str, int], deque[PooledSocketEntry]] = defaultdict(deque)
+        self._pool: dict[tuple[str, int, str], deque[PooledSocketEntry]] = defaultdict(deque)
         self._reuse_count: int = 0
         self._fresh_count: int = 0
 
@@ -186,7 +239,11 @@ class VerifiedConnectionPool:
         """Close and remove any pooled connections idle for more than `max_idle_seconds`."""
         now = self._monotonic()
         closed_count = 0
-        keys = [(host, port)] if (host is not None and port is not None) else list(self._pool.keys())
+        if host is not None and port is not None:
+            target_port = int(port)
+            keys = [k for k in self._pool if k[0] == host and k[1] == target_port]
+        else:
+            keys = list(self._pool.keys())
         for key in keys:
             queue = self._pool.get(key)
             if not queue:
@@ -205,18 +262,30 @@ class VerifiedConnectionPool:
                 self._pool.pop(key, None)
         return closed_count
 
-    def acquire_for_command(self, host: str, port: int, command: str) -> PooledSocketEntry | None:
-        """Acquire a pooled verified connection for `(host, port)` if `command` is `show-*`.
+    def acquire_for_command(
+        self,
+        host: str,
+        port: int,
+        command: str,
+        *,
+        session_scope: str | None = None,
+    ) -> PooledSocketEntry | None:
+        """Acquire a pooled verified connection for `(host, port, scope)` if eligible.
 
-        Always evicts expired connections first. For non-`show-*` commands, returns `None`
-        so a fresh TLS-verified connection is established.
+        Always evicts expired connections first. For non-pooled commands, closes idle sockets
+        before returning `None` so a fresh TLS-verified connection is established cleanly.
         """
-        self.evict_expired(host, port)
-        if not is_readonly_poolable_command(command):
+        target_port = int(port)
+        self.evict_expired(host, target_port)
+        scope = session_scope or ""
+        if not is_poolable_command(command, session_scope=scope or None):
+            if scope:
+                self.close_scope(host, target_port, scope)
+            self.close_scope(host, target_port, "")
             self._fresh_count += 1
             return None
 
-        key = (host, int(port))
+        key = (host, target_port, scope)
         queue = self._pool.get(key)
         now = self._monotonic()
         while queue:
@@ -231,6 +300,9 @@ class VerifiedConnectionPool:
             entry.close()
 
         self._pool.pop(key, None)
+        if scope:
+            # Close idle shared read-only sockets on this host before opening a dedicated connection.
+            self.close_scope(host, target_port, "")
         self._fresh_count += 1
         return None
 
@@ -240,23 +312,26 @@ class VerifiedConnectionPool:
         command: str,
         *,
         should_close: bool = False,
+        session_scope: str | None = None,
     ) -> bool:
-        """Return a healthy verified connection to the pool if `command` is `show-*`, else close it."""
+        """Return a healthy verified connection to the pool if eligible, else close it."""
+        eff_scope = entry.pool_scope if session_scope is None else session_scope
+        entry.pool_scope = eff_scope
         now = self._monotonic()
         if (
             should_close
-            or not is_readonly_poolable_command(command)
+            or not is_poolable_command(command, session_scope=eff_scope or None)
             or not entry.is_usable(now, self._max_idle_seconds)
         ):
             entry.close()
             return False
         entry.last_used_at = now
-        self._pool[(entry.host, int(entry.port))].append(entry)
+        self._pool[(entry.host, int(entry.port), eff_scope)].append(entry)
         return True
 
-    def close_host(self, host: str, port: int) -> int:
-        """Close all pooled connections for `(host, port)`."""
-        key = (host, int(port))
+    def close_scope(self, host: str, port: int, session_scope: str = "") -> int:
+        """Close all pooled connections for `(host, port, session_scope)`."""
+        key = (host, int(port), session_scope)
         queue = self._pool.pop(key, None)
         if not queue:
             return 0
@@ -267,18 +342,75 @@ class VerifiedConnectionPool:
             count += 1
         return count
 
-    def close_all(self) -> int:
-        """Close all pooled connections across all hosts."""
+    def close_session_scope(self, session_scope: str) -> int:
+        """Close all pooled connections associated with `session_scope` across all hosts."""
+        if not session_scope:
+            return 0
         total = 0
-        for key in list(self._pool.keys()):
-            total += self.close_host(key[0], key[1])
+        for host, port, scope in list(self._pool.keys()):
+            if scope == session_scope:
+                total += self.close_scope(host, port, scope)
         return total
 
-    def pooled_count(self, host: str | None = None, port: int | None = None) -> int:
+    def close_host(self, host: str, port: int) -> int:
+        """Close all pooled connections across all scopes for `(host, port)`."""
+        target_port = int(port)
+        total = 0
+        for h, p, scope in list(self._pool.keys()):
+            if h == host and p == target_port:
+                total += self.close_scope(h, p, scope)
+        return total
+
+    def close_all(self) -> int:
+        """Close all pooled connections across all hosts and scopes."""
+        total = 0
+        for h, p, scope in list(self._pool.keys()):
+            total += self.close_scope(h, p, scope)
+        return total
+
+    def pooled_count(
+        self,
+        host: str | None = None,
+        port: int | None = None,
+        *,
+        session_scope: str | None = None,
+    ) -> int:
         """Return the number of currently pooled idle connections."""
-        if host is not None and port is not None:
-            return len(self._pool.get((host, int(port)), ()))
-        return sum(len(q) for q in self._pool.values())
+        target_port = int(port) if port is not None else None
+        total = 0
+        for (h, p, s), queue in self._pool.items():
+            if host is not None and h != host:
+                continue
+            if target_port is not None and p != target_port:
+                continue
+            if session_scope is not None and s != session_scope:
+                continue
+            total += len(queue)
+        return total
+
+
+@dataclass(frozen=True)
+class _TransportPoolContext:
+    """Per-request command and derived session scope propagated via `ContextVar` to the connector."""
+
+    command: str
+    session_scope: str = ""
+
+
+_transport_pool_ctx: ContextVar[_TransportPoolContext | None] = ContextVar(
+    "arodonata_transport_pool_ctx",
+    default=None,
+)
+
+
+@dataclass
+class _ProtoTrackEntry:
+    """Tracks per-protocol TLS fingerprint, last command, session scope, and request count."""
+
+    fingerprint: str
+    command: str = ""
+    pool_scope: str = ""
+    request_count: int = 1
 
 
 class FingerprintTCPConnector(aiohttp.TCPConnector):
@@ -295,14 +427,12 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
         **kwargs: Any,
     ) -> None:
         if ssl_context is None:
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+            ssl_context = _DEFAULT_CHECKPOINT_SSL_CONTEXT
         super().__init__(ssl=ssl_context, keepalive_timeout=connection_pool.max_idle_seconds, **kwargs)
         self._trust_policy = trust_policy
         self._connection_pool = connection_pool
         self._proto_fingerprints: weakref.WeakKeyDictionary[ResponseHandler, str] = weakref.WeakKeyDictionary()
-        self._proto_commands: weakref.WeakKeyDictionary[ResponseHandler, str] = weakref.WeakKeyDictionary()
+        self._proto_state: weakref.WeakKeyDictionary[ResponseHandler, _ProtoTrackEntry] = weakref.WeakKeyDictionary()
 
     async def _create_proxy_connection(
         self,
@@ -340,6 +470,7 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
             trust_policy=self._trust_policy,
         )
         self._proto_fingerprints[proto] = fp
+        self._proto_state[proto] = _ProtoTrackEntry(fingerprint=fp, request_count=1)
         return transp, proto
 
     async def connect(
@@ -348,23 +479,37 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
         traces: list[Trace],
         timeout: aiohttp.ClientTimeout,
     ) -> Connection:
-        command = req.url.path.rsplit("/", 1)[-1] if req.url.path else ""
+        call_ctx = _transport_pool_ctx.get()
+        command = (
+            call_ctx.command if call_ctx is not None else (req.url.path.rsplit("/", 1)[-1] if req.url.path else "")
+        )
+        session_scope = call_ctx.session_scope if call_ctx is not None else ""
         host = req.url.raw_host or req.host
         port = req.port or 443
         key: ConnectionKey = req.connection_key
 
         self._connection_pool.evict_expired()
-        pooled = self._connection_pool.acquire_for_command(host, port, command)
+        pooled = self._connection_pool.acquire_for_command(
+            host,
+            port,
+            command,
+            session_scope=session_scope or None,
+        )
         if pooled is not None and isinstance(pooled.protocol, ResponseHandler):
             proto = pooled.protocol
-            self._proto_commands[proto] = command
+            self._proto_state[proto] = _ProtoTrackEntry(
+                fingerprint=pooled.fingerprint,
+                command=command,
+                pool_scope=pooled.pool_scope,
+                request_count=pooled.request_count,
+            )
             self._acquired.add(proto)
             if self._limit_per_host:
                 self._acquired_per_host[key].add(proto)
             return Connection(self, key, proto, self._loop)
 
         # Ensure aiohttp's internal `_conns` does not hand back a connection when `VerifiedConnectionPool`
-        # declined reuse (e.g. non-show command or expired idle time)
+        # declined reuse (e.g. non-pooled command, different scope, or expired idle time)
         if key in self._conns:
             while self._conns[key]:
                 old_proto, _ = self._conns[key].popleft()
@@ -373,7 +518,15 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
 
         conn = await super().connect(req, traces, timeout)
         if conn.protocol is not None:
-            self._proto_commands[conn.protocol] = command
+            existing = self._proto_state.get(conn.protocol)
+            req_count = existing.request_count if existing is not None else 1
+            fp = existing.fingerprint if existing is not None else self._proto_fingerprints.get(conn.protocol, "")
+            self._proto_state[conn.protocol] = _ProtoTrackEntry(
+                fingerprint=fp,
+                command=command,
+                pool_scope=session_scope,
+                request_count=req_count,
+            )
         return conn
 
     def _release(
@@ -386,20 +539,37 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
         if self._closed:
             return
         self._release_acquired(key, protocol)
-        fp = self._proto_fingerprints.get(protocol, "")
-        command = self._proto_commands.pop(protocol, "")
+        state = self._proto_state.pop(protocol, None)
+        fp = state.fingerprint if state is not None else self._proto_fingerprints.get(protocol, "")
+        command = state.command if state is not None else ""
+        pool_scope = state.pool_scope if state is not None else ""
+        req_count = state.request_count if state is not None else 1
         entry = PooledSocketEntry(
             host=key.host,
             port=key.port or 443,
             fingerprint=fp,
             protocol=protocol,
             last_used_at=self._connection_pool._monotonic(),
+            request_count=req_count,
+            pool_scope=pool_scope,
         )
-        if should_close or self._force_close or protocol.should_close or not is_readonly_poolable_command(command):
+        if (
+            should_close
+            or self._force_close
+            or protocol.should_close
+            or not is_poolable_command(command, session_scope=pool_scope or None)
+        ):
             entry.close()
             self._proto_fingerprints.pop(protocol, None)
             return
-        self._connection_pool.release_after_command(entry, command, should_close=False)
+        kept = self._connection_pool.release_after_command(
+            entry,
+            command,
+            should_close=False,
+            session_scope=pool_scope,
+        )
+        if not kept:
+            self._proto_fingerprints.pop(protocol, None)
 
 
 @dataclass
@@ -486,8 +656,9 @@ class ApiTransport:
       (`phase="read"`).
     - NEVER automatically re-sends a request after request bytes have been written to
       the socket (on read timeout, `ConnectionResetError`, or `BrokenPipeError`).
-    - Reuses verified keep-alive connections via `VerifiedConnectionPool` (up to 10s idle)
-      strictly for read-only `show-*` commands.
+    - Reuses verified keep-alive connections via `VerifiedConnectionPool` (up to 10s idle
+      and `< 95` requests) for read-only `show-*` commands and scoped dedicated-session
+      commands while closing idle sockets before non-pooled boundary/mutating commands.
     """
 
     def __init__(
@@ -552,9 +723,11 @@ class ApiTransport:
         port: int = 443,
         sid: str | None = None,
         timeout: float | None = None,
+        session_scope: str | None = None,
     ) -> ApiCallResult:
         """Execute `POST https://<host>:<port>/web_api/<command>` with pre-request TLS verification."""
         clean_cmd = validate_command_name(command)
+        eff_scope = session_scope or ""
 
         connect_timeout = float(self._settings.connect_timeout)
         read_timeout = self._settings.resolve_read_timeout(timeout)
@@ -575,7 +748,7 @@ class ApiTransport:
         }
         if sid:
             headers["X-chkp-sid"] = sid
-        if not is_readonly_poolable_command(clean_cmd):
+        if not is_poolable_command(clean_cmd, session_scope=eff_scope or None):
             headers["Connection"] = "close"
 
         body_bytes = json.dumps(payload or {}, separators=(",", ":")).encode("utf-8")
@@ -592,6 +765,7 @@ class ApiTransport:
                 connect_timeout=connect_timeout,
                 read_timeout=read_timeout,
                 known_sids=known_sids,
+                session_scope=eff_scope,
             )
 
         return await self._execute_with_aiohttp(
@@ -604,6 +778,7 @@ class ApiTransport:
             connect_timeout=connect_timeout,
             read_timeout=read_timeout,
             known_sids=known_sids,
+            session_scope=eff_scope,
         )
 
     async def _execute_with_custom_sender(
@@ -618,10 +793,16 @@ class ApiTransport:
         connect_timeout: float,
         read_timeout: float,
         known_sids: tuple[str, ...] | None,
+        session_scope: str = "",
     ) -> ApiCallResult:
         """Execute request through the injected `request_sender` while enforcing all pool/TLS/timeout rules."""
         assert self._request_sender is not None
-        pooled_entry = self._pool.acquire_for_command(host, port, command)
+        pooled_entry = self._pool.acquire_for_command(
+            host,
+            port,
+            command,
+            session_scope=session_scope or None,
+        )
 
         # Step 1: If no pooled connection was reused, perform pre-request TLS verification
         # BEFORE any request headers or bytes can be sent.
@@ -733,9 +914,15 @@ class ApiTransport:
                 fingerprint=verified_fp,
                 protocol=object(),
                 last_used_at=self._pool._monotonic(),
+                pool_scope=session_scope,
             )
         should_close = raw_resp.headers.get("Connection", "").lower() == "close"
-        self._pool.release_after_command(active_entry, command, should_close=should_close)
+        self._pool.release_after_command(
+            active_entry,
+            command,
+            should_close=should_close,
+            session_scope=session_scope,
+        )
         return _parse_cp_json_response(raw_resp.status, raw_resp.body)
 
     async def _execute_with_aiohttp(
@@ -750,6 +937,7 @@ class ApiTransport:
         connect_timeout: float,
         read_timeout: float,
         known_sids: tuple[str, ...] | None,
+        session_scope: str = "",
     ) -> ApiCallResult:
         session = await self._ensure_aiohttp_session()
         client_timeout = aiohttp.ClientTimeout(
@@ -759,6 +947,7 @@ class ApiTransport:
             sock_read=read_timeout,
         )
 
+        pool_ctx_token = _transport_pool_ctx.set(_TransportPoolContext(command=command, session_scope=session_scope))
         try:
             async with session.post(
                 url,
@@ -831,6 +1020,8 @@ class ApiTransport:
                 request_sent=True,
                 known_sids=known_sids,
             ) from exc
+        finally:
+            _transport_pool_ctx.reset(pool_ctx_token)
 
         if 300 <= status_code < 400:
             self._pool.close_host(host, port)
@@ -842,8 +1033,12 @@ class ApiTransport:
                 known_sids=known_sids,
             )
 
-        if not is_readonly_poolable_command(command) or conn_header.lower() == "close":
-            self._pool.close_host(host, port)
+        if not is_poolable_command(command, session_scope=session_scope or None):
+            if session_scope:
+                self._pool.close_scope(host, port, session_scope)
+            self._pool.close_scope(host, port, "")
+        elif conn_header.lower() == "close":
+            self._pool.close_scope(host, port, session_scope)
 
         return _parse_cp_json_response(status_code, raw_body)
 
@@ -859,12 +1054,16 @@ class ApiTransport:
 
 __all__ = [
     "KEEPALIVE_IDLE_LIMIT_SECONDS",
+    "MAX_KEEPALIVE_REQUESTS_PER_SOCKET",
+    "NON_POOLABLE_SESSION_COMMANDS",
     "ApiTransport",
     "FingerprintTCPConnector",
     "PooledSocketEntry",
     "RawHttpResponse",
     "VerifiedConnectionPool",
+    "derive_session_pool_scope",
     "extract_peer_der_cert",
+    "is_poolable_command",
     "is_readonly_poolable_command",
     "validate_command_name",
     "verify_transport_peer_certificate",
