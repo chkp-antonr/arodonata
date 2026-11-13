@@ -16,11 +16,15 @@ from aiohttp import web
 
 from arodonata.adapters.checkpoint.tls import TrustPolicy, compute_der_fingerprint
 from arodonata.adapters.checkpoint.transport import (
+    MAX_KEEPALIVE_REQUESTS_PER_SOCKET,
+    NON_POOLABLE_SESSION_COMMANDS,
     ApiTransport,
     FingerprintTCPConnector,
     PooledSocketEntry,
     RawHttpResponse,
     VerifiedConnectionPool,
+    derive_session_pool_scope,
+    is_poolable_command,
     validate_command_name,
     verify_transport_peer_certificate,
 )
@@ -507,5 +511,244 @@ async def test_real_loopback_tls_connector_pinning_pooling_and_redirects_blocked
             assert disc_exc.value.request_sent is True
         finally:
             await good_transport.close()
+    finally:
+        await runner.cleanup()
+
+
+async def test_non_poolable_commands_close_idle_sockets_before_connecting(tmp_path: Path) -> None:
+    """Idle pooled sockets are closed BEFORE peer handshake starts for boundary / un-scoped mutating commands."""
+    der, fp = _make_der("preconnect-close")
+    clock = FakeClock(2000.0)
+    pool = VerifiedConnectionPool(max_idle_seconds=10.0, monotonic_fn=clock)
+    policy = TrustPolicy(
+        mode="pinned",
+        known_hosts_path=tmp_path / "known.json",
+        pinned_fingerprints=f"10.0.0.1:443={fp}",
+    )
+
+    created_protos: list[FakeSocketProtocol] = []
+    closed_at_handshake: list[bool] = []
+
+    def cert_getter(_h: str, _p: int) -> bytes:
+        if created_protos:
+            closed_at_handshake.append(created_protos[-1].closed)
+        return der
+
+    async def sender(**kwargs: Any) -> tuple[RawHttpResponse, PooledSocketEntry | None]:
+        reused = kwargs["reused_entry"]
+        if reused is not None:
+            entry = reused
+        else:
+            proto = FakeSocketProtocol()
+            created_protos.append(proto)
+            entry = PooledSocketEntry(
+                host=kwargs["host"],
+                port=kwargs["port"],
+                fingerprint=fp,
+                protocol=proto,
+                last_used_at=clock(),
+            )
+        return RawHttpResponse(status=200, body=b"{}", reused_connection=reused is not None), entry
+
+    transport = ApiTransport(
+        settings=ArodonataSettings(),
+        trust_policy=policy,
+        connection_pool=pool,
+        peer_cert_getter=cert_getter,
+        request_sender=sender,
+    )
+
+    try:
+        for non_poolable_cmd in ("login", "add-host", "publish", "discard", "logout"):
+            await transport.execute("10.0.0.1", "show-hosts", sid="sid_readonly")
+            assert pool.pooled_count("10.0.0.1", 443) == 1
+            active_proto = created_protos[-1]
+            assert active_proto.closed is False
+
+            await transport.execute("10.0.0.1", non_poolable_cmd, sid="sid_readonly")
+            assert closed_at_handshake[-1] is True, (
+                f"Expected idle socket to be closed BEFORE handshake for {non_poolable_cmd!r}"
+            )
+            assert active_proto.closed is True
+            assert pool.pooled_count("10.0.0.1", 443) == 0
+    finally:
+        await transport.close()
+
+
+async def test_dedicated_session_scope_pools_mutations_and_isolates_scopes(tmp_path: Path) -> None:
+    """Dedicated session_scope reuses verified sockets across in-session mutations without exposing raw SID."""
+    raw_sid_a = "top_secret_sid_alpha_999"
+    raw_sid_b = "top_secret_sid_beta_888"
+    scope_a = derive_session_pool_scope(raw_sid_a)
+    scope_b = derive_session_pool_scope(raw_sid_b)
+
+    assert scope_a.startswith("s:")
+    assert raw_sid_a not in scope_a
+    assert scope_a != scope_b
+    assert is_poolable_command("add-host", session_scope=None) is False
+    assert is_poolable_command("add-host", session_scope=scope_a) is True
+    for boundary_cmd in NON_POOLABLE_SESSION_COMMANDS:
+        assert is_poolable_command(boundary_cmd, session_scope=scope_a) is False
+
+    der, fp = _make_der("scoped-pool")
+    clock = FakeClock(3000.0)
+    pool = VerifiedConnectionPool(max_idle_seconds=10.0, monotonic_fn=clock)
+    policy = TrustPolicy(
+        mode="pinned",
+        known_hosts_path=tmp_path / "known.json",
+        pinned_fingerprints=f"10.0.0.1:443={fp}",
+    )
+
+    handshakes = 0
+    recorded_headers: list[dict[str, str]] = []
+    entries_by_scope: dict[str, PooledSocketEntry] = {}
+
+    def cert_getter(_h: str, _p: int) -> bytes:
+        nonlocal handshakes
+        handshakes += 1
+        return der
+
+    async def sender(**kwargs: Any) -> tuple[RawHttpResponse, PooledSocketEntry | None]:
+        recorded_headers.append(dict(kwargs["headers"]))
+        reused = kwargs["reused_entry"]
+        if reused is not None:
+            return RawHttpResponse(status=200, body=b'{"uid":"u1"}', reused_connection=True), reused
+        proto = FakeSocketProtocol()
+        entry = PooledSocketEntry(
+            host=kwargs["host"],
+            port=kwargs["port"],
+            fingerprint=fp,
+            protocol=proto,
+            last_used_at=clock(),
+        )
+        sid_val = kwargs["headers"].get("X-chkp-sid", "")
+        entries_by_scope[sid_val] = entry
+        return RawHttpResponse(status=200, body=b'{"uid":"u1"}', reused_connection=False), entry
+
+    transport = ApiTransport(
+        settings=ArodonataSettings(),
+        trust_policy=policy,
+        connection_pool=pool,
+        peer_cert_getter=cert_getter,
+        request_sender=sender,
+    )
+
+    try:
+        # 1. Dedicated session A executes sequential in-session commands on 1 verified socket
+        for cmd in ("show-session", "add-host", "add-group", "set-access-rule"):
+            res = await transport.execute("10.0.0.1", cmd, {}, sid=raw_sid_a, session_scope=scope_a)
+            assert res.success is True
+            assert "Connection" not in recorded_headers[-1]
+
+        assert handshakes == 1
+        assert pool.reuse_count == 3
+        assert pool.pooled_count("10.0.0.1", 443, session_scope=scope_a) == 1
+        entry_a = entries_by_scope[raw_sid_a]
+        assert entry_a.request_count == 4
+        assert raw_sid_a not in repr(entry_a)
+        assert raw_sid_a not in repr(pool._pool)
+
+        # 2. Dedicated session B stays isolated on its own socket without closing A's socket
+        await transport.execute("10.0.0.1", "add-host", {}, sid=raw_sid_b, session_scope=scope_b)
+        assert handshakes == 2
+        assert pool.pooled_count("10.0.0.1", 443, session_scope=scope_a) == 1
+        assert pool.pooled_count("10.0.0.1", 443, session_scope=scope_b) == 1
+
+        # 3. Boundary command on session A closes A's pooled socket before connecting and keeps B intact
+        await transport.execute("10.0.0.1", "publish", {}, sid=raw_sid_a, session_scope=scope_a)
+        assert recorded_headers[-1]["Connection"] == "close"
+        assert entry_a.protocol.closed is True
+        assert pool.pooled_count("10.0.0.1", 443, session_scope=scope_a) == 0
+        assert pool.pooled_count("10.0.0.1", 443, session_scope=scope_b) == 1
+    finally:
+        await transport.close()
+
+
+async def test_real_loopback_tls_dedicated_session_pooling_and_95_request_rotation(tmp_path: Path) -> None:
+    """Exercise real FingerprintTCPConnector against loopback TLS server:
+    - Verifies _DEFAULT_CHECKPOINT_SSL_CONTEXT enforces TLS 1.2+, CERT_NONE, NO_COMPRESSION, and HTTP/1.1 ALPN
+    - Reuses 1 verified TCP/TLS socket for requests 1..95 in dedicated session_scope
+    - Rotates cleanly on release at request 95 so request 96 opens a fresh TLS connection
+    """
+    cert_pem, key_pem, _der, server_fp = _generate_self_signed_cert(tmp_path, "rot-server")
+    peer_ports: list[int] = []
+
+    async def handle_web_api(request: web.Request) -> web.StreamResponse:
+        if request.transport is not None:
+            peername = request.transport.get_extra_info("peername")
+            if isinstance(peername, tuple) and len(peername) >= 2:
+                peer_ports.append(int(peername[1]))
+        return web.json_response({"uid": "rule-1"})
+
+    app = web.Application()
+    app.router.add_post("/web_api/{cmd}", handle_web_api)
+
+    ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ssl_ctx.load_cert_chain(certfile=str(cert_pem), keyfile=str(key_pem))
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0, ssl_context=ssl_ctx)
+    await site.start()
+    try:
+        assert site._server is not None
+        port = site._server.sockets[0].getsockname()[1]
+
+        policy = TrustPolicy(
+            mode="pinned",
+            known_hosts_path=tmp_path / "rot_known.json",
+            pinned_fingerprints=f"127.0.0.1:{port}={server_fp}",
+        )
+        pool = VerifiedConnectionPool(max_idle_seconds=10.0)
+        transport = ApiTransport(
+            settings=ArodonataSettings(tls_trust="pinned"),
+            trust_policy=policy,
+            connection_pool=pool,
+        )
+        scope = derive_session_pool_scope("loopback_write_sid_1")
+        try:
+            session = await transport._ensure_aiohttp_session()
+            assert transport._connector is not None
+            conn_ssl = transport._connector._ssl
+            assert isinstance(conn_ssl, ssl.SSLContext)
+            assert conn_ssl.minimum_version == ssl.TLSVersion.TLSv1_2
+            assert conn_ssl.verify_mode == ssl.CERT_NONE
+            assert conn_ssl.check_hostname is False
+            assert bool(conn_ssl.options & ssl.OP_NO_COMPRESSION)
+            assert not session.closed
+
+            # Requests 1..95 reuse a single TCP/TLS connection and rotate at 95
+            for idx in range(MAX_KEEPALIVE_REQUESTS_PER_SOCKET):
+                res = await transport.execute(
+                    "127.0.0.1",
+                    "add-access-rule",
+                    {"name": f"r-{idx}"},
+                    port=port,
+                    sid="loopback_write_sid_1",
+                    session_scope=scope,
+                )
+                assert res.success is True
+
+            assert pool.fresh_count == 1
+            assert pool.reuse_count == MAX_KEEPALIVE_REQUESTS_PER_SOCKET - 1
+            assert len(set(peer_ports)) == 1
+            # Request 95 hit the 95-request rotation limit on release -> pool now empty
+            assert pool.pooled_count("127.0.0.1", port, session_scope=scope) == 0
+
+            # Request 96 opens a fresh TLS-verified connection cleanly
+            res_96 = await transport.execute(
+                "127.0.0.1",
+                "add-access-rule",
+                {"name": "r-95"},
+                port=port,
+                sid="loopback_write_sid_1",
+                session_scope=scope,
+            )
+            assert res_96.success is True
+            assert pool.fresh_count == 2
+            assert len(set(peer_ports)) == 2
+            assert pool.pooled_count("127.0.0.1", port, session_scope=scope) == 1
+        finally:
+            await transport.close()
     finally:
         await runner.cleanup()

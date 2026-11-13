@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **transport,sessions**: Reuse fingerprint-verified keep-alive HTTPS connections across sequential non-boundary commands within dedicated sessions (`WriteSession` / explicit `sid`) via non-reversible SHA-256 `session_scope`, while isolating shared read-only `show-*` pooling and enforcing `Connection: close` on session-boundary and un-scoped mutating commands.
+- **transport**: Use a pre-built lightweight TLS 1.2+ `SSLContext` without disk CA bundle loads for fingerprint-verified Check Point connections.
+
+### Fixed
+
+- **transport**: Prevent `aiohttp.ServerDisconnectedError` (`0`-byte EOF) caused by stale idle pooled sockets and Check Point `httpd2` `MaxKeepAliveRequests` (`100`) exhaustion by evicting matching idle sockets before non-pooled or fresh session handshakes, rotating pooled sockets at `95` requests in `FingerprintTCPConnector`, and closing session-scoped sockets on `logout_sid`.
+
 ## v2.6.0 (2026-11-13)
 
 ### Feat

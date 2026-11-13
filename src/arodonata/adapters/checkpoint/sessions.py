@@ -29,7 +29,7 @@ from typing import Any
 import arlogi
 
 from arodonata.adapters.checkpoint.rate_limiter import LoginGate, RateLimiter
-from arodonata.adapters.checkpoint.transport import ApiTransport
+from arodonata.adapters.checkpoint.transport import ApiTransport, derive_session_pool_scope
 from arodonata.core.config import ArodonataSettings, ServerEndpointConfig
 from arodonata.core.context import (
     AuthContext,
@@ -1126,6 +1126,8 @@ class LoginCoordinator:
                     auth_identity=entry.auth_identity,
                 )
 
+        scope = derive_session_pool_scope(sid)
+        self._transport.connection_pool.close_session_scope(scope)
         try:
             async with self._rate_limiter.slot(endpoint.host):
                 res = await self._transport.execute(
@@ -1143,6 +1145,8 @@ class LoginCoordinator:
             raise
         except BaseException:
             return False
+        finally:
+            self._transport.connection_pool.close_session_scope(scope)
 
     @traced
     async def logout_all(self, *, include_cached_readonly: bool = True) -> int:

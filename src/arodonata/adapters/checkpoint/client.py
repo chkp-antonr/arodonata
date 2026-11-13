@@ -33,7 +33,11 @@ from arodonata.adapters.checkpoint.sessions import (
 )
 from arodonata.adapters.checkpoint.task_waiter import TaskWaiter, extract_task_ids
 from arodonata.adapters.checkpoint.tls import TrustPolicy
-from arodonata.adapters.checkpoint.transport import ApiTransport, VerifiedConnectionPool
+from arodonata.adapters.checkpoint.transport import (
+    ApiTransport,
+    VerifiedConnectionPool,
+    derive_session_pool_scope,
+)
 from arodonata.adapters.storage import DatabaseManager, SqlCacheAdapter, SqlLockAdapter
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import (
@@ -214,12 +218,16 @@ class AMgmtClient:
             known_hosts_path=self._settings.tls_known_hosts_path,
             pinned_fingerprints=self._settings.tls_fingerprints,
         )
-        self._connection_pool = connection_pool or VerifiedConnectionPool(monotonic_fn=monotonic_fn)
-        self._transport = transport or ApiTransport(
-            settings=self._settings,
-            trust_policy=self._trust_policy,
-            connection_pool=self._connection_pool,
-        )
+        if transport is not None:
+            self._transport = transport
+            self._connection_pool = connection_pool or transport.connection_pool
+        else:
+            self._connection_pool = connection_pool or VerifiedConnectionPool(monotonic_fn=monotonic_fn)
+            self._transport = ApiTransport(
+                settings=self._settings,
+                trust_policy=self._trust_policy,
+                connection_pool=self._connection_pool,
+            )
         self._task_waiter = task_waiter or TaskWaiter(
             task_timeout=self._settings.task_timeout,
             monotonic_fn=monotonic_fn,
@@ -423,16 +431,22 @@ class AMgmtClient:
             )
 
         call_budget = timeout if timeout is not None else self._settings.api_timeout
+        session_scope = derive_session_pool_scope(active_sid) if (not using_cached_sid and active_sid) else None
 
         async def _execute_once(curr_sid: str, curr_ip: str, curr_mds_ip: str) -> ApiCallResult:
+            exec_kwargs: dict[str, Any] = {
+                "port": port,
+                "sid": curr_sid,
+                "timeout": call_budget,
+            }
+            if session_scope is not None:
+                exec_kwargs["session_scope"] = session_scope
             async with self._rate_limiter.slot(curr_mds_ip):
                 return await self._transport.execute(
                     curr_ip,
                     clean_cmd,
                     payload,
-                    port=port,
-                    sid=curr_sid,
-                    timeout=call_budget,
+                    **exec_kwargs,
                 )
 
         try:
@@ -520,14 +534,19 @@ class AMgmtClient:
             if task_ids:
 
                 async def _poll_show_task(poll_payload: dict[str, Any]) -> ApiCallResult:
+                    poll_kwargs: dict[str, Any] = {
+                        "port": port,
+                        "sid": active_sid,
+                        "timeout": None,  # Uses max(api_timeout, login_timeout) + 5s socket read timeout
+                    }
+                    if session_scope is not None:
+                        poll_kwargs["session_scope"] = session_scope
                     async with self._rate_limiter.slot(mds_ip):
                         return await self._transport.execute(
                             target_ip,
                             "show-task",
                             poll_payload,
-                            port=port,
-                            sid=active_sid,
-                            timeout=None,  # Uses max(api_timeout, login_timeout) + 5s socket read timeout
+                            **poll_kwargs,
                         )
 
                 res = await self._task_waiter.wait_for_tasks(
