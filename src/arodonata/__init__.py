@@ -1,6 +1,6 @@
 """Arodonata v2 — Async-first Python SDK for Check Point Management & MDSM."""
 
-__version__ = "2.6.0"
+__version__ = "2.6.1"
 
 from arodonata.adapters.checkpoint import AMgmtClient
 from arodonata.api_reference import (
