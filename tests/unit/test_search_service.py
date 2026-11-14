@@ -761,3 +761,103 @@ async def test_cross_domain_get_group_members_cache_only_global_visibility_and_a
         assert [g.name for g in gw_search.memberships[gw_match_uid]] == ["G_Corp_Firewalls"]
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_query_objects_cpmi_asset_equivalents_and_group_by_aliases() -> None:
+    """`query_objects` matches Check Point `Cpmi*` asset classes via short aliases and resolves `group_by` aliases."""
+    db = DatabaseManager()
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        lock_port = SqlLockAdapter(db)
+        api = SearchFakeApi()
+        settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+        domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+        coordinator = DomainSyncCoordinator(
+            settings=settings,
+            api=api,
+            cache=cache,
+            lock_port=lock_port,
+            domain_service=domain_service,
+        )
+        object_service = ObjectService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+        service_cache = ServiceCacheService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+        search_service = SearchService(
+            cache=cache,
+            object_service=object_service,
+            service_cache=service_cache,
+        )
+
+        await cache.replace_domain_assets(
+            "mds1",
+            "Perimeter",
+            [
+                Asset(
+                    uid="gw-1",
+                    name="perim-gw-01",
+                    type="CpmiGatewayPlain",
+                    mgmt_name="mds1",
+                    domain_name="Perimeter",
+                ),
+                Asset(
+                    uid="cl-1",
+                    name="perim-cl-01",
+                    type="CpmiGatewayCluster",
+                    mgmt_name="mds1",
+                    domain_name="Perimeter",
+                ),
+                Asset(
+                    uid="m-1",
+                    name="perim-cl-01-m1",
+                    type="CpmiVsxClusterMember",
+                    mgmt_name="mds1",
+                    domain_name="Perimeter",
+                ),
+                Asset(
+                    uid="vsx-1",
+                    name="perim-vsx-01",
+                    type="CpmiVsxClusterNetobj",
+                    mgmt_name="mds1",
+                    domain_name="Perimeter",
+                ),
+                Asset(
+                    uid="vs-1",
+                    name="perim-vs-01",
+                    type="CpmiVsNetobj",
+                    mgmt_name="mds1",
+                    domain_name="Perimeter",
+                ),
+            ],
+        )
+
+        res = await search_service.query_objects(
+            mgmt_name="mds1",
+            types=["gateway", "cluster", "member", "vsx", "vs"],
+            group_by=["domain", "asset_type"],
+            aggregate="count",
+            cache_mode="cache",
+        )
+        assert res["total"] == 5
+        assert res["group_by"] == ["domain_name", "type"]
+        assert all(g["domain"] == "Perimeter" and g["domain_name"] == "Perimeter" for g in res["groups"])
+        assert {g["asset_type"] for g in res["groups"]} == {
+            "CpmiGatewayPlain",
+            "CpmiGatewayCluster",
+            "CpmiVsxClusterMember",
+            "CpmiVsxClusterNetobj",
+            "CpmiVsNetobj",
+        }
+        assert all(g["type"] == g["asset_type"] for g in res["groups"])
+
+        # Canonical keys must not inject alias keys
+        canon = await search_service.query_objects(
+            mgmt_name="mds1",
+            types=["cluster"],
+            group_by=["domain_name", "type"],
+            aggregate="count",
+            cache_mode="cache",
+        )
+        assert canon["groups"] == [{"domain_name": "Perimeter", "type": "CpmiGatewayCluster", "count": 1}]
+    finally:
+        await db.close()

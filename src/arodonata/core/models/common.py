@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal, overload
 
@@ -104,6 +105,70 @@ CANONICAL_ASSET_TYPES: frozenset[str] = frozenset(
     }
 )
 
+_CANONICAL_ASSET_BY_LOWER: dict[str, str] = {t.lower(): t for t in CANONICAL_ASSET_TYPES}
+
+_ASSET_EQUIVALENT_GROUPS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        ("gateway", "simple-gateway", "simple_gateway", "cpmigatewayplain"),
+        ("simple-gateway", "CpmiGatewayPlain"),
+    ),
+    (
+        ("cluster", "simple-cluster", "simple_cluster", "cpmigatewaycluster"),
+        ("simple-cluster", "CpmiGatewayCluster"),
+    ),
+    (
+        ("member", "cluster-member", "cluster_member", "cpmiclustermember"),
+        ("cluster-member", "vsx-cluster-member", "CpmiClusterMember", "CpmiVsxClusterMember"),
+    ),
+    (
+        ("vsx-cluster-member", "vsx_cluster_member", "cpmivsxclustermember"),
+        ("vsx-cluster-member", "CpmiVsxClusterMember"),
+    ),
+    (
+        ("vsx", "vsx-gateway", "vsx_gateway", "cpmivsxnetobj"),
+        ("vsx-gateway", "vsx-cluster", "CpmiVsxNetobj", "CpmiVsxClusterNetobj"),
+    ),
+    (
+        ("vsx-cluster", "vsx_cluster", "cpmivsxclusternetobj"),
+        ("vsx-cluster", "CpmiVsxClusterNetobj"),
+    ),
+    (
+        (
+            "vs",
+            "virtual-system",
+            "virtual_system",
+            "vs-netobj",
+            "vs_netobj",
+            "cpmivsnetobj",
+            "cpmivsclusternetobj",
+        ),
+        ("virtual-system", "vs-netobj", "CpmiVsNetobj", "CpmiVsClusterNetobj"),
+    ),
+    (
+        ("server", "mgmt", "host-ckp", "checkpoint-host", "checkpoint_host", "cpmihostckp"),
+        ("checkpoint-host", "CpmiHostCkp"),
+    ),
+    (
+        ("interoperable", "interoperable-device", "interoperable_device"),
+        ("interoperable-device",),
+    ),
+)
+
+ASSET_TYPE_EQUIVALENTS: dict[str, tuple[str, ...]] = {
+    alias: targets for aliases, targets in _ASSET_EQUIVALENT_GROUPS for alias in aliases
+}
+
+QUERY_GROUP_BY_ALIASES: dict[str, str] = {
+    "domain": "domain_name",
+    "mgmt": "mgmt_name",
+    "server": "mgmt_name",
+    "management": "mgmt_name",
+    "object_type": "type",
+    "asset_type": "type",
+    "service_type": "type",
+    "orig_domain": "original_domain",
+}
+
 
 def normalize_object_type(item_type: str) -> str:
     """Normalize a network object type alias (e.g. `'range'` -> `'address-range'`)."""
@@ -123,6 +188,32 @@ def normalize_asset_type(item_type: str) -> str:
     """Normalize an asset type alias (e.g. `'gateway'` -> `'simple-gateway'`, `'cluster'` -> `'simple-cluster'`)."""
     clean = item_type.strip().lower()
     return ASSET_TYPE_ALIASES.get(clean, clean)
+
+
+def expand_asset_type(item_type: str) -> tuple[str, ...]:
+    """Expand an asset type or alias to all equivalent REST and Check Point `Cpmi*` classes."""
+    clean = item_type.strip()
+    if not clean:
+        return ()
+    low = clean.lower()
+    if low in ASSET_TYPE_EQUIVALENTS:
+        return ASSET_TYPE_EQUIVALENTS[low]
+    if low in _CANONICAL_ASSET_BY_LOWER:
+        return (_CANONICAL_ASSET_BY_LOWER[low],)
+    return (clean,)
+
+
+def expand_asset_types(types: Sequence[str]) -> list[str]:
+    """Expand asset types/aliases into deduplicated REST and Check Point `Cpmi*` classes."""
+    expanded: list[str] = []
+    seen_lower: set[str] = set()
+    for raw_type in types:
+        for candidate in expand_asset_type(str(raw_type or "")):
+            low = candidate.lower()
+            if low not in seen_lower:
+                seen_lower.add(low)
+                expanded.append(candidate)
+    return expanded
 
 
 def normalize_any_type(item_type: str) -> str:

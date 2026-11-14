@@ -31,7 +31,7 @@ from arodonata.adapters.storage.tables import (
     _ensure_utc,
 )
 from arodonata.core.models.assets import Asset
-from arodonata.core.models.common import SyncScope, SyncStatus, utc_now
+from arodonata.core.models.common import SyncScope, SyncStatus, expand_asset_types, utc_now
 from arodonata.core.models.domains import DomainInfo, DomainSyncState, SIDCacheEntry
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import (
@@ -1165,9 +1165,11 @@ class SqlCacheAdapter:
             if domain_name is not None:
                 stmt = stmt.where(AssetRecord.domain_name == domain_name)  # type: ignore[arg-type]
             if types is not None:
-                if not types:
+                expanded_types = expand_asset_types(types)
+                if not expanded_types:
                     return []
-                stmt = stmt.where(AssetRecord.type.in_(list(types)))  # type: ignore[attr-defined]
+                lowered_types = [t.lower() for t in expanded_types]
+                stmt = stmt.where(func.lower(col(AssetRecord.type)).in_(lowered_types))
             stmt = stmt.order_by(AssetRecord.name, AssetRecord.uid)
             rows = (await session.execute(stmt)).scalars().all()
             return [_record_to_asset(r) for r in rows]

@@ -18,7 +18,7 @@ import base64
 import copy
 import json
 import re
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Awaitable
 from pathlib import Path
 from typing import Any
@@ -151,18 +151,56 @@ def _project_details_level(item: dict[str, Any], details_level: str) -> dict[str
     return copy.deepcopy(item)
 
 
-def _slice_rulebase_nodes(
-    layer_payload: dict[str, Any],
-    *,
-    offset: int,
-    limit: int,
-) -> dict[str, Any]:
-    """Slice a Check Point `show-access-rulebase` or `show-nat-rulebase` payload by rule `offset` and `limit`."""
-    raw_nodes = layer_payload.get("rulebase")
-    nodes = raw_nodes if isinstance(raw_nodes, list) else []
+_INLINE_LIST_RULE_FIELDS: tuple[str, ...] = (
+    "source",
+    "destination",
+    "service",
+    "install-on",
+    "time",
+    "vpn",
+    "content",
+)
+_INLINE_SCALAR_RULE_FIELDS: tuple[str, ...] = (
+    "action",
+    "inline-layer",
+    "original-source",
+    "original-destination",
+    "original-service",
+    "translated-source",
+    "translated-destination",
+    "translated-service",
+)
+_ACCESS_WHERE_USED_COLS: tuple[str, ...] = ("source", "destination", "service", "vpn", "time", "install-on")
+_NAT_WHERE_USED_COLS: tuple[str, ...] = (
+    "original-source",
+    "original-destination",
+    "original-service",
+    "translated-source",
+    "translated-destination",
+    "translated-service",
+    "install-on",
+)
 
-    # Flatten rules with their enclosing section metadata so we can slice accurately by rule index
-    flat_rules: list[tuple[dict[str, Any] | None, dict[str, Any]]] = []
+
+def _extract_ref_uids(value: Any) -> set[str]:
+    """Extract UID strings from a string, object dict, or list of references."""
+    if isinstance(value, str):
+        clean = value.strip()
+        return {clean} if clean else set()
+    if isinstance(value, dict):
+        uid_val = value.get("uid")
+        return {str(uid_val)} if uid_val else set()
+    if isinstance(value, list):
+        out: set[str] = set()
+        for entry in value:
+            out.update(_extract_ref_uids(entry))
+        return out
+    return set()
+
+
+def _iter_flat_rulebase_nodes(nodes: list[Any]) -> list[tuple[dict[str, Any] | None, dict[str, Any]]]:
+    """Flatten top-level and section-nested rulebase entries into `(section_meta, rule_dict)` pairs."""
+    flat: list[tuple[dict[str, Any] | None, dict[str, Any]]] = []
     for node in nodes:
         if not isinstance(node, dict):
             continue
@@ -172,9 +210,56 @@ def _slice_rulebase_nodes(
             children = child_list if isinstance(child_list, list) else []
             for child in children:
                 if isinstance(child, dict):
-                    flat_rules.append((node, child))
+                    flat.append((node, child))
         else:
-            flat_rules.append((None, node))
+            flat.append((None, node))
+    return flat
+
+
+def _inline_rule_objects(rule: dict[str, Any], obj_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Replace UID references in a copied rule with full objects from `objects-dictionary`."""
+    for field in _INLINE_LIST_RULE_FIELDS:
+        raw_list = rule.get(field)
+        if not isinstance(raw_list, list):
+            continue
+        rule[field] = [
+            copy.deepcopy(obj_map[elem]) if isinstance(elem, str) and elem in obj_map else elem for elem in raw_list
+        ]
+
+    for field in _INLINE_SCALAR_RULE_FIELDS:
+        raw_val = rule.get(field)
+        if isinstance(raw_val, str) and raw_val in obj_map:
+            rule[field] = copy.deepcopy(obj_map[raw_val])
+
+    track_val = rule.get("track")
+    if isinstance(track_val, dict):
+        t_type = track_val.get("type")
+        if isinstance(t_type, str) and t_type in obj_map:
+            resolved_track = copy.deepcopy(obj_map[t_type])
+            track_val["type"] = resolved_track
+            if isinstance(resolved_track.get("name"), str):
+                track_val.setdefault("name", resolved_track["name"])
+    return rule
+
+
+def _slice_rulebase_nodes(
+    layer_payload: dict[str, Any],
+    *,
+    offset: int,
+    limit: int,
+    use_object_dictionary: bool = True,
+) -> dict[str, Any]:
+    """Slice a Check Point `show-access-rulebase` or `show-nat-rulebase` payload by rule `offset` and `limit`."""
+    raw_nodes = layer_payload.get("rulebase")
+    nodes = raw_nodes if isinstance(raw_nodes, list) else []
+    flat_rules = _iter_flat_rulebase_nodes(nodes)
+
+    obj_dict_raw = layer_payload.get("objects-dictionary", [])
+    obj_map: dict[str, dict[str, Any]] = {}
+    if not use_object_dictionary and isinstance(obj_dict_raw, list):
+        for entry in obj_dict_raw:
+            if isinstance(entry, dict) and entry.get("uid"):
+                obj_map[str(entry["uid"])] = entry
 
     total = len(flat_rules)
     eff_offset = max(0, int(offset))
@@ -187,10 +272,14 @@ def _slice_rulebase_nodes(
 
     for idx_in_slice, (sec_meta, rule_dict) in enumerate(sliced):
         abs_rule_num = eff_offset + idx_in_slice + 1
+        copied_rule = copy.deepcopy(rule_dict)
+        if not use_object_dictionary and obj_map:
+            copied_rule = _inline_rule_objects(copied_rule, obj_map)
+
         if sec_meta is None:
             current_sec_uid = None
             current_sec_dict = None
-            page_nodes.append(copy.deepcopy(rule_dict))
+            page_nodes.append(copied_rule)
         else:
             sec_uid = str(sec_meta.get("uid") or sec_meta.get("name") or "sec")
             if sec_uid != current_sec_uid or current_sec_dict is None:
@@ -201,12 +290,12 @@ def _slice_rulebase_nodes(
                     "type": sec_meta.get("type", "access-section"),
                     "from": abs_rule_num,
                     "to": abs_rule_num,
-                    "rulebase": [copy.deepcopy(rule_dict)],
+                    "rulebase": [copied_rule],
                 }
                 page_nodes.append(current_sec_dict)
             else:
                 current_sec_dict["to"] = abs_rule_num
-                current_sec_dict["rulebase"].append(copy.deepcopy(rule_dict))
+                current_sec_dict["rulebase"].append(copied_rule)
 
     from_idx = (eff_offset + 1) if sliced else 0
     to_idx = (eff_offset + len(sliced)) if sliced else 0
@@ -215,7 +304,7 @@ def _slice_rulebase_nodes(
         "uid": layer_payload.get("uid", ""),
         "name": layer_payload.get("name", ""),
         "rulebase": page_nodes,
-        "objects-dictionary": copy.deepcopy(layer_payload.get("objects-dictionary", [])),
+        "objects-dictionary": copy.deepcopy(obj_dict_raw) if use_object_dictionary else [],
         "from": from_idx,
         "to": to_idx,
         "total": total,
@@ -223,6 +312,290 @@ def _slice_rulebase_nodes(
     if "package" in layer_payload:
         result["package"] = layer_payload["package"]
     return result
+
+
+def _empty_where_used_bucket() -> dict[str, Any]:
+    """Return an empty Check Point `where-used` usage bucket."""
+    return {
+        "total": 0,
+        "objects": [],
+        "access-control-rules": [],
+        "nat-rules": [],
+        "threat-prevention-rules": [],
+        "https-rules": [],
+    }
+
+
+def _find_domain_object_by_ref(dom_files: dict[str, Any], lookup: str) -> dict[str, Any] | None:
+    """Resolve an object by `uid` or `name` across a domain's fixture payloads."""
+    if not lookup:
+        return None
+    for file_key, file_val in dom_files.items():
+        if not isinstance(file_val, dict):
+            continue
+        items = file_val.get("objects")
+        if isinstance(items, list):
+            for obj in items:
+                if isinstance(obj, dict) and (obj.get("uid") == lookup or obj.get("name") == lookup):
+                    return obj
+        if file_key in ("show-access-rulebase", "show-nat-rulebase"):
+            for layer_val in file_val.values():
+                if not isinstance(layer_val, dict):
+                    continue
+                for entry in layer_val.get("objects-dictionary", []):
+                    if isinstance(entry, dict) and (entry.get("uid") == lookup or entry.get("name") == lookup):
+                        return entry
+        direct_match = file_val.get(lookup)
+        if isinstance(direct_match, dict):
+            return direct_match
+        for sub_val in file_val.values():
+            if isinstance(sub_val, dict) and (sub_val.get("uid") == lookup or sub_val.get("name") == lookup):
+                return sub_val
+            if isinstance(sub_val, list):
+                for entry in sub_val:
+                    if isinstance(entry, dict) and (entry.get("uid") == lookup or entry.get("name") == lookup):
+                        return entry
+    return None
+
+
+def _resolve_access_layer_payload(
+    dom_files: dict[str, Any],
+    global_files: dict[str, Any],
+    lookup: str,
+) -> dict[str, Any] | None:
+    """Resolve an access rulebase layer payload by store key, layer UID, or layer name."""
+    for scope_files in (dom_files, global_files):
+        rb_store = scope_files.get("show-access-rulebase", {})
+        if not isinstance(rb_store, dict):
+            continue
+        direct = rb_store.get(lookup)
+        if isinstance(direct, dict):
+            return direct
+        for candidate in rb_store.values():
+            if isinstance(candidate, dict) and (candidate.get("uid") == lookup or candidate.get("name") == lookup):
+                return candidate
+    return None
+
+
+def _resolve_nat_package_payload(dom_files: dict[str, Any], pkg_lookup: str) -> dict[str, Any] | None:
+    """Resolve a NAT rulebase payload by package name, package UID, or rulebase UID."""
+    nat_store = dom_files.get("show-nat-rulebase", {})
+    if not isinstance(nat_store, dict):
+        return None
+    direct = nat_store.get(pkg_lookup)
+    if isinstance(direct, dict):
+        return direct
+
+    for pkg in dom_files.get("show-packages", {}).get("packages", []):
+        if not isinstance(pkg, dict):
+            continue
+        if pkg.get("uid") == pkg_lookup or pkg.get("name") == pkg_lookup:
+            for key in (pkg.get("name"), pkg.get("uid")):
+                if key:
+                    candidate_by_key = nat_store.get(key)
+                    if isinstance(candidate_by_key, dict):
+                        return candidate_by_key
+
+    for candidate in nat_store.values():
+        if isinstance(candidate, dict) and (
+            candidate.get("package") == pkg_lookup or candidate.get("uid") == pkg_lookup
+        ):
+            return candidate
+    return None
+
+
+def _collect_group_parents(
+    dom_files: dict[str, Any],
+    global_files: dict[str, Any],
+    dom_name: str,
+) -> dict[str, list[tuple[dict[str, Any], str]]]:
+    """Build `member_uid -> [(group_dict, owning_domain)]` across groups in domain and Global."""
+    parents: dict[str, list[tuple[dict[str, Any], str]]] = {}
+    group_cmds = ("show-groups", "show-groups-with-exclusion", "show-service-groups")
+    scopes: list[tuple[str, dict[str, Any]]] = [(dom_name, dom_files)]
+    if dom_name != "Global" and global_files:
+        scopes.append(("Global", global_files))
+
+    for scope_dom, scope_files in scopes:
+        for cmd in group_cmds:
+            items = scope_files.get(cmd, {}).get("objects", [])
+            if not isinstance(items, list):
+                continue
+            for grp in items:
+                if not isinstance(grp, dict) or not grp.get("uid"):
+                    continue
+                member_uids = _extract_ref_uids(grp.get("members"))
+                member_uids.update(_extract_ref_uids(grp.get("include")))
+                member_uids.update(_extract_ref_uids(grp.get("except")))
+                for m_uid in member_uids:
+                    parents.setdefault(m_uid, []).append((grp, scope_dom))
+    return parents
+
+
+def _build_where_used_response(
+    dom_files: dict[str, Any],
+    global_files: dict[str, Any],
+    dom_name: str,
+    target_uid: str,
+    *,
+    indirect: bool,
+    max_depth: int,
+) -> dict[str, Any]:
+    """Compute Check Point `where-used` payload for `target_uid` from domain fixtures."""
+    used_directly = _empty_where_used_bucket()
+    used_indirectly = _empty_where_used_bucket()
+
+    # 1. Upward group membership traversal
+    parents_by_member = _collect_group_parents(dom_files, global_files, dom_name)
+    direct_seen: set[str] = set()
+    indirect_seen: set[str] = set()
+    ancestor_group_uids: set[str] = set()
+    queue: deque[tuple[str, int]] = deque([(target_uid, 0)])
+    visited_nodes: set[str] = {target_uid}
+
+    while queue:
+        curr_uid, curr_depth = queue.popleft()
+        next_depth = curr_depth + 1
+        if curr_depth >= 1 and (not indirect or next_depth > max_depth):
+            continue
+        for grp, scope_dom in parents_by_member.get(curr_uid, []):
+            g_uid = str(grp.get("uid") or "")
+            if not g_uid:
+                continue
+            ancestor_group_uids.add(g_uid)
+            grp_ref = {
+                "uid": g_uid,
+                "name": str(grp.get("name") or g_uid),
+                "type": str(grp.get("type") or "group"),
+                "domain": copy.deepcopy(grp.get("domain") or {"name": scope_dom}),
+            }
+            if next_depth == 1 and g_uid not in direct_seen:
+                direct_seen.add(g_uid)
+                used_directly["objects"].append(grp_ref)
+            elif next_depth >= 2 and indirect and g_uid not in indirect_seen:
+                indirect_seen.add(g_uid)
+                used_indirectly["objects"].append(grp_ref)
+
+            if indirect and next_depth < max_depth and g_uid not in visited_nodes:
+                visited_nodes.add(g_uid)
+                queue.append((g_uid, next_depth))
+
+    # 2. Package / access-layer mapping
+    layer_to_pkg: dict[str, dict[str, str]] = {}
+    pkg_lookup_map: dict[str, dict[str, str]] = {}
+    for pkg in dom_files.get("show-packages", {}).get("packages", []):
+        if not isinstance(pkg, dict):
+            continue
+        pkg_uid = str(pkg.get("uid") or "")
+        pkg_name = str(pkg.get("name") or pkg_uid)
+        pkg_ref = {"uid": pkg_uid, "name": pkg_name}
+        if pkg_uid:
+            pkg_lookup_map[pkg_uid] = pkg_ref
+        if pkg_name:
+            pkg_lookup_map[pkg_name] = pkg_ref
+        for lyr in pkg.get("access-layers", []):
+            if not isinstance(lyr, dict):
+                continue
+            if lyr.get("uid"):
+                layer_to_pkg[str(lyr["uid"])] = pkg_ref
+            if lyr.get("name"):
+                layer_to_pkg[str(lyr["name"])] = pkg_ref
+
+    # 3. Access rules scan
+    rb_store = dom_files.get("show-access-rulebase", {})
+    if isinstance(rb_store, dict):
+        for layer_key, layer_payload in rb_store.items():
+            if not isinstance(layer_payload, dict):
+                continue
+            layer_uid = str(layer_payload.get("uid") or layer_key)
+            layer_name = str(layer_payload.get("name") or layer_uid)
+            pkg_ref = (
+                layer_to_pkg.get(layer_uid)
+                or layer_to_pkg.get(layer_name)
+                or {
+                    "uid": layer_uid,
+                    "name": layer_name,
+                }
+            )
+            raw_acc_rb = layer_payload.get("rulebase")
+            flat_rules = _iter_flat_rulebase_nodes(raw_acc_rb if isinstance(raw_acc_rb, list) else [])
+            for idx, (_, rule) in enumerate(flat_rules, start=1):
+                col_uids = {col: _extract_ref_uids(rule.get(col)) for col in _ACCESS_WHERE_USED_COLS}
+                direct_cols = [col for col, uids in col_uids.items() if target_uid in uids]
+                indirect_cols = (
+                    [col for col, uids in col_uids.items() if ancestor_group_uids & uids] if indirect else []
+                )
+                if not direct_cols and not indirect_cols:
+                    continue
+                entry = {
+                    "rule": {
+                        "uid": str(rule.get("uid") or ""),
+                        "name": str(rule.get("name") or ""),
+                        "type": str(rule.get("type") or "access-rule"),
+                    },
+                    "rule-columns": direct_cols if direct_cols else indirect_cols,
+                    "package": dict(pkg_ref),
+                    "layer": {"uid": layer_uid, "name": layer_name, "type": "access-layer"},
+                    "position": str(rule.get("rule-number") or idx),
+                }
+                if direct_cols:
+                    used_directly["access-control-rules"].append(entry)
+                elif indirect_cols:
+                    used_indirectly["access-control-rules"].append(entry)
+
+    # 4. NAT rules scan
+    nat_store = dom_files.get("show-nat-rulebase", {})
+    if isinstance(nat_store, dict):
+        for nat_key, nat_payload in nat_store.items():
+            if not isinstance(nat_payload, dict):
+                continue
+            pkg_name = str(nat_payload.get("package") or nat_key)
+            pkg_ref = (
+                pkg_lookup_map.get(pkg_name)
+                or pkg_lookup_map.get(str(nat_payload.get("uid") or ""))
+                or {
+                    "uid": str(nat_payload.get("uid") or nat_key),
+                    "name": pkg_name,
+                }
+            )
+            raw_nat_rb = nat_payload.get("rulebase")
+            flat_rules = _iter_flat_rulebase_nodes(raw_nat_rb if isinstance(raw_nat_rb, list) else [])
+            for idx, (_, rule) in enumerate(flat_rules, start=1):
+                col_uids = {col: _extract_ref_uids(rule.get(col)) for col in _NAT_WHERE_USED_COLS}
+                direct_cols = [col for col, uids in col_uids.items() if target_uid in uids]
+                indirect_cols = (
+                    [col for col, uids in col_uids.items() if ancestor_group_uids & uids] if indirect else []
+                )
+                if not direct_cols and not indirect_cols:
+                    continue
+                entry = {
+                    "rule": {
+                        "uid": str(rule.get("uid") or ""),
+                        "name": str(rule.get("name") or ""),
+                        "type": str(rule.get("type") or "nat-rule"),
+                    },
+                    "rule-columns": direct_cols if direct_cols else indirect_cols,
+                    "package": dict(pkg_ref),
+                    "position": str(rule.get("rule-number") or idx),
+                }
+                if direct_cols:
+                    used_directly["nat-rules"].append(entry)
+                elif indirect_cols:
+                    used_indirectly["nat-rules"].append(entry)
+
+    for bucket in (used_directly, used_indirectly):
+        bucket["total"] = (
+            len(bucket["objects"])
+            + len(bucket["access-control-rules"])
+            + len(bucket["nat-rules"])
+            + len(bucket["threat-prevention-rules"])
+            + len(bucket["https-rules"])
+        )
+
+    resp: dict[str, Any] = {"used-directly": used_directly}
+    if indirect:
+        resp["used-indirectly"] = used_indirectly
+    return resp
 
 
 class FileReplayCliMock(GatewayCliPort):
@@ -896,6 +1269,30 @@ class FileReplayApiMock(ApiPort):
                     status_code=200,
                     data={"objects": [], "from": 0, "to": 0, "total": 0},
                 )
+            if clean_cmd == "where-used":
+                lookup_ref = str(req.get("uid") or req.get("name") or "")
+                sys_items = [
+                    *self._show_mdss.get("objects", []),
+                    *self._show_domains.get("objects", []),
+                ]
+                if lookup_ref and any(
+                    isinstance(o, dict) and (o.get("uid") == lookup_ref or o.get("name") == lookup_ref)
+                    for o in sys_items
+                ):
+                    data_out: dict[str, Any] = {"used-directly": _empty_where_used_bucket()}
+                    if bool(req.get("indirect", False)):
+                        data_out["used-indirectly"] = _empty_where_used_bucket()
+                    return ApiCallResult(success=True, status_code=200, data=data_out)
+                return ApiCallResult(
+                    success=False,
+                    status_code=404,
+                    error_code="generic_err_object_not_found",
+                    error_message=f"Requested object [{lookup_ref}] not found in {dom_name}",
+                    data={
+                        "code": "generic_err_object_not_found",
+                        "message": f"Requested object [{lookup_ref}] not found in {dom_name}",
+                    },
+                )
 
         dom_files = self._domain_data.get(dom_name)
         if dom_files is None:
@@ -971,11 +1368,12 @@ class FileReplayApiMock(ApiPort):
             )
 
         if clean_cmd == "show-access-rulebase":
-            rb_store = dom_files.get("show-access-rulebase", {})
             lookup = str(req.get("uid") or req.get("name") or "")
-            layer_payload = rb_store.get(lookup)
-            if layer_payload is None and lookup in self._domain_data.get("Global", {}).get("show-access-rulebase", {}):
-                layer_payload = self._domain_data["Global"]["show-access-rulebase"][lookup]
+            layer_payload = _resolve_access_layer_payload(
+                dom_files,
+                self._domain_data.get("Global", {}),
+                lookup,
+            )
             if layer_payload is None:
                 return ApiCallResult(
                     success=False,
@@ -991,13 +1389,13 @@ class FileReplayApiMock(ApiPort):
                 layer_payload,
                 offset=int(req.get("offset", 0)),
                 limit=int(req.get("limit", 100)),
+                use_object_dictionary=bool(req.get("use-object-dictionary", True)),
             )
             return ApiCallResult(success=True, status_code=200, data=sliced_rb)
 
         if clean_cmd == "show-nat-rulebase":
-            nat_store = dom_files.get("show-nat-rulebase", {})
             pkg_lookup = str(req.get("package") or req.get("uid") or req.get("name") or "")
-            nat_payload = nat_store.get(pkg_lookup)
+            nat_payload = _resolve_nat_package_payload(dom_files, pkg_lookup)
             if nat_payload is None:
                 return ApiCallResult(
                     success=False,
@@ -1013,8 +1411,39 @@ class FileReplayApiMock(ApiPort):
                 nat_payload,
                 offset=int(req.get("offset", 0)),
                 limit=int(req.get("limit", 100)),
+                use_object_dictionary=bool(req.get("use-object-dictionary", True)),
             )
             return ApiCallResult(success=True, status_code=200, data=sliced_nat)
+
+        if clean_cmd == "where-used":
+            lookup_ref = str(req.get("uid") or req.get("name") or "")
+            global_files = self._domain_data.get("Global", {})
+            target_obj = _find_domain_object_by_ref(dom_files, lookup_ref)
+            if target_obj is None and dom_name != "Global":
+                target_obj = _find_domain_object_by_ref(global_files, lookup_ref)
+            if target_obj is None:
+                return ApiCallResult(
+                    success=False,
+                    status_code=404,
+                    error_code="generic_err_object_not_found",
+                    error_message=f"Requested object [{lookup_ref}] not found in {dom_name}",
+                    data={
+                        "code": "generic_err_object_not_found",
+                        "message": f"Requested object [{lookup_ref}] not found in {dom_name}",
+                    },
+                )
+            target_uid = str(target_obj.get("uid") or lookup_ref)
+            indirect_flag = bool(req.get("indirect", False))
+            max_depth = max(1, int(req.get("indirect-max-depth", 5)))
+            wu_data = _build_where_used_response(
+                dom_files,
+                global_files,
+                dom_name,
+                target_uid,
+                indirect=indirect_flag,
+                max_depth=max_depth,
+            )
+            return ApiCallResult(success=True, status_code=200, data=wu_data)
 
         if clean_cmd == "show-package":
             pkg_lookup = str(req.get("name") or req.get("uid") or "")

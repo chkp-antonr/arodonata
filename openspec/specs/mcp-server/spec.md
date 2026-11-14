@@ -37,12 +37,12 @@ The `arodonata.mcp` package SHALL provide a standalone CLI (`arodonata-mcp`) and
 
 ### Requirement: Structured Object Aggregation and Cache Status Tools
 
-The `arodonata[mcp]` server SHALL expose a structured query and schema-introspection tool (`query_objects` supporting `aggregate="list" | "count" | "describe"`) for cross-domain filtering, grouping, and counting over `arodonata_objects`, `arodonata_services`, and `arodonata_assets` without raw SQL, along with a unified `cache_control` tool (`action="status" | "refresh"`) reporting freshness per domain and scope from `domain_sync_state` or triggering scoped synchronization.
+The `arodonata[mcp]` server SHALL expose a structured query and schema-introspection tool (`query_objects` supporting `aggregate="list" | "count" | "describe"`) for cross-domain filtering, grouping, and counting over `arodonata_objects`, `arodonata_services`, and `arodonata_assets` without raw SQL, along with a unified `cache_control` tool (`action="status" | "refresh"`) reporting freshness per domain and scope from `domain_sync_state` or triggering scoped synchronization. It SHALL normalize `group_by` field aliases (`domain` -> `domain_name`, `mgmt` / `server` / `management` -> `mgmt_name`, `object_type` / `asset_type` / `service_type` -> `type`, `orig_domain` -> `original_domain`) and expand asset type aliases (`gateway`, `cluster`, `member`, `vsx`, `vs`, `server`) to include Check Point `Cpmi*` classes (`CpmiGatewayPlain`, `CpmiGatewayCluster`, `CpmiClusterMember`, `CpmiVsxClusterMember`, `CpmiVsxNetobj`, `CpmiVsxClusterNetobj`, `CpmiVsNetobj`, `CpmiVsClusterNetobj`, `CpmiHostCkp`) with case-insensitive matching.
 
 #### Scenario: Aggregate object counts across domains in a single tool call
 
-- **WHEN** `query_objects(types=["host", "network"], group_by=["domain_name", "type"], aggregate="count")` is called
-- **THEN** the tool SHALL execute a parameterized query over the cached tables (distinguishing domain-owned vs Global objects via `original_domain`) and return the grouped counts in a single response
+- **WHEN** `query_objects(types=["host", "network"], group_by=["domain_name", "type"], aggregate="count")` is called (or with `group_by=["domain", "type"]` and asset aliases such as `types=["cluster", "vsx", "vs"]`)
+- **THEN** the tool SHALL execute a parameterized query over the cached tables (distinguishing domain-owned vs Global objects via `original_domain`), resolve `group_by` aliases and `Cpmi*` asset classes case-insensitively, and return the grouped counts in a single response (populating both requested alias keys and canonical keys when an alias is used)
 
 #### Scenario: Progressive-disclosure schema description via query_objects
 
@@ -56,7 +56,7 @@ The `arodonata[mcp]` server SHALL expose a structured query and schema-introspec
 
 ### Requirement: Multi-Server Tool Surface and Cache-Backed Envelopes
 
-The MCP server SHALL expose a consolidated cache-aligned tool surface (`list_domains`, `list_objects`, `list_services`, `list_assets`, `show_object`, `show_rulebase`, `locate_rules`, `search_objects`, `get_group_members`, `query_objects`, `cache_control`, `change_report`, `api_call`, and opt-in CPCRUD tools), pre-validating explicit `domain` names against `arodonata_domains` and normalizing short and canonical object/service/asset types.
+The MCP server SHALL expose a consolidated cache-aligned tool surface (`list_domains`, `list_objects`, `list_services`, `list_assets`, `show_object`, `show_rulebase`, `locate_rules`, `search_objects`, `get_group_members`, `query_objects`, `cache_control`, `change_report`, `api_call`, and opt-in CPCRUD tools), pre-validating explicit `domain` names against `arodonata_domains` and normalizing short and canonical object/service/asset types (including case-insensitive `Cpmi*` equivalence expansion across `list_assets`, `search_objects`, and `query_objects`).
 
 #### Scenario: List and search tool response envelope includes source, accurate cache age, and cold-cache auto-upgrade
 

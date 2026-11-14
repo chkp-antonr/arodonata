@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **models,testing**: Added `ASSET_TYPE_EQUIVALENTS`, `QUERY_GROUP_BY_ALIASES`, `expand_asset_type()`, and `expand_asset_types()` in `arodonata.core.models`, and implemented `where-used` (direct and indirect groups, access control rules, NAT rules via `show-packages`, and `System Data` package metadata) plus `use-object-dictionary=False` inline object dictionary expansion and layer/package UID lookup in `arodonata.testing.replay_mock.FileReplayApiMock`.
+
+### Fixed
+
+- **search,assets,mcp**: Expanded `Cpmi*` internal Check Point asset type aliases (`CpmiGatewayPlain` <-> `simple-gateway`, `CpmiGatewayCluster` <-> `simple-cluster`, `CpmiClusterMember` / `CpmiVsxClusterMember` <-> `cluster-member` / `vsx-cluster-member`, `CpmiVsxNetobj` / `CpmiVsxClusterNetobj` <-> `vsx-gateway` / `vsx-cluster`, `CpmiVsNetobj` / `CpmiVsClusterNetobj` <-> `virtual-system` / `vs-netobj`, `CpmiHostCkp` <-> `checkpoint-host`) across `SqlCacheAdapter.get_assets()`, `AssetRefreshService.get_assets()`, `SearchService.search_objects()`, `SearchService.query_objects()`, and MCP `list_assets`, and mapped `query_objects` `group_by` aliases (`domain` -> `domain_name`, `mgmt` / `server` / `management` -> `mgmt_name`, `object_type` / `asset_type` / `service_type` -> `type`, `orig_domain` -> `original_domain`) so grouped results preserve domain/server metadata and emit both requested alias keys and canonical column keys.
+
 ## v2.6.1 (2026-11-13)
 
 ### Fix

@@ -29,8 +29,10 @@ from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
     CANONICAL_ASSET_TYPES,
     DEFAULT_OBJECT_TYPES,
+    QUERY_GROUP_BY_ALIASES,
     CacheMode,
     SyncScope,
+    expand_asset_type,
     normalize_any_type,
     normalize_object_type,
     to_naive_utc,
@@ -288,7 +290,7 @@ class SearchService:
             for raw_t in raw_non_blank:
                 any_t = normalize_any_type(raw_t)
                 if any_t.lower() in canonical_assets_lower:
-                    asset_types_lower.add(any_t.lower())
+                    asset_types_lower.update(t.lower() for t in expand_asset_type(raw_t))
                     if raw_t.lower() == "gateway":
                         asset_types_lower.update(
                             {
@@ -302,6 +304,7 @@ class SearchService:
                                 "cpmivsxnetobj",
                                 "cpmivsxclusternetobj",
                                 "cpmivsnetobj",
+                                "cpmivsclusternetobj",
                             }
                         )
                 elif not any_t.startswith("service-"):
@@ -990,7 +993,24 @@ class SearchService:
             )
 
         canonical_asset_types_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
-        requested_types = [normalize_any_type(t) for t in types] if types is not None else None
+        requested_types: list[str] | None = None
+        if types is not None:
+            requested_types = []
+            seen_req_types: set[str] = set()
+            for raw_t in types:
+                clean_t = str(raw_t or "").strip()
+                if not clean_t:
+                    continue
+                any_t = normalize_any_type(clean_t)
+                candidates = (
+                    tuple(t.lower() for t in expand_asset_type(clean_t))
+                    if any_t.lower() in canonical_asset_types_lower
+                    else (any_t,)
+                )
+                for candidate in candidates:
+                    if candidate not in seen_req_types:
+                        seen_req_types.add(candidate)
+                        requested_types.append(candidate)
         want_objects = requested_types is None or any(
             not t.startswith("service-") and t not in canonical_asset_types_lower for t in requested_types
         )
@@ -1133,21 +1153,37 @@ class SearchService:
 
         # Grouping
         if group_by:
-            group_fields = [g.strip() for g in group_by if g.strip()]
+            raw_group_fields = [g.strip() for g in group_by if g and g.strip()]
+            group_specs: list[tuple[str, list[str]]] = []
+            canonical_idx: dict[str, int] = {}
+            for req_field in raw_group_fields:
+                canonical_attr = QUERY_GROUP_BY_ALIASES.get(req_field.lower(), req_field)
+                if canonical_attr not in canonical_idx:
+                    canonical_idx[canonical_attr] = len(group_specs)
+                    group_specs.append((canonical_attr, [req_field]))
+                elif req_field not in group_specs[canonical_idx[canonical_attr]][1]:
+                    group_specs[canonical_idx[canonical_attr]][1].append(req_field)
+
             grouped_counts: dict[tuple[Any, ...], int] = defaultdict(int)
             for item in combined_items:
-                key_tuple = tuple(getattr(item, f, None) for f in group_fields)
+                key_tuple = tuple(getattr(item, canonical_attr, None) for canonical_attr, _ in group_specs)
                 grouped_counts[key_tuple] += 1
 
             groups_out: list[dict[str, Any]] = []
             for key_tuple, count_val in sorted(grouped_counts.items(), key=lambda kv: [str(x) for x in kv[0]]):
-                row_dict: dict[str, Any] = {field: key_tuple[idx] for idx, field in enumerate(group_fields)}
+                row_dict: dict[str, Any] = {}
+                for idx, (canonical_attr, req_fields) in enumerate(group_specs):
+                    val = key_tuple[idx]
+                    for req_field in req_fields:
+                        row_dict[req_field] = val
+                    if canonical_attr not in row_dict:
+                        row_dict[canonical_attr] = val
                 row_dict["count"] = count_val
                 groups_out.append(row_dict)
 
             return {
                 "total": len(combined_items),
-                "group_by": group_fields,
+                "group_by": [canonical_attr for canonical_attr, _ in group_specs],
                 "groups": groups_out,
             }
 

@@ -106,12 +106,12 @@ The testing harness SHALL provide a deterministic (fixed-seed) generator and raw
 
 ### Requirement: File-Backed Check Point API and Gateway CLI Replay Doubles
 
-The testing package SHALL provide `FileReplayApiMock` (`ApiPort`) and `FileReplayCliMock` (`GatewayCliPort`) backed by the raw dataset on disk, emulating Check Point pagination (`limit`/`offset`/`from`/`to`/`total`), `details-level`, `uid`/`name` and `class-name` filtering, `run-script` + `show-task` Base64 task responses, VSX `vsenv` / `vsx stat -l` / `CTX%05d` bash validation, and per-call audit counters.
+The testing package SHALL provide `FileReplayApiMock` (`ApiPort`) and `FileReplayCliMock` (`GatewayCliPort`) backed by the raw dataset on disk, emulating Check Point pagination (`limit`/`offset`/`from`/`to`/`total`), `details-level`, `uid`/`name` and `class-name` filtering, rulebase section slicing (`show-access-rulebase`, `show-nat-rulebase`) including `use-object-dictionary=False` object inlining, `where-used` dependency resolution (direct and indirect group memberships, access rules, and NAT rules), `run-script` + `show-task` Base64 task responses, VSX `vsenv` / `vsx stat -l` / `CTX%05d` bash validation, and per-call audit counters.
 
 #### Scenario: Paginated API queries and VSX CLI context validation execute against raw fixture files
 
-- **WHEN** `ArodonataClient` queries `FileReplayApiMock` with `limit`/`offset` or `uid`/`name`/`class-name` filters and executes route collection scripts against `FileReplayCliMock` (or `run-script` + `show-task` fallback)
-- **THEN** `FileReplayApiMock` SHALL return continuity-valid slices (`from`, `to`, `total`) and Base64-encoded `show-task` responses from the raw dataset while recording per-command call counters, and `FileReplayCliMock` SHALL verify `vsenv` / `vsx stat -l` and `CTX%05d` `$FWDIR` guards before returning the raw CLI stdout for the target node and VSID
+- **WHEN** `ArodonataClient` queries `FileReplayApiMock` with `limit`/`offset`, `uid`/`name`/`class-name` filters, `where-used`, or `show-access-rulebase` / `show-nat-rulebase` (`use-object-dictionary=True | False`), and executes route collection scripts against `FileReplayCliMock` (or `run-script` + `show-task` fallback)
+- **THEN** `FileReplayApiMock` SHALL return continuity-valid slices (`from`, `to`, `total`), resolve `where-used` direct and indirect group/access-rule/NAT-rule references (and inline `objects-dictionary` dicts when `use-object-dictionary=False`), and return Base64-encoded `show-task` responses from the raw dataset while recording per-command call counters, and `FileReplayCliMock` SHALL verify `vsenv` / `vsx stat -l` and `CTX%05d` `$FWDIR` guards before returning the raw CLI stdout for the target node and VSID
 
 ### Requirement: Standalone Check Point Web API HTTPS Mock Server for Downstream Applications
 

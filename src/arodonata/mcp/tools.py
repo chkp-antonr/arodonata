@@ -54,8 +54,8 @@ from arodonata.core.models.common import (
     DEFAULT_SERVICE_TYPES,
     CacheMode,
     SyncScope,
+    expand_asset_types,
     normalize_any_type,
-    normalize_asset_type,
     normalize_object_type,
     normalize_service_type,
     utc_now,
@@ -725,7 +725,8 @@ def register_mcp_tools(
         description=(
             "List Check Point gateways, clusters, cluster members, VSX systems, virtual systems, and management "
             "servers (checkpoint-host) from arodonata_assets with optional types filter ('gateway', 'cluster', "
-            "'member', 'vsx', 'vs', 'server') and parent cluster/VSX filter."
+            "'member', 'vsx', 'vs', 'server' — automatically matching both REST and Check Point Cpmi* classes such as "
+            "CpmiGatewayCluster, CpmiVsxNetobj, CpmiVsNetobj) and parent cluster/VSX filter."
         ),
     )
     @mcp_tool_guard("list_assets", client_getter)
@@ -745,7 +746,7 @@ def register_mcp_tools(
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
         eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
         mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
-        normalized_types = [normalize_asset_type(t) for t in types if t and t.strip()] if types else None
+        expanded_types = expand_asset_types(types) if types else None
 
         if is_live:
             payload: dict[str, Any] = {
@@ -780,7 +781,7 @@ def register_mcp_tools(
         all_assets = await client.get_gateways(
             mgmt_name=eff_mgmt,
             domain=eff_domain,
-            types=normalized_types if not parent else None,
+            types=expanded_types if not parent else None,
             include_global=include_global,
             cache_mode=mode,
         )
@@ -823,8 +824,8 @@ def register_mcp_tools(
                 or (a.parent_asset_id is not None and a.parent_asset_id.lower() in matched_parent_asset_ids)
                 or (a.parent_name is not None and a.parent_name.lower() == parent_lower)
             ]
-            if normalized_types:
-                t_set = {t.lower() for t in normalized_types}
+            if expanded_types:
+                t_set = {t.lower() for t in expanded_types}
                 assets = [a for a in assets if a.type.lower() in t_set]
 
         filtered = _filter_assets(assets, filter)
@@ -1372,6 +1373,9 @@ def register_mcp_tools(
             "Execute structured cross-domain filtering, grouping (group_by), counting (aggregate='count'|'list'), "
             "or progressive-disclosure schema introspection (aggregate='describe') over arodonata_objects, "
             "arodonata_services, and arodonata_assets, distinguishing local vs Global objects via original_domain. "
+            "Groupable fields: mgmt_name (aliases: mgmt, server), domain_name (alias: domain), original_domain, "
+            "type (aliases: object_type, asset_type), color, protocol. Asset type aliases ('gateway', 'cluster', "
+            "'member', 'vsx', 'vs', 'server') match both REST and Check Point Cpmi* classes. "
             "Defaults to cache_mode='smart' (auto-syncing uncached or stale domains)."
         ),
     )

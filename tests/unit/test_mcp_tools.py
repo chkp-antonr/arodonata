@@ -1720,3 +1720,74 @@ async def test_cold_cache_search_and_query_objects_gateway_types_multiserver_and
         list_data = _parse_tool_json(list_res)
         returned_names = {o["name"] for o in list_data["objects"]}
         assert "web-srv-1" in returned_names
+
+
+@pytest.mark.asyncio
+async def test_list_assets_and_query_objects_cpmi_aliases() -> None:
+    """`list_assets` and `query_objects` match Check Point `Cpmi*` asset classes via short aliases case-insensitively."""
+    from arodonata.core.models.assets import Asset
+    from arodonata.core.models.domains import DomainSyncState
+
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        await client.get_domains("mds1", include_global=True)
+        await client.cache.replace_domain_assets(
+            "mds1",
+            "Corp",
+            [
+                Asset(uid="gw-1", name="gw-plain", type="CpmiGatewayPlain", mgmt_name="mds1", domain_name="Corp"),
+                Asset(uid="cl-1", name="cl-cpmi", type="CpmiGatewayCluster", mgmt_name="mds1", domain_name="Corp"),
+                Asset(uid="vs-1", name="vs-cpmi", type="CpmiVsNetobj", mgmt_name="mds1", domain_name="Corp"),
+                Asset(uid="srv-1", name="cma-cpmi", type="CpmiHostCkp", mgmt_name="mds1", domain_name="Corp"),
+            ],
+            sync_states=[
+                DomainSyncState(mgmt_name="mds1", domain_name="Corp", scope="assets", item_type="*", status="ok")
+            ],
+        )
+        await client.cache.upsert_sync_state(
+            DomainSyncState(mgmt_name="mds1", domain_name="Corp", scope="objects", item_type="host", status="ok")
+        )
+
+        server = create_mcp_server(client, auth_mode="host")
+
+        # "gateway" + "server" matches CpmiGatewayPlain and CpmiHostCkp, NOT CpmiGatewayCluster
+        gw_srv = _parse_tool_json(
+            await server.call_tool(
+                "list_assets",
+                {"mgmt_name": "mds1", "domain": "Corp", "types": ["gateway", "server"], "cache_mode": "cache"},
+            )
+        )
+        assert {a["name"] for a in gw_srv["objects"]} == {"gw-plain", "cma-cpmi"}
+
+        # "cluster" + "vs" matches CpmiGatewayCluster and CpmiVsNetobj
+        cl_vs = _parse_tool_json(
+            await server.call_tool(
+                "list_assets",
+                {"mgmt_name": "mds1", "domain": "Corp", "types": ["cluster", "vs"], "cache_mode": "cache"},
+            )
+        )
+        assert {a["name"] for a in cl_vs["objects"]} == {"cl-cpmi", "vs-cpmi"}
+
+        # query_objects with alias group_by=["domain", "type"] across Cpmi* assets
+        q_grouped = _parse_tool_json(
+            await server.call_tool(
+                "query_objects",
+                {
+                    "mgmt_name": "mds1",
+                    "types": ["gateway", "cluster", "vs", "server"],
+                    "group_by": ["domain", "type"],
+                    "aggregate": "count",
+                    "cache_mode": "cache",
+                },
+            )
+        )
+        assert q_grouped["total"] == 4
+        assert {g["type"] for g in q_grouped["groups"]} == {
+            "CpmiGatewayPlain",
+            "CpmiGatewayCluster",
+            "CpmiVsNetobj",
+            "CpmiHostCkp",
+        }
+        assert all(g["domain"] == "Corp" and g["domain_name"] == "Corp" for g in q_grouped["groups"])
