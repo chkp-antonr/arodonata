@@ -24,7 +24,7 @@ from arodonata.core.config import ArodonataSettings
 from arodonata.core.errors import ServerIdentityError
 from arodonata.core.events import DomainSyncProgressEvent, SyncProgressEvent
 from arodonata.core.models.assets import Asset
-from arodonata.core.models.common import CacheMode, to_naive_utc, utc_now
+from arodonata.core.models.common import CacheMode, expand_asset_types, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainSyncState, RefreshOutcome
 from arodonata.core.ports import ApiPort, CachePort
 from arodonata.core.services.sync_coordinator import DomainProbeResult, DomainSyncCoordinator
@@ -1075,11 +1075,18 @@ class AssetRefreshService:
                 cache_ttl=cache_ttl,
             )
 
+        expanded_types = expand_asset_types(types) if types is not None else None
+        if expanded_types is not None and not expanded_types:
+            return []
+
         assets = await self._cache.get_assets(
             mgmt_name=mgmt_name,
             domain_name=domain,
-            types=types,
+            types=expanded_types,
         )
+        if expanded_types is not None:
+            lowered_set = {t.lower() for t in expanded_types}
+            assets = [a for a in assets if a.type.lower() in lowered_set]
         if not include_global and domain is None:
             assets = [a for a in assets if a.domain_name != "Global"]
         return assets
