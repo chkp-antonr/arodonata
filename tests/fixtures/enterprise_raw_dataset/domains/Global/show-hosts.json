@@ -4,481 +4,881 @@
       "uid": "uid-glob-host-001",
       "name": "H_Global_DNS_001",
       "type": "host",
-      "ipv4-address": "10.253.0.1"
+      "ipv4-address": "10.253.0.1",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-002",
       "name": "H_Global_DNS_002",
       "type": "host",
-      "ipv4-address": "10.253.0.2"
+      "ipv4-address": "10.253.0.2",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-003",
       "name": "H_Global_DNS_003",
       "type": "host",
-      "ipv4-address": "10.253.0.3"
+      "ipv4-address": "10.253.0.3",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-004",
       "name": "H_Global_DNS_004",
       "type": "host",
-      "ipv4-address": "10.253.0.4"
+      "ipv4-address": "10.253.0.4",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-005",
       "name": "H_Global_DNS_005",
       "type": "host",
-      "ipv4-address": "10.253.0.5"
+      "ipv4-address": "10.253.0.5",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-006",
       "name": "H_Global_DNS_006",
       "type": "host",
-      "ipv4-address": "10.253.0.6"
+      "ipv4-address": "10.253.0.6",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-007",
       "name": "H_Global_DNS_007",
       "type": "host",
-      "ipv4-address": "10.253.0.7"
+      "ipv4-address": "10.253.0.7",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-008",
       "name": "H_Global_DNS_008",
       "type": "host",
-      "ipv4-address": "10.253.0.8"
+      "ipv4-address": "10.253.0.8",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-009",
       "name": "H_Global_DNS_009",
       "type": "host",
-      "ipv4-address": "10.253.0.9"
+      "ipv4-address": "10.253.0.9",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-010",
       "name": "H_Global_DNS_010",
       "type": "host",
-      "ipv4-address": "10.253.0.10"
+      "ipv4-address": "10.253.0.10",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-011",
       "name": "H_Global_DNS_011",
       "type": "host",
-      "ipv4-address": "10.253.0.11"
+      "ipv4-address": "10.253.0.11",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-012",
       "name": "H_Global_DNS_012",
       "type": "host",
-      "ipv4-address": "10.253.0.12"
+      "ipv4-address": "10.253.0.12",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-013",
       "name": "H_Global_DNS_013",
       "type": "host",
-      "ipv4-address": "10.253.0.13"
+      "ipv4-address": "10.253.0.13",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-014",
       "name": "H_Global_DNS_014",
       "type": "host",
-      "ipv4-address": "10.253.0.14"
+      "ipv4-address": "10.253.0.14",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-015",
       "name": "H_Global_DNS_015",
       "type": "host",
-      "ipv4-address": "10.253.0.15"
+      "ipv4-address": "10.253.0.15",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-016",
       "name": "H_Global_DNS_016",
       "type": "host",
-      "ipv4-address": "10.253.0.16"
+      "ipv4-address": "10.253.0.16",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-017",
       "name": "H_Global_DNS_017",
       "type": "host",
-      "ipv4-address": "10.253.0.17"
+      "ipv4-address": "10.253.0.17",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-018",
       "name": "H_Global_DNS_018",
       "type": "host",
-      "ipv4-address": "10.253.0.18"
+      "ipv4-address": "10.253.0.18",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-019",
       "name": "H_Global_DNS_019",
       "type": "host",
-      "ipv4-address": "10.253.0.19"
+      "ipv4-address": "10.253.0.19",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-020",
       "name": "H_Global_DNS_020",
       "type": "host",
-      "ipv4-address": "10.253.0.20"
+      "ipv4-address": "10.253.0.20",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-021",
       "name": "H_Global_DNS_021",
       "type": "host",
-      "ipv4-address": "10.253.0.21"
+      "ipv4-address": "10.253.0.21",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-022",
       "name": "H_Global_DNS_022",
       "type": "host",
-      "ipv4-address": "10.253.0.22"
+      "ipv4-address": "10.253.0.22",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-023",
       "name": "H_Global_DNS_023",
       "type": "host",
-      "ipv4-address": "10.253.0.23"
+      "ipv4-address": "10.253.0.23",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-024",
       "name": "H_Global_DNS_024",
       "type": "host",
-      "ipv4-address": "10.253.0.24"
+      "ipv4-address": "10.253.0.24",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-025",
       "name": "H_Global_DNS_025",
       "type": "host",
-      "ipv4-address": "10.253.0.25"
+      "ipv4-address": "10.253.0.25",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-026",
       "name": "H_Global_DNS_026",
       "type": "host",
-      "ipv4-address": "10.253.0.26"
+      "ipv4-address": "10.253.0.26",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-027",
       "name": "H_Global_DNS_027",
       "type": "host",
-      "ipv4-address": "10.253.0.27"
+      "ipv4-address": "10.253.0.27",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-028",
       "name": "H_Global_DNS_028",
       "type": "host",
-      "ipv4-address": "10.253.0.28"
+      "ipv4-address": "10.253.0.28",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-029",
       "name": "H_Global_DNS_029",
       "type": "host",
-      "ipv4-address": "10.253.0.29"
+      "ipv4-address": "10.253.0.29",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-030",
       "name": "H_Global_DNS_030",
       "type": "host",
-      "ipv4-address": "10.253.0.30"
+      "ipv4-address": "10.253.0.30",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-031",
       "name": "H_Global_DNS_031",
       "type": "host",
-      "ipv4-address": "10.253.0.31"
+      "ipv4-address": "10.253.0.31",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-032",
       "name": "H_Global_DNS_032",
       "type": "host",
-      "ipv4-address": "10.253.0.32"
+      "ipv4-address": "10.253.0.32",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-033",
       "name": "H_Global_DNS_033",
       "type": "host",
-      "ipv4-address": "10.253.0.33"
+      "ipv4-address": "10.253.0.33",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-034",
       "name": "H_Global_DNS_034",
       "type": "host",
-      "ipv4-address": "10.253.0.34"
+      "ipv4-address": "10.253.0.34",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-035",
       "name": "H_Global_DNS_035",
       "type": "host",
-      "ipv4-address": "10.253.0.35"
+      "ipv4-address": "10.253.0.35",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-036",
       "name": "H_Global_DNS_036",
       "type": "host",
-      "ipv4-address": "10.253.0.36"
+      "ipv4-address": "10.253.0.36",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-037",
       "name": "H_Global_DNS_037",
       "type": "host",
-      "ipv4-address": "10.253.0.37"
+      "ipv4-address": "10.253.0.37",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-038",
       "name": "H_Global_DNS_038",
       "type": "host",
-      "ipv4-address": "10.253.0.38"
+      "ipv4-address": "10.253.0.38",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-039",
       "name": "H_Global_DNS_039",
       "type": "host",
-      "ipv4-address": "10.253.0.39"
+      "ipv4-address": "10.253.0.39",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-040",
       "name": "H_Global_DNS_040",
       "type": "host",
-      "ipv4-address": "10.253.0.40"
+      "ipv4-address": "10.253.0.40",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-041",
       "name": "H_Global_DNS_041",
       "type": "host",
-      "ipv4-address": "10.253.0.41"
+      "ipv4-address": "10.253.0.41",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-042",
       "name": "H_Global_DNS_042",
       "type": "host",
-      "ipv4-address": "10.253.0.42"
+      "ipv4-address": "10.253.0.42",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-043",
       "name": "H_Global_DNS_043",
       "type": "host",
-      "ipv4-address": "10.253.0.43"
+      "ipv4-address": "10.253.0.43",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-044",
       "name": "H_Global_DNS_044",
       "type": "host",
-      "ipv4-address": "10.253.0.44"
+      "ipv4-address": "10.253.0.44",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-045",
       "name": "H_Global_DNS_045",
       "type": "host",
-      "ipv4-address": "10.253.0.45"
+      "ipv4-address": "10.253.0.45",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-046",
       "name": "H_Global_DNS_046",
       "type": "host",
-      "ipv4-address": "10.253.0.46"
+      "ipv4-address": "10.253.0.46",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-047",
       "name": "H_Global_DNS_047",
       "type": "host",
-      "ipv4-address": "10.253.0.47"
+      "ipv4-address": "10.253.0.47",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-048",
       "name": "H_Global_DNS_048",
       "type": "host",
-      "ipv4-address": "10.253.0.48"
+      "ipv4-address": "10.253.0.48",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-049",
       "name": "H_Global_DNS_049",
       "type": "host",
-      "ipv4-address": "10.253.0.49"
+      "ipv4-address": "10.253.0.49",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-050",
       "name": "H_Global_DNS_050",
       "type": "host",
-      "ipv4-address": "10.253.0.50"
+      "ipv4-address": "10.253.0.50",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-051",
       "name": "H_Global_DNS_051",
       "type": "host",
-      "ipv4-address": "10.253.0.51"
+      "ipv4-address": "10.253.0.51",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-052",
       "name": "H_Global_DNS_052",
       "type": "host",
-      "ipv4-address": "10.253.0.52"
+      "ipv4-address": "10.253.0.52",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-053",
       "name": "H_Global_DNS_053",
       "type": "host",
-      "ipv4-address": "10.253.0.53"
+      "ipv4-address": "10.253.0.53",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-054",
       "name": "H_Global_DNS_054",
       "type": "host",
-      "ipv4-address": "10.253.0.54"
+      "ipv4-address": "10.253.0.54",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-055",
       "name": "H_Global_DNS_055",
       "type": "host",
-      "ipv4-address": "10.253.0.55"
+      "ipv4-address": "10.253.0.55",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-056",
       "name": "H_Global_DNS_056",
       "type": "host",
-      "ipv4-address": "10.253.0.56"
+      "ipv4-address": "10.253.0.56",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-057",
       "name": "H_Global_DNS_057",
       "type": "host",
-      "ipv4-address": "10.253.0.57"
+      "ipv4-address": "10.253.0.57",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-058",
       "name": "H_Global_DNS_058",
       "type": "host",
-      "ipv4-address": "10.253.0.58"
+      "ipv4-address": "10.253.0.58",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-059",
       "name": "H_Global_DNS_059",
       "type": "host",
-      "ipv4-address": "10.253.0.59"
+      "ipv4-address": "10.253.0.59",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-060",
       "name": "H_Global_DNS_060",
       "type": "host",
-      "ipv4-address": "10.253.0.60"
+      "ipv4-address": "10.253.0.60",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-061",
       "name": "H_Global_DNS_061",
       "type": "host",
-      "ipv4-address": "10.253.0.61"
+      "ipv4-address": "10.253.0.61",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-062",
       "name": "H_Global_DNS_062",
       "type": "host",
-      "ipv4-address": "10.253.0.62"
+      "ipv4-address": "10.253.0.62",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-063",
       "name": "H_Global_DNS_063",
       "type": "host",
-      "ipv4-address": "10.253.0.63"
+      "ipv4-address": "10.253.0.63",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-064",
       "name": "H_Global_DNS_064",
       "type": "host",
-      "ipv4-address": "10.253.0.64"
+      "ipv4-address": "10.253.0.64",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-065",
       "name": "H_Global_DNS_065",
       "type": "host",
-      "ipv4-address": "10.253.0.65"
+      "ipv4-address": "10.253.0.65",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-066",
       "name": "H_Global_DNS_066",
       "type": "host",
-      "ipv4-address": "10.253.0.66"
+      "ipv4-address": "10.253.0.66",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-067",
       "name": "H_Global_DNS_067",
       "type": "host",
-      "ipv4-address": "10.253.0.67"
+      "ipv4-address": "10.253.0.67",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-068",
       "name": "H_Global_DNS_068",
       "type": "host",
-      "ipv4-address": "10.253.0.68"
+      "ipv4-address": "10.253.0.68",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-069",
       "name": "H_Global_DNS_069",
       "type": "host",
-      "ipv4-address": "10.253.0.69"
+      "ipv4-address": "10.253.0.69",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-070",
       "name": "H_Global_DNS_070",
       "type": "host",
-      "ipv4-address": "10.253.0.70"
+      "ipv4-address": "10.253.0.70",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-071",
       "name": "H_Global_DNS_071",
       "type": "host",
-      "ipv4-address": "10.253.0.71"
+      "ipv4-address": "10.253.0.71",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-072",
       "name": "H_Global_DNS_072",
       "type": "host",
-      "ipv4-address": "10.253.0.72"
+      "ipv4-address": "10.253.0.72",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-073",
       "name": "H_Global_DNS_073",
       "type": "host",
-      "ipv4-address": "10.253.0.73"
+      "ipv4-address": "10.253.0.73",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-074",
       "name": "H_Global_DNS_074",
       "type": "host",
-      "ipv4-address": "10.253.0.74"
+      "ipv4-address": "10.253.0.74",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-075",
       "name": "H_Global_DNS_075",
       "type": "host",
-      "ipv4-address": "10.253.0.75"
+      "ipv4-address": "10.253.0.75",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-076",
       "name": "H_Global_DNS_076",
       "type": "host",
-      "ipv4-address": "10.253.0.76"
+      "ipv4-address": "10.253.0.76",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-077",
       "name": "H_Global_DNS_077",
       "type": "host",
-      "ipv4-address": "10.253.0.77"
+      "ipv4-address": "10.253.0.77",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-078",
       "name": "H_Global_DNS_078",
       "type": "host",
-      "ipv4-address": "10.253.0.78"
+      "ipv4-address": "10.253.0.78",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-079",
       "name": "H_Global_DNS_079",
       "type": "host",
-      "ipv4-address": "10.253.0.79"
+      "ipv4-address": "10.253.0.79",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-host-080",
       "name": "H_Global_DNS_080",
       "type": "host",
-      "ipv4-address": "10.253.0.80"
+      "ipv4-address": "10.253.0.80",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     }
   ],
   "from": 1,

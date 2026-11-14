@@ -22,7 +22,7 @@ from typing import Any
 
 import platformdirs
 
-DATASET_VERSION = "1.0.0"
+DATASET_VERSION = "1.1.0"
 DEFAULT_SEED = 20261108
 
 USER_DOMAINS: tuple[str, ...] = (
@@ -2020,6 +2020,46 @@ def generate_enterprise_raw_dataset(
                 }
             )
 
+    # Tag Global domain objects with explicit MDSM Global domain ownership metadata.
+    _global_domain_meta: dict[str, str] = {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain",
+    }
+    for _global_coll in (
+        hosts_by_domain["Global"],
+        networks_by_domain["Global"],
+        ranges_by_domain["Global"],
+        groups_by_domain["Global"],
+        dns_domains_by_domain["Global"],
+        services_tcp_by_domain["Global"],
+        services_udp_by_domain["Global"],
+        services_icmp_by_domain["Global"],
+        service_groups_by_domain["Global"],
+    ):
+        for _global_item in _global_coll:
+            _global_item.setdefault("domain", dict(_global_domain_meta))
+
+    _global_lookup: dict[str, dict[str, Any]] = {}
+    for _global_coll in (
+        hosts_by_domain["Global"],
+        networks_by_domain["Global"],
+        groups_by_domain["Global"],
+        services_tcp_by_domain["Global"],
+        services_udp_by_domain["Global"],
+    ):
+        for _global_item in _global_coll:
+            if _global_item.get("uid"):
+                _global_lookup[str(_global_item["uid"])] = _global_item
+
+    _rule_104_global_uids: tuple[str, ...] = (
+        "uid-glob-grp-branches",
+        "uid-glob-host-001",
+        "uid-glob-grp-dc",
+        "uid-global-svc-udp-53",
+        "uid-global-svc-tcp-53",
+    )
+
     # ------------------------------------------------------------------
     # 13. Policy Packages, Access Rulebases (1,000+ rules), and NAT Rulebases
     # ------------------------------------------------------------------
@@ -2090,8 +2130,16 @@ def generate_enterprise_raw_dataset(
         dom_hosts = hosts_by_domain[dom][:30]
         dom_nets = networks_by_domain[dom][:20]
         dom_svcs = services_tcp_by_domain[dom]
+        seen_dict_uids: set[str] = {str(item["uid"]) for item in obj_dict}
         for item in (*dom_hosts, *dom_nets, *dom_svcs):
             obj_dict.append(item)
+            seen_dict_uids.add(str(item["uid"]))
+        if dom != "Global":
+            for g_uid in _rule_104_global_uids:
+                g_item = _global_lookup.get(g_uid)
+                if g_item is not None and g_uid not in seen_dict_uids:
+                    obj_dict.append(g_item)
+                    seen_dict_uids.add(g_uid)
 
         sections: list[dict[str, Any]] = []
         rule_num = 1
@@ -2119,6 +2167,16 @@ def generate_enterprise_raw_dataset(
                     if rule_num == 105
                     else "6c488338-8eec-4103-ad21-cd461ac2c472"
                 )
+                if dom != "Global" and rule_num == 104:
+                    src_list = ["uid-glob-grp-branches", src_obj["uid"]]
+                    dst_list = ["uid-glob-host-001", "uid-glob-grp-dc"]
+                    svc_list = ["uid-global-svc-udp-53", "uid-global-svc-tcp-53"]
+                    rule_comment = f"Enterprise global DNS & branch-to-DC access rule #104 in {dom}"
+                else:
+                    src_list = [src_obj["uid"]]
+                    dst_list = [dst_obj["uid"]]
+                    svc_list = [svc_obj["uid"]]
+                    rule_comment = f"Generated enterprise access rule #{rule_num} in {dom}"
                 sec_rules.append(
                     {
                         "uid": f"uid-arule-{d_slug}-{rule_num:04d}",
@@ -2126,16 +2184,16 @@ def generate_enterprise_raw_dataset(
                         "type": "access-rule",
                         "rule-number": rule_num,
                         "enabled": True,
-                        "source": [src_obj["uid"]],
+                        "source": src_list,
                         "source-negate": False,
-                        "destination": [dst_obj["uid"]],
+                        "destination": dst_list,
                         "destination-negate": False,
-                        "service": [svc_obj["uid"]],
+                        "service": svc_list,
                         "service-negate": False,
                         "action": act_uid,
                         "track": {"type": "598ead32-aa42-4615-90ed-f51a5928d41d"},
                         "install-on": ["97aeb369-9aea-11d5-bd16-0090272ccb30"],
-                        "comments": f"Generated enterprise access rule #{rule_num} in {dom}",
+                        "comments": rule_comment,
                     }
                 )
                 rule_num += 1
@@ -2244,6 +2302,41 @@ def generate_enterprise_raw_dataset(
             "from": 1,
             "to": 2,
             "total": 2,
+        },
+    )
+    global_assignments_raw: list[dict[str, Any]] = [
+        {
+            "uid": f"uid-ga-{dom.lower()}",
+            "name": f"Global_to_{dom}",
+            "type": "global-assignment",
+            "global-domain": {
+                "uid": "uid-dom-global",
+                "name": "Global",
+                "domain-type": "global domain",
+            },
+            "dependent-domain": {
+                "uid": f"uid-dom-{dom.lower()}",
+                "name": dom,
+                "domain-type": "domain",
+            },
+            "global-access-policy": "Global_Standard_Pkg",
+            "global-threat-prevention-policy": "",
+            "manage-protection-actions": False,
+            "assignment-status": "assigned",
+            "assignment-up-to-date": {
+                "posix": 1794139200000,
+                "iso-8601": "2026-11-08T10:00:00Z",
+            },
+        }
+        for dom in USER_DOMAINS
+    ]
+    _write_json(
+        root / "mds" / "show-global-assignments.json",
+        {
+            "objects": global_assignments_raw,
+            "from": 1 if global_assignments_raw else 0,
+            "to": len(global_assignments_raw),
+            "total": len(global_assignments_raw),
         },
     )
 

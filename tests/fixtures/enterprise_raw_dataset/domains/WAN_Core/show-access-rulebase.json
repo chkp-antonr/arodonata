@@ -2816,15 +2816,18 @@
             "rule-number": 104,
             "enabled": true,
             "source": [
+              "uid-glob-grp-branches",
               "uid-wan_core-bulk-host-014"
             ],
             "source-negate": false,
             "destination": [
-              "uid-wan_core-bulk-net-002"
+              "uid-glob-host-001",
+              "uid-glob-grp-dc"
             ],
             "destination-negate": false,
             "service": [
-              "uid-wan_core-svc-tcp-6379"
+              "uid-global-svc-udp-53",
+              "uid-global-svc-tcp-53"
             ],
             "service-negate": false,
             "action": "6c488338-8eec-4103-ad21-cd461ac2c472",
@@ -2834,7 +2837,7 @@
             "install-on": [
               "97aeb369-9aea-11d5-bd16-0090272ccb30"
             ],
-            "comments": "Generated enterprise access rule #104 in WAN_Core"
+            "comments": "Enterprise global DNS & branch-to-DC access rule #104 in WAN_Core"
           },
           {
             "uid": "uid-arule-wan_core-0105",
@@ -3308,6 +3311,65 @@
         "name": "SVC_WAN_Core_TCP_9200",
         "type": "service-tcp",
         "port": "9200"
+      },
+      {
+        "uid": "uid-glob-grp-branches",
+        "name": "G_Global_Branch_Supernet",
+        "type": "group",
+        "members": [
+          "uid-glob-net-branches"
+        ],
+        "domain": {
+          "uid": "uid-dom-global",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "uid-glob-host-001",
+        "name": "H_Global_DNS_001",
+        "type": "host",
+        "ipv4-address": "10.253.0.1",
+        "domain": {
+          "uid": "uid-dom-global",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "uid-glob-grp-dc",
+        "name": "G_Global_DC_Supernet",
+        "type": "group",
+        "members": [
+          "uid-glob-net-dc-vault"
+        ],
+        "domain": {
+          "uid": "uid-dom-global",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "uid-global-svc-udp-53",
+        "name": "UDP_53",
+        "type": "service-udp",
+        "port": "53",
+        "domain": {
+          "uid": "uid-dom-global",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "uid-global-svc-tcp-53",
+        "name": "TCP_53",
+        "type": "service-tcp",
+        "port": "53",
+        "domain": {
+          "uid": "uid-dom-global",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
       }
     ],
     "from": 1,

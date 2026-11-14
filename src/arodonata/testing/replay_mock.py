@@ -19,18 +19,56 @@ import copy
 import json
 import re
 from collections import Counter, deque
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
 from arodonata.adapters.checkpoint.pager import DEFAULT_PAGE_LIMIT, paginate_objects
 from arodonata.core.context import AuthContext
+from arodonata.core.errors import REDACTED_PLACEHOLDER, SessionError
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
 from arodonata.core.models.topology import GatewayCliResult, GatewayCliTarget
 from arodonata.core.ports import ApiPort, GatewayCliPort
+from arodonata.core.telemetry import span_attrs, traced
+from arodonata.testing._emulator_changes import (
+    build_show_changes_task,
+    compute_session_delta,
+    count_delta_items,
+    parse_checkpoint_date_ms,
+)
+from arodonata.testing._emulator_crud import (
+    delete_unused_objects,
+    filter_show_objects,
+    find_effective_object,
+    find_unused_objects,
+    handle_entity_crud,
+    handle_rulebase_crud,
+    paginate_items,
+    parse_rule_number,
+    slice_rulebase_with_sections,
+)
+from arodonata.testing._emulator_models import (
+    CMD_TO_ENTITY_ACTION,
+    MutationRecord,
+    PublishedDelta,
+    ReplayStateSnapshot,
+    SidBinding,
+    WorkSession,
+    cp_error,
+    cp_ok,
+    format_domain_meta,
+    format_timestamp,
+    is_mutating_command,
+    sanitize_call_payload,
+    summarize_payload,
+)
 from arodonata.testing.dataset_generator import (
     ALL_DOMAINS,
     DEFAULT_DATASET_DIR,
+    USER_DOMAINS,
     ensure_enterprise_raw_dataset,
 )
 
@@ -797,14 +835,9 @@ class FileReplayApiMock(ApiPort):
         )
 
         # Load domain JSON payloads into memory so tests can mutate single gateways without modifying disk files
-        self._domain_data: dict[str, dict[str, Any]] = {}
-        for dom_name in ALL_DOMAINS:
-            dom_dir = self._dataset_dir / "domains" / dom_name
-            dom_files: dict[str, Any] = {}
-            if dom_dir.is_dir():
-                for json_file in sorted(dom_dir.glob("*.json")):
-                    dom_files[json_file.stem] = json.loads(json_file.read_text(encoding="utf-8"))
-            self._domain_data[dom_name] = dom_files
+        self._domain_data: dict[str, dict[str, Any]] = {
+            dom_name: self._load_domain_files(dom_name) for dom_name in ALL_DOMAINS
+        }
 
         # Index node_uid -> node_name across all domains for `run-script` target resolution
         self._node_uid_to_name: dict[str, str] = {}
@@ -819,9 +852,31 @@ class FileReplayApiMock(ApiPort):
                             if isinstance(m, dict) and m.get("uid") and m.get("name"):
                                 self._node_uid_to_name[str(m["uid"])] = str(m["name"])
 
+        ga_path = self._dataset_dir / "mds" / "show-global-assignments.json"
+        raw_ga = json.loads(ga_path.read_text(encoding="utf-8")) if ga_path.is_file() else {"objects": []}
+        self._show_global_assignments: list[dict[str, Any]] = list(raw_ga.get("objects", []))
+
+        # Baselines are loaded lazily per domain on first restore/reset of a dirty domain.
+        self._initial_domain_data: dict[str, dict[str, Any]] = {}
+        self._initial_global_assignments: list[dict[str, Any]] = copy.deepcopy(self._show_global_assignments)
+        self._dirty_domains: set[str] = set()
+        self._domain_generation: Counter[str] = Counter()
+
         self._tasks: dict[str, dict[str, Any]] = {}
+        self._sid_bindings: dict[str, SidBinding] = {}
+        self._work_sessions: dict[str, WorkSession] = {}
+        self._published_session_by_domain: dict[str, str] = {}
+        for dom_n, d_files in self._domain_data.items():
+            last_pub = d_files.get("show-last-published-session", {})
+            if isinstance(last_pub, dict) and last_pub.get("uid"):
+                self._published_session_by_domain[dom_n] = str(last_pub["uid"])
+        self._published_deltas: dict[str, list[PublishedDelta]] = {}
+
         self._sid_seq = 0
         self._task_seq = 0
+        self._session_seq = 0
+        self._uid_seq = 0
+        self._ts_seq = 1794300000000
 
         # Call counters and call logs for test assertions
         self.api_call_counts: Counter[tuple[str, str]] = Counter()
@@ -829,6 +884,12 @@ class FileReplayApiMock(ApiPort):
         self.command_counts: Counter[str] = Counter()
         self.gateway_detail_queries: list[tuple[str, str, str]] = []
         self.call_log: list[dict[str, Any]] = []
+
+    def __repr__(self) -> str:
+        return (
+            f"FileReplayApiMock(dataset_dir={self._dataset_dir!s}, "
+            f"domains={len(self._domain_data)}, active_sessions={sum(1 for b in self._sid_bindings.values() if b.active)})"
+        )
 
     @property
     def dataset_dir(self) -> Path:
@@ -855,6 +916,413 @@ class FileReplayApiMock(ApiPort):
         self._cli_mock.reset_counters()
 
     # ------------------------------------------------------------------
+    # State Snapshots, Reset, Session Inspection & Call-Log Assertions
+    # ------------------------------------------------------------------
+
+    def get_active_sid_binding(self, sid: str | None) -> SidBinding | None:
+        """Return the active `SidBinding` for `sid`, or `None` if unknown or logged out."""
+        if not sid:
+            return None
+        binding = self._sid_bindings.get(sid)
+        if binding is None or not binding.active:
+            return None
+        return binding
+
+    def _load_domain_files(self, dom_name: str) -> dict[str, Any]:
+        dom_dir = self._dataset_dir / "domains" / dom_name
+        dom_files: dict[str, Any] = {}
+        if dom_dir.is_dir():
+            for json_file in sorted(dom_dir.glob("*.json")):
+                dom_files[json_file.stem] = json.loads(json_file.read_text(encoding="utf-8"))
+        return dom_files
+
+    def _get_clean_domain_baseline(self, dom_name: str) -> dict[str, Any]:
+        baseline = self._initial_domain_data.get(dom_name)
+        if baseline is None:
+            baseline = self._load_domain_files(dom_name)
+            self._initial_domain_data[dom_name] = baseline
+        return baseline
+
+    def _mark_domain_mutated(self, dom_name: str) -> None:
+        self._dirty_domains.add(dom_name)
+        self._domain_generation[dom_name] += 1
+
+    def snapshot_state(self) -> ReplayStateSnapshot:
+        """Capture an in-memory snapshot of modified domains, sessions, locks, tasks, and CLI overrides."""
+        domain_copies = {
+            dom_name: copy.deepcopy(self._domain_data[dom_name])
+            for dom_name in self._dirty_domains
+            if dom_name in self._domain_data
+        }
+        return ReplayStateSnapshot(
+            domain_copies=domain_copies,
+            dirty_domains=set(domain_copies.keys()),
+            work_sessions=copy.deepcopy(self._work_sessions),
+            sid_bindings=copy.deepcopy(self._sid_bindings),
+            published_session_by_domain=dict(self._published_session_by_domain),
+            published_deltas=copy.deepcopy(self._published_deltas),
+            tasks=copy.deepcopy(self._tasks),
+            show_global_assignments=copy.deepcopy(self._show_global_assignments),
+            counters={
+                "sid_seq": self._sid_seq,
+                "task_seq": self._task_seq,
+                "session_seq": self._session_seq,
+                "uid_seq": self._uid_seq,
+                "ts_seq": self._ts_seq,
+            },
+            cli_overrides=copy.deepcopy(self._cli_mock._cli_overrides),
+            fail_ssh_nodes=set(self._cli_mock.fail_ssh_nodes),
+            call_log=copy.deepcopy(self.call_log),
+            domain_generations=dict(self._domain_generation),
+        )
+
+    def restore_state(self, snapshot: ReplayStateSnapshot) -> None:
+        """Restore emulator state rapidly from a previously captured `ReplayStateSnapshot`."""
+        for dom_name in snapshot.dirty_domains | self._dirty_domains:
+            if dom_name in snapshot.domain_copies:
+                self._domain_data[dom_name] = copy.deepcopy(snapshot.domain_copies[dom_name])
+            elif dom_name in self._domain_data:
+                self._domain_data[dom_name] = copy.deepcopy(self._get_clean_domain_baseline(dom_name))
+
+        self._dirty_domains = set(snapshot.dirty_domains)
+        self._domain_generation = Counter(snapshot.domain_generations)
+        self._work_sessions = copy.deepcopy(snapshot.work_sessions)
+        self._sid_bindings = copy.deepcopy(snapshot.sid_bindings)
+        self._published_session_by_domain = dict(snapshot.published_session_by_domain)
+        self._published_deltas = copy.deepcopy(snapshot.published_deltas)
+        self._tasks = copy.deepcopy(snapshot.tasks)
+        self._show_global_assignments = copy.deepcopy(snapshot.show_global_assignments)
+
+        self._sid_seq = snapshot.counters.get("sid_seq", self._sid_seq)
+        self._task_seq = snapshot.counters.get("task_seq", self._task_seq)
+        self._session_seq = snapshot.counters.get("session_seq", self._session_seq)
+        self._uid_seq = snapshot.counters.get("uid_seq", self._uid_seq)
+        self._ts_seq = snapshot.counters.get("ts_seq", self._ts_seq)
+
+        self._cli_mock._cli_overrides = copy.deepcopy(snapshot.cli_overrides)
+        self._cli_mock.fail_ssh_nodes = set(snapshot.fail_ssh_nodes)
+        self.call_log = copy.deepcopy(snapshot.call_log)
+
+    def reset(self) -> None:
+        """Reset all in-memory domain data, sessions, locks, tasks, counters, and CLI overrides to baseline."""
+        for dom_name in list(self._dirty_domains):
+            if dom_name in self._domain_data:
+                self._domain_data[dom_name] = copy.deepcopy(self._get_clean_domain_baseline(dom_name))
+        self._dirty_domains.clear()
+        self._domain_generation.clear()
+        self._show_global_assignments = copy.deepcopy(self._initial_global_assignments)
+        self._work_sessions.clear()
+        self._sid_bindings.clear()
+        self._published_deltas.clear()
+        self._tasks.clear()
+        self._published_session_by_domain.clear()
+        for dom_n, d_files in self._domain_data.items():
+            last_pub = d_files.get("show-last-published-session", {})
+            if isinstance(last_pub, dict) and last_pub.get("uid"):
+                self._published_session_by_domain[dom_n] = str(last_pub["uid"])
+        self._sid_seq = 0
+        self._task_seq = 0
+        self._session_seq = 0
+        self._uid_seq = 0
+        self._ts_seq = 1794300000000
+        self._cli_mock._cli_overrides.clear()
+        self._cli_mock.fail_ssh_nodes.clear()
+        self.reset_counters()
+
+    def get_calls(
+        self,
+        *,
+        domain: str | None = None,
+        command: str | None = None,
+        mutating_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return recorded `call_log` entries matching optional `domain`, `command`, and `mutating_only` filters."""
+        norm_dom = self._normalize_domain(domain) if domain is not None else None
+        out: list[dict[str, Any]] = []
+        for entry in self.call_log:
+            if norm_dom is not None and entry.get("domain") != norm_dom:
+                continue
+            if command is not None and entry.get("command") != command:
+                continue
+            if mutating_only and not entry.get("is_mutating", entry.get("mutating")):
+                continue
+            out.append(entry)
+        return out
+
+    def assert_no_global_mutations(self) -> None:
+        """Fail if any mutating API command targeted the `Global` domain."""
+        global_writes = [
+            f"{e.get('command')} ({e.get('payload_summary')})"
+            for e in self.call_log
+            if e.get("domain") == "Global" and e.get("is_mutating", e.get("mutating"))
+        ]
+        if global_writes:
+            raise AssertionError(f"Unexpected mutating commands in Global domain: {', '.join(global_writes)}")
+
+    def assert_no_full_object_scans(
+        self,
+        commands: Iterable[str] = ("show-hosts", "show-networks", "show-address-ranges", "show-groups"),
+    ) -> None:
+        """Fail if any command in `commands` was invoked (e.g., to guard against uncached full-table scans)."""
+        target_cmds = set(commands)
+        hits = [f"{e.get('domain')}:{e.get('command')}" for e in self.call_log if e.get("command") in target_cmds]
+        if hits:
+            raise AssertionError(f"Unexpected full-object scan commands invoked: {', '.join(hits)}")
+
+    def assert_command_called(
+        self,
+        command: str,
+        *,
+        domain: str | None = None,
+        times: int | None = None,
+    ) -> None:
+        """Assert that `command` was called (optionally within `domain` and exact `times` count)."""
+        matches = self.get_calls(domain=domain, command=command)
+        if times is None:
+            if not matches:
+                scope = f" in domain {domain!r}" if domain else ""
+                raise AssertionError(f"Expected command {command!r}{scope} to be called at least once, got 0")
+        elif len(matches) != times:
+            scope = f" in domain {domain!r}" if domain else ""
+            raise AssertionError(f"Expected command {command!r}{scope} {times} time(s), got {len(matches)}")
+
+    def assert_command_not_called(self, command: str, *, domain: str | None = None) -> None:
+        """Assert that `command` was never called (optionally restricted to `domain`)."""
+        matches = self.get_calls(domain=domain, command=command)
+        if matches:
+            scope = f" in domain {domain!r}" if domain else ""
+            raise AssertionError(f"Expected command {command!r}{scope} not to be called, got {len(matches)}")
+
+    # ------------------------------------------------------------------
+    # Internal Session, Timestamp & Overlay Helpers
+    # ------------------------------------------------------------------
+
+    def _next_timestamp_ms(self) -> int:
+        self._ts_seq += 1000
+        return self._ts_seq
+
+    def _allocate_uid(self, prefix: str) -> str:
+        self._uid_seq += 1
+        clean = prefix.replace("-", "_")
+        return f"uid-{clean}-{self._uid_seq:06d}"
+
+    def _known_sids(self, extra_sid: str | None = None) -> set[str]:
+        sids = set(self._sid_bindings.keys())
+        if extra_sid:
+            sids.add(extra_sid)
+        return sids
+
+    def _create_work_session(
+        self,
+        domain: str,
+        *,
+        user_name: str = "admin",
+        name: str = "",
+        description: str = "",
+        application: str = "WEB_API",
+        read_only: bool = False,
+    ) -> WorkSession:
+        self._session_seq += 1
+        ts_ms = self._next_timestamp_ms()
+        dom_meta = format_domain_meta(domain)
+        ws = WorkSession(
+            uid=f"sess-{domain.lower().replace(' ', '-')}-{self._session_seq:06d}",
+            domain=domain,
+            user_name=user_name,
+            name=name,
+            description=description,
+            application=application,
+            read_only=read_only,
+            state="open",
+            base_published_uid=self._published_session_by_domain.get(domain, ""),
+            created_time_posix=ts_ms,
+            last_modify_posix=ts_ms,
+            base_domain_gen=self._domain_generation[domain],
+            domain_meta=dom_meta,
+        )
+        self._work_sessions[ws.uid] = ws
+        return ws
+
+    def _effective_domain_files(self, dom_name: str, binding: SidBinding | None) -> dict[str, Any] | None:
+        if binding is not None and binding.active and binding.domain == dom_name:
+            ws = self._work_sessions.get(binding.session_uid)
+            if ws is not None and ws.state == "open" and ws.overlay_data is not None:
+                return ws.overlay_data
+        return self._domain_data.get(dom_name)
+
+    def _ensure_overlay(self, ws: WorkSession) -> dict[str, Any]:
+        if ws.overlay_data is None:
+            published = self._domain_data.get(ws.domain, {})
+            ws.base_snapshot = copy.deepcopy(published)
+            ws.overlay_data = copy.deepcopy(published)
+            ws.base_published_uid = self._published_session_by_domain.get(ws.domain, "")
+            ws.base_domain_gen = self._domain_generation[ws.domain]
+        return ws.overlay_data
+
+    def _effective_all_domains(self, binding: SidBinding | None) -> dict[str, Mapping[str, Any]]:
+        out: dict[str, Mapping[str, Any]] = {}
+        for dom_n in self._domain_data:
+            eff = self._effective_domain_files(dom_n, binding)
+            if eff is not None:
+                out[dom_n] = eff
+        return out
+
+    @staticmethod
+    def _candidate_preflight_layers(
+        store: Any,
+        *,
+        dom_files: Mapping[str, Any],
+        pkg_or_lyr: str,
+        is_nat: bool,
+        allow_multi: bool,
+    ) -> list[Mapping[str, Any]]:
+        if not isinstance(store, Mapping):
+            return []
+        if pkg_or_lyr:
+            resolved_layer = (
+                _resolve_nat_package_payload(dict(dom_files), pkg_or_lyr)
+                if is_nat
+                else _resolve_access_layer_payload(dict(dom_files), {}, pkg_or_lyr)
+            )
+            return [resolved_layer] if isinstance(resolved_layer, Mapping) else []
+        layers = [v for v in store.values() if isinstance(v, Mapping)]
+        if not allow_multi and len(layers) != 1:
+            return []
+        return layers
+
+    def _preflight_target_uids(
+        self,
+        command: str,
+        req: Mapping[str, Any],
+        dom_files: Mapping[str, Any],
+        global_files: Mapping[str, Any],
+        dom_name: str,
+    ) -> set[str]:
+        targets: set[str] = set()
+        entity_map = CMD_TO_ENTITY_ACTION.get(command)
+        if entity_map is not None:
+            spec, action = entity_map
+            if action in ("set", "delete"):
+                lookup = str(req.get("uid") or req.get("name") or "")
+                found = find_effective_object(
+                    dom_files, global_files, dom_name, lookup, preferred_spec=spec, include_extras=False
+                )
+                if found is not None and found[0].get("uid"):
+                    targets.add(str(found[0]["uid"]))
+            elif action == "add" and bool(req.get("set-if-exists", False)):
+                name = str(req.get("name") or "").strip()
+                if name:
+                    found = find_effective_object(
+                        dom_files,
+                        global_files,
+                        dom_name,
+                        name,
+                        preferred_spec=spec,
+                        local_only=True,
+                        include_extras=False,
+                    )
+                    if found is not None and found[0].get("uid"):
+                        targets.add(str(found[0]["uid"]))
+            return targets
+
+        if command in (
+            "set-access-rule",
+            "delete-access-rule",
+            "set-nat-rule",
+            "delete-nat-rule",
+            "set-access-section",
+            "delete-access-section",
+            "set-nat-section",
+            "delete-nat-section",
+        ):
+            is_nat = "-nat-" in command
+            is_section = command.endswith("-section")
+            rb_cmd = "show-nat-rulebase" if is_nat else "show-access-rulebase"
+            store = dom_files.get(rb_cmd, {})
+            pkg_or_lyr = str(req.get("package") if is_nat else (req.get("layer") or ""))
+
+            if not is_section:
+                uid = str(req.get("uid") or "").strip()
+                if uid:
+                    targets.add(uid)
+                    return targets
+                req_num, valid_num = parse_rule_number(req.get("rule-number"))
+                if not valid_num:
+                    return targets
+                req_name = str(req.get("name") or "")
+                candidate_layers = self._candidate_preflight_layers(
+                    store,
+                    dom_files=dom_files,
+                    pkg_or_lyr=pkg_or_lyr,
+                    is_nat=is_nat,
+                    allow_multi=not (req_num is not None and not req_name),
+                )
+                for layer_data in candidate_layers:
+                    idx = 0
+                    for node in layer_data.get("rulebase", []):
+                        if not isinstance(node, Mapping):
+                            continue
+                        raw_children = node.get("rulebase")
+                        children: list[Any] = raw_children if isinstance(raw_children, list) else [node]
+                        for child in children:
+                            if not isinstance(child, Mapping):
+                                continue
+                            idx += 1
+                            child_num, num_ok = parse_rule_number(child.get("rule-number"))
+                            eff_num = child_num if (num_ok and child_num is not None) else idx
+                            if (
+                                (req_num is not None and eff_num == req_num)
+                                or (req_name and child.get("name") == req_name)
+                            ) and child.get("uid"):
+                                targets.add(str(child["uid"]))
+            else:
+                sec_uid = str(req.get("uid") or "").strip()
+                sec_name = str(req.get("name") or "").strip()
+                if sec_uid:
+                    targets.add(sec_uid)
+                candidate_layers = self._candidate_preflight_layers(
+                    store,
+                    dom_files=dom_files,
+                    pkg_or_lyr=pkg_or_lyr,
+                    is_nat=is_nat,
+                    allow_multi=True,
+                )
+                for layer_data in candidate_layers:
+                    for node in layer_data.get("rulebase", []):
+                        if not isinstance(node, Mapping):
+                            continue
+                        node_type = str(node.get("type") or "")
+                        if not (node_type.endswith("-section") or isinstance(node.get("rulebase"), list)):
+                            continue
+                        if (sec_uid and node.get("uid") == sec_uid) or (sec_name and node.get("name") == sec_name):
+                            if node.get("uid"):
+                                targets.add(str(node["uid"]))
+                            if command.startswith("delete-"):
+                                for child in node.get("rulebase", []):
+                                    if isinstance(child, Mapping) and child.get("uid"):
+                                        targets.add(str(child["uid"]))
+        return targets
+
+    def _check_cross_session_locks(self, ws: WorkSession, candidate_uids: set[str]) -> ApiCallResult | None:
+        if not candidate_uids:
+            return None
+        for other_ws in self._work_sessions.values():
+            if other_ws.domain != ws.domain or other_ws.uid == ws.uid:
+                continue
+            if other_ws.state not in ("open", "disconnected"):
+                continue
+            overlap = sorted(candidate_uids & other_ws.locked_uids)
+            if overlap:
+                holder = other_ws.name or other_ws.uid
+                return cp_error(
+                    "generic_err_object_locked",
+                    f"Object [{overlap[0]}] is locked by another session [{other_ws.uid}]",
+                    status_code=400,
+                    blocking_errors=[{"message": f"Object [{overlap[0]}] is locked by session {holder}"}],
+                )
+        return None
+
+    # ------------------------------------------------------------------
     # In-Memory Mutation Helpers for Step 6 Targeted Gateway Refresh
     # ------------------------------------------------------------------
 
@@ -865,6 +1333,7 @@ class FileReplayApiMock(ApiPort):
         interfaces: list[dict[str, Any]],
     ) -> None:
         """Update the raw `interfaces` list for a single gateway across summary and detail payloads in memory."""
+        self._mark_domain_mutated(domain)
         dom_files = self._domain_data[domain]
         target_uid: str | None = None
         target_name: str | None = None
@@ -901,6 +1370,8 @@ class FileReplayApiMock(ApiPort):
         new_posix_time: int = 1794225600000,
     ) -> None:
         """Simulate a new `publish` in `domain` by updating `show-last-published-session` and `show-sessions`."""
+        self._mark_domain_mutated(domain)
+        self._published_session_by_domain[domain] = new_session_uid
         dom_files = self._domain_data[domain]
         new_sess = {
             "uid": new_session_uid,
@@ -1080,12 +1551,19 @@ class FileReplayApiMock(ApiPort):
             # Also record the show-task poll so tests can verify run-script + show-task interaction
             self.api_call_counts[(dom_name, "show-task")] += 1
             self.command_counts["show-task"] += 1
+            show_task_payload = {"task-id": task_id, "details-level": "full"}
             self.call_log.append(
                 {
                     "mgmt_name": "mds",
                     "domain": dom_name,
                     "command": "show-task",
-                    "payload": {"task-id": task_id, "details-level": "full"},
+                    "payload": show_task_payload,
+                    "payload_summary": summarize_payload("show-task", show_task_payload),
+                    "sid_ref": None,
+                    "session_uid": None,
+                    "mutating": False,
+                    "success": True,
+                    "error_code": None,
                 }
             )
             return ApiCallResult(
@@ -1109,121 +1587,743 @@ class FileReplayApiMock(ApiPort):
         )
 
     # ------------------------------------------------------------------
-    # ApiPort Implementation
+    # ApiPort Implementation & Stateful Dispatch
     # ------------------------------------------------------------------
 
-    async def api_call(
+    def _next_task_id(self) -> str:
+        self._task_seq += 1
+        return f"12345678-9999-4999-8999-{self._task_seq:012d}"
+
+    def _apply_domain_mutation(
         self,
-        mgmt_name: str,
-        command: str,
-        payload: dict[str, Any] | None = None,
+        clean_cmd: str,
+        req: Mapping[str, Any],
         *,
-        domain: str | None = None,
-        sid: str | None = None,
-        server_ip: str | None = None,
-        wait_for_task: bool = True,
-        timeout: float | None = None,
-    ) -> ApiCallResult:
-        """Execute a single Check Point Management API command against the loaded raw dataset."""
-        _ = (sid, server_ip, timeout)
-        clean_cmd = command.strip().lstrip("/")
-        if clean_cmd.startswith("web_api/"):
-            clean_cmd = clean_cmd.removeprefix("web_api/")
-        req = dict(payload) if payload else {}
-        dom_name = self._normalize_domain(domain or (req.get("domain") if clean_cmd != "login" else None))
-
-        self.api_call_counts[(dom_name, clean_cmd)] += 1
-        self.command_counts[clean_cmd] += 1
-        self.call_log.append(
-            {
-                "mgmt_name": mgmt_name,
-                "domain": dom_name,
-                "command": clean_cmd,
-                "payload": copy.deepcopy(req),
-            }
+        dom_name: str,
+        target_files: dict[str, Any],
+        global_files: Mapping[str, Any],
+        all_domains: Mapping[str, Mapping[str, Any]],
+        user_name: str,
+        locked_uids_out: set[str],
+        override_now_ms: int | None = None,
+    ) -> tuple[ApiCallResult, str | None] | None:
+        now_ms = override_now_ms if override_now_ms is not None else self._next_timestamp_ms()
+        entity_hit = handle_entity_crud(
+            clean_cmd,
+            req,
+            dom_name=dom_name,
+            dom_files=target_files,
+            global_files=global_files,
+            all_domains_effective=all_domains,
+            uid_allocator=self._allocate_uid,
+            now_ms=now_ms,
+            user_name=user_name,
+            locked_uids_out=locked_uids_out,
         )
+        if entity_hit is not None:
+            return entity_hit
 
-        # 1. Session & system lifecycle commands
-        if clean_cmd == "login":
-            self._sid_seq += 1
-            login_dom = self._normalize_domain(req.get("domain") or domain)
-            return ApiCallResult(
-                success=True,
-                status_code=200,
-                data={
-                    "sid": f"mock-sid-{login_dom}-{self._sid_seq}",
-                    "uid": f"sess-login-{self._sid_seq:06d}",
-                    "session-timeout": 600,
-                    "api-server-version": "1.9.1",
-                    "disk-space-message": "OK",
-                },
+        rb_hit = handle_rulebase_crud(
+            clean_cmd,
+            req,
+            dom_name=dom_name,
+            dom_files=target_files,
+            global_files=global_files,
+            uid_allocator=self._allocate_uid,
+            now_ms=now_ms,
+            user_name=user_name,
+            locked_uids_out=locked_uids_out,
+        )
+        if rb_hit is not None:
+            return rb_hit
+
+        if clean_cmd == "delete-unused-objects":
+            removed = delete_unused_objects(
+                target_files,
+                dom_name=dom_name,
+                all_domains_effective=all_domains,
+                locked_uids_out=locked_uids_out,
+            )
+            return cp_ok({"deleted-count": removed, "message": f"Deleted {removed} unused objects"}), None
+
+        return None
+
+    def _handle_global_assignments_cmd(
+        self,
+        clean_cmd: str,
+        req: Mapping[str, Any],
+        *,
+        binding: SidBinding | None,
+        dom_name: str,
+        wait_for_task: bool,
+    ) -> ApiCallResult:
+        if clean_cmd == "show-global-assignments":
+            return cp_ok(paginate_items(self._show_global_assignments, req, collection_key="objects"))
+
+        def _domain_ref_matches(val: Any, target: str) -> bool:
+            if not target:
+                return True
+            if isinstance(val, Mapping):
+                return target in (str(val.get("name") or ""), str(val.get("uid") or ""))
+            return str(val or "") == target
+
+        if clean_cmd == "show-global-assignment":
+            lookup_uid = str(req.get("uid") or "").strip()
+            dep_dom = str(req.get("dependent-domain") or "").strip()
+            glob_dom = str(req.get("global-domain") or "").strip()
+            for entry in self._show_global_assignments:
+                if lookup_uid and entry.get("uid") == lookup_uid:
+                    return cp_ok(copy.deepcopy(entry))
+                if (
+                    dep_dom
+                    and _domain_ref_matches(entry.get("dependent-domain"), dep_dom)
+                    and _domain_ref_matches(entry.get("global-domain"), glob_dom)
+                ):
+                    return cp_ok(copy.deepcopy(entry))
+            return cp_error(
+                "generic_err_object_not_found",
+                f"Global assignment [{lookup_uid or dep_dom}] not found",
+                status_code=404,
             )
 
-        if clean_cmd in ("logout", "keepalive", "discard"):
-            return ApiCallResult(success=True, status_code=200, data={"message": "OK"})
+        if clean_cmd in ("assign-global-assignment", "assign-global-policy"):
+            if binding is not None and self._work_sessions[binding.session_uid].read_only:
+                return cp_error("err_validation_failed", "Cannot modify database in read-only session", status_code=400)
+            if binding is not None and binding.domain not in ("System Data", "Global") and dom_name == "Global":
+                return cp_error(
+                    "generic_err_object_read_only",
+                    f"Cannot assign Global policy from local domain [{binding.domain}]",
+                    status_code=400,
+                )
 
-        if clean_cmd == "publish":
-            self._task_seq += 1
-            tid = f"12345678-9999-4999-8999-{self._task_seq:012d}"
+            raw_globs = req.get("global-domains") or req.get("global-domain") or ["Global"]
+            global_list = [str(g) for g in (raw_globs if isinstance(raw_globs, list) else [raw_globs])]
+            raw_deps = req.get("dependent-domains") or req.get("dependent-domain")
+            if raw_deps is None:
+                dep_list = [d for d in USER_DOMAINS if d in self._domain_data]
+            else:
+                dep_list = [str(d) for d in (raw_deps if isinstance(raw_deps, list) else [raw_deps])]
+
+            for dep in dep_list:
+                if dep not in self._domain_data or dep in ("Global", "System Data"):
+                    return cp_error(
+                        "generic_err_object_not_found",
+                        f"Dependent domain [{dep}] not found",
+                        status_code=404,
+                    )
+
+            ts_ms = self._next_timestamp_ms()
+            ts_obj = format_timestamp(ts_ms)
+            details: list[dict[str, Any]] = []
+            for dep in dep_list:
+                for g_dom in global_list:
+                    matched_entry: dict[str, Any] | None = None
+                    for entry in self._show_global_assignments:
+                        if _domain_ref_matches(entry.get("dependent-domain"), dep) and _domain_ref_matches(
+                            entry.get("global-domain"), g_dom
+                        ):
+                            matched_entry = entry
+                            break
+                    if matched_entry is None:
+                        matched_entry = {
+                            "uid": self._allocate_uid("ga"),
+                            "type": "global-assignment",
+                            "global-domain": format_domain_meta(g_dom),
+                            "dependent-domain": format_domain_meta(dep),
+                            "global-access-policy": str(req.get("global-access-policy") or "Global_Standard_Pkg"),
+                            "global-threat-prevention-policy": str(req.get("global-threat-prevention-policy") or ""),
+                        }
+                        self._show_global_assignments.append(matched_entry)
+                    matched_entry["assignment-status"] = "assigned"
+                    matched_entry["assignment-up-to-date"] = dict(ts_obj)
+                    matched_entry["last-modify-time"] = dict(ts_obj)
+
+                # Update dependent domain package metadata so downstream readers observe assignment
+                self._mark_domain_mutated(dep)
+                for pkg in self._domain_data[dep].get("show-packages", {}).get("packages", []):
+                    if isinstance(pkg, dict):
+                        pkg["global-policy-assigned-at"] = dict(ts_obj)
+                        pkg["global-domains"] = list(global_list)
+
+                details.append(
+                    {
+                        "uid": self._allocate_uid("td"),
+                        "domainName": dep,
+                        "statusCode": "succeeded",
+                        "statusDescription": f"Global policy assigned to {dep}",
+                    }
+                )
+
+            tid = self._next_task_id()
             t_obj = {
                 "uid": tid,
                 "task-id": tid,
-                "task-name": "Publish operation",
+                "task-name": "Assign Global Policy",
                 "status": "succeeded",
                 "progress-percentage": 100,
                 "suppressed": False,
-                "task-details": [{"uid": f"td-{tid}", "statusDescription": "Publish completed successfully"}],
+                "task-details": details,
             }
             self._tasks[tid] = t_obj
             if wait_for_task:
-                return ApiCallResult(success=True, status_code=200, data={"tasks": [t_obj]})
-            return ApiCallResult(success=True, status_code=200, data={"task-id": tid})
+                return cp_ok({"tasks": [copy.deepcopy(t_obj)]}, task_id=tid)
+            return cp_ok({"task-id": tid}, task_id=tid)
+
+        return cp_error("generic_err_command_not_recognized", f"Unsupported command {clean_cmd!r}")
+
+    def _resolve_session_by_uid(self, uid: str, dom_name: str) -> dict[str, Any] | None:
+        ws = self._work_sessions.get(uid)
+        if ws is not None:
+            return ws.to_checkpoint_dict()
+        search_domains = [dom_name] if dom_name in self._domain_data else list(self._domain_data.keys())
+        for d_name in search_domains:
+            d_files = self._domain_data[d_name]
+            for s in d_files.get("show-sessions", {}).get("objects", []):
+                if isinstance(s, dict) and s.get("uid") == uid:
+                    return copy.deepcopy(s)
+            last_pub = d_files.get("show-last-published-session", {})
+            if isinstance(last_pub, dict) and last_pub.get("uid") == uid:
+                return copy.deepcopy(last_pub)
+        return None
+
+    def _handle_show_changes(
+        self,
+        dom_name: str,
+        req: Mapping[str, Any],
+        *,
+        binding: SidBinding | None,
+        wait_for_task: bool,
+    ) -> ApiCallResult:
+        to_uid = str(req.get("to-session") or "").strip()
+        from_uid = str(req.get("from-session") or "").strip()
+        from_ms = parse_checkpoint_date_ms(req.get("from-date"))
+        to_ms = parse_checkpoint_date_ms(req.get("to-date"))
+        global_dom = self._effective_domain_files("Global", binding)
+
+        change_entries: list[dict[str, Any]] = []
+        if to_uid and to_uid in self._work_sessions and self._work_sessions[to_uid].state in ("open", "disconnected"):
+            ws = self._work_sessions[to_uid]
+            before_dom = self._domain_data.get(ws.domain, {})
+            after_dom = ws.overlay_data if ws.overlay_data is not None else before_dom
+            delta = compute_session_delta(
+                before_dom,
+                after_dom,
+                global_before=self._domain_data.get("Global", {}),
+                global_after=global_dom,
+                session_meta=ws.to_checkpoint_dict(),
+            )
+            if count_delta_items(delta) > 0:
+                change_entries.append(delta)
+        elif to_uid:
+            matched_deltas = [d for d in self._published_deltas.get(dom_name, []) if d.session_uid == to_uid]
+            if matched_deltas:
+                change_entries.extend(copy.deepcopy(d.changes) for d in matched_deltas)
+            else:
+                sess_meta = self._resolve_session_by_uid(to_uid, dom_name)
+                if sess_meta is None:
+                    return cp_error(
+                        "generic_err_object_not_found",
+                        f"Session [{to_uid}] not found in {dom_name}",
+                        status_code=404,
+                    )
+        else:
+            pub_list = self._published_deltas.get(dom_name, [])
+            in_range = not bool(from_uid)
+            for p_delta in pub_list:
+                if from_uid and p_delta.session_uid == from_uid:
+                    in_range = True
+                    continue
+                if not in_range:
+                    continue
+                if from_ms is not None and p_delta.publish_time_posix < from_ms:
+                    continue
+                if to_ms is not None and p_delta.publish_time_posix > to_ms:
+                    continue
+                change_entries.append(copy.deepcopy(p_delta.changes))
+
+        tid = self._next_task_id()
+        task_obj = build_show_changes_task(tid, change_entries)
+        self._tasks[tid] = task_obj
+        if wait_for_task:
+            return cp_ok({"tasks": [copy.deepcopy(task_obj)]}, task_id=tid)
+        return cp_ok({"task-id": tid}, task_id=tid)
+
+    def _rotate_sid_bindings_for_session(self, ws: WorkSession) -> None:
+        """Rebind active SIDs attached to `ws.uid` onto fresh open sessions (`OwnedSession` invariant)."""
+        for act_binding in self._sid_bindings.values():
+            if act_binding.active and act_binding.session_uid == ws.uid:
+                fresh_ws = self._create_work_session(
+                    ws.domain,
+                    user_name=act_binding.user_name,
+                    name="",
+                    description="",
+                    application=ws.application,
+                    read_only=act_binding.read_only,
+                )
+                act_binding.session_uid = fresh_ws.uid
+
+    def _record_publish_task(
+        self,
+        session_uid: str | None,
+        n_changes: int,
+        *,
+        wait_for_task: bool,
+    ) -> ApiCallResult:
+        tid = self._next_task_id()
+        detail: dict[str, Any] = {
+            "uid": f"td-{tid}",
+            "statusDescription": "Publish completed successfully",
+        }
+        if session_uid:
+            detail["revision"] = session_uid
+            detail["publishResponse"] = {
+                "uid": session_uid,
+                "mode": "async",
+                "number-of-published-changes": n_changes,
+            }
+            detail["publish-Response"] = {
+                "uid": session_uid,
+                "number-of-published-changes": n_changes,
+            }
+        t_obj: dict[str, Any] = {
+            "uid": tid,
+            "task-id": tid,
+            "task-name": "Publish operation",
+            "status": "succeeded",
+            "progress-percentage": 100,
+            "suppressed": False,
+            "task-details": [detail],
+        }
+        self._tasks[tid] = t_obj
+        if wait_for_task:
+            payload: dict[str, Any] = {"tasks": [copy.deepcopy(t_obj)]}
+            if session_uid:
+                payload["uid"] = session_uid
+            return cp_ok(payload, task_id=tid)
+        return cp_ok({"task-id": tid}, task_id=tid)
+
+    def _handle_publish(
+        self,
+        req: Mapping[str, Any],
+        *,
+        binding: SidBinding | None,
+        wait_for_task: bool,
+    ) -> ApiCallResult:
+        req_uid = str(req.get("uid") or "").strip()
+        ws: WorkSession | None = None
+        if req_uid:
+            ws = self._work_sessions.get(req_uid)
+            if ws is None:
+                return cp_error("generic_err_object_not_found", f"Session [{req_uid}] not found", status_code=404)
+            if binding is not None:
+                if binding.read_only:
+                    return cp_error("err_validation_failed", "Cannot publish from a read-only session", status_code=400)
+                if binding.domain not in ("System Data", ws.domain):
+                    return cp_error(
+                        "err_validation_failed",
+                        f"Session bound to domain [{binding.domain}] cannot publish session in [{ws.domain}]",
+                        status_code=400,
+                    )
+        elif binding is not None:
+            ws = self._work_sessions.get(binding.session_uid)
+
+        if ws is None:
+            return self._record_publish_task(None, 0, wait_for_task=wait_for_task)
+
+        if ws.read_only:
+            return cp_error("err_validation_failed", "Cannot publish from a read-only session", status_code=400)
+        if ws.state in ("published", "discarded"):
+            return cp_error("err_validation_failed", f"Session [{ws.uid}] is already {ws.state}", status_code=400)
+
+        target_dom = ws.domain
+        if target_dom not in self._domain_data:
+            pub_ts = self._next_timestamp_ms()
+            ws.state = "published"
+            ws.published_time_posix = pub_ts
+            ws.last_modify_posix = pub_ts
+            ws.published_changes = 0
+            ws.changes_count = 0
+            ws.locked_uids.clear()
+            ws.overlay_data = None
+            ws.base_snapshot = None
+            self._rotate_sid_bindings_for_session(ws)
+            return self._record_publish_task(ws.uid, 0, wait_for_task=wait_for_task)
+
+        before_dom = copy.deepcopy(self._domain_data[target_dom])
+        current_pub_uid = self._published_session_by_domain.get(target_dom, "")
+
+        if ws.overlay_data is not None:
+            if ws.base_published_uid == current_pub_uid and ws.base_domain_gen == self._domain_generation[target_dom]:
+                candidate_after = copy.deepcopy(ws.overlay_data)
+            else:
+                candidate_after = copy.deepcopy(before_dom)
+                global_files = self._domain_data.get("Global", {})
+                for rec in ws.mutation_records:
+                    outcome = self._apply_domain_mutation(
+                        rec.command,
+                        rec.payload,
+                        dom_name=rec.domain,
+                        target_files=candidate_after,
+                        global_files=global_files,
+                        all_domains=self._domain_data,
+                        user_name=ws.user_name,
+                        locked_uids_out=set(),
+                    )
+                    if outcome is not None and not outcome[0].success:
+                        return outcome[0]
+        else:
+            candidate_after = copy.deepcopy(before_dom)
+
+        pub_ts = self._next_timestamp_ms()
+        ws.state = "published"
+        ws.published_time_posix = pub_ts
+        ws.last_modify_posix = pub_ts
+
+        delta = compute_session_delta(
+            before_dom,
+            candidate_after,
+            global_before=before_dom if target_dom == "Global" else self._domain_data.get("Global", {}),
+            global_after=candidate_after if target_dom == "Global" else self._domain_data.get("Global", {}),
+            session_meta=ws.to_checkpoint_dict(),
+        )
+        n_changes = count_delta_items(delta)
+        ws.published_changes = n_changes
+        ws.changes_count = 0
+        ws.locked_uids.clear()
+        ws.overlay_data = None
+        ws.base_snapshot = None
+
+        self._domain_data[target_dom] = candidate_after
+        self._mark_domain_mutated(target_dom)
+        self._published_session_by_domain[target_dom] = ws.uid
+
+        pub_dict = ws.to_checkpoint_dict()
+        pub_dict["published-changes"] = n_changes
+        pub_dict["number-of-published-changes"] = n_changes
+        delta["session"] = copy.deepcopy(pub_dict)
+
+        dom_files = self._domain_data[target_dom]
+        dom_files["show-last-published-session"] = copy.deepcopy(pub_dict)
+        sessions_list = dom_files.setdefault("show-sessions", {}).setdefault("objects", [])
+        sessions_list.insert(0, copy.deepcopy(pub_dict))
+        dom_files["show-sessions"]["total"] = len(sessions_list)
+        dom_files["show-sessions"]["to"] = len(sessions_list)
+        dom_files["show-sessions"]["from"] = 1 if sessions_list else 0
+
+        self._published_deltas.setdefault(target_dom, []).append(
+            PublishedDelta(
+                session_uid=ws.uid,
+                session_name=ws.name,
+                domain=target_dom,
+                user_name=ws.user_name,
+                publish_time_posix=pub_ts,
+                publish_time_iso=pub_dict["publish-time"]["iso-8601"],
+                changes=delta,
+            )
+        )
+
+        self._rotate_sid_bindings_for_session(ws)
+        return self._record_publish_task(ws.uid, n_changes, wait_for_task=wait_for_task)
+
+    def _dispatch_api_call(
+        self,
+        mgmt_name: str,
+        clean_cmd: str,
+        req: dict[str, Any],
+        *,
+        dom_name: str,
+        sid: str | None,
+        binding: SidBinding | None,
+        wait_for_task: bool,
+    ) -> ApiCallResult:
+        # 1. Login lifecycle
+        if clean_cmd == "login":
+            login_dom = self._normalize_domain(req.get("domain") or dom_name)
+            if login_dom != "System Data" and login_dom not in self._domain_data:
+                return cp_error(
+                    "generic_err_object_not_found",
+                    f"Domain [{login_dom}] not found in dataset",
+                    status_code=404,
+                )
+            self._sid_seq += 1
+            new_sid = f"mock-sid-{login_dom}-{self._sid_seq}"
+            sid_ref = f"sid#{self._sid_seq:04d}"
+            user_name = str(req.get("user") or "admin")
+            read_only = bool(req.get("read-only", False))
+            sess_name = str(req.get("session-name") or "")
+            sess_desc = str(req.get("session-description") or "")
+            app_name = str(req.get("application") or "WEB_API")
+
+            ws: WorkSession | None = None
+            if bool(req.get("continue-last-session", False)) and not read_only:
+                for cand_ws in reversed(list(self._work_sessions.values())):
+                    if (
+                        cand_ws.domain == login_dom
+                        and cand_ws.user_name == user_name
+                        and cand_ws.state == "disconnected"
+                        and not cand_ws.read_only
+                    ):
+                        cand_ws.state = "open"
+                        cand_ws.last_modify_posix = self._next_timestamp_ms()
+                        ws = cand_ws
+                        break
+            if ws is None:
+                ws = self._create_work_session(
+                    login_dom,
+                    user_name=user_name,
+                    name=sess_name,
+                    description=sess_desc,
+                    application=app_name,
+                    read_only=read_only,
+                )
+
+            self._sid_bindings[new_sid] = SidBinding(
+                sid=new_sid,
+                sid_ref=sid_ref,
+                mgmt_name=mgmt_name,
+                domain=login_dom,
+                user_name=user_name,
+                session_uid=ws.uid,
+                read_only=ws.read_only,
+                active=True,
+            )
+            return cp_ok(
+                {
+                    "sid": new_sid,
+                    "uid": ws.uid,
+                    "session-timeout": 600,
+                    "api-server-version": "1.9.1",
+                    "disk-space-message": "OK",
+                    "read-only": ws.read_only,
+                }
+            )
+
+        # Validate active SID when provided
+        active_ws: WorkSession | None = None
+        if sid is not None:
+            if binding is None or not binding.active:
+                return cp_error("generic_err_invalid_session_id", "Session ID is invalid or expired", status_code=401)
+            active_ws = self._work_sessions.get(binding.session_uid)
+            if active_ws is None:
+                return cp_error(
+                    "generic_err_invalid_session_id",
+                    "Attached work session is invalid or expired",
+                    status_code=401,
+                )
+
+        if clean_cmd == "logout":
+            if binding is not None:
+                binding.active = False
+            if active_ws is not None and active_ws.state == "open":
+                if bool(req.get("continue-session-in-smartconsole", False)):
+                    active_ws.state = "disconnected"
+                else:
+                    active_ws.overlay_data = None
+                    active_ws.base_snapshot = None
+                    active_ws.locked_uids.clear()
+                    active_ws.mutation_records.clear()
+                    active_ws.changes_count = 0
+                    active_ws.state = "discarded"
+            return cp_ok({"message": "OK"})
+
+        if clean_cmd == "keepalive":
+            return cp_ok({"message": "OK"})
+
+        if clean_cmd == "set-session":
+            if active_ws is None:
+                return cp_error("generic_err_wrong_session_id", "Active session is required", status_code=400)
+            if active_ws.read_only:
+                return cp_error("err_validation_failed", "Cannot modify a read-only session", status_code=400)
+            if req.get("new-name") is not None:
+                active_ws.name = str(req["new-name"])
+            elif req.get("name") is not None:
+                active_ws.name = str(req["name"])
+            if req.get("description") is not None:
+                active_ws.description = str(req["description"])
+            if req.get("comments") is not None:
+                active_ws.comments = str(req["comments"])
+            if req.get("color") is not None:
+                active_ws.color = str(req["color"])
+            if req.get("tags") is not None:
+                raw_tags = req["tags"]
+                active_ws.tags = list(raw_tags) if isinstance(raw_tags, list) else [raw_tags]
+            active_ws.last_modify_posix = self._next_timestamp_ms()
+            return cp_ok(active_ws.to_checkpoint_dict())
+
+        if clean_cmd == "take-over-session":
+            if binding is None or active_ws is None:
+                return cp_error("generic_err_wrong_session_id", "Active session is required", status_code=400)
+            if binding.read_only:
+                return cp_error(
+                    "err_validation_failed", "Cannot take over a session from a read-only session", status_code=400
+                )
+            target_uid = str(req.get("uid") or "").strip()
+            target_ws = self._work_sessions.get(target_uid)
+            if target_ws is None:
+                return cp_error("generic_err_object_not_found", f"Session [{target_uid}] not found", status_code=404)
+            if binding.domain not in ("System Data", target_ws.domain):
+                return cp_error(
+                    "err_validation_failed",
+                    f"Session bound to domain [{binding.domain}] cannot take over session in [{target_ws.domain}]",
+                    status_code=400,
+                )
+            if target_ws.read_only:
+                return cp_error("err_validation_failed", "Cannot take over a read-only session", status_code=400)
+            if target_ws.state in ("published", "discarded"):
+                return cp_error(
+                    "err_validation_failed",
+                    f"Cannot take over session [{target_uid}] in state {target_ws.state!r}",
+                    status_code=400,
+                )
+            disconnect_active = bool(req.get("disconnect-active-session", False))
+            other_active = [
+                other_b
+                for other_b in self._sid_bindings.values()
+                if other_b.sid != binding.sid and other_b.session_uid == target_ws.uid and other_b.active
+            ]
+            if other_active:
+                if disconnect_active:
+                    for other_b in other_active:
+                        other_b.active = False
+                elif target_ws.application != "WEB_API" or target_ws.user_name != binding.user_name:
+                    return cp_error(
+                        "err_validation_failed",
+                        (
+                            f"Session [{target_uid}] is currently active; "
+                            "pass disconnect-active-session=true to take over"
+                        ),
+                        status_code=400,
+                    )
+                else:
+                    for other_b in other_active:
+                        fresh_other_ws = self._create_work_session(
+                            other_b.domain,
+                            user_name=other_b.user_name,
+                            name="",
+                            description="",
+                            application="WEB_API",
+                            read_only=other_b.read_only,
+                        )
+                        other_b.session_uid = fresh_other_ws.uid
+            if active_ws.uid != target_ws.uid:
+                active_ws.state = "disconnected"
+            target_ws.state = "open"
+            target_ws.last_modify_posix = self._next_timestamp_ms()
+            binding.session_uid = target_ws.uid
+            binding.domain = target_ws.domain
+            return cp_ok(target_ws.to_checkpoint_dict())
+
+        if clean_cmd == "switch-session":
+            if binding is None or active_ws is None:
+                return cp_error("generic_err_wrong_session_id", "Active session is required", status_code=400)
+            target_uid = str(req.get("uid") or "").strip()
+            target_ws = self._work_sessions.get(target_uid)
+            if target_ws is None:
+                return cp_error("generic_err_object_not_found", f"Session [{target_uid}] not found", status_code=404)
+            if binding.domain not in ("System Data", target_ws.domain):
+                return cp_error(
+                    "err_validation_failed",
+                    f"Session bound to domain [{binding.domain}] cannot switch to session in [{target_ws.domain}]",
+                    status_code=400,
+                )
+            if target_ws.state not in ("open", "disconnected"):
+                return cp_error(
+                    "err_validation_failed",
+                    f"Cannot switch to session [{target_uid}] in state {target_ws.state!r}",
+                    status_code=400,
+                )
+            if active_ws.uid != target_ws.uid:
+                active_ws.state = "disconnected"
+            target_ws.state = "open"
+            target_ws.last_modify_posix = self._next_timestamp_ms()
+            binding.session_uid = target_ws.uid
+            binding.domain = target_ws.domain
+            return cp_ok(target_ws.to_checkpoint_dict())
+
+        if clean_cmd == "discard":
+            if active_ws is not None and active_ws.read_only:
+                return cp_error("err_validation_failed", "Cannot discard from a read-only session", status_code=400)
+            target_uid = str(req.get("uid") or "").strip()
+            if target_uid:
+                target_ws = self._work_sessions.get(target_uid)
+                if target_ws is None:
+                    return cp_error(
+                        "generic_err_object_not_found", f"Session [{target_uid}] not found", status_code=404
+                    )
+                if binding is not None and binding.domain not in ("System Data", target_ws.domain):
+                    return cp_error(
+                        "err_validation_failed",
+                        f"Session bound to domain [{binding.domain}] cannot discard session in [{target_ws.domain}]",
+                        status_code=400,
+                    )
+                if target_ws.state in ("published", "discarded"):
+                    return cp_error(
+                        "err_validation_failed",
+                        f"Session [{target_uid}] is already {target_ws.state}",
+                        status_code=400,
+                    )
+            elif active_ws is not None:
+                target_ws = active_ws
+            else:
+                return cp_ok({"message": "OK"})
+
+            discarded_changes = target_ws.changes_count
+            target_ws.overlay_data = None
+            target_ws.base_snapshot = None
+            target_ws.locked_uids.clear()
+            target_ws.mutation_records.clear()
+            target_ws.changes_count = 0
+            target_ws.state = "discarded"
+            target_ws.last_modify_posix = self._next_timestamp_ms()
+
+            if binding is not None and active_ws is not None and target_ws.uid == active_ws.uid:
+                fresh_ws = self._create_work_session(
+                    active_ws.domain,
+                    user_name=active_ws.user_name,
+                    name="",
+                    description="",
+                    application=active_ws.application,
+                    read_only=active_ws.read_only,
+                )
+                binding.session_uid = fresh_ws.uid
+            return cp_ok({"message": "OK", "number-of-discarded-changes": discarded_changes})
+
+        if clean_cmd == "publish":
+            return self._handle_publish(req, binding=binding, wait_for_task=wait_for_task)
 
         if clean_cmd == "show-api-versions":
-            return ApiCallResult(
-                success=True,
-                status_code=200,
-                data={"current-version": "1.9.1", "supported-versions": ["1.8", "1.9", "1.9.1"]},
-            )
+            return cp_ok({"current-version": "1.9.1", "supported-versions": ["1.8", "1.9", "1.9.1"]})
 
-        # 2. MDS domain discovery commands
+        # 2. MDS domain & global assignment commands
         if clean_cmd == "show-domains":
             items = self._show_domains.get("objects", [])
-            return ApiCallResult(
-                success=True,
-                status_code=200,
-                data=self._paginate_list(items, req, collection_key="objects"),
-            )
+            return cp_ok(self._paginate_list(items, req, collection_key="objects"))
 
         if clean_cmd == "show-global-domain":
-            return ApiCallResult(
-                success=True,
-                status_code=200,
-                data=copy.deepcopy(self._show_global_domain),
+            return cp_ok(copy.deepcopy(self._show_global_domain))
+
+        if clean_cmd in (
+            "show-global-assignments",
+            "show-global-assignment",
+            "assign-global-assignment",
+            "assign-global-policy",
+        ):
+            return self._handle_global_assignments_cmd(
+                clean_cmd, req, binding=binding, dom_name=dom_name, wait_for_task=wait_for_task
             )
 
         if clean_cmd == "show-domain":
             lookup = str(req.get("name") or req.get("uid") or dom_name)
             if lookup.lower() == "global" or lookup == self._show_global_domain.get("uid"):
-                return ApiCallResult(success=True, status_code=200, data=copy.deepcopy(self._show_global_domain))
+                return cp_ok(copy.deepcopy(self._show_global_domain))
             for d_obj in self._show_domains.get("objects", []):
                 if d_obj.get("name") == lookup or d_obj.get("uid") == lookup:
-                    return ApiCallResult(success=True, status_code=200, data=copy.deepcopy(d_obj))
-            return ApiCallResult(
-                success=False,
-                status_code=404,
-                error_code="generic_err_object_not_found",
-                error_message=f"Requested domain [{lookup}] not found",
-                data={"code": "generic_err_object_not_found", "message": f"Requested domain [{lookup}] not found"},
-            )
+                    return cp_ok(copy.deepcopy(d_obj))
+            return cp_error("generic_err_object_not_found", f"Requested domain [{lookup}] not found", status_code=404)
 
         if clean_cmd == "show-mdss":
             items = self._show_mdss.get("objects", [])
-            return ApiCallResult(
-                success=True,
-                status_code=200,
-                data=self._paginate_list(items, req, collection_key="objects"),
-            )
+            return cp_ok(self._paginate_list(items, req, collection_key="objects"))
 
         # 3. Task polling & cprid `run-script`
         if clean_cmd == "run-script":
@@ -1237,22 +2337,26 @@ class FileReplayApiMock(ApiPort):
                 if str(tid) in self._tasks:
                     found_tasks.append(copy.deepcopy(self._tasks[str(tid)]))
             if not found_tasks:
-                return ApiCallResult(
-                    success=False,
-                    status_code=404,
-                    error_code="generic_err_object_not_found",
-                    error_message=f"Requested task {tids} not found",
-                    data={"code": "generic_err_object_not_found", "message": f"Requested task {tids} not found"},
-                )
-            return ApiCallResult(success=True, status_code=200, data={"tasks": found_tasks})
+                return cp_error("generic_err_object_not_found", f"Requested task {tids} not found", status_code=404)
+            return cp_ok({"tasks": found_tasks})
 
-        # 4. Domain-scoped commands
-        if dom_name == "System Data":
-            if clean_cmd in ("show-last-published-session", "show-session"):
-                return ApiCallResult(
-                    success=True,
-                    status_code=200,
-                    data={
+        # Cross-domain session inspection commands
+        if clean_cmd == "show-session":
+            req_uid = str(req.get("uid") or "").strip()
+            if req_uid:
+                resolved = self._resolve_session_by_uid(req_uid, dom_name)
+                if resolved is None:
+                    return cp_error(
+                        "generic_err_object_not_found",
+                        f"Session [{req_uid}] not found",
+                        status_code=404,
+                    )
+                return cp_ok(resolved)
+            if active_ws is not None:
+                return cp_ok(active_ws.to_checkpoint_dict())
+            if dom_name == "System Data":
+                return cp_ok(
+                    {
                         "uid": "sess-system-data-0001",
                         "name": "system-session",
                         "type": "session",
@@ -1261,20 +2365,41 @@ class FileReplayApiMock(ApiPort):
                         "published-changes": 0,
                         "number-of-published-changes": 0,
                         "publish-time": {"posix": 1794139200000, "iso-8601": "2026-11-08T12:00:00Z"},
-                    },
+                    }
                 )
-            if clean_cmd == "show-sessions":
-                return ApiCallResult(
-                    success=True,
-                    status_code=200,
-                    data={"objects": [], "from": 0, "to": 0, "total": 0},
+
+        if clean_cmd == "show-sessions":
+            if req.get("view-published-sessions") is False:
+                open_sessions = [
+                    ws.to_checkpoint_dict()
+                    for ws in self._work_sessions.values()
+                    if ws.state in ("open", "disconnected") and (dom_name == "System Data" or ws.domain == dom_name)
+                ]
+                return cp_ok(self._paginate_list(open_sessions, req, collection_key="objects"))
+            if dom_name == "System Data":
+                return cp_ok({"objects": [], "from": 0, "to": 0, "total": 0})
+
+        if clean_cmd == "show-changes":
+            return self._handle_show_changes(dom_name, req, binding=binding, wait_for_task=wait_for_task)
+
+        # 4. System Data fallback commands
+        if dom_name == "System Data":
+            if clean_cmd == "show-last-published-session":
+                return cp_ok(
+                    {
+                        "uid": "sess-system-data-0001",
+                        "name": "system-session",
+                        "type": "session",
+                        "state": "published",
+                        "locks": 0,
+                        "published-changes": 0,
+                        "number-of-published-changes": 0,
+                        "publish-time": {"posix": 1794139200000, "iso-8601": "2026-11-08T12:00:00Z"},
+                    }
                 )
             if clean_cmd == "where-used":
                 lookup_ref = str(req.get("uid") or req.get("name") or "")
-                sys_items = [
-                    *self._show_mdss.get("objects", []),
-                    *self._show_domains.get("objects", []),
-                ]
+                sys_items = [*self._show_mdss.get("objects", []), *self._show_domains.get("objects", [])]
                 if lookup_ref and any(
                     isinstance(o, dict) and (o.get("uid") == lookup_ref or o.get("name") == lookup_ref)
                     for o in sys_items
@@ -1282,49 +2407,120 @@ class FileReplayApiMock(ApiPort):
                     data_out: dict[str, Any] = {"used-directly": _empty_where_used_bucket()}
                     if bool(req.get("indirect", False)):
                         data_out["used-indirectly"] = _empty_where_used_bucket()
-                    return ApiCallResult(success=True, status_code=200, data=data_out)
-                return ApiCallResult(
-                    success=False,
+                    return cp_ok(data_out)
+                return cp_error(
+                    "generic_err_object_not_found",
+                    f"Requested object [{lookup_ref}] not found in {dom_name}",
                     status_code=404,
-                    error_code="generic_err_object_not_found",
-                    error_message=f"Requested object [{lookup_ref}] not found in {dom_name}",
-                    data={
-                        "code": "generic_err_object_not_found",
-                        "message": f"Requested object [{lookup_ref}] not found in {dom_name}",
-                    },
                 )
 
-        dom_files = self._domain_data.get(dom_name)
-        if dom_files is None:
-            return ApiCallResult(
-                success=False,
-                status_code=404,
-                error_code="generic_err_object_not_found",
-                error_message=f"Domain [{dom_name}] not found in dataset",
-                data={"code": "generic_err_object_not_found", "message": f"Domain [{dom_name}] not found"},
+        mutating = is_mutating_command(clean_cmd)
+        if mutating and dom_name == "System Data":
+            return cp_error(
+                "err_validation_failed",
+                f"Cannot execute domain object/rule mutation {clean_cmd!r} in System Data domain",
+                status_code=400,
             )
+
+        dom_files = self._effective_domain_files(dom_name, binding)
+        if dom_files is None:
+            return cp_error(
+                "generic_err_object_not_found", f"Domain [{dom_name}] not found in dataset", status_code=404
+            )
+        global_files = self._effective_domain_files("Global", binding) or {}
+
+        # 5. Stateful mutations & CRUD commands
+        if mutating and active_ws is not None:
+            if active_ws.read_only:
+                return cp_error("err_validation_failed", "Cannot modify database in read-only session", status_code=400)
+            if binding is not None and binding.domain != dom_name:
+                if dom_name == "Global" and binding.domain != "System Data":
+                    return cp_error(
+                        "generic_err_object_read_only",
+                        f"Cannot mutate Global domain from local domain session [{binding.domain}]",
+                        status_code=400,
+                    )
+                return cp_error(
+                    "err_validation_failed",
+                    f"Session bound to domain [{binding.domain}] cannot mutate domain [{dom_name}]",
+                    status_code=400,
+                )
+
+        if (
+            mutating
+            or clean_cmd in CMD_TO_ENTITY_ACTION
+            or clean_cmd.startswith(("show-access-rule", "show-access-section", "show-nat-rule", "show-nat-section"))
+        ):
+            is_write = mutating
+            if is_write and active_ws is not None:
+                candidate_uids = self._preflight_target_uids(clean_cmd, req, dom_files, global_files, dom_name)
+                lock_err = self._check_cross_session_locks(active_ws, candidate_uids)
+                if lock_err is not None:
+                    return lock_err
+                target_files = self._ensure_overlay(active_ws)
+                user_name = active_ws.user_name
+            elif is_write:
+                target_files = self._domain_data[dom_name]
+                user_name = "admin"
+            else:
+                target_files = dom_files
+                user_name = active_ws.user_name if active_ws is not None else "admin"
+
+            locked_out: set[str] = set()
+            all_eff = self._effective_all_domains(binding)
+            outcome = self._apply_domain_mutation(
+                clean_cmd,
+                req,
+                dom_name=dom_name,
+                target_files=target_files,
+                global_files=global_files,
+                all_domains=all_eff,
+                user_name=user_name,
+                locked_uids_out=locked_out,
+            )
+            if outcome is not None:
+                res, assigned_uid = outcome
+                if res.success and is_write:
+                    if active_ws is not None:
+                        active_ws.locked_uids.update(locked_out)
+                        replay_payload = copy.deepcopy(req)
+                        if assigned_uid and "uid" not in replay_payload:
+                            replay_payload["uid"] = assigned_uid
+                        active_ws.mutation_records.append(
+                            MutationRecord(
+                                command=clean_cmd,
+                                domain=dom_name,
+                                payload=replay_payload,
+                                assigned_uid=assigned_uid,
+                            )
+                        )
+                        active_ws.last_modify_posix = self._next_timestamp_ms()
+                        active_ws.changes_count = len(active_ws.mutation_records)
+                    else:
+                        self._mark_domain_mutated(dom_name)
+                return res
+
+        if clean_cmd == "show-unused-objects":
+            unused = find_unused_objects(
+                dom_files,
+                dom_name=dom_name,
+                all_domains_effective=self._effective_all_domains(binding),
+            )
+            return cp_ok(paginate_items(unused, req, collection_key="objects"))
 
         if clean_cmd in ("show-last-published-session", "show-session"):
             sess_data = dom_files.get(clean_cmd) or dom_files.get("show-last-published-session") or {}
-            return ApiCallResult(success=True, status_code=200, data=copy.deepcopy(sess_data))
+            return cp_ok(copy.deepcopy(sess_data))
 
         if clean_cmd in ("show-simple-gateway", "show-simple-cluster", "show-generic-object"):
             lookup_key = str(req.get("uid") or req.get("name") or "")
             self.gateway_detail_queries.append((dom_name, clean_cmd, lookup_key))
             store = dom_files.get(clean_cmd, {})
             if lookup_key in store:
-                return ApiCallResult(
-                    success=True,
-                    status_code=200,
-                    data=_project_details_level(store[lookup_key], str(req.get("details-level") or "full")),
-                )
+                return cp_ok(_project_details_level(store[lookup_key], str(req.get("details-level") or "full")))
             for item_val in store.values():
                 if isinstance(item_val, dict) and item_val.get("name") == lookup_key:
-                    return ApiCallResult(
-                        success=True,
-                        status_code=200,
-                        data=_project_details_level(item_val, str(req.get("details-level") or "full")),
-                    )
+                    return cp_ok(_project_details_level(item_val, str(req.get("details-level") or "full")))
             if clean_cmd == "show-generic-object":
                 raw_gen = dom_files.get("show-generic-objects", {})
                 gen_lists = (
@@ -1337,17 +2533,9 @@ class FileReplayApiMock(ApiPort):
                         if isinstance(g_obj, dict) and (
                             g_obj.get("uid") == lookup_key or g_obj.get("name") == lookup_key
                         ):
-                            return ApiCallResult(
-                                success=True,
-                                status_code=200,
-                                data=_project_details_level(g_obj, str(req.get("details-level") or "full")),
-                            )
-            return ApiCallResult(
-                success=False,
-                status_code=404,
-                error_code="generic_err_object_not_found",
-                error_message=f"Requested object [{lookup_key}] not found",
-                data={"code": "generic_err_object_not_found", "message": f"Requested object [{lookup_key}] not found"},
+                            return cp_ok(_project_details_level(g_obj, str(req.get("details-level") or "full")))
+            return cp_error(
+                "generic_err_object_not_found", f"Requested object [{lookup_key}] not found", status_code=404
             )
 
         if clean_cmd == "show-generic-objects":
@@ -1361,76 +2549,60 @@ class FileReplayApiMock(ApiPort):
             else:
                 all_generic = [g for v in raw_gen.values() if isinstance(v, list) for g in v if isinstance(g, dict)]
             filtered = [g for g in all_generic if not name_filter or g.get("name") == name_filter]
-            return ApiCallResult(
-                success=True,
-                status_code=200,
-                data=self._paginate_list(filtered, req, collection_key="objects"),
-            )
+            return cp_ok(self._paginate_list(filtered, req, collection_key="objects"))
 
         if clean_cmd == "show-access-rulebase":
             lookup = str(req.get("uid") or req.get("name") or "")
-            layer_payload = _resolve_access_layer_payload(
-                dom_files,
-                self._domain_data.get("Global", {}),
-                lookup,
-            )
+            layer_payload = _resolve_access_layer_payload(dom_files, global_files, lookup)
             if layer_payload is None:
-                return ApiCallResult(
-                    success=False,
+                return cp_error(
+                    "generic_err_object_not_found",
+                    f"Requested access layer [{lookup}] not found in {dom_name}",
                     status_code=404,
-                    error_code="generic_err_object_not_found",
-                    error_message=f"Requested access layer [{lookup}] not found in {dom_name}",
-                    data={
-                        "code": "generic_err_object_not_found",
-                        "message": f"Requested access layer [{lookup}] not found in {dom_name}",
-                    },
                 )
-            sliced_rb = _slice_rulebase_nodes(
+            sliced_rb = slice_rulebase_with_sections(
                 layer_payload,
+                dom_files=dom_files,
+                global_files=global_files,
+                dom_name=dom_name,
                 offset=int(req.get("offset", 0)),
                 limit=int(req.get("limit", 100)),
                 use_object_dictionary=bool(req.get("use-object-dictionary", True)),
             )
-            return ApiCallResult(success=True, status_code=200, data=sliced_rb)
+            return cp_ok(sliced_rb)
 
         if clean_cmd == "show-nat-rulebase":
             pkg_lookup = str(req.get("package") or req.get("uid") or req.get("name") or "")
             nat_payload = _resolve_nat_package_payload(dom_files, pkg_lookup)
+            if nat_payload is None and dom_name != "Global":
+                nat_payload = _resolve_nat_package_payload(global_files, pkg_lookup)
             if nat_payload is None:
-                return ApiCallResult(
-                    success=False,
+                return cp_error(
+                    "generic_err_object_not_found",
+                    f"Requested NAT package [{pkg_lookup}] not found in {dom_name}",
                     status_code=404,
-                    error_code="generic_err_object_not_found",
-                    error_message=f"Requested NAT package [{pkg_lookup}] not found in {dom_name}",
-                    data={
-                        "code": "generic_err_object_not_found",
-                        "message": f"Requested NAT package [{pkg_lookup}] not found in {dom_name}",
-                    },
                 )
-            sliced_nat = _slice_rulebase_nodes(
+            sliced_nat = slice_rulebase_with_sections(
                 nat_payload,
+                dom_files=dom_files,
+                global_files=global_files,
+                dom_name=dom_name,
                 offset=int(req.get("offset", 0)),
                 limit=int(req.get("limit", 100)),
                 use_object_dictionary=bool(req.get("use-object-dictionary", True)),
             )
-            return ApiCallResult(success=True, status_code=200, data=sliced_nat)
+            return cp_ok(sliced_nat)
 
         if clean_cmd == "where-used":
             lookup_ref = str(req.get("uid") or req.get("name") or "")
-            global_files = self._domain_data.get("Global", {})
             target_obj = _find_domain_object_by_ref(dom_files, lookup_ref)
             if target_obj is None and dom_name != "Global":
                 target_obj = _find_domain_object_by_ref(global_files, lookup_ref)
             if target_obj is None:
-                return ApiCallResult(
-                    success=False,
+                return cp_error(
+                    "generic_err_object_not_found",
+                    f"Requested object [{lookup_ref}] not found in {dom_name}",
                     status_code=404,
-                    error_code="generic_err_object_not_found",
-                    error_message=f"Requested object [{lookup_ref}] not found in {dom_name}",
-                    data={
-                        "code": "generic_err_object_not_found",
-                        "message": f"Requested object [{lookup_ref}] not found in {dom_name}",
-                    },
                 )
             target_uid = str(target_obj.get("uid") or lookup_ref)
             indirect_flag = bool(req.get("indirect", False))
@@ -1443,158 +2615,59 @@ class FileReplayApiMock(ApiPort):
                 indirect=indirect_flag,
                 max_depth=max_depth,
             )
-            return ApiCallResult(success=True, status_code=200, data=wu_data)
+            return cp_ok(wu_data)
 
         if clean_cmd == "show-package":
             pkg_lookup = str(req.get("name") or req.get("uid") or "")
-            for pkg in dom_files.get("show-packages", {}).get("packages", []):
-                if pkg.get("name") == pkg_lookup or pkg.get("uid") == pkg_lookup:
-                    return ApiCallResult(success=True, status_code=200, data=copy.deepcopy(pkg))
-            return ApiCallResult(
-                success=False,
-                status_code=404,
-                error_code="generic_err_object_not_found",
-                error_message=f"Package [{pkg_lookup}] not found",
-                data={"code": "generic_err_object_not_found", "message": f"Package [{pkg_lookup}] not found"},
-            )
+            for scope_files in (dom_files, global_files if dom_name != "Global" else {}):
+                for pkg in scope_files.get("show-packages", {}).get("packages", []):
+                    if pkg.get("name") == pkg_lookup or pkg.get("uid") == pkg_lookup:
+                        return cp_ok(copy.deepcopy(pkg))
+            return cp_error("generic_err_object_not_found", f"Package [{pkg_lookup}] not found", status_code=404)
 
         if clean_cmd == "show-access-layer":
             layer_lookup = str(req.get("name") or req.get("uid") or "")
-            for lyr in dom_files.get("show-access-layers", {}).get("access-layers", []):
-                if lyr.get("name") == layer_lookup or lyr.get("uid") == layer_lookup:
-                    return ApiCallResult(success=True, status_code=200, data=copy.deepcopy(lyr))
-            return ApiCallResult(
-                success=False,
-                status_code=404,
-                error_code="generic_err_object_not_found",
-                error_message=f"Access layer [{layer_lookup}] not found",
-                data={"code": "generic_err_object_not_found", "message": f"Access layer [{layer_lookup}] not found"},
-            )
+            for scope_files in (dom_files, global_files if dom_name != "Global" else {}):
+                for lyr in scope_files.get("show-access-layers", {}).get("access-layers", []):
+                    if lyr.get("name") == layer_lookup or lyr.get("uid") == layer_lookup:
+                        return cp_ok(copy.deepcopy(lyr))
+            return cp_error("generic_err_object_not_found", f"Access layer [{layer_lookup}] not found", status_code=404)
 
         if clean_cmd == "show-object":
             lookup_uid = str(req.get("uid") or req.get("name") or "")
-            for file_val in dom_files.values():
-                if not isinstance(file_val, dict):
-                    continue
-                items = file_val.get("objects")
-                if isinstance(items, list):
-                    for obj in items:
-                        if isinstance(obj, dict) and (obj.get("uid") == lookup_uid or obj.get("name") == lookup_uid):
-                            return ApiCallResult(
-                                success=True,
-                                status_code=200,
-                                data={"object": copy.deepcopy(obj)},
-                            )
-                elif lookup_uid in file_val and isinstance(file_val[lookup_uid], dict):
-                    return ApiCallResult(
-                        success=True,
-                        status_code=200,
-                        data={"object": copy.deepcopy(file_val[lookup_uid])},
-                    )
-            return ApiCallResult(
-                success=False,
-                status_code=404,
-                error_code="generic_err_object_not_found",
-                error_message=f"Object [{lookup_uid}] not found",
-                data={"code": "generic_err_object_not_found", "message": f"Object [{lookup_uid}] not found"},
+            found_eff = find_effective_object(
+                dom_files, global_files, dom_name, lookup_uid, allow_sentinels=False, include_extras=True
             )
+            if found_eff is not None:
+                return cp_ok({"object": copy.deepcopy(found_eff[0])})
+            for scope_files in (dom_files, global_files if dom_name != "Global" else {}):
+                for file_val in scope_files.values():
+                    if not isinstance(file_val, dict):
+                        continue
+                    items = file_val.get("objects")
+                    if isinstance(items, list):
+                        for obj in items:
+                            if isinstance(obj, dict) and (
+                                obj.get("uid") == lookup_uid or obj.get("name") == lookup_uid
+                            ):
+                                return cp_ok({"object": copy.deepcopy(obj)})
+                    elif lookup_uid in file_val and isinstance(file_val[lookup_uid], dict):
+                        return cp_ok({"object": copy.deepcopy(file_val[lookup_uid])})
+            return cp_error("generic_err_object_not_found", f"Object [{lookup_uid}] not found", status_code=404)
 
         if clean_cmd == "show-objects":
-            req_type = str(req.get("type") or "object").strip()
             filter_raw = req.get("filter")
             filter_needle = str(filter_raw).strip().lower() if filter_raw is not None else ""
             ip_only = bool(req.get("ip-only", False))
-
-            candidates: list[dict[str, Any]] = []
-            seen_uids: set[str] = set()
-            if req_type in _SHOW_OBJECTS_TYPE_TO_CMD:
-                plural_payload = dom_files.get(_SHOW_OBJECTS_TYPE_TO_CMD[req_type], {})
-                raw_items = plural_payload.get("objects", []) if isinstance(plural_payload, dict) else []
-                for item in raw_items:
-                    if not isinstance(item, dict):
-                        continue
-                    item_type = item.get("type")
-                    if item_type is not None and str(item_type) != req_type:
-                        continue
-                    uid_key = str(item.get("uid") or "")
-                    if uid_key and uid_key in seen_uids:
-                        continue
-                    if uid_key:
-                        seen_uids.add(uid_key)
-                    candidates.append(item)
-            elif req_type == "object":
-                for plural_cmd in _SHOW_OBJECTS_TYPE_TO_CMD.values():
-                    plural_payload = dom_files.get(plural_cmd, {})
-                    raw_items = plural_payload.get("objects", []) if isinstance(plural_payload, dict) else []
-                    for item in raw_items:
-                        if not isinstance(item, dict):
-                            continue
-                        uid_key = str(item.get("uid") or "")
-                        if uid_key and uid_key in seen_uids:
-                            continue
-                        if uid_key:
-                            seen_uids.add(uid_key)
-                        candidates.append(item)
-            else:
-                for file_val in dom_files.values():
-                    if not isinstance(file_val, dict):
-                        continue
-                    raw_items = file_val.get("objects", [])
-                    if not isinstance(raw_items, list):
-                        continue
-                    for item in raw_items:
-                        if not isinstance(item, dict) or str(item.get("type") or "") != req_type:
-                            continue
-                        uid_key = str(item.get("uid") or "")
-                        if uid_key and uid_key in seen_uids:
-                            continue
-                        if uid_key:
-                            seen_uids.add(uid_key)
-                        candidates.append(item)
-
-            matched = [
-                item
-                for item in candidates
-                if _matches_show_objects_filter(item, filter_needle=filter_needle, ip_only=ip_only)
-            ]
-            return ApiCallResult(
-                success=True,
-                status_code=200,
-                data=self._paginate_list(matched, req, collection_key="objects"),
+            matched = filter_show_objects(
+                dom_files,
+                global_files,
+                dom_name,
+                req,
+                _SHOW_OBJECTS_TYPE_TO_CMD,
+                lambda item: _matches_show_objects_filter(item, filter_needle=filter_needle, ip_only=ip_only),
             )
-
-        # Singular object lookups (`show-host`, `show-network`, `show-group`, `show-package`, etc.)
-        singular_to_plural = {
-            "show-host": ("show-hosts", "objects"),
-            "show-network": ("show-networks", "objects"),
-            "show-address-range": ("show-address-ranges", "objects"),
-            "show-group": ("show-groups", "objects"),
-            "show-dns-domain": ("show-dns-domains", "objects"),
-            "show-package": ("show-packages", "packages"),
-            "show-service-tcp": ("show-services-tcp", "objects"),
-            "show-service-udp": ("show-services-udp", "objects"),
-            "show-service-icmp": ("show-services-icmp", "objects"),
-            "show-service-group": ("show-service-groups", "objects"),
-        }
-        if clean_cmd in singular_to_plural:
-            plural_cmd, col_key = singular_to_plural[clean_cmd]
-            lookup_ref = str(req.get("uid") or req.get("name") or "")
-            plural_payload = dom_files.get(plural_cmd, {})
-            items_list = plural_payload.get(col_key, []) if isinstance(plural_payload, dict) else []
-            for item in items_list:
-                if isinstance(item, dict) and (item.get("uid") == lookup_ref or item.get("name") == lookup_ref):
-                    return ApiCallResult(
-                        success=True,
-                        status_code=200,
-                        data=_project_details_level(item, str(req.get("details-level", "standard"))),
-                    )
-            return ApiCallResult(
-                success=False,
-                status_code=404,
-                error_code="generic_err_object_not_found",
-                error_message=f"Requested object [{lookup_ref}] not found",
-                data={"code": "generic_err_object_not_found", "message": f"Requested object [{lookup_ref}] not found"},
-            )
+            return cp_ok(self._paginate_list(matched, req, collection_key="objects"))
 
         # Standard paginated listing commands (`show-gateways-and-servers`, `show-hosts`, `show-networks`, etc.)
         if clean_cmd in dom_files and isinstance(dom_files[clean_cmd], dict):
@@ -1605,11 +2678,7 @@ class FileReplayApiMock(ApiPort):
                     col_key = candidate_key
                     break
             items = file_payload.get(col_key, [])
-            return ApiCallResult(
-                success=True,
-                status_code=200,
-                data=self._paginate_list(items, req, collection_key=col_key),
-            )
+            return cp_ok(self._paginate_list(items, req, collection_key=col_key))
 
         # Empty paginated response for optional plural object/service/layer types not populated in fixture
         if clean_cmd.startswith(
@@ -1624,23 +2693,108 @@ class FileReplayApiMock(ApiPort):
             "show-wildcard",
             "show-wildcards",
             "show-gsn-handover-groups",
-            "show-access-section",
-            "show-nat-section",
         }:
-            return ApiCallResult(
-                success=True,
-                status_code=200,
-                data={"objects": [], "from": 0, "to": 0, "total": 0},
-            )
+            return cp_ok({"objects": [], "from": 0, "to": 0, "total": 0})
 
-        return ApiCallResult(
-            success=False,
+        return cp_error(
+            "generic_err_command_not_recognized",
+            f"Unsupported command {clean_cmd!r} in FileReplayApiMock",
             status_code=400,
-            error_code="generic_err_command_not_recognized",
-            error_message=f"Unsupported command {clean_cmd!r} in FileReplayApiMock",
-            data={"code": "generic_err_command_not_recognized", "message": f"Unsupported command {clean_cmd!r}"},
         )
 
+    @traced
+    async def api_call(
+        self,
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        domain: str | None = None,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        wait_for_task: bool = True,
+        timeout: float | None = None,
+    ) -> ApiCallResult:
+        """Execute a single Check Point Management API command with stateful sessions, overlays, and OTEL spans."""
+        _ = (server_ip, timeout)
+        clean_cmd = command.strip().lstrip("/")
+        if clean_cmd.startswith("web_api/"):
+            clean_cmd = clean_cmd.removeprefix("web_api/")
+        req = dict(payload) if payload else {}
+        binding = self._sid_bindings.get(sid) if sid is not None else None
+
+        if clean_cmd == "login":
+            dom_name = self._normalize_domain(req.get("domain") or domain)
+        elif domain is not None:
+            dom_name = self._normalize_domain(domain)
+        elif req.get("domain") is not None:
+            dom_name = self._normalize_domain(req.get("domain"))
+        elif binding is not None:
+            dom_name = binding.domain
+        else:
+            dom_name = self._normalize_domain(None)
+
+        sid_ref: str | None = binding.sid_ref if binding is not None else ("invalid-sid" if sid is not None else None)
+        known_sids = self._known_sids(sid)
+
+        is_mut = is_mutating_command(clean_cmd)
+        self.api_call_counts[(dom_name, clean_cmd)] += 1
+        self.command_counts[clean_cmd] += 1
+        log_entry: dict[str, Any] = {
+            "mgmt_name": mgmt_name,
+            "domain": dom_name,
+            "command": clean_cmd,
+            "is_mutating": is_mut,
+            "mutating": is_mut,
+            "sid_ref": sid_ref,
+            "session_uid": binding.session_uid if binding is not None else None,
+            "read_only_session": binding.read_only if binding is not None else None,
+            "payload": sanitize_call_payload(req, known_sids=known_sids),
+            "payload_summary": summarize_payload(clean_cmd, req, known_sids=known_sids),
+            "status_code": 200,
+            "success": True,
+            "error_code": None,
+        }
+        self.call_log.append(log_entry)
+
+        span_attrs(
+            mgmt_name=mgmt_name,
+            domain=dom_name,
+            command=clean_cmd,
+            sid_ref=sid_ref or "",
+            session_uid=binding.session_uid if binding is not None else "",
+            mutating=is_mut,
+        )
+
+        res = self._dispatch_api_call(
+            mgmt_name,
+            clean_cmd,
+            req,
+            dom_name=dom_name,
+            sid=sid,
+            binding=binding,
+            wait_for_task=wait_for_task,
+        )
+
+        log_entry["status_code"] = res.status_code
+        log_entry["success"] = res.success
+        log_entry["error_code"] = res.error_code
+        if clean_cmd == "login" and res.success and isinstance(res.data, dict):
+            new_sid = str(res.data.get("sid") or "")
+            new_binding = self._sid_bindings.get(new_sid)
+            if new_binding is not None:
+                log_entry["sid_ref"] = new_binding.sid_ref
+                log_entry["session_uid"] = new_binding.session_uid
+                log_entry["read_only_session"] = new_binding.read_only
+                span_attrs(sid_ref=new_binding.sid_ref, session_uid=new_binding.session_uid)
+
+        span_attrs(status_code=res.status_code, success=res.success, error_code=res.error_code or "")
+        if not res.success:
+            span = trace.get_current_span()
+            span.set_status(Status(StatusCode.ERROR, res.error_code or "api_error"))
+        return res
+
+    @traced
     async def api_query(
         self,
         mgmt_name: str,
@@ -1655,8 +2809,16 @@ class FileReplayApiMock(ApiPort):
     ) -> ApiQueryResult:
         """Execute a continuity-verified paginated listing query via `paginate_objects`."""
         clean_cmd = command.strip().lstrip("/")
-        dom_name = self._normalize_domain(domain)
+        binding = self._sid_bindings.get(sid) if sid is not None else None
+        dom_name = self._normalize_domain(domain if domain is not None else (binding.domain if binding else None))
         self.api_query_counts[(dom_name, clean_cmd)] += 1
+        span_attrs(
+            mgmt_name=mgmt_name,
+            domain=dom_name,
+            command=clean_cmd,
+            details_level=details_level,
+            limit=limit,
+        )
 
         async def _call_page(page_payload: dict[str, Any]) -> ApiCallResult:
             return await self.api_call(
@@ -1676,6 +2838,7 @@ class FileReplayApiMock(ApiPort):
             limit=limit,
         )
 
+    @traced
     async def create_dedicated_session(
         self,
         mgmt_name: str,
@@ -1685,11 +2848,28 @@ class FileReplayApiMock(ApiPort):
         session_name: str | None = None,
         session_description: str | None = None,
     ) -> tuple[str, str]:
-        """Open an isolated mock session and return `(sid, server_ip)`."""
-        _ = (mgmt_name, auth, session_name, session_description)
-        self._sid_seq += 1
+        """Open a registered stateful mock session and return `(sid, server_ip)`."""
         dom_name = self._normalize_domain(domain)
-        return f"dedicated-sid-{dom_name}-{self._sid_seq}", "127.0.0.1"
+        user_name = "admin"
+        if auth is not None and getattr(auth, "username", None):
+            user_name = str(auth.username)
+        login_payload: dict[str, Any] = {"domain": dom_name, "user": user_name}
+        if session_name:
+            login_payload["session-name"] = session_name
+        if session_description:
+            login_payload["session-description"] = session_description
+        if domain == "Global":
+            login_payload["domain"] = "Global"
+        res = await self.api_call(mgmt_name, "login", login_payload, domain=dom_name)
+        new_sid = str(res.data.get("sid") or "") if isinstance(res.data, dict) else ""
+        if not res.success or not new_sid:
+            err_detail = res.error_message or res.error_code or f"HTTP {res.status_code}"
+            raise SessionError(
+                f"Failed to create dedicated session for domain {dom_name!r}: {err_detail}",
+                known_sids=[new_sid] if new_sid else None,
+            )
+        span_attrs(mgmt_name=mgmt_name, domain=dom_name, sid_ref=REDACTED_PLACEHOLDER)
+        return new_sid, "127.0.0.1"
 
     def logout_sid(
         self,
@@ -1698,21 +2878,28 @@ class FileReplayApiMock(ApiPort):
         *,
         server_ip: str | None = None,
     ) -> Awaitable[bool]:
-        """Log out a mock session identifier."""
-        _ = (mgmt_name, sid, server_ip)
+        """Log out a registered mock session identifier and clean up uncommitted work."""
+        _ = server_ip
 
-        async def _noop() -> bool:
-            return True
+        async def _do_logout() -> bool:
+            binding = self.get_active_sid_binding(sid)
+            if binding is None:
+                return False
+            res = await self.api_call(mgmt_name, "logout", {}, domain=binding.domain, sid=sid)
+            return res.success
 
-        return _noop()
+        return _do_logout()
 
     async def close(self, *, logout: bool | None = None) -> None:
-        """Close the mock adapter."""
-        _ = logout
+        """Close the mock adapter, optionally logging out all active sessions."""
+        if logout:
+            for sid in [s for s, b in self._sid_bindings.items() if b.active]:
+                await self.logout_sid("mds", sid)
         return None
 
 
 __all__ = [
     "FileReplayApiMock",
     "FileReplayCliMock",
+    "ReplayStateSnapshot",
 ]

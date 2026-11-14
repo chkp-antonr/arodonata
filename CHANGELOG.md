@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **testing**: Extended `FileReplayApiMock` and `CheckPointReplayHttpServer` (`src/arodonata/testing/_emulator_models.py`, `_emulator_crud.py`, `_emulator_changes.py`, `replay_mock.py`, `mock_server.py`) into a stateful Check Point Management and MDSM replay emulator supporting per-`sid` staging overlays, read-your-own-writes isolation, read-only session enforcement, cross-session object locking (`generic_err_object_locked`), `set-session`, `take-over-session`, `switch-session`, `publish`, `discard`, `logout`, and structured `show-changes` deltas.
+- **testing**: Implemented stateful CRUD, bidirectional group membership maintenance, Check Point uniqueness checks, and referential integrity validation (`generic_err_object_cannot_be_deleted`) across hosts, networks, address ranges, DNS domains, application sites, groups, TCP/UDP/ICMP/ICMPv6/other services, service groups, `show-unused-objects` / `delete-unused-objects`, and Access/NAT rules and sections with automatic `rule-number`, section bounds, `objects-dictionary`, and `where-used` recomputation.
+- **testing**: Added MDSM `Global` domain visibility for local reads, local write protection (`generic_err_object_read_only`), and `assign-global-assignment` / `assign-global-policy` task emulation, and upgraded `dataset_generator.py` to `DATASET_VERSION = "1.1.0"` with `mds/show-global-assignments.json` and deterministic `Global` references in Access rule `#104`.
+- **testing**: Added fast in-memory state management (`ReplayStateSnapshot`, `snapshot_state()`, `restore_state()`, `reset()`), SID-redacted `call_log` records, and test assertion helpers (`get_calls()`, `assert_no_global_mutations()`, `assert_no_full_object_scans()`, `assert_command_called()`, `assert_command_not_called()`), plus comprehensive E2E test suites and updated documentation in `docs/guides/enterprise-replay-mock-server.md`.
+
+### Fixed
+
+- **cpcrud**: Updated `Executor._extract_published_session_uid()` and shared `_resolve_session_uid()` in `src/arodonata/cpcrud/executor.py` to extract published session UIDs from `show-task` `task-details[].revision` and `publishResponse` payloads without redundant pre-publish `show-session` round-trips.
+
+### Security
+
+- **testing**: Gated `CheckPointReplayHttpServer` `/__testing__/*` control endpoints behind opt-in `enable_test_control=False` (`--enable-test-control`) and `X-Arodonata-Test-Token` / active `X-chkp-sid` authentication, enforced domain session pinning on `FileReplayApiMock`, and verified zero raw SID or credential leakage across `call_log` entries and OpenTelemetry spans.
+
 ## v2.6.2 (2026-11-14)
 
 ### Fix

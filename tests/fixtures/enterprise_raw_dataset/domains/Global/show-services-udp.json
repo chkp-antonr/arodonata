@@ -4,43 +4,78 @@
       "uid": "uid-global-svc-udp-53",
       "name": "UDP_53",
       "type": "service-udp",
-      "port": "53"
+      "port": "53",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-global-svc-udp-123",
       "name": "UDP_123",
       "type": "service-udp",
-      "port": "123"
+      "port": "123",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-global-svc-udp-161",
       "name": "UDP_161",
       "type": "service-udp",
-      "port": "161"
+      "port": "161",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-global-svc-udp-500",
       "name": "UDP_500",
       "type": "service-udp",
-      "port": "500"
+      "port": "500",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-global-svc-udp-514",
       "name": "UDP_514",
       "type": "service-udp",
-      "port": "514"
+      "port": "514",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-global-svc-udp-1812",
       "name": "UDP_1812",
       "type": "service-udp",
-      "port": "1812"
+      "port": "1812",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-global-svc-udp-4500",
       "name": "UDP_4500",
       "type": "service-udp",
-      "port": "4500"
+      "port": "4500",
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     }
   ],
   "from": 1,

@@ -15,7 +15,9 @@ import argparse
 import asyncio
 import contextlib
 import copy
+import hmac
 import json
+import secrets
 import ssl
 import subprocess
 import tempfile
@@ -23,10 +25,13 @@ from pathlib import Path
 from typing import Any
 
 from aiohttp import web
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from arodonata.adapters.checkpoint.tls import compute_der_fingerprint
+from arodonata.core.telemetry import span_attrs, traced
 from arodonata.testing.dataset_generator import DEFAULT_DATASET_DIR, ensure_enterprise_raw_dataset
-from arodonata.testing.replay_mock import FileReplayApiMock
+from arodonata.testing.replay_mock import FileReplayApiMock, ReplayStateSnapshot
 
 
 def _generate_self_signed_cert(cert_dir: Path, host: str = "127.0.0.1") -> tuple[Path, Path, str]:
@@ -124,6 +129,8 @@ class CheckPointReplayHttpServer:
         rewrite_domain_ips: bool = True,
         cert_path: Path | str | None = None,
         key_path: Path | str | None = None,
+        enable_test_control: bool = False,
+        test_control_token: str | None = None,
     ) -> None:
         self._dataset_dir = ensure_enterprise_raw_dataset(dataset_dir)
         self._api_mock = api_mock or FileReplayApiMock(self._dataset_dir)
@@ -134,12 +141,23 @@ class CheckPointReplayHttpServer:
         self._rewrite_domain_ips = rewrite_domain_ips
         self._cert_path = Path(cert_path) if cert_path else None
         self._key_path = Path(key_path) if key_path else None
+        self._enable_test_control = enable_test_control
+        self._test_control_token: str = (
+            test_control_token.strip()
+            if isinstance(test_control_token, str) and test_control_token.strip()
+            else secrets.token_urlsafe(24)
+        )
         self._temp_dir: tempfile.TemporaryDirectory[str] | None = None
         self._fingerprint: str = ""
-        self._sid_to_domain: dict[str, str] = {}
+        self._named_snapshots: dict[str, ReplayStateSnapshot] = {}
 
         self._app = web.Application()
         self._app.router.add_post("/web_api/{command}", self._handle_web_api)
+        if self._enable_test_control:
+            self._app.router.add_post("/__testing__/reset", self._handle_testing_reset)
+            self._app.router.add_post("/__testing__/snapshot", self._handle_testing_snapshot)
+            self._app.router.add_post("/__testing__/restore", self._handle_testing_restore)
+            self._app.router.add_get("/__testing__/call-log", self._handle_testing_call_log)
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
 
@@ -147,6 +165,18 @@ class CheckPointReplayHttpServer:
     def api_mock(self) -> FileReplayApiMock:
         """Underlying `FileReplayApiMock` instance."""
         return self._api_mock
+
+    def snapshot_state(self) -> ReplayStateSnapshot:
+        """Capture an in-memory snapshot of underlying emulator state."""
+        return self._api_mock.snapshot_state()
+
+    def restore_state(self, snapshot: ReplayStateSnapshot) -> None:
+        """Restore underlying emulator state from `snapshot`."""
+        self._api_mock.restore_state(snapshot)
+
+    def reset(self) -> None:
+        """Reset underlying emulator state back to dataset baseline."""
+        self._api_mock.reset()
 
     @property
     def host(self) -> str:
@@ -169,22 +199,100 @@ class CheckPointReplayHttpServer:
         connect_host = "127.0.0.1" if self._host == "0.0.0.0" else self._host
         return f"https://{connect_host}:{self._bound_port}/web_api"
 
-    async def _handle_web_api(self, request: web.Request) -> web.Response:
-        command = request.match_info.get("command", "").strip()
+    @property
+    def test_control_token(self) -> str:
+        """Shared secret token accepted via `X-Arodonata-Test-Token` on `/__testing__/*` endpoints."""
+        return self._test_control_token
+
+    async def _read_json_dict(self, request: web.Request) -> dict[str, Any]:
         try:
             raw_text = await request.text()
-            payload: dict[str, Any] = json.loads(raw_text) if raw_text.strip() else {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload: Any = json.loads(raw_text) if raw_text.strip() else {}
+            return payload if isinstance(payload, dict) else {}
         except Exception:
-            payload = {}
+            return {}
 
+    def _authorize_testing_request(self, request: web.Request) -> web.Response | None:
+        token = request.headers.get("X-Arodonata-Test-Token", "").strip()
+        if token:
+            if hmac.compare_digest(token, self._test_control_token):
+                return None
+            return web.json_response(
+                {
+                    "code": "generic_err_invalid_credentials",
+                    "message": "Invalid X-Arodonata-Test-Token header",
+                },
+                status=401,
+            )
+        sid = request.headers.get("X-chkp-sid", "").strip()
+        if sid:
+            if self._api_mock.get_active_sid_binding(sid) is not None:
+                return None
+            return web.json_response(
+                {
+                    "code": "generic_err_invalid_session_id",
+                    "message": "Session ID is invalid or expired",
+                },
+                status=401,
+            )
+        return web.json_response(
+            {
+                "code": "generic_err_missing_required_header",
+                "message": "X-Arodonata-Test-Token or active X-chkp-sid header is required",
+            },
+            status=401,
+        )
+
+    async def _handle_testing_reset(self, request: web.Request) -> web.Response:
+        auth_err = self._authorize_testing_request(request)
+        if auth_err is not None:
+            return auth_err
+        self.reset()
+        return web.json_response({"status": "ok"})
+
+    async def _handle_testing_snapshot(self, request: web.Request) -> web.Response:
+        auth_err = self._authorize_testing_request(request)
+        if auth_err is not None:
+            return auth_err
+        payload = await self._read_json_dict(request)
+        name = str(payload.get("name") or "default").strip() or "default"
+        self._named_snapshots[name] = self.snapshot_state()
+        return web.json_response({"status": "ok", "name": name})
+
+    async def _handle_testing_restore(self, request: web.Request) -> web.Response:
+        auth_err = self._authorize_testing_request(request)
+        if auth_err is not None:
+            return auth_err
+        payload = await self._read_json_dict(request)
+        name = str(payload.get("name") or "default").strip() or "default"
+        snap = self._named_snapshots.get(name)
+        if snap is None:
+            return web.json_response(
+                {"code": "generic_err_object_not_found", "message": f"Snapshot [{name}] not found"},
+                status=404,
+            )
+        self.restore_state(snap)
+        return web.json_response({"status": "ok", "name": name})
+
+    async def _handle_testing_call_log(self, request: web.Request) -> web.Response:
+        auth_err = self._authorize_testing_request(request)
+        if auth_err is not None:
+            return auth_err
+        return web.json_response({"calls": self._api_mock.call_log})
+
+    @traced
+    async def _handle_web_api(self, request: web.Request) -> web.Response:
+        command = request.match_info.get("command", "").strip()
+        payload = await self._read_json_dict(request)
         sid = request.headers.get("X-chkp-sid", "").strip() or None
         explicit_domain = payload.get("domain")
+
         if command == "login":
             has_key = bool(str(payload.get("api-key") or "").strip())
             has_user_pass = bool(str(payload.get("user") or "").strip() and str(payload.get("password") or "").strip())
             if not (has_key or has_user_pass):
+                span_attrs(command=command, status_code=401, error_code="generic_err_invalid_credentials")
+                trace.get_current_span().set_status(Status(StatusCode.ERROR, "generic_err_invalid_credentials"))
                 return web.json_response(
                     {
                         "code": "generic_err_invalid_credentials",
@@ -193,16 +301,60 @@ class CheckPointReplayHttpServer:
                     status=401,
                 )
             resolved_domain = str(explicit_domain) if explicit_domain else "System Data"
+            span_attrs(command=command, domain=resolved_domain, sid_ref="login")
         else:
-            if not sid or sid not in self._sid_to_domain:
+            if not sid:
+                span_attrs(command=command, status_code=401, error_code="generic_err_missing_required_header")
+                trace.get_current_span().set_status(Status(StatusCode.ERROR, "generic_err_missing_required_header"))
                 return web.json_response(
                     {
-                        "code": "generic_err_wrong_session_id",
-                        "message": "Session ID is missing or invalid",
+                        "code": "generic_err_missing_required_header",
+                        "message": "X-chkp-sid header is missing",
                     },
                     status=401,
                 )
-            resolved_domain = self._sid_to_domain[sid]
+            binding = self._api_mock.get_active_sid_binding(sid)
+            if binding is None:
+                span_attrs(command=command, status_code=401, error_code="generic_err_invalid_session_id")
+                trace.get_current_span().set_status(Status(StatusCode.ERROR, "generic_err_invalid_session_id"))
+                return web.json_response(
+                    {
+                        "code": "generic_err_invalid_session_id",
+                        "message": "Session ID is invalid or expired",
+                    },
+                    status=401,
+                )
+            if binding.domain != "System Data":
+                if explicit_domain is not None and str(explicit_domain).strip():
+                    norm_explicit = self._api_mock._normalize_domain(str(explicit_domain))
+                    if norm_explicit != binding.domain:
+                        span_attrs(
+                            command=command,
+                            domain=binding.domain,
+                            sid_ref=binding.sid_ref,
+                            session_uid=binding.session_uid,
+                            status_code=400,
+                            error_code="err_validation_failed",
+                        )
+                        trace.get_current_span().set_status(Status(StatusCode.ERROR, "err_validation_failed"))
+                        return web.json_response(
+                            {
+                                "code": "err_validation_failed",
+                                "message": (
+                                    f"Session bound to domain [{binding.domain}] cannot target domain [{norm_explicit}]"
+                                ),
+                            },
+                            status=400,
+                        )
+                resolved_domain = binding.domain
+            else:
+                resolved_domain = str(explicit_domain) if explicit_domain else binding.domain
+            span_attrs(
+                command=command,
+                domain=resolved_domain,
+                sid_ref=binding.sid_ref,
+                session_uid=binding.session_uid,
+            )
 
         res = await self._api_mock.api_call(
             "mds",
@@ -212,13 +364,6 @@ class CheckPointReplayHttpServer:
             sid=sid,
             wait_for_task=False,
         )
-
-        if command == "login" and res.success and isinstance(res.data, dict):
-            new_sid = str(res.data.get("sid") or "")
-            if new_sid:
-                self._sid_to_domain[new_sid] = self._api_mock._normalize_domain(resolved_domain)
-        elif command == "logout" and sid:
-            self._sid_to_domain.pop(sid, None)
 
         resp_data = res.data
         if (
@@ -231,6 +376,10 @@ class CheckPointReplayHttpServer:
                 self._advertise_host or request.url.host or ("127.0.0.1" if self._host == "0.0.0.0" else self._host)
             )
             resp_data = _rewrite_server_ips(resp_data, adv_host)
+
+        span_attrs(status_code=res.status_code, success=res.success, error_code=res.error_code or "")
+        if not res.success:
+            trace.get_current_span().set_status(Status(StatusCode.ERROR, res.error_code or "api_error"))
 
         return web.json_response(resp_data, status=res.status_code or (200 if res.success else 400))
 
@@ -322,6 +471,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional path to a PEM TLS private key file (auto-generated if omitted).",
     )
+    parser.add_argument(
+        "--enable-test-control",
+        action="store_true",
+        default=False,
+        help="Expose /__testing__/* state reset/snapshot/call-log endpoints for external integration tests.",
+    )
+    parser.add_argument(
+        "--test-control-token",
+        default=None,
+        help="Optional shared secret token for X-Arodonata-Test-Token authentication on /__testing__/* endpoints.",
+    )
     return parser
 
 
@@ -333,6 +493,8 @@ async def _run_cli_server(args: argparse.Namespace) -> None:
         advertise_host=args.advertise_host,
         cert_path=args.cert,
         key_path=args.key,
+        enable_test_control=bool(args.enable_test_control),
+        test_control_token=args.test_control_token,
     )
     await server.start()
     manifest = server.api_mock.manifest

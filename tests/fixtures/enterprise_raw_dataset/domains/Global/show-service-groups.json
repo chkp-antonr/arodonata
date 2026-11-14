@@ -8,7 +8,12 @@
         "uid-global-svc-tcp-80",
         "uid-global-svc-tcp-443",
         "uid-global-svc-tcp-8443"
-      ]
+      ],
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     }
   ],
   "from": 1,

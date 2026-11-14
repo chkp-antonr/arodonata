@@ -1,0 +1,214 @@
+{
+  "objects": [
+    {
+      "uid": "uid-ga-branch",
+      "name": "Global_to_Branch",
+      "type": "global-assignment",
+      "global-domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      },
+      "dependent-domain": {
+        "uid": "uid-dom-branch",
+        "name": "Branch",
+        "domain-type": "domain"
+      },
+      "global-access-policy": "Global_Standard_Pkg",
+      "global-threat-prevention-policy": "",
+      "manage-protection-actions": false,
+      "assignment-status": "assigned",
+      "assignment-up-to-date": {
+        "posix": 1794139200000,
+        "iso-8601": "2026-11-08T10:00:00Z"
+      }
+    },
+    {
+      "uid": "uid-ga-regional",
+      "name": "Global_to_Regional",
+      "type": "global-assignment",
+      "global-domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      },
+      "dependent-domain": {
+        "uid": "uid-dom-regional",
+        "name": "Regional",
+        "domain-type": "domain"
+      },
+      "global-access-policy": "Global_Standard_Pkg",
+      "global-threat-prevention-policy": "",
+      "manage-protection-actions": false,
+      "assignment-status": "assigned",
+      "assignment-up-to-date": {
+        "posix": 1794139200000,
+        "iso-8601": "2026-11-08T10:00:00Z"
+      }
+    },
+    {
+      "uid": "uid-ga-wan_core",
+      "name": "Global_to_WAN_Core",
+      "type": "global-assignment",
+      "global-domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      },
+      "dependent-domain": {
+        "uid": "uid-dom-wan_core",
+        "name": "WAN_Core",
+        "domain-type": "domain"
+      },
+      "global-access-policy": "Global_Standard_Pkg",
+      "global-threat-prevention-policy": "",
+      "manage-protection-actions": false,
+      "assignment-status": "assigned",
+      "assignment-up-to-date": {
+        "posix": 1794139200000,
+        "iso-8601": "2026-11-08T10:00:00Z"
+      }
+    },
+    {
+      "uid": "uid-ga-perimeter",
+      "name": "Global_to_Perimeter",
+      "type": "global-assignment",
+      "global-domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      },
+      "dependent-domain": {
+        "uid": "uid-dom-perimeter",
+        "name": "Perimeter",
+        "domain-type": "domain"
+      },
+      "global-access-policy": "Global_Standard_Pkg",
+      "global-threat-prevention-policy": "",
+      "manage-protection-actions": false,
+      "assignment-status": "assigned",
+      "assignment-up-to-date": {
+        "posix": 1794139200000,
+        "iso-8601": "2026-11-08T10:00:00Z"
+      }
+    },
+    {
+      "uid": "uid-ga-transit",
+      "name": "Global_to_Transit",
+      "type": "global-assignment",
+      "global-domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      },
+      "dependent-domain": {
+        "uid": "uid-dom-transit",
+        "name": "Transit",
+        "domain-type": "domain"
+      },
+      "global-access-policy": "Global_Standard_Pkg",
+      "global-threat-prevention-policy": "",
+      "manage-protection-actions": false,
+      "assignment-status": "assigned",
+      "assignment-up-to-date": {
+        "posix": 1794139200000,
+        "iso-8601": "2026-11-08T10:00:00Z"
+      }
+    },
+    {
+      "uid": "uid-ga-dc_spine",
+      "name": "Global_to_DC_Spine",
+      "type": "global-assignment",
+      "global-domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      },
+      "dependent-domain": {
+        "uid": "uid-dom-dc_spine",
+        "name": "DC_Spine",
+        "domain-type": "domain"
+      },
+      "global-access-policy": "Global_Standard_Pkg",
+      "global-threat-prevention-policy": "",
+      "manage-protection-actions": false,
+      "assignment-status": "assigned",
+      "assignment-up-to-date": {
+        "posix": 1794139200000,
+        "iso-8601": "2026-11-08T10:00:00Z"
+      }
+    },
+    {
+      "uid": "uid-ga-dc_pod",
+      "name": "Global_to_DC_Pod",
+      "type": "global-assignment",
+      "global-domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      },
+      "dependent-domain": {
+        "uid": "uid-dom-dc_pod",
+        "name": "DC_Pod",
+        "domain-type": "domain"
+      },
+      "global-access-policy": "Global_Standard_Pkg",
+      "global-threat-prevention-policy": "",
+      "manage-protection-actions": false,
+      "assignment-status": "assigned",
+      "assignment-up-to-date": {
+        "posix": 1794139200000,
+        "iso-8601": "2026-11-08T10:00:00Z"
+      }
+    },
+    {
+      "uid": "uid-ga-db_seg",
+      "name": "Global_to_DB_Seg",
+      "type": "global-assignment",
+      "global-domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      },
+      "dependent-domain": {
+        "uid": "uid-dom-db_seg",
+        "name": "DB_Seg",
+        "domain-type": "domain"
+      },
+      "global-access-policy": "Global_Standard_Pkg",
+      "global-threat-prevention-policy": "",
+      "manage-protection-actions": false,
+      "assignment-status": "assigned",
+      "assignment-up-to-date": {
+        "posix": 1794139200000,
+        "iso-8601": "2026-11-08T10:00:00Z"
+      }
+    },
+    {
+      "uid": "uid-ga-partner_dmz",
+      "name": "Global_to_Partner_DMZ",
+      "type": "global-assignment",
+      "global-domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      },
+      "dependent-domain": {
+        "uid": "uid-dom-partner_dmz",
+        "name": "Partner_DMZ",
+        "domain-type": "domain"
+      },
+      "global-access-policy": "Global_Standard_Pkg",
+      "global-threat-prevention-policy": "",
+      "manage-protection-actions": false,
+      "assignment-status": "assigned",
+      "assignment-up-to-date": {
+        "posix": 1794139200000,
+        "iso-8601": "2026-11-08T10:00:00Z"
+      }
+    }
+  ],
+  "from": 1,
+  "to": 9,
+  "total": 9
+}

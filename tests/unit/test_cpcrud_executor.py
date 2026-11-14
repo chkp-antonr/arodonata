@@ -802,3 +802,63 @@ async def test_staged_session_mmp_restart_web_api_provenance_and_adopt_helper_cl
             sid="explicit-caller-sid-123",
             server_ip="198.51.100.99",
         )
+
+
+@pytest.mark.asyncio
+async def test_executor_extracts_published_session_uid_from_polled_show_task_payload() -> None:
+    """Extract published session UID from `publishResponse` or Check Point canonical `revision` without extra `show-session`."""
+    for task_detail in (
+        {"uid": "td-pub-301", "publishResponse": {"uid": "async-pub-uid-301", "mode": "async"}},
+        {"uid": "td-pub-401", "revision": "cp-rev-uid-401"},
+        {"uid": "td-pub-402", "revision": {"uid": "cp-rev-uid-402"}},
+    ):
+        expected_uid = (
+            task_detail["publishResponse"]["uid"]
+            if "publishResponse" in task_detail
+            else (
+                task_detail["revision"]["uid"]
+                if isinstance(task_detail["revision"], dict)
+                else str(task_detail["revision"])
+            )
+        )
+        api = ExecutorFakeApi()
+        orig_call = api.api_call
+
+        async def async_task_publish_call(
+            mgmt_name: str,
+            command: str,
+            payload: dict[str, Any] | None = None,
+            *,
+            _orig=orig_call,
+            _detail=task_detail,
+            **kwargs: Any,
+        ) -> ApiCallResult:
+            if command == "publish":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "tasks": [
+                            {
+                                "task-id": "task-pub-301",
+                                "status": "succeeded",
+                                "progress-percentage": 100,
+                                "task-details": [_detail],
+                            }
+                        ]
+                    },
+                    task_id="task-pub-301",
+                )
+            return await _orig(mgmt_name, command, payload, **kwargs)
+
+        api.api_call = async_task_publish_call  # type: ignore[method-assign]
+        executor = Executor(api=api)
+        emitted_events = [ev async for ev in executor.stream_apply(_make_sample_plan(session_uid="pub-head-1"))]
+
+        report = executor.last_report
+        assert report is not None
+        assert report.published_domains == ["mds1:Corp"]
+        assert report.published_sessions == {"mds1:Corp": expected_uid}
+        assert not any(c[1] == "show-session" for c in api.calls)
+        pub_events = [e for e in emitted_events if isinstance(e, CPCRUDDomainPublishedEvent)]
+        assert len(pub_events) == 1
+        assert pub_events[0].session_uid == expected_uid

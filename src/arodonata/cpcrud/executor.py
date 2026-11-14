@@ -390,7 +390,7 @@ class Executor:
 
             if no_publish and keep_session:
                 if not session_uid:
-                    with suppress(Exception):
+                    try:
                         s_info = await self._api.api_call(
                             mgmt_name,
                             "show-session",
@@ -405,6 +405,10 @@ class Executor:
                                 session_uid = s_uid_val
                             if not eff_session_name and isinstance(s_info.data.get("name"), str):
                                 eff_session_name = str(s_info.data["name"])
+                    except ServerIdentityError:
+                        raise
+                    except Exception:
+                        pass
                 staged_info = StagedSessionInfo(
                     mgmt_name=mgmt_name,
                     domain_name=dom_name,
@@ -747,7 +751,6 @@ class Executor:
                                 )
                                 continue
 
-                        # Query session UID if needed before or from publish
                         try:
                             pub_res = await self._api.api_call(
                                 mgmt_name,
@@ -773,7 +776,11 @@ class Executor:
                             ws.published = True
                             published_domains.append(dom_label)
                             pub_data = pub_res.data if isinstance(pub_res.data, dict) else {}
-                            pub_uid = str(pub_data.get("uid") or session_uid or "") or None
+                            pub_uid = _extract_published_session_uid(pub_data) or session_uid or None
+                            if pub_uid is None:
+                                head_ok, head_uid, _, _ = await self._check_current_domain_head(mgmt_name, dom_name)
+                                if head_ok and head_uid:
+                                    pub_uid = head_uid
                             if pub_uid:
                                 published_sessions[dom_label] = pub_uid
                             self._invalidate_domain(mgmt_name, dom_name)
@@ -1577,6 +1584,42 @@ class Executor:
             if sid and sid != active_sid:
                 with suppress(Exception):
                     await self._api.logout_sid(mgmt_name, sid, server_ip=server_ip)
+
+
+def _extract_published_session_uid(pub_data: dict[str, Any]) -> str | None:
+    """Extract the published session UID from a direct `publish` payload or a polled `show-task` payload."""
+    direct_uid = pub_data.get("uid")
+    if isinstance(direct_uid, str) and direct_uid.strip():
+        return direct_uid.strip()
+
+    tasks = pub_data.get("tasks")
+    if isinstance(tasks, list):
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            details = task.get("task-details")
+            if not isinstance(details, list):
+                continue
+            for detail in details:
+                if not isinstance(detail, dict):
+                    continue
+                rev = detail.get("revision")
+                if isinstance(rev, str) and rev.strip():
+                    return rev.strip()
+                if isinstance(rev, dict):
+                    rev_uid = rev.get("uid")
+                    if isinstance(rev_uid, str) and rev_uid.strip():
+                        return rev_uid.strip()
+                for resp_key in ("publishResponse", "publish-Response"):
+                    resp_block = detail.get(resp_key)
+                    if isinstance(resp_block, dict):
+                        block_uid = resp_block.get("uid")
+                        if isinstance(block_uid, str) and block_uid.strip():
+                            return block_uid.strip()
+                sess_uid = detail.get("session-uid")
+                if isinstance(sess_uid, str) and sess_uid.strip():
+                    return sess_uid.strip()
+    return None
 
 
 def _fold_retry_report(cumulative: ApplyReport, retry_rep: ApplyReport) -> None:
