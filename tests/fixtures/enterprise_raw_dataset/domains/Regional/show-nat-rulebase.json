@@ -659,6 +659,65 @@
         "name": "SVC_Regional_TCP_9200",
         "type": "service-tcp",
         "port": "9200"
+      },
+      {
+        "uid": "uid-glob-grp-branches",
+        "name": "G_Global_Branch_Supernet",
+        "type": "group",
+        "members": [
+          "uid-glob-net-branches"
+        ],
+        "domain": {
+          "uid": "uid-dom-global",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "uid-glob-host-001",
+        "name": "H_Global_DNS_001",
+        "type": "host",
+        "ipv4-address": "10.253.0.1",
+        "domain": {
+          "uid": "uid-dom-global",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "uid-glob-grp-dc",
+        "name": "G_Global_DC_Supernet",
+        "type": "group",
+        "members": [
+          "uid-glob-net-dc-vault"
+        ],
+        "domain": {
+          "uid": "uid-dom-global",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "uid-global-svc-udp-53",
+        "name": "UDP_53",
+        "type": "service-udp",
+        "port": "53",
+        "domain": {
+          "uid": "uid-dom-global",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
+      },
+      {
+        "uid": "uid-global-svc-tcp-53",
+        "name": "TCP_53",
+        "type": "service-tcp",
+        "port": "53",
+        "domain": {
+          "uid": "uid-dom-global",
+          "name": "Global",
+          "domain-type": "global domain"
+        }
       }
     ],
     "from": 1,

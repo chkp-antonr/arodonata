@@ -4,7 +4,12 @@
       "uid": "uid-global-dns-corp",
       "name": ".global.enterprise.internal",
       "type": "dns-domain",
-      "is-sub-domain": true
+      "is-sub-domain": true,
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     }
   ],
   "from": 1,

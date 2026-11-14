@@ -6,7 +6,12 @@
       "type": "group",
       "members": [
         "uid-glob-net-branches"
-      ]
+      ],
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     },
     {
       "uid": "uid-glob-grp-dc",
@@ -14,7 +19,12 @@
       "type": "group",
       "members": [
         "uid-glob-net-dc-vault"
-      ]
+      ],
+      "domain": {
+        "uid": "uid-dom-global",
+        "name": "Global",
+        "domain-type": "global domain"
+      }
     }
   ],
   "from": 1,

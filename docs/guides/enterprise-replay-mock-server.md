@@ -82,3 +82,37 @@ api_mock = FileReplayApiMock(cli_mock=cli_mock)
 async with ArodonataClient(api=api_mock, gateway_cli=cli_mock) as client:
     await client.topology_service.refresh_topology(mgmt_name="mds", collect_routes=True)
 ```
+
+## Stateful Session Isolation, CRUD, and MDSM Emulation
+
+Both `FileReplayApiMock` and `CheckPointReplayHttpServer` emulate stateful Check Point Management & MDSM behavior on top of the loaded dataset:
+
+- **Per-`sid` Staging Overlays & Session Lifecycle**: Sessions opened via `login`, `/web_api/login`, or `create_dedicated_session` receive an isolated copy-on-write staging overlay and acquire per-object UID locks on modification. Supports `read-only` sessions, `set-session`, `take-over-session` (including disconnecting the prior active SID), `switch-session`, `discard`, `logout` / `logout_sid`, `publish` (with conflict-checked rebase fallback and post-publish work-session rotation), `show-session`, `show-sessions`, `show-last-published-session`, and `show-changes`.
+- **Stateful Object, Service, Group & Rule CRUD**: Supports `show-*` / `add-*` / `set-*` / `delete-*` for `host`, `network`, `address-range`, `dns-domain`, `application-site`, `group`, `service-tcp`, `service-udp`, `service-icmp`, `service-icmp6`, `service-other`, `service-group`, `access-rule`, `access-section`, `nat-rule`, `nat-section`, plus `show-unused-objects` and `delete-unused-objects`.
+- **Referential Integrity & Consistency**: Enforces Check Point deletion blocking (`generic_err_object_cannot_be_deleted` with `blocking-errors`) whenever an object or group is referenced by groups, Access rules, or NAT rules, and keeps `where-used`, `show-objects`, `show-object`, and `objects-dictionary` synchronized after every change.
+- **MDSM `Global` Read/Write Protection**: `Global` objects and groups are visible across local user domains (`show-object`, `show-objects`, `where-used`, `show-access-rulebase`), while local-domain `set-*` / `delete-*` calls targeting `Global` entities are rejected with `generic_err_object_read_only`. Also supports `show-global-assignments`, `show-global-assignment`, `assign-global-assignment`, and `assign-global-policy`.
+
+## Fast Snapshot/Restore, Test Control Endpoints, and Call-Log Assertions
+
+### In-Memory Snapshot & Reset (`ReplayStateSnapshot`)
+
+Use `snapshot_state()` and `restore_state(snapshot)` on either `FileReplayApiMock` or `CheckPointReplayHttpServer` to isolate multi-step E2E scenarios in milliseconds without regenerating disk fixtures (capturing domain data, sessions, locks, tasks, global assignments, and `FileReplayCliMock` overrides), or call `reset()` to return to the baseline fixture state.
+
+### Opt-In HTTP Test-Control Endpoints (`--enable-test-control`)
+
+Programmatic `CheckPointReplayHttpServer(..., enable_test_control=True)` (default `False` in both the constructor and CLI; opt-in via `--enable-test-control`, optionally with `--test-control-token`) requires authentication on all control endpoints via either `X-Arodonata-Test-Token: <server.test_control_token>` or an active `X-chkp-sid` header, and exposes:
+
+- `POST /__testing__/reset`: Resets all server state back to dataset baseline.
+- `POST /__testing__/snapshot`: Saves a named snapshot (`{"name": "..."}`, defaults to `"default"`).
+- `POST /__testing__/restore`: Restores a named snapshot (`{"name": "..."}`, defaults to `"default"`).
+- `GET /__testing__/call-log`: Returns the SID-redacted `api_mock.call_log`.
+
+### SID-Safe `call_log` & Assertion Helpers
+
+`FileReplayApiMock.call_log` redacts raw SIDs, passwords, and API keys while recording non-secret `mgmt_name`, `domain`, `command`, `is_mutating`, `sid_ref`, `session_uid`, `read_only_session`, `payload`, `payload_summary`, `status_code`, `success`, and `error_code`. Built-in helpers:
+
+- `get_calls(domain=..., command=..., mutating_only=...)`
+- `assert_no_global_mutations()`
+- `assert_no_full_object_scans(...)`
+- `assert_command_called(command, domain=..., times=...)`
+- `assert_command_not_called(command, domain=...)`

@@ -1,0 +1,96 @@
+# Design
+
+## Context
+
+See `proposal.md` for motivation and `specs/integration-testing-and-examples/spec.md` for the behavioral contract. Currently, `FileReplayApiMock` (`src/arodonata/testing/replay_mock.py`) loads per-domain raw JSON fixtures into `_domain_data` on demand, serves read-only `show-*` / `where-used` / `run-script` / `show-task` queries, and ignores `sid` arguments (`_ = (sid, server_ip, timeout)`). Meanwhile, `CheckPointReplayHttpServer` (`src/arodonata/testing/mock_server.py`) keeps a separate local `_sessions` dictionary mapping `X-chkp-sid` tokens to domain names and forwards every `/web_api/{cmd}` call to `self._api_mock.api_call(..., wait_for_task=False)` without propagating `sid` semantics or write/session-lifecycle handling.
+
+At the same time, Arodonata's `AMgmtClient`, `CPCRUDService` (`Planner` / `Executor`), `WriteSession`, `CachedRulebaseSource`, and `arodonata.reports` (`collect_change_report`, `placement`) rely on subtle Check Point Management R81.20 behaviors:
+
+- `WriteSession` opens a dedicated `sid`, mutates objects/rules in an isolated session, optionally adopts/switches helper sessions (`take-over-session`, `switch-session`, `discard {"uid": ...}`), polls asynchronous `publish` tasks via `TaskWaiter`, and relies on `show-session {}` after `publish` reporting an active clean `"open"` session (`changes=0`, `locks=0`, `number-of-published-changes=0`, no `publish-time`) so `OwnedSession` rule placement (`arodonata/reports/placement.py`) succeeds before `logout`.
+- `collect_change_report` calls `show-sessions` (`view-published-sessions: True`), `show-session {"uid": ...}`, and `show-changes` (`to-session`, `from-session`, `from-date`, `to-date`), expecting `changes[].operations` buckets with `old-object`, `new-object`, `field-changes`, `layer`, `package`, `rule-number`, and `old-rule-number` metadata (and expecting a task reply when called over `/web_api/show-changes` with `wait_for_task=False`).
+- Existing unit and scale suites (`test_topology_raw_replay_scale.py`, `test_replay_mock_where_used.py`, `test_replay_mock_show_objects.py`, `test_cpcrud_planner.py`) inspect `api_mock._domain_data` directly, invoke read calls with `sid=None`, and assert fixed counts across the `enterprise_raw_dataset`.
+
+## Goals / Non-Goals
+
+**Goals:**
+
+- Transform `FileReplayApiMock` and `CheckPointReplayHttpServer` into a unified, Check Point-faithful in-memory stateful MDSM emulator supporting per-`sid` isolation, session adoption/publish/discard, full object/service/group/rule/section CRUD, referential integrity, `Global` domain protections, `show-changes` deltas, and millisecond snapshot/restore/reset.
+- Unify HTTP and direct `ApiPort` session registries inside `FileReplayApiMock` so direct `ArodonataClient(api=FileReplayApiMock())` tests and full HTTPS `ArodonataClient` + `AMgmtClient` -> `CheckPointReplayHttpServer` workflows behave identically.
+- Preserve 100% backward compatibility with `sid=None` read callers, direct `_domain_data` fixture injection in existing unit tests, and all `enterprise_raw_dataset` scale-test invariants.
+- Enforce strict SID/secret redaction in `call_log` and verify provider-agnostic OpenTelemetry span propagation via `InMemorySpanExporter`.
+
+**Non-Goals:**
+
+- Persisting runtime mutations back to static fixture files under `tests/fixtures/enterprise_raw_dataset/`.
+- Re-implementing Check Point network latency profiles or HTTP 429 login throttling (already covered by `test_sessions.py` and lab buckets).
+- Adding Threat Prevention (`show-threat-rulebase`) or HTTPS Inspection (`show-https-rulebase`) mutation engines unless required cleanly on top of Access and NAT rulebase handlers; primary scope is network objects, services, groups, Access rules/sections, and NAT rules/sections.
+
+## Decisions
+
+### 1. Two-Layer Session Registry (`_SidBinding` + `_WorkSession`) & Copy-on-Write Overlay
+
+- **Decision**: Keep `self._domain_data: dict[str, dict[str, Any]]` as the canonical **published** per-domain snapshot and layer two explicit structures in `FileReplayApiMock`:
+  - `_WorkSession`: represents a Check Point work session (`uid`, `mgmt_name`, `domain`, `name`, `description`, `comments`, `color`, `tags`, `user_name`, `application="WEB_API"`, `state` in `{"open", "disconnected", "published", "discarded"}`, `read_only`, `created_iso`, `created_posix`, `publish_time`, `changes: int`, `published_changes: int`, `locked_uids: set[str]`, `base_published_uid: str | None`, `working_domain_data: dict[str, Any] | None`, `mutation_records: list[_MutationRecord]`, `last_delta: dict[str, Any] | None`).
+  - `_SidBinding`: maps an opaque login token `sid` to its active `session_uid`, `mgmt_name`, `domain`, `read_only`, and deterministic non-secret `sid_ref` (`"sid#0001"`, ...).
+- **Copy-on-Write Semantics & Read Isolation**:
+  - Read-only logins (`"read-only": true`), clean sessions (`working_domain_data is None`), and legacy `sid=None` calls read directly from `self._domain_data[dom]` with zero copying overhead.
+  - On the first mutating command in a write session (`read_only=False`), `_ensure_session_overlay(session)` clones `copy.deepcopy(self._domain_data[dom])` into `session.working_domain_data` and captures `session.base_published_uid`.
+  - `_get_effective_domain_data(dom, sid)` returns `session.working_domain_data` when an active write session has a staging overlay, giving automatic read-your-own-writes across every read handler (`show-*`, `show-objects`, `show-object`, `where-used`, `show-*-rulebase`, `show-unused-objects`) while keeping all other SIDs and `sid=None` on published `_domain_data[dom]`.
+- **Cross-Session Locks, Concurrency, and Post-Publish Work-Session Rotation**:
+  - Whenever an open session modifies or deletes an existing UID, that UID is added to `session.locked_uids`. Any other open session attempting `set-*` or `delete-*` on a locked UID fails immediately with HTTP `400` and `generic_err_object_locked`.
+  - On `publish` (`{}` or `{"uid": target_uid}`):
+    - If `base_published_uid == current_published_uid` (fast path), `session.working_domain_data` is deep-copied atomically into `self._domain_data[dom]`.
+    - If another session published non-conflicting edits after `base_published_uid` (re-base path), the emulator replays `session.mutation_records` against the current `self._domain_data[dom]` under full validation before committing (failing cleanly with HTTP `400` / `err_validation_failed` if a conflict arose).
+    - The published `_WorkSession` transitions to `state="published"`, stamps `publish-time`, sets `published-changes = changes`, `changes = 0`, `locks = 0`, updates `show-last-published-session` and prepends the revision to `show-sessions`, and stores a full `show-changes` delta (`added-objects`, `modified-objects`, `deleted-objects`, `added-rules`, `modified-rules`, `deleted-rules`) keyed by `session.uid`.
+    - Immediately after publish, Check Point R81.20 opens a fresh empty work session for the logged-in user; rebinding `sid` to a newly allocated `"open"` `_WorkSession` (`changes=0`, `locks=0`, `number-of-published-changes=0`, no `publish-time`) guarantees that both multi-publish workflows and `OwnedSession` verification in `arodonata/reports/placement.py` behave identically to a live MDS.
+- **Session Lifecycle & HTTP Unification**:
+  - Support `login` (including `domain`, `read-only`, `session-name`, `session-description`, `user`, `session-timeout`), `logout` / `logout_sid` (implicit discard if unpublished), `set-session` (`new-name`/`name`, `description`, `comments`, `color`, `tags`), `discard` (`{}` or `{"uid": target_uid}`), `take-over-session` (`uid`, optional `disconnect-active-session` which invalidates the prior active `sid`), `switch-session` (`uid`), and `show-session` (`{}` or `{"uid": ...}`).
+  - Refactor `CheckPointReplayHttpServer` so `/web_api/login`, `/web_api/logout`, and `/web_api/{cmd}` delegate SID lifecycle and resolution directly to `FileReplayApiMock` (`login`, `logout_sid`, `resolve_sid_context`), enforcing HTTP `401` (`generic_err_missing_required_header` when `X-chkp-sid` is absent on non-login requests, and `generic_err_invalid_session_id` when unknown, logged out, or disconnected by takeover).
+  - Return `{"task-id": tid}` (or `{"tasks": [{"task-id": tid}]}`) when async commands (`publish`, `show-changes`, `assign-global-assignment`, `assign-global-policy`, `run-script`) are invoked with `wait_for_task=False` (HTTPS server path, polled via `show-task`), and return completed `show-task`-shaped payloads directly when `wait_for_task=True` (direct `ApiPort` path). On `publish`, populate `"revision"` and `"publishResponse"` inside `task-details[0]` for `show-task`, return only `{"task-id": tid}` when `wait_for_task=False`, and also include the published `"uid"` when `wait_for_task=True` so `Executor._stream_single_pass` extracts the exact published session UID without extra lookups.
+- **Alternative Considered**: Computing field-level overlay diffs dynamically at every read call instead of copy-on-write per dirty domain. Copy-on-write on first write is simpler, zero-risk for complex transitive queries (`where-used`, sectioned rulebase paging, `objects-dictionary`), and touches only dirty domains in memory.
+
+### 2. Object, Service, Group, and Rule CRUD Engine with Referential Integrity
+
+- **Unified Entity Registry Mapping**:
+  - Drive object and service handlers through a single declarative registry mapping each type (`host`, `network`, `address-range`, `dns-domain`, `application-site`, `group`, `service-tcp`, `service-udp`, `service-icmp`, `service-icmp6`, `service-other`, `service-group`) to its singular command (`show-<type>`), plural fixture key (`show-hosts`, `show-services-tcp`, etc.), `add-<type>` / `set-<type>` / `delete-<type>` command names, required fields, and duplicate-value match keys (`ipv4-address`, `subnet4`+`mask-length4`, `port`+`protocol`, etc., respecting `ignore-warnings: true` and `set-if-exists: true`).
+  - Support both list replacement and `{"add": str | list[str], "remove": str | list[str]}` on `members` (`group` and `service-group`), plus reverse `groups` updates on `add-*` / `set-*` and `new-name` rename propagation across groups, rules, and change deltas.
+  - Normalize `"Original"` (`85c0f50f-6d8a-4528-88ab-5fb11d8fe16c`) and `"Any"` (`97aeb369-9aea-11d5-bd16-0090272ccb30`) sentinels on rule creation and edits. On Access rule cell mutations (`source`, `destination`, `service`), adding concrete objects automatically strips `"Any"`, while removing the last concrete object reverts the cell to `[NAT_ANY_OBJECT_UID]` (`"Any"`)—matching Check Point behavior tested by MMP Decommission workflows (which disable or delete sole-member rules instead of opening them to `Any`).
+- **Referential Integrity & Unused Object Management**:
+  - Implement a shared live reference scanner (used by `where-used`, `delete-*`, `show-unused-objects`, and `delete-unused-objects`) across effective domain `group` / `service-group` memberships, all Access rules (both `enabled=True` and `enabled=False`, plus inline/section metadata), all NAT rules, and gateway interface topologies (`leads-to-specific-network`, `specific-network`).
+  - Reject `delete-*` whenever at least one reference exists, returning HTTP `400` with `code="generic_err_object_cannot_be_deleted"` and `blocking-errors` detailing the referencing groups/rules (containing `err_validation_failed`-compatible diagnostics). Implement `show-unused-objects` (filterable) and `delete-unused-objects` (removing unreferenced local objects into the active staging overlay while leaving referenced and `Global` objects untouched).
+- **Rulebase Positioning, Section Handling, and Live Consistency**:
+  - Implement `show-access-rule`, `add-access-rule`, `set-access-rule`, `delete-access-rule`, `add-access-section`, `set-access-section`, `delete-access-section`, `show-nat-rule`, `add-nat-rule`, `set-nat-rule`, `delete-nat-rule`, `add-nat-section`, `set-nat-section`, and `delete-nat-section`.
+  - Resolve `position` and `new-position`: `"top"`, `"bottom"`, 1-based integer `rule-number`, `{"top": <section>}`, `{"bottom": <section>}`, `{"above": <uid|name|rule-number>}`, and `{"below": <uid|name|rule-number>}`, matching `src/arodonata/cpcrud/position_helper.py` cleanup-rule placement semantics.
+  - After every rule or section add/move/edit/delete, recompute sequential 1-based `rule-number` values across the flat rule order, update each section's `from` and `to` bounds (omitting or clearing `from`/`to` on empty sections cleanly for `rulebase/pager.py`), update layer/package `total`, and dynamically rebuild `objects-dictionary` from all referenced objects, actions, tracks, and inline layers across effective local + `Global` domains so `show-*-rule`, `show-*-rulebase` (`use-object-dictionary=True | False`), `where-used`, `show-objects`, and `show-object` are always 100% consistent.
+
+### 3. MDSM Domain Isolation, `Global` Write Protection, and Dataset Wiring (`dataset_generator.py`)
+
+- **Cross-Domain Visibility Boundary**:
+  - Tag every object/service/group returned by the emulator with its owning `"domain": {"uid": ..., "name": ..., "domain-type": ...}`.
+  - In a local domain session (or `domain != "Global"` read), `show-object`, singular `show-*`, `show-objects` (unless `domains-to-process == ["CURRENT_DOMAIN"]` or `show-only-local-domain == True`), `where-used`, and rule/group reference lookups resolve effective local-domain entities first and fall back to published `Global` entities.
+  - Keep plural bulk sync commands (`show-hosts`, `show-networks`, `show-address-ranges`, `show-groups`, `show-dns-domains`, `show-services-*`) strictly scoped to the queried domain so per-domain cache sync semantics in `ObjectService` / `ServiceCacheService` remain unchanged.
+- **`Global` Write Protection & Policy Assignment**:
+  - Reject any mutating command (`set-*`, `delete-*`, rule/section edit) issued from a local domain session when the resolved target UID or name is owned by `"Global"`, returning HTTP `400` (`error_code="generic_err_object_read_only"`, `blocking-errors=[{"code": "err_validation_failed", "message": "Global object '<name>' is read-only in domain '<domain>'."}]`).
+  - Allow direct write sessions on `"Global"` to add/edit/delete `Global` objects while checking cross-domain references across all local domains before permitting `delete-*` on any `Global` entity.
+  - Add `assign-global-assignment` (canonical Check Point Web API command) and `assign-global-policy` (alias), plus `show-global-assignment` and `show-global-assignments`, backed by `mds/show-global-assignments.json`. Executing assignment returns a Check Point async/completed task and updates assignment state (`global-access-policy`, `global-threat-prevention-policy`, `dependent-domain`, `last-assign-time`).
+- **Deterministic Dataset Wiring (`DATASET_VERSION = "1.1.0"`)**:
+  - In `dataset_generator.py`, bump `DATASET_VERSION = "1.1.0"` and generate `mds/show-global-assignments.json` alongside local-domain usage of `Global` objects/services/groups (`uid-glob-grp-branches`, `uid-glob-host-001`, `uid-glob-grp-dc`, `uid-global-svc-udp-53`, `uid-global-svc-tcp-53`) inside existing Access rule #104 (`uid-arule-<d_slug>-0104`) of every local user domain (`dom != "Global"`).
+  - Crucially, replacing rule #104 in place (rather than adding rule #106 and without altering `uid-arule-perimeter-0001` or `uid-nrule-perimeter-001`) guarantees zero regressions in `test_topology_raw_replay_scale.py` (`10` domains, `284` cached assets, `276` gateways, `105` access rules in `3` sections, `12` NAT rules, `<250` topology-cached objects) and `test_replay_mock_where_used.py`.
+
+### 4. Fast In-Memory Snapshot/Restore/Reset, Redacted `call_log`, and OTEL Hygiene
+
+- **`ReplayStateSnapshot` & Millisecond Reset**:
+  - Introduce `ReplayStateSnapshot` in `src/arodonata/testing/replay_mock.py` storing deep copies of materialized `_domain_data`, `_mds_data`, `_sid_bindings`, `_work_sessions`, `_published_changes`, `_dynamic_tasks`, sequence counters, and attached `FileReplayCliMock` overrides (`_cli_overrides`, `_failing_nodes`).
+  - Expose `snapshot_state()`, `restore_state(snapshot)`, and `reset(clear_call_log: bool = True)` on both `FileReplayApiMock` and `CheckPointReplayHttpServer`, plus opt-in HTTP test control routes (`POST /__testing__/reset`, `POST /__testing__/snapshot`, `POST /__testing__/restore`, `GET /__testing__/call-log`) gated by `enable_test_control: bool = False` (constructor flag) / `--enable-test-control` (CLI flag) and authenticated via `X-Arodonata-Test-Token` (matching `test_control_token` / `--test-control-token`) or an active `X-chkp-sid`.
+  - Optimize copy performance: domains never mutated retain references to an immutable initial baseline dict inside `_baseline_domain_data`, so snapshotting/restoring after mutating `1–2` domains only deep-copies dirty domains and completes in milliseconds.
+- **Redacted `call_log` & Assertion Helpers**:
+  - Enrich each entry in `FileReplayApiMock.call_log` with `mgmt_name`, `domain`, `command`, `is_mutating`, deterministic non-secret `sid_ref` (`"sid#0001"`), `session_uid`, `read_only_session`, sanitized `payload` (`sanitize_mapping` + `redact_sid(..., known_sids=active_sids)`), `payload_summary`, `status_code`, `success`, and `error_code`. Never store raw `sid`, `api-key`, or `password` anywhere in `call_log`, exception strings, or HTTP error payloads.
+  - Add helper methods `get_calls(...)`, `assert_no_global_mutations()`, `assert_no_full_object_scans(allowed_domains=())`, `assert_command_called(...)`, and `assert_command_not_called(...)`.
+- **Provider-Agnostic OpenTelemetry Instrumentation**:
+  - Decorate key `FileReplayApiMock` / `CheckPointReplayHttpServer` dispatch entrypoints with `@traced` from `arodonata.core.telemetry` and record non-sensitive attributes via `span_attrs(mgmt_name=..., domain=..., command=..., sid_ref=..., session_uid=..., status_code=...)` (never passing raw `sid` or credentials, and never initializing a global `TracerProvider`).
+
+## Risks / Trade-offs
+
+- **[Risk] `TaskWaiter` default `2.0s` initial poll delay slows HTTPS E2E tests calling `publish` or `show-changes`** → **Mitigation**: Keep Check Point-accurate async task responses on `/web_api/{cmd}` when `wait_for_task=False`, document passing `TaskWaiter(initial_delay=0.01)` in HTTPS integration tests, and return completed task payloads immediately on direct `ApiPort` calls when `wait_for_task=True`.
+- **[Risk] Deep-copying all 10 domains (~1,050 rules + ~2,600 objects) repeatedly in tight test loops slows down suites** → **Mitigation**: Keep lazy per-domain loading intact, share immutable untouched baseline dicts via copy-on-write per dirty domain/session, and clear overlays cleanly on `publish`/`discard`/`reset`.
+- **[Risk] Dataset v1.1.0 changes breaking existing scale or `where-used` assertions** → **Mitigation**: Keep `test_topology_raw_replay_scale.py` counts and `uid-arule-perimeter-0001` / `uid-nrule-perimeter-001` fixtures strictly untouched by embedding `Global` references solely in rule #104 (`uid-arule-<domain>-0104`) and `mds/show-global-assignments.json`.

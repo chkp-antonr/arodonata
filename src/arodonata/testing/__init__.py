@@ -13,7 +13,7 @@ from arodonata.testing.dataset_generator import (
     ensure_enterprise_raw_dataset,
     generate_enterprise_raw_dataset,
 )
-from arodonata.testing.replay_mock import FileReplayApiMock, FileReplayCliMock
+from arodonata.testing.replay_mock import FileReplayApiMock, FileReplayCliMock, ReplayStateSnapshot
 
 if TYPE_CHECKING:
     from arodonata.testing.mock_server import CheckPointReplayHttpServer
@@ -36,6 +36,7 @@ __all__ = [
     "CheckPointReplayHttpServer",
     "FileReplayApiMock",
     "FileReplayCliMock",
+    "ReplayStateSnapshot",
     "ensure_enterprise_raw_dataset",
     "generate_enterprise_raw_dataset",
 ]
