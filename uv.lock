@@ -220,7 +220,7 @@ otel = [
 
 [[package]]
 name = "arodonata"
-version = "2.6.1"
+version = "2.6.2"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
