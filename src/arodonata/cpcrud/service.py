@@ -271,6 +271,10 @@ class CPCRUDService:
         ):
             yield ev
 
+    def notify_sid_logged_out(self, mgmt_name: str, sid: str) -> None:
+        """Propagate `logout_sid` notification to the underlying CPCRUD executor."""
+        self._executor.notify_sid_logged_out(mgmt_name, sid)
+
     @traced
     async def discard_staged_session(
         self,

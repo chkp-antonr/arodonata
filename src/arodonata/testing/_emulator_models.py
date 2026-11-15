@@ -17,6 +17,7 @@ ACCEPT_UID = "6c488338-8eec-4103-ad21-cd461ac2c472"
 DROP_UID = "6c488338-8eec-4103-ad21-cd461ac2c473"
 DROP_UID_ALT = "6c488338-8eec-4103-ad21-cd461ac2c476"
 REJECT_UID = "6c488338-8eec-4103-ad21-cd461ac2c474"
+APPLY_LAYER_UID = "6c488338-8eec-4103-ad21-cd461ac2c475"
 LOG_TRACK_UID = "598ead32-aa42-4615-90ed-f51a5928d41d"
 NONE_TRACK_UID = "29e53e3d-23bf-48fe-b6b1-d59bd88036f1"
 NONE_TRACK_UID_ALT = "29e53e3d-23bf-48fe-b6b1-d59bd88036f9"
@@ -35,6 +36,7 @@ BUILTIN_SENTINELS: dict[str, dict[str, Any]] = {
     DROP_UID: {"uid": DROP_UID, "name": "Drop", "type": "RulebaseAction"},
     DROP_UID_ALT: {"uid": DROP_UID_ALT, "name": "Drop", "type": "RulebaseAction"},
     REJECT_UID: {"uid": REJECT_UID, "name": "Reject", "type": "RulebaseAction"},
+    APPLY_LAYER_UID: {"uid": APPLY_LAYER_UID, "name": "Apply Layer", "type": "RulebaseAction"},
     LOG_TRACK_UID: {"uid": LOG_TRACK_UID, "name": "Log", "type": "Track"},
     NONE_TRACK_UID: {"uid": NONE_TRACK_UID, "name": "None", "type": "Track"},
     NONE_TRACK_UID_ALT: {"uid": NONE_TRACK_UID_ALT, "name": "None", "type": "Track"},
@@ -49,6 +51,8 @@ ACTION_NAME_TO_UID: dict[str, str] = {
     "accept": ACCEPT_UID,
     "drop": DROP_UID,
     "reject": REJECT_UID,
+    "apply layer": APPLY_LAYER_UID,
+    "inner layer": APPLY_LAYER_UID,
 }
 
 ACTION_UID_TO_NAME: dict[str, str] = {

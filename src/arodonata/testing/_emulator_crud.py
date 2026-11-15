@@ -33,6 +33,8 @@ _EXTRA_OBJECT_BUCKETS: tuple[tuple[str, str], ...] = (
     ("show-gateways-and-servers", "objects"),
     ("show-packages", "packages"),
     ("show-access-layers", "access-layers"),
+    ("show-https-layers", "https-layers"),
+    ("show-threat-layers", "threat-layers"),
 )
 _NETWORK_NAMESPACE_TYPES: frozenset[str] = frozenset(
     {
@@ -55,6 +57,8 @@ _SERVICE_NAMESPACE_TYPES: frozenset[str] = frozenset(
     }
 )
 _ACCESS_CELL_LIST_FIELDS: tuple[str, ...] = ("source", "destination", "service", "install-on", "vpn", "content", "time")
+_HTTPS_CELL_LIST_FIELDS: tuple[str, ...] = ("source", "destination", "service", "site-category", "install-on")
+_THREAT_CELL_LIST_FIELDS: tuple[str, ...] = ("protected-scope", "source", "destination", "service", "install-on")
 _NAT_CELL_SCALAR_FIELDS: tuple[str, ...] = (
     "original-source",
     "original-destination",
@@ -71,9 +75,12 @@ _RULE_DICT_LIST_FIELDS: tuple[str, ...] = (
     "vpn",
     "content",
     "time",
+    "protected-scope",
+    "site-category",
 )
 _RULE_DICT_SCALAR_FIELDS: tuple[str, ...] = (
     "action",
+    "inline-layer",
     "original-source",
     "original-destination",
     "original-service",
@@ -91,6 +98,48 @@ _NAT_REF_COLS: tuple[str, ...] = (
     "translated-service",
     "install-on",
 )
+_RULE_KIND_CONFIGS: dict[str, dict[str, Any]] = {
+    "access": {
+        "store_key": "show-access-rulebase",
+        "layer_store": "show-access-layers",
+        "layer_key": "access-layers",
+        "layer_type": "access-layer",
+        "rule_type": "access-rule",
+        "section_type": "access-section",
+        "label": "Access",
+        "list_fields": _ACCESS_CELL_LIST_FIELDS,
+    },
+    "nat": {
+        "store_key": "show-nat-rulebase",
+        "layer_store": "show-packages",
+        "layer_key": "packages",
+        "layer_type": "nat-package",
+        "rule_type": "nat-rule",
+        "section_type": "nat-section",
+        "label": "NAT",
+        "list_fields": (),
+    },
+    "https": {
+        "store_key": "show-https-rulebase",
+        "layer_store": "show-https-layers",
+        "layer_key": "https-layers",
+        "layer_type": "https-layer",
+        "rule_type": "https-rule",
+        "section_type": "https-section",
+        "label": "HTTPS",
+        "list_fields": _HTTPS_CELL_LIST_FIELDS,
+    },
+    "threat": {
+        "store_key": "show-threat-rulebase",
+        "layer_store": "show-threat-layers",
+        "layer_key": "threat-layers",
+        "layer_type": "threat-layer",
+        "rule_type": "threat-rule",
+        "section_type": "threat-section",
+        "label": "Threat",
+        "list_fields": _THREAT_CELL_LIST_FIELDS,
+    },
+}
 
 
 def extract_ref_uids(value: Any) -> set[str]:
@@ -663,19 +712,24 @@ def collect_blocking_references(
                 if target_uid in m_uids:
                     refs.append(f"Group '{grp.get('name', grp.get('uid'))}' in domain '{scope_dom}'")
 
-        rb_store = scope_files.get("show-access-rulebase", {})
-        if isinstance(rb_store, Mapping):
-            for layer_key, layer_val in rb_store.items():
-                if not isinstance(layer_val, Mapping):
-                    continue
-                layer_name = str(layer_val.get("name") or layer_key)
-                for idx, (_, rule) in enumerate(_iter_flat_rule_entries(layer_val.get("rulebase")), start=1):
-                    used = set()
-                    for col in _ACCESS_REF_COLS:
-                        used.update(extract_ref_uids(rule.get(col)))
-                    if target_uid in used:
-                        r_label = rule.get("name") or f"#{rule.get('rule-number') or idx}"
-                        refs.append(f"Access rule {r_label!r} in layer '{layer_name}' (domain '{scope_dom}')")
+        for rb_cmd, ref_cols, rb_label in (
+            ("show-access-rulebase", _ACCESS_REF_COLS, "Access"),
+            ("show-https-rulebase", _HTTPS_CELL_LIST_FIELDS, "HTTPS"),
+            ("show-threat-rulebase", _THREAT_CELL_LIST_FIELDS, "Threat"),
+        ):
+            rb_store = scope_files.get(rb_cmd, {})
+            if isinstance(rb_store, Mapping):
+                for layer_key, layer_val in rb_store.items():
+                    if not isinstance(layer_val, Mapping):
+                        continue
+                    layer_name = str(layer_val.get("name") or layer_key)
+                    for idx, (_, rule) in enumerate(_iter_flat_rule_entries(layer_val.get("rulebase")), start=1):
+                        used = set()
+                        for col in ref_cols:
+                            used.update(extract_ref_uids(rule.get(col)))
+                        if target_uid in used:
+                            r_label = rule.get("name") or f"#{rule.get('rule-number') or idx}"
+                            refs.append(f"{rb_label} rule {r_label!r} in layer '{layer_name}' (domain '{scope_dom}')")
 
         nat_store = scope_files.get("show-nat-rulebase", {})
         if isinstance(nat_store, Mapping):
@@ -918,7 +972,7 @@ def _propagate_object_rename(dom_files: dict[str, Any], renamed_obj: Mapping[str
                     if isinstance(entry, dict) and entry.get("uid") == obj_uid:
                         entry["name"] = new_name
 
-    for rb_cmd in ("show-access-rulebase", "show-nat-rulebase"):
+    for rb_cmd in ("show-access-rulebase", "show-nat-rulebase", "show-https-rulebase", "show-threat-rulebase"):
         rb_store = dom_files.get(rb_cmd, {})
         if not isinstance(rb_store, dict):
             continue
@@ -1364,9 +1418,11 @@ def _resolve_rulebase_container(
     dom_name: str,
     req: Mapping[str, Any],
     *,
-    is_nat: bool,
+    rule_kind: str = "access",
 ) -> tuple[dict[str, Any], str] | None:
-    store_key = "show-nat-rulebase" if is_nat else "show-access-rulebase"
+    cfg = _RULE_KIND_CONFIGS[rule_kind]
+    store_key = cfg["store_key"]
+    is_nat = rule_kind == "nat"
     lookup_ref = str(req.get("package") or "" if is_nat else req.get("layer") or "")
 
     scopes: list[tuple[str, Mapping[str, Any]]] = [(dom_name, dom_files)]
@@ -1385,6 +1441,13 @@ def _resolve_rulebase_container(
                 for pkg in scope_files.get("show-packages", {}).get("packages", []):
                     if isinstance(pkg, Mapping) and (pkg.get("uid") == lookup_ref or pkg.get("name") == lookup_ref):
                         for k in (pkg.get("name"), pkg.get("uid")):
+                            if k and isinstance(store.get(str(k)), dict):
+                                return store[str(k)], scope_dom
+            else:
+                layer_list = scope_files.get(cfg["layer_store"], {}).get(cfg["layer_key"], [])
+                for lyr in layer_list if isinstance(layer_list, list) else []:
+                    if isinstance(lyr, Mapping) and (lyr.get("uid") == lookup_ref or lyr.get("name") == lookup_ref):
+                        for k in (lyr.get("name"), lyr.get("uid")):
                             if k and isinstance(store.get(str(k)), dict):
                                 return store[str(k)], scope_dom
             for cand in store.values():
@@ -1784,14 +1847,38 @@ def _apply_cell_list_update(
     return replaced, None
 
 
-def _normalize_action(val: Any) -> str | ApiCallResult:
-    lookup = _ref_uid(val) if isinstance(val, Mapping) else str(val or "Drop").strip()
-    if lookup in BUILTIN_SENTINELS:
-        return lookup
-    lowered = lookup.lower()
-    if lowered in ACTION_NAME_TO_UID:
-        return ACTION_NAME_TO_UID[lowered]
-    return cp_error("err_validation_failed", f"Invalid rule action [{lookup}]", status_code=400)
+def _normalize_action(val: Any, *, rule_kind: str = "access") -> str | ApiCallResult:
+    default_by_kind = {"access": "Drop", "https": "Inspect", "threat": "Optimized"}
+    default_action = default_by_kind.get(rule_kind, "Drop")
+    if isinstance(val, Mapping):
+        lookup = str(val.get("uid") or val.get("name") or default_action).strip()
+    else:
+        lookup = str(val if val is not None else default_action).strip() or default_action
+
+    if rule_kind == "access":
+        if lookup in BUILTIN_SENTINELS:
+            return lookup
+        lowered = lookup.lower()
+        if lowered in ACTION_NAME_TO_UID:
+            return ACTION_NAME_TO_UID[lowered]
+        return cp_error("err_validation_failed", f"Invalid rule action [{lookup}]", status_code=400)
+
+    if rule_kind == "https":
+        https_canonical = {"inspect": "Inspect", "bypass": "Bypass", "hold": "Hold", "ask": "Ask"}
+        return https_canonical.get(lookup.lower(), lookup)
+
+    if rule_kind == "threat":
+        threat_canonical = {
+            "optimized": "Optimized",
+            "basic": "Basic",
+            "strict": "Strict",
+            "detect": "Detect",
+            "prevent": "Prevent",
+            "inactive": "Inactive",
+        }
+        return threat_canonical.get(lookup.lower(), lookup)
+
+    return lookup
 
 
 def _normalize_track(val: Any) -> dict[str, Any]:
@@ -1804,6 +1891,52 @@ def _normalize_track(val: Any) -> dict[str, Any]:
     return {"type": t_uid}
 
 
+def _normalize_inline_layer(
+    val: Any,
+    *,
+    rule_kind: str,
+    dom_files: Mapping[str, Any],
+    global_files: Mapping[str, Any],
+    dom_name: str,
+    existing_dict_map: Mapping[str, Mapping[str, Any]],
+) -> tuple[str | None, ApiCallResult | None]:
+    """Resolve an `inline-layer` UID or layer name within domain/Global layer stores."""
+    if val is None:
+        return None, None
+    lookup = str(val.get("uid") or val.get("name") or "").strip() if isinstance(val, Mapping) else str(val).strip()
+    if not lookup:
+        return None, None
+
+    cfg = _RULE_KIND_CONFIGS.get(rule_kind, _RULE_KIND_CONFIGS["access"])
+    scopes: tuple[Mapping[str, Any], ...] = (dom_files, global_files) if dom_name != "Global" else (dom_files,)
+    for scope_files in scopes:
+        layers = scope_files.get(cfg["layer_store"], {}).get(cfg["layer_key"], [])
+        if isinstance(layers, list):
+            for lyr in layers:
+                if isinstance(lyr, Mapping) and (lyr.get("uid") == lookup or lyr.get("name") == lookup):
+                    return str(lyr.get("uid") or lookup), None
+        rb_store = scope_files.get(cfg["store_key"], {})
+        if isinstance(rb_store, Mapping):
+            direct = rb_store.get(lookup)
+            if isinstance(direct, Mapping):
+                return str(direct.get("uid") or lookup), None
+            for cand in rb_store.values():
+                if isinstance(cand, Mapping) and (cand.get("uid") == lookup or cand.get("name") == lookup):
+                    return str(cand.get("uid") or lookup), None
+
+    if lookup in existing_dict_map:
+        return lookup, None
+    for uid, entry in existing_dict_map.items():
+        if entry.get("name") == lookup:
+            return uid, None
+
+    return None, cp_error(
+        "generic_err_object_not_found",
+        f"Requested inline layer [{lookup}] not found in {dom_name}",
+        status_code=404,
+    )
+
+
 def _format_rule_response(
     rule: Mapping[str, Any],
     *,
@@ -1811,7 +1944,7 @@ def _format_rule_response(
     dom_files: Mapping[str, Any],
     global_files: Mapping[str, Any],
     dom_name: str,
-    is_nat: bool,
+    rule_kind: str = "access",
 ) -> dict[str, Any]:
     """Return a single Check Point rule response with resolved object summary dicts."""
     dict_list = build_objects_dictionary(
@@ -1824,15 +1957,16 @@ def _format_rule_response(
     obj_map = {str(entry["uid"]): entry for entry in dict_list if isinstance(entry, dict) and entry.get("uid")}
     inlined = _inline_rule_objects(copy.deepcopy(dict(rule)), obj_map)
     inlined.setdefault("domain", format_domain_meta(dom_name))
-    if is_nat:
+    if rule_kind == "nat":
         inlined.setdefault("package", layer_payload.get("package") or layer_payload.get("name") or "")
     else:
+        layer_type = _RULE_KIND_CONFIGS.get(rule_kind, _RULE_KIND_CONFIGS["access"])["layer_type"]
         inlined.setdefault(
             "layer",
             {
                 "uid": layer_payload.get("uid", ""),
                 "name": layer_payload.get("name", ""),
-                "type": "access-layer",
+                "type": layer_type,
             },
         )
     return inlined
@@ -1870,6 +2004,13 @@ def _normalize_nat_scalar_field(
     return r_uid, None
 
 
+def _detect_rule_kind(command: str) -> str | None:
+    for kind in ("access", "nat", "https", "threat"):
+        if command.endswith(f"-{kind}-rule") or command.endswith(f"-{kind}-section"):
+            return kind
+    return None
+
+
 def handle_rulebase_crud(
     command: str,
     req: Mapping[str, Any],
@@ -1882,19 +2023,22 @@ def handle_rulebase_crud(
     user_name: str,
     locked_uids_out: set[str],
 ) -> tuple[ApiCallResult, str | None] | None:
-    """Execute Access & NAT rule and section CRUD commands against live domain state."""
-    is_nat = command.endswith("-nat-rule") or command.endswith("-nat-section")
-    is_access = command.endswith("-access-rule") or command.endswith("-access-section")
-    if not (is_nat or is_access):
+    """Execute Access, NAT, HTTPS, & Threat rule and section CRUD commands against live domain state."""
+    rule_kind = _detect_rule_kind(command)
+    if rule_kind is None:
         return None
 
+    cfg = _RULE_KIND_CONFIGS[rule_kind]
+    is_nat = rule_kind == "nat"
     is_section = command.endswith("-section")
     action = command.split("-", 1)[0]
-    container = _resolve_rulebase_container(dom_files, global_files, dom_name, req, is_nat=is_nat)
+    container = _resolve_rulebase_container(dom_files, global_files, dom_name, req, rule_kind=rule_kind)
     if container is None:
         ref = req.get("package") if is_nat else (req.get("layer") or req.get("uid") or req.get("name") or "")
-        kind = "NAT package" if is_nat else "Access layer"
-        return cp_error("generic_err_object_not_found", f"Requested {kind} [{ref}] not found", status_code=404), None
+        kind_label = "NAT package" if is_nat else f"{cfg['label']} layer"
+        return cp_error(
+            "generic_err_object_not_found", f"Requested {kind_label} [{ref}] not found", status_code=404
+        ), None
 
     layer_payload, owning_dom = container
     if action in ("add", "set", "delete") and owning_dom == "Global" and dom_name != "Global":
@@ -1923,7 +2067,7 @@ def handle_rulebase_crud(
             new_sec: dict[str, Any] = {
                 "uid": sec_uid,
                 "name": sec_name,
-                "type": "nat-section" if is_nat else "access-section",
+                "type": cfg["section_type"],
                 "domain": format_domain_meta(dom_name),
                 "rulebase": [],
             }
@@ -1992,14 +2136,14 @@ def handle_rulebase_crud(
                     dom_files=dom_files,
                     global_files=global_files,
                     dom_name=dom_name,
-                    is_nat=is_nat,
+                    rule_kind=rule_kind,
                 )
             ),
             None,
         )
 
     if action == "add":
-        assigned_uid = str(req.get("uid") or "").strip() or uid_allocator("nat-rule" if is_nat else "access-rule")
+        assigned_uid = str(req.get("uid") or "").strip() or uid_allocator(cfg["rule_type"])
         ts = format_timestamp(now_ms)
         meta = {
             "lock": "unlocked",
@@ -2009,69 +2153,45 @@ def handle_rulebase_crud(
             "last-modifier": user_name,
             "last-modify-time": dict(ts),
         }
-        if is_access:
-            src, err = _apply_cell_list_update(
-                [ANY_UID],
-                req.get("source", [ANY_UID]),
-                dom_files=dom_files,
-                global_files=global_files,
-                dom_name=dom_name,
-                existing_dict_map=existing_dict_map,
+        if not is_nat:
+            req_cols = (
+                ("protected-scope", "source", "destination", "service", "install-on")
+                if rule_kind == "threat"
+                else ("source", "destination", "service", "install-on")
             )
-            if err is not None:
-                return err, None
-            dst, err = _apply_cell_list_update(
-                [ANY_UID],
-                req.get("destination", [ANY_UID]),
-                dom_files=dom_files,
-                global_files=global_files,
-                dom_name=dom_name,
-                existing_dict_map=existing_dict_map,
+            opt_cols = (
+                ("vpn", "content", "time")
+                if rule_kind == "access"
+                else (("site-category",) if rule_kind == "https" else ())
             )
-            if err is not None:
-                return err, None
-            svc, err = _apply_cell_list_update(
-                [ANY_UID],
-                req.get("service", [ANY_UID]),
-                dom_files=dom_files,
-                global_files=global_files,
-                dom_name=dom_name,
-                existing_dict_map=existing_dict_map,
-            )
-            if err is not None:
-                return err, None
-            inst, err = _apply_cell_list_update(
-                [ANY_UID],
-                req.get("install-on", [ANY_UID]),
-                dom_files=dom_files,
-                global_files=global_files,
-                dom_name=dom_name,
-                existing_dict_map=existing_dict_map,
-            )
-            if err is not None:
-                return err, None
-            act = _normalize_action(req.get("action", "Drop"))
+            act = _normalize_action(req.get("action"), rule_kind=rule_kind)
             if isinstance(act, ApiCallResult):
                 return act, None
-            new_rule: dict[str, Any] = {
+            default_track = NONE_TRACK_UID if act == "Drop" else LOG_TRACK_UID
+            new_rule = {
                 "uid": assigned_uid,
                 "name": str(req.get("name") or ""),
-                "type": "access-rule",
+                "type": cfg["rule_type"],
                 "domain": format_domain_meta(dom_name),
                 "enabled": bool(req.get("enabled", True)),
-                "source": src,
-                "source-negate": bool(req.get("source-negate", False)),
-                "destination": dst,
-                "destination-negate": bool(req.get("destination-negate", False)),
-                "service": svc,
-                "service-negate": bool(req.get("service-negate", False)),
                 "action": act,
-                "track": _normalize_track(req.get("track", NONE_TRACK_UID if act == "Drop" else LOG_TRACK_UID)),
-                "install-on": inst,
+                "track": _normalize_track(req.get("track", default_track)),
                 "comments": str(req.get("comments") or ""),
                 "meta-info": meta,
             }
-            for opt_col in ("vpn", "content", "time"):
+            for col in req_cols:
+                vals, err = _apply_cell_list_update(
+                    [ANY_UID],
+                    req.get(col, [ANY_UID]),
+                    dom_files=dom_files,
+                    global_files=global_files,
+                    dom_name=dom_name,
+                    existing_dict_map=existing_dict_map,
+                )
+                if err is not None:
+                    return err, None
+                new_rule[col] = vals
+            for opt_col in opt_cols:
                 if opt_col in req:
                     vals, col_err = _apply_cell_list_update(
                         [ANY_UID],
@@ -2084,6 +2204,30 @@ def handle_rulebase_crud(
                     if col_err is not None:
                         return col_err, None
                     new_rule[opt_col] = vals
+            if rule_kind == "access":
+                new_rule["source-negate"] = bool(req.get("source-negate", False))
+                new_rule["destination-negate"] = bool(req.get("destination-negate", False))
+                new_rule["service-negate"] = bool(req.get("service-negate", False))
+            if rule_kind in ("access", "https") and "inline-layer" in req and req.get("inline-layer") is not None:
+                inline_uid, il_err = _normalize_inline_layer(
+                    req.get("inline-layer"),
+                    rule_kind=rule_kind,
+                    dom_files=dom_files,
+                    global_files=global_files,
+                    dom_name=dom_name,
+                    existing_dict_map=existing_dict_map,
+                )
+                if il_err is not None:
+                    return il_err, None
+                if inline_uid:
+                    new_rule["inline-layer"] = inline_uid
+            if rule_kind == "https":
+                if "certificate" in req and req["certificate"] is not None:
+                    new_rule["certificate"] = copy.deepcopy(req["certificate"])
+                if "blade" in req and req["blade"] is not None:
+                    new_rule["blade"] = copy.deepcopy(req["blade"])
+            if rule_kind == "threat" and "exceptions" in req:
+                new_rule["exceptions"] = copy.deepcopy(req["exceptions"])
         else:
             nat_fields: dict[str, str] = {}
             for nat_col in _NAT_CELL_SCALAR_FIELDS:
@@ -2136,7 +2280,7 @@ def handle_rulebase_crud(
                     dom_files=dom_files,
                     global_files=global_files,
                     dom_name=dom_name,
-                    is_nat=is_nat,
+                    rule_kind=rule_kind,
                 )
             ),
             assigned_uid,
@@ -2158,8 +2302,8 @@ def handle_rulebase_crud(
         if "comments" in req:
             rule["comments"] = str(req["comments"])
 
-        if is_access:
-            for col in _ACCESS_CELL_LIST_FIELDS:
+        if not is_nat:
+            for col in cfg["list_fields"]:
                 if col in req:
                     cur = (
                         list(extract_ref_uids(rule.get(col)))
@@ -2179,16 +2323,42 @@ def handle_rulebase_crud(
                         return err, None
                     rule[col] = updated
             if "action" in req:
-                act = _normalize_action(req["action"])
+                act = _normalize_action(req["action"], rule_kind=rule_kind)
                 if isinstance(act, ApiCallResult):
                     parent_list[parent_idx] = snapshot_rule
                     return act, None
                 rule["action"] = act
             if "track" in req:
                 rule["track"] = _normalize_track(req["track"])
-            for neg_key in ("source-negate", "destination-negate", "service-negate"):
-                if neg_key in req:
-                    rule[neg_key] = bool(req[neg_key])
+            if rule_kind == "access":
+                for neg_key in ("source-negate", "destination-negate", "service-negate"):
+                    if neg_key in req:
+                        rule[neg_key] = bool(req[neg_key])
+            if rule_kind in ("access", "https") and "inline-layer" in req:
+                inline_uid, il_err = _normalize_inline_layer(
+                    req["inline-layer"],
+                    rule_kind=rule_kind,
+                    dom_files=dom_files,
+                    global_files=global_files,
+                    dom_name=dom_name,
+                    existing_dict_map=existing_dict_map,
+                )
+                if il_err is not None:
+                    parent_list[parent_idx] = snapshot_rule
+                    return il_err, None
+                if inline_uid:
+                    rule["inline-layer"] = inline_uid
+                else:
+                    rule.pop("inline-layer", None)
+            if rule_kind == "https":
+                for opt_h in ("certificate", "blade"):
+                    if opt_h in req:
+                        if req[opt_h] is None:
+                            rule.pop(opt_h, None)
+                        else:
+                            rule[opt_h] = copy.deepcopy(req[opt_h])
+            if rule_kind == "threat" and "exceptions" in req:
+                rule["exceptions"] = copy.deepcopy(req["exceptions"])
         else:
             if "method" in req:
                 rule["method"] = str(req["method"])
@@ -2245,7 +2415,7 @@ def handle_rulebase_crud(
                     dom_files=dom_files,
                     global_files=global_files,
                     dom_name=dom_name,
-                    is_nat=is_nat,
+                    rule_kind=rule_kind,
                 )
             ),
             rule_uid,

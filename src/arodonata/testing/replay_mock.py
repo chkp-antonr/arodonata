@@ -197,6 +197,8 @@ _INLINE_LIST_RULE_FIELDS: tuple[str, ...] = (
     "time",
     "vpn",
     "content",
+    "protected-scope",
+    "site-category",
 )
 _INLINE_SCALAR_RULE_FIELDS: tuple[str, ...] = (
     "action",
@@ -209,6 +211,8 @@ _INLINE_SCALAR_RULE_FIELDS: tuple[str, ...] = (
     "translated-service",
 )
 _ACCESS_WHERE_USED_COLS: tuple[str, ...] = ("source", "destination", "service", "vpn", "time", "install-on")
+_HTTPS_WHERE_USED_COLS: tuple[str, ...] = ("source", "destination", "service", "site-category", "install-on")
+_THREAT_WHERE_USED_COLS: tuple[str, ...] = ("protected-scope", "source", "destination", "service", "install-on")
 _NAT_WHERE_USED_COLS: tuple[str, ...] = (
     "original-source",
     "original-destination",
@@ -396,23 +400,43 @@ def _find_domain_object_by_ref(dom_files: dict[str, Any], lookup: str) -> dict[s
     return None
 
 
+def _resolve_layer_payload(
+    dom_files: dict[str, Any],
+    global_files: dict[str, Any],
+    lookup: str,
+    *,
+    store_key: str = "show-access-rulebase",
+    layer_store_key: str = "show-access-layers",
+    layer_list_key: str = "access-layers",
+) -> dict[str, Any] | None:
+    """Resolve an access/https/threat rulebase layer payload by key, layer UID, or layer name."""
+    for scope_files in (dom_files, global_files):
+        rb_store = scope_files.get(store_key, {})
+        if not isinstance(rb_store, dict):
+            continue
+        direct = rb_store.get(lookup)
+        if isinstance(direct, dict):
+            return direct
+        for lyr in scope_files.get(layer_store_key, {}).get(layer_list_key, []):
+            if isinstance(lyr, dict) and (lyr.get("uid") == lookup or lyr.get("name") == lookup):
+                for key in (lyr.get("name"), lyr.get("uid")):
+                    if key:
+                        nested = rb_store.get(str(key))
+                        if isinstance(nested, dict):
+                            return nested
+        for candidate in rb_store.values():
+            if isinstance(candidate, dict) and (candidate.get("uid") == lookup or candidate.get("name") == lookup):
+                return candidate
+    return None
+
+
 def _resolve_access_layer_payload(
     dom_files: dict[str, Any],
     global_files: dict[str, Any],
     lookup: str,
 ) -> dict[str, Any] | None:
     """Resolve an access rulebase layer payload by store key, layer UID, or layer name."""
-    for scope_files in (dom_files, global_files):
-        rb_store = scope_files.get("show-access-rulebase", {})
-        if not isinstance(rb_store, dict):
-            continue
-        direct = rb_store.get(lookup)
-        if isinstance(direct, dict):
-            return direct
-        for candidate in rb_store.values():
-            if isinstance(candidate, dict) and (candidate.get("uid") == lookup or candidate.get("name") == lookup):
-                return candidate
-    return None
+    return _resolve_layer_payload(dom_files, global_files, lookup)
 
 
 def _resolve_nat_package_payload(dom_files: dict[str, Any], pkg_lookup: str) -> dict[str, Any] | None:
@@ -531,17 +555,31 @@ def _build_where_used_response(
             pkg_lookup_map[pkg_uid] = pkg_ref
         if pkg_name:
             pkg_lookup_map[pkg_name] = pkg_ref
-        for lyr in pkg.get("access-layers", []):
-            if not isinstance(lyr, dict):
-                continue
-            if lyr.get("uid"):
-                layer_to_pkg[str(lyr["uid"])] = pkg_ref
-            if lyr.get("name"):
-                layer_to_pkg[str(lyr["name"])] = pkg_ref
+        for layer_key in ("access-layers", "https-layers", "threat-layers"):
+            for lyr in pkg.get(layer_key, []):
+                if not isinstance(lyr, dict):
+                    continue
+                if lyr.get("uid"):
+                    layer_to_pkg[str(lyr["uid"])] = pkg_ref
+                if lyr.get("name"):
+                    layer_to_pkg[str(lyr["name"])] = pkg_ref
 
-    # 3. Access rules scan
-    rb_store = dom_files.get("show-access-rulebase", {})
-    if isinstance(rb_store, dict):
+    # 3. Access, HTTPS, and Threat Prevention rules scan
+    layer_scans = (
+        ("show-access-rulebase", _ACCESS_WHERE_USED_COLS, "access-rule", "access-layer", "access-control-rules"),
+        ("show-https-rulebase", _HTTPS_WHERE_USED_COLS, "https-rule", "https-layer", "https-rules"),
+        (
+            "show-threat-rulebase",
+            _THREAT_WHERE_USED_COLS,
+            "threat-rule",
+            "threat-layer",
+            "threat-prevention-rules",
+        ),
+    )
+    for rb_cmd, cols, default_rule_type, layer_type, out_bucket_key in layer_scans:
+        rb_store = dom_files.get(rb_cmd, {})
+        if not isinstance(rb_store, dict):
+            continue
         for layer_key, layer_payload in rb_store.items():
             if not isinstance(layer_payload, dict):
                 continue
@@ -555,10 +593,10 @@ def _build_where_used_response(
                     "name": layer_name,
                 }
             )
-            raw_acc_rb = layer_payload.get("rulebase")
-            flat_rules = _iter_flat_rulebase_nodes(raw_acc_rb if isinstance(raw_acc_rb, list) else [])
+            raw_rb = layer_payload.get("rulebase")
+            flat_rules = _iter_flat_rulebase_nodes(raw_rb if isinstance(raw_rb, list) else [])
             for idx, (_, rule) in enumerate(flat_rules, start=1):
-                col_uids = {col: _extract_ref_uids(rule.get(col)) for col in _ACCESS_WHERE_USED_COLS}
+                col_uids = {col: _extract_ref_uids(rule.get(col)) for col in cols}
                 direct_cols = [col for col, uids in col_uids.items() if target_uid in uids]
                 indirect_cols = (
                     [col for col, uids in col_uids.items() if ancestor_group_uids & uids] if indirect else []
@@ -569,17 +607,17 @@ def _build_where_used_response(
                     "rule": {
                         "uid": str(rule.get("uid") or ""),
                         "name": str(rule.get("name") or ""),
-                        "type": str(rule.get("type") or "access-rule"),
+                        "type": str(rule.get("type") or default_rule_type),
                     },
                     "rule-columns": direct_cols if direct_cols else indirect_cols,
                     "package": dict(pkg_ref),
-                    "layer": {"uid": layer_uid, "name": layer_name, "type": "access-layer"},
+                    "layer": {"uid": layer_uid, "name": layer_name, "type": layer_type},
                     "position": str(rule.get("rule-number") or idx),
                 }
                 if direct_cols:
-                    used_directly["access-control-rules"].append(entry)
+                    used_directly[out_bucket_key].append(entry)
                 elif indirect_cols:
-                    used_indirectly["access-control-rules"].append(entry)
+                    used_indirectly[out_bucket_key].append(entry)
 
     # 4. NAT rules scan
     nat_store = dom_files.get("show-nat-rulebase", {})
@@ -1002,6 +1040,18 @@ class FileReplayApiMock(ApiPort):
         self._cli_mock._cli_overrides = copy.deepcopy(snapshot.cli_overrides)
         self._cli_mock.fail_ssh_nodes = set(snapshot.fail_ssh_nodes)
         self.call_log = copy.deepcopy(snapshot.call_log)
+        self.api_call_counts.clear()
+        self.command_counts.clear()
+        self.api_query_counts.clear()
+        self.gateway_detail_queries.clear()
+        for entry in self.call_log:
+            if not isinstance(entry, dict):
+                continue
+            cmd = str(entry.get("command") or "")
+            dom = str(entry.get("domain") or "")
+            if cmd:
+                self.api_call_counts[(dom, cmd)] += 1
+                self.command_counts[cmd] += 1
 
     def reset(self) -> None:
         """Reset all in-memory domain data, sessions, locks, tasks, counters, and CLI overrides to baseline."""
@@ -1173,17 +1223,28 @@ class FileReplayApiMock(ApiPort):
         *,
         dom_files: Mapping[str, Any],
         pkg_or_lyr: str,
-        is_nat: bool,
+        rule_kind: str,
         allow_multi: bool,
     ) -> list[Mapping[str, Any]]:
         if not isinstance(store, Mapping):
             return []
         if pkg_or_lyr:
-            resolved_layer = (
-                _resolve_nat_package_payload(dict(dom_files), pkg_or_lyr)
-                if is_nat
-                else _resolve_access_layer_payload(dict(dom_files), {}, pkg_or_lyr)
-            )
+            if rule_kind == "nat":
+                resolved_layer = _resolve_nat_package_payload(dict(dom_files), pkg_or_lyr)
+            else:
+                rb_meta = {
+                    "access": ("show-access-rulebase", "show-access-layers", "access-layers"),
+                    "https": ("show-https-rulebase", "show-https-layers", "https-layers"),
+                    "threat": ("show-threat-rulebase", "show-threat-layers", "threat-layers"),
+                }[rule_kind]
+                resolved_layer = _resolve_layer_payload(
+                    dict(dom_files),
+                    {},
+                    pkg_or_lyr,
+                    store_key=rb_meta[0],
+                    layer_store_key=rb_meta[1],
+                    layer_list_key=rb_meta[2],
+                )
             return [resolved_layer] if isinstance(resolved_layer, Mapping) else []
         layers = [v for v in store.values() if isinstance(v, Mapping)]
         if not allow_multi and len(layers) != 1:
@@ -1225,19 +1286,18 @@ class FileReplayApiMock(ApiPort):
                         targets.add(str(found[0]["uid"]))
             return targets
 
-        if command in (
-            "set-access-rule",
-            "delete-access-rule",
-            "set-nat-rule",
-            "delete-nat-rule",
-            "set-access-section",
-            "delete-access-section",
-            "set-nat-section",
-            "delete-nat-section",
-        ):
-            is_nat = "-nat-" in command
+        matched_kind = next(
+            (
+                k
+                for k in ("access", "nat", "https", "threat")
+                if command in (f"set-{k}-rule", f"delete-{k}-rule", f"set-{k}-section", f"delete-{k}-section")
+            ),
+            None,
+        )
+        if matched_kind is not None:
+            is_nat = matched_kind == "nat"
             is_section = command.endswith("-section")
-            rb_cmd = "show-nat-rulebase" if is_nat else "show-access-rulebase"
+            rb_cmd = f"show-{matched_kind}-rulebase"
             store = dom_files.get(rb_cmd, {})
             pkg_or_lyr = str(req.get("package") if is_nat else (req.get("layer") or ""))
 
@@ -1254,7 +1314,7 @@ class FileReplayApiMock(ApiPort):
                     store,
                     dom_files=dom_files,
                     pkg_or_lyr=pkg_or_lyr,
-                    is_nat=is_nat,
+                    rule_kind=matched_kind,
                     allow_multi=not (req_num is not None and not req_name),
                 )
                 for layer_data in candidate_layers:
@@ -1284,7 +1344,7 @@ class FileReplayApiMock(ApiPort):
                     store,
                     dom_files=dom_files,
                     pkg_or_lyr=pkg_or_lyr,
-                    is_nat=is_nat,
+                    rule_kind=matched_kind,
                     allow_multi=True,
                 )
                 for layer_data in candidate_layers:
@@ -2115,7 +2175,10 @@ class FileReplayApiMock(ApiPort):
             if binding is not None:
                 binding.active = False
             if active_ws is not None and active_ws.state == "open":
-                if bool(req.get("continue-session-in-smartconsole", False)):
+                has_uncommitted = bool(
+                    active_ws.changes_count > 0 or active_ws.locked_uids or active_ws.mutation_records
+                )
+                if has_uncommitted or bool(req.get("continue-session-in-smartconsole", False)):
                     active_ws.state = "disconnected"
                 else:
                     active_ws.overlay_data = None
@@ -2124,6 +2187,35 @@ class FileReplayApiMock(ApiPort):
                     active_ws.mutation_records.clear()
                     active_ws.changes_count = 0
                     active_ws.state = "discarded"
+            return cp_ok({"message": "OK"})
+
+        if clean_cmd in ("disconnect", "continue-session-in-smartconsole"):
+            target_uid = str(req.get("uid") or "").strip()
+            if target_uid:
+                target_ws = self._work_sessions.get(target_uid)
+                if target_ws is None:
+                    return cp_error(
+                        "generic_err_object_not_found", f"Session [{target_uid}] not found", status_code=404
+                    )
+                if binding is not None and binding.domain not in ("System Data", target_ws.domain):
+                    return cp_error(
+                        "err_validation_failed",
+                        f"Session bound to domain [{binding.domain}] cannot disconnect session in [{target_ws.domain}]",
+                        status_code=400,
+                    )
+            else:
+                target_ws = active_ws
+
+            if target_ws is not None:
+                for b in self._sid_bindings.values():
+                    if b.session_uid == target_ws.uid and b.active:
+                        b.active = False
+                if target_ws.state == "open":
+                    target_ws.state = "disconnected"
+                    target_ws.last_modify_posix = self._next_timestamp_ms()
+                return cp_ok(target_ws.to_checkpoint_dict())
+            if binding is not None:
+                binding.active = False
             return cp_ok({"message": "OK"})
 
         if clean_cmd == "keepalive":
@@ -2382,6 +2474,44 @@ class FileReplayApiMock(ApiPort):
         if clean_cmd == "show-changes":
             return self._handle_show_changes(dom_name, req, binding=binding, wait_for_task=wait_for_task)
 
+        if clean_cmd == "show-checkpoint-host":
+            lookup = str(req.get("name") or req.get("uid") or "").strip()
+            details_level = str(req.get("details-level") or "full")
+            candidate_scopes: list[dict[str, Any]] = []
+            eff_dom = self._effective_domain_files(dom_name, binding)
+            if isinstance(eff_dom, dict):
+                candidate_scopes.append(eff_dom)
+            for extra_dom in ("System Data", "SMC User", "Global"):
+                if extra_dom != dom_name and isinstance(self._domain_data.get(extra_dom), dict):
+                    candidate_scopes.append(self._domain_data[extra_dom])
+            for d_name, d_files in self._domain_data.items():
+                if d_name not in (dom_name, "System Data", "SMC User", "Global") and isinstance(d_files, dict):
+                    candidate_scopes.append(d_files)
+            for scope_files in candidate_scopes:
+                for bucket_cmd in ("show-checkpoint-hosts", "show-gateways-and-servers"):
+                    for obj in scope_files.get(bucket_cmd, {}).get("objects", []):
+                        if isinstance(obj, dict) and (
+                            not lookup or obj.get("uid") == lookup or obj.get("name") == lookup
+                        ):
+                            return cp_ok(_project_details_level(obj, details_level))
+            for mds_obj in self._show_mdss.get("objects", []):
+                if isinstance(mds_obj, dict) and (mds_obj.get("uid") == lookup or mds_obj.get("name") == lookup):
+                    return cp_ok(_project_details_level(mds_obj, details_level))
+            if lookup == mgmt_name and "SMC User" in self._domain_data:
+                return cp_ok(
+                    {
+                        "uid": f"uid-chost-{mgmt_name}",
+                        "name": mgmt_name,
+                        "type": "checkpoint-host",
+                        "domain": {"uid": "uid-dom-smc-user", "name": "SMC User", "domain-type": "domain"},
+                    }
+                )
+            return cp_error(
+                "generic_err_object_not_found",
+                f"Requested Check Point host [{lookup}] not found",
+                status_code=404,
+            )
+
         # 4. System Data fallback commands
         if dom_name == "System Data":
             if clean_cmd == "show-last-published-session":
@@ -2449,7 +2579,15 @@ class FileReplayApiMock(ApiPort):
         if (
             mutating
             or clean_cmd in CMD_TO_ENTITY_ACTION
-            or clean_cmd.startswith(("show-access-rule", "show-access-section", "show-nat-rule", "show-nat-section"))
+            or (
+                clean_cmd.startswith("show-")
+                and not clean_cmd.endswith("-rulebase")
+                and any(
+                    clean_cmd.endswith(f"-{rk}-{sfx}")
+                    for rk in ("access", "nat", "https", "threat")
+                    for sfx in ("rule", "section")
+                )
+            )
         ):
             is_write = mutating
             if is_write and active_ws is not None:
@@ -2551,13 +2689,26 @@ class FileReplayApiMock(ApiPort):
             filtered = [g for g in all_generic if not name_filter or g.get("name") == name_filter]
             return cp_ok(self._paginate_list(filtered, req, collection_key="objects"))
 
-        if clean_cmd == "show-access-rulebase":
+        if clean_cmd in ("show-access-rulebase", "show-https-rulebase", "show-threat-rulebase"):
+            rb_specs = {
+                "show-access-rulebase": ("show-access-layers", "access-layers", "access"),
+                "show-https-rulebase": ("show-https-layers", "https-layers", "HTTPS"),
+                "show-threat-rulebase": ("show-threat-layers", "threat-layers", "Threat"),
+            }
+            lyr_store, lyr_key, label = rb_specs[clean_cmd]
             lookup = str(req.get("uid") or req.get("name") or "")
-            layer_payload = _resolve_access_layer_payload(dom_files, global_files, lookup)
+            layer_payload = _resolve_layer_payload(
+                dom_files,
+                global_files,
+                lookup,
+                store_key=clean_cmd,
+                layer_store_key=lyr_store,
+                layer_list_key=lyr_key,
+            )
             if layer_payload is None:
                 return cp_error(
                     "generic_err_object_not_found",
-                    f"Requested access layer [{lookup}] not found in {dom_name}",
+                    f"Requested {label} layer [{lookup}] not found in {dom_name}",
                     status_code=404,
                 )
             sliced_rb = slice_rulebase_with_sections(
@@ -2625,13 +2776,21 @@ class FileReplayApiMock(ApiPort):
                         return cp_ok(copy.deepcopy(pkg))
             return cp_error("generic_err_object_not_found", f"Package [{pkg_lookup}] not found", status_code=404)
 
-        if clean_cmd == "show-access-layer":
+        if clean_cmd in ("show-access-layer", "show-https-layer", "show-threat-layer"):
+            layer_cmd_meta = {
+                "show-access-layer": ("show-access-layers", "access-layers", "Access"),
+                "show-https-layer": ("show-https-layers", "https-layers", "HTTPS"),
+                "show-threat-layer": ("show-threat-layers", "threat-layers", "Threat"),
+            }
+            lyr_store, lyr_key, lyr_label = layer_cmd_meta[clean_cmd]
             layer_lookup = str(req.get("name") or req.get("uid") or "")
             for scope_files in (dom_files, global_files if dom_name != "Global" else {}):
-                for lyr in scope_files.get("show-access-layers", {}).get("access-layers", []):
+                for lyr in scope_files.get(lyr_store, {}).get(lyr_key, []):
                     if lyr.get("name") == layer_lookup or lyr.get("uid") == layer_lookup:
                         return cp_ok(copy.deepcopy(lyr))
-            return cp_error("generic_err_object_not_found", f"Access layer [{layer_lookup}] not found", status_code=404)
+            return cp_error(
+                "generic_err_object_not_found", f"{lyr_label} layer [{layer_lookup}] not found", status_code=404
+            )
 
         if clean_cmd == "show-object":
             lookup_uid = str(req.get("uid") or req.get("name") or "")
@@ -2669,16 +2828,138 @@ class FileReplayApiMock(ApiPort):
             )
             return cp_ok(self._paginate_list(matched, req, collection_key="objects"))
 
+        if clean_cmd in ("verify-policy", "install-policy"):
+            pkg_lookup = str(req.get("policy-package") or req.get("package") or "").strip()
+            all_pkgs = [
+                pkg
+                for scope_files in (dom_files, global_files if dom_name != "Global" else {})
+                for pkg in scope_files.get("show-packages", {}).get("packages", [])
+                if isinstance(pkg, dict)
+            ]
+            if pkg_lookup:
+                matched_pkg = next(
+                    (p for p in all_pkgs if p.get("name") == pkg_lookup or p.get("uid") == pkg_lookup),
+                    None,
+                )
+                if matched_pkg is None:
+                    return cp_error(
+                        "generic_err_object_not_found",
+                        f"Requested policy package [{pkg_lookup}] not found in {dom_name}",
+                        status_code=404,
+                    )
+                eff_pkg = str(matched_pkg.get("name") or pkg_lookup)
+            else:
+                eff_pkg = str(all_pkgs[0].get("name")) if all_pkgs else "Standard"
+
+            if clean_cmd == "verify-policy":
+                tid = self._next_task_id()
+                t_obj = {
+                    "uid": tid,
+                    "task-id": tid,
+                    "task-name": f"Verify Policy ({eff_pkg})",
+                    "status": "succeeded",
+                    "progress-percentage": 100,
+                    "suppressed": False,
+                    "comments": f"Package '{eff_pkg}' verified with 0 errors.",
+                    "task-details": [
+                        {
+                            "uid": self._allocate_uid("td"),
+                            "statusCode": "succeeded",
+                            "statusDescription": "Succeeded",
+                            "errors": [],
+                            "warnings": [],
+                        }
+                    ],
+                }
+                self._tasks[tid] = t_obj
+                if wait_for_task:
+                    return cp_ok({"tasks": [copy.deepcopy(t_obj)]}, task_id=tid)
+                return cp_ok({"task-id": tid}, task_id=tid)
+
+            raw_targets = req.get("targets")
+            req_targets = (
+                [str(raw_targets).strip()]
+                if isinstance(raw_targets, str)
+                else ([str(t).strip() for t in raw_targets if str(t).strip()] if isinstance(raw_targets, list) else [])
+            )
+            if not req_targets:
+                return cp_error("err_validation_failed", "install-policy: 'targets' is required", status_code=400)
+
+            all_gws = [
+                gw
+                for scope_files in (dom_files, global_files if dom_name != "Global" else {})
+                for gw in scope_files.get("show-gateways-and-servers", {}).get("objects", [])
+                if isinstance(gw, dict)
+            ]
+            resolved_targets: list[str] = []
+            for tgt in req_targets:
+                if tgt.lower() == "all":
+                    for gw in all_gws:
+                        gw_name = str(gw.get("name") or gw.get("uid") or "")
+                        if gw_name and gw_name not in resolved_targets:
+                            resolved_targets.append(gw_name)
+                    continue
+                matched_gw = next(
+                    (gw for gw in all_gws if gw.get("name") == tgt or gw.get("uid") == tgt),
+                    None,
+                )
+                if matched_gw is None:
+                    return cp_error(
+                        "generic_err_object_not_found",
+                        f"Requested install target [{tgt}] not found in {dom_name}",
+                        status_code=404,
+                    )
+                resolved_targets.append(str(matched_gw.get("name") or tgt))
+
+            tid = self._next_task_id()
+            t_obj = {
+                "uid": tid,
+                "task-id": tid,
+                "task-name": f"Install Policy ({eff_pkg})",
+                "status": "succeeded",
+                "progress-percentage": 100,
+                "suppressed": False,
+                "installed-targets": list(resolved_targets),
+                "task-details": [
+                    {
+                        "uid": self._allocate_uid("td"),
+                        "gatewayName": tgt_name,
+                        "statusCode": "succeeded",
+                        "statusDescription": "Succeeded",
+                        "errors": [],
+                        "warnings": [],
+                    }
+                    for tgt_name in resolved_targets
+                ],
+            }
+            self._tasks[tid] = t_obj
+            if wait_for_task:
+                return cp_ok({"tasks": [copy.deepcopy(t_obj)]}, task_id=tid)
+            return cp_ok({"task-id": tid}, task_id=tid)
+
         # Standard paginated listing commands (`show-gateways-and-servers`, `show-hosts`, `show-networks`, etc.)
         if clean_cmd in dom_files and isinstance(dom_files[clean_cmd], dict):
             file_payload = dom_files[clean_cmd]
             col_key = "objects"
-            for candidate_key in ("objects", "packages", "access-layers", "nat-rules", "sessions"):
+            for candidate_key in (
+                "objects",
+                "packages",
+                "access-layers",
+                "https-layers",
+                "threat-layers",
+                "nat-rules",
+                "sessions",
+            ):
                 if isinstance(file_payload.get(candidate_key), list):
                     col_key = candidate_key
                     break
             items = file_payload.get(col_key, [])
             return cp_ok(self._paginate_list(items, req, collection_key=col_key))
+
+        if clean_cmd == "show-https-layers":
+            return cp_ok({"https-layers": [], "from": 0, "to": 0, "total": 0})
+        if clean_cmd == "show-threat-layers":
+            return cp_ok({"threat-layers": [], "from": 0, "to": 0, "total": 0})
 
         # Empty paginated response for optional plural object/service/layer types not populated in fixture
         if clean_cmd.startswith(
