@@ -261,6 +261,10 @@ class StagedSessionInfo(BaseModel):
         """Return the raw session identifier for external workflow continuation (never included in `repr()`)."""
         return self._sid
 
+    def clear_sid(self) -> None:
+        """Clear the active SID after logout while preserving session provenance."""
+        self._sid = ""
+
     def __repr__(self) -> str:
         sid_state = REDACTED_PLACEHOLDER if self._sid else None
         return (

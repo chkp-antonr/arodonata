@@ -724,6 +724,7 @@ class ArodonataClient:
         server_ip: str | None = None,
     ) -> Awaitable[bool]:
         """Log out a specific session identifier."""
+        self._cpcrud.notify_sid_logged_out(mgmt_name, sid)
         return self._api.logout_sid(mgmt_name, sid, server_ip=server_ip)
 
     # ------------------------------------------------------------------

@@ -199,10 +199,17 @@ async def test_e2e_in_process_mmp_decommission_cpcrud_reports_and_mcp(tmp_path: 
         )
         assert len(staged_report.staged_sessions) == 1
         staged_uid = staged_report.staged_sessions[0].session_uid
+        staged_sid = staged_report.staged_sessions[0].sid
+        assert staged_sid
         assert not (await api_mock.api_call("mds", "show-host", {"name": "cpcrud-e2e-host"}, domain="Branch")).success
 
+        # Mimic MMP try_verify_draft logout_sid before staged discard: session stays disconnected & adopts without 401
+        call_log_start = len(api_mock.call_log)
+        assert await client.logout_sid("mds", staged_sid) is True
         disc_res = await client.cpcrud.discard_staged_session("mds", "Branch", session_uid=staged_uid)
         assert disc_res.success
+        discard_slice = api_mock.call_log[call_log_start:]
+        assert not any(c.get("error_code") == "generic_err_invalid_session_id" for c in discard_slice)
 
         pub_report = await client.cpcrud.apply(plan, no_publish=False, session_name="cpcrud-e2e-pub")
         assert list(pub_report.published_sessions.keys()) == ["mds:Branch"]

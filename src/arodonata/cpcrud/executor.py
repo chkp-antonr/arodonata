@@ -1519,6 +1519,14 @@ class Executor:
         assert self._last_staged_publish_result is not None
         return self._last_staged_publish_result
 
+    def notify_sid_logged_out(self, mgmt_name: str, sid: str) -> None:
+        """Clear `_sid` on any tracked staged session whose `sid` was explicitly logged out."""
+        if not sid:
+            return
+        for entry in self._staged_sessions.values():
+            if entry.sid == sid and (not mgmt_name or entry.mgmt_name == mgmt_name):
+                entry.clear_sid()
+
     @traced
     async def discard_staged_session(
         self,

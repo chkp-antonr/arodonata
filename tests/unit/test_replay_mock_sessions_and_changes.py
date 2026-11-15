@@ -201,11 +201,31 @@ async def test_cross_session_uid_locks_and_release_paths() -> None:
     assert rule_conflict.status_code == 400
     assert rule_conflict.error_code == "generic_err_object_locked"
 
-    # logout sid_a -> discards staged edits & frees section/rule locks
+    # logout sid_a with uncommitted edits -> transitions to disconnected and preserves section/rule locks
+    sess_a_uid = str((await api.api_call("mds", "show-session", {}, domain="Branch", sid=sid_a)).data["uid"])
     out_a = await api.logout_sid("mds", sid_a)
     assert out_a is True
 
     sid_c, _ = await api.create_dedicated_session("mds", "Branch")
+    still_locked = await api.api_call(
+        "mds",
+        "set-access-section",
+        {"layer": "Branch_Standard_Pkg Network", "uid": sec_uid, "new-name": "StillLocked"},
+        domain="Branch",
+        sid=sid_c,
+    )
+    assert not still_locked.success
+    assert still_locked.error_code == "generic_err_object_locked"
+
+    # Explicit discard of the disconnected session releases uncommitted edits & locks
+    disc_disconnected = await api.api_call(
+        "mds",
+        "discard",
+        {"uid": sess_a_uid},
+        domain="Branch",
+        sid=sid_c,
+    )
+    assert disc_disconnected.success
     edit_c = await api.api_call(
         "mds",
         "set-host",
