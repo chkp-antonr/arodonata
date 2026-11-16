@@ -11,7 +11,17 @@ from typing import Any
 from ._emulator_models import BUILTIN_SENTINELS, ENTITY_SPECS
 
 _IGNORED_DIFF_FIELDS: frozenset[str] = frozenset({"meta-info", "last-modify-time", "layer-uid"})
-_RULE_LIST_REF_FIELDS: tuple[str, ...] = ("source", "destination", "service", "install-on", "vpn", "content", "time")
+_RULE_LIST_REF_FIELDS: tuple[str, ...] = (
+    "source",
+    "destination",
+    "service",
+    "install-on",
+    "protected-scope",
+    "site-category",
+    "vpn",
+    "content",
+    "time",
+)
 _RULE_SCALAR_REF_FIELDS: tuple[str, ...] = (
     "action",
     "original-source",
@@ -65,7 +75,7 @@ def _build_uid_summary_index(*domain_maps: Mapping[str, Any] | None) -> dict[str
                     if isinstance(item.get("domain"), Mapping):
                         summary["domain"] = copy.deepcopy(dict(item["domain"]))
                     index.setdefault(uid, summary)
-        for rb_cmd in ("show-access-rulebase", "show-nat-rulebase"):
+        for rb_cmd in ("show-access-rulebase", "show-nat-rulebase", "show-https-rulebase", "show-threat-rulebase"):
             rb_store = dom_map.get(rb_cmd)
             if not isinstance(rb_store, Mapping):
                 continue
@@ -202,13 +212,14 @@ def _layer_to_package_map(dom_map: Mapping[str, Any]) -> dict[str, str]:
         pkg_name = str(pkg.get("name") or "")
         if not pkg_name:
             continue
-        for lyr in pkg.get("access-layers", []):
-            if not isinstance(lyr, Mapping):
-                continue
-            if lyr.get("uid"):
-                out[str(lyr["uid"])] = pkg_name
-            if lyr.get("name"):
-                out[str(lyr["name"])] = pkg_name
+        for layer_key in ("access-layers", "https-layers", "threat-layers"):
+            for lyr in pkg.get(layer_key, []):
+                if not isinstance(lyr, Mapping):
+                    continue
+                if lyr.get("uid"):
+                    out[str(lyr["uid"])] = pkg_name
+                if lyr.get("name"):
+                    out[str(lyr["name"])] = pkg_name
     return out
 
 
@@ -379,6 +390,8 @@ def compute_session_delta(
 
     _diff_rulebase_bucket("show-access-rulebase", is_nat=False)
     _diff_rulebase_bucket("show-nat-rulebase", is_nat=True)
+    _diff_rulebase_bucket("show-https-rulebase", is_nat=False)
+    _diff_rulebase_bucket("show-threat-rulebase", is_nat=False)
 
     container: dict[str, Any] = {
         "added-objects": added_objects,

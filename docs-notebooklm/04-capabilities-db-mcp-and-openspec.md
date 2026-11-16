@@ -21,7 +21,7 @@ In the enterprise automation ecosystem (such as **FPCR v2**, web portals, CLIs, 
 - Database-backed caching across **15 `arodonata_*`-prefixed SQLModel tables** (PostgreSQL `asyncpg` and SQLite `aiosqlite`) with SHA-256 schema hash auto-migration, naive UTC timestamp uniformity (`tzinfo=None`), and distributed locks (`arodonata_distributed_locks`).
 - Incremental (`show-changes`) and full synchronization across domains, objects, services, assets (gateways/clusters/VSX), and rulebases with typed streaming progress events (`SyncProgressEvent`).
 - Isolated write sessions (`WriteSession`) with `contextvars`-bound `SessionOverlay` for read-your-own-writes isolation prior to `publish`.
-- Declarative Policy-as-Code (`CPCRUDService`): offline JSON Schema validation, `HybridStateReader`, two-axis conflict policies (`NameConflictPolicy` × `IpConflictPolicy`), pre-publish staleness verification (`DomainStamp`), staged session handoff (`take-over-session`), and compensating rollback generation (`inverse`).
+- Declarative Policy-as-Code (`CPCRUDService`): offline JSON Schema validation, `HybridStateReader`, two-axis conflict policies (`NameConflictPolicy` × `IpConflictPolicy`), pre-publish staleness verification (`DomainStamp`), staged session handoff (`take-over-session`), compensating rollback generation (`inverse`), and full lifecycle support for network objects, services, `application-site` custom URL/regex objects, groups, and rules.
 - Normalized 6-table rulebase cache with exact SmartConsole hierarchical rule numbering (`1`, `2.1`, `3`), reverse UID lookup (`locate_rules`), and local rulebase filtering (`filter_rulebase`, including `output_format="cpcrud"`).
 - Auditable change evidence collection and offline multi-format rendering (`HTML`, `Markdown`, `JSON`).
 - Consolidated Model Context Protocol (`arodonata.mcp`) server with 13 cache-aligned core tools and 5 tamper-proof HMAC-signed CPCRUD tools.
@@ -539,7 +539,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Column, DateTime
+from sqlalchemy import JSON, BigInteger, Column, DateTime
 from sqlmodel import Field, SQLModel
 
 from arodonata.core.errors import REDACTED_PLACEHOLDER
@@ -1094,6 +1094,69 @@ class ThreatRuleRecord(SQLModel, table=True):
     )
 
 
+class GatewayTopologyRecord(SQLModel, table=True):
+    """Cached pre-expanded IPv4 topology interval behind a gateway interface in `arodonata_gateway_topology`."""
+
+    __tablename__ = "arodonata_gateway_topology"
+
+    id: str = Field(primary_key=True)
+    mgmt_name: str = Field(index=True)
+    domain_name: str = Field(index=True)
+    gateway_id: str = Field(default="", index=True)
+    gateway_asset_id: str = Field(default="", index=True)
+    gateway_uid: str = Field(index=True)
+    gateway_name: str = Field(index=True)
+    gateway_type: str = Field(default="simple-gateway")
+    interface_name: str = Field(index=True)
+    interface_ipv4: str | None = Field(default=None)
+    interface_mask_length: int | None = Field(default=None)
+    topology_zone: str = Field(default="internal", index=True)
+    leads_to_dmz: bool = Field(default=False)
+    anti_spoofing_mode: str = Field(default="unknown")
+    source_type: str = Field(default="interface_connected", index=True)
+    source_ref: str = Field(default="")
+    cidr_or_range: str = Field(default="")
+    ip_first_int: int = Field(
+        sa_column=Column(BigInteger, nullable=False, index=True),
+    )
+    ip_last_int: int = Field(
+        sa_column=Column(BigInteger, nullable=False, index=True),
+    )
+    prefix_len: int = Field(default=32)
+    updated_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=Column(DateTime(timezone=False), nullable=False),
+    )
+
+
+class TopologyAnnotationRecord(SQLModel, table=True):
+    """Persistent administrator override, standby route marker, or IPAM metadata in `arodonata_topology_annotations`."""
+
+    __tablename__ = "arodonata_topology_annotations"
+
+    id: str = Field(primary_key=True)
+    mgmt_name: str = Field(index=True)
+    domain_name: str = Field(index=True)
+    gateway_uid: str = Field(index=True)
+    gateway_name: str = Field(default="", index=True)
+    interface_name: str = Field(default="*", index=True)
+    cidr_or_range: str = Field(default="*", index=True)
+    trust_static_topology: bool | None = Field(default=None)
+    disposition: str | None = Field(default=None, index=True)
+    topology_zone: str | None = Field(default=None)
+    zone: str = Field(default="")
+    site: str = Field(default="")
+    comment: str = Field(default="")
+    custom_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSON, nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=Column(DateTime(timezone=False), nullable=False),
+    )
+
+
 ARODONATA_TABLE_NAMES: frozenset[str] = frozenset(
     {
         SchemaVersionRecord.__tablename__,
@@ -1111,6 +1174,8 @@ ARODONATA_TABLE_NAMES: frozenset[str] = frozenset(
         NatRuleRecord.__tablename__,
         HttpsRuleRecord.__tablename__,
         ThreatRuleRecord.__tablename__,
+        GatewayTopologyRecord.__tablename__,
+        TopologyAnnotationRecord.__tablename__,
     }
 )
 ```
@@ -1257,6 +1322,56 @@ app.mount("/mcp", mcp_asgi)
 
 ---
 
+### OpenSpec Capability: `api-reference` (`openspec/specs/api-reference/spec.md`)
+
+# api-reference Specification
+
+## Purpose
+
+Defines the bundled multi-version Check Point API schema index (`cp_api_index.json.gz`, covering Management API `v1.9` through `v2.2` and Gaia API `v2.0.1`), lazy in-memory `ApiReferenceEngine`, two-step command discovery (`search_commands` and `describe_command` with dynamic version filtering), and offline request payload validation (`validate_payload`).
+
+## Requirements
+
+### Requirement: Bundled Multi-Version API Schema Index and Lazy Loading
+
+`arodonata.api_reference` SHALL package the compressed multi-version Check Point API schema bundle (`cp_api_index.json.gz`, covering Management API `v1.9`, `v2`, `v2.1`, `v2.2` and Gaia API `v2.0.1`) inside the installed distribution, load and decompress it lazily in memory on first query (with optional custom `index_path` override), and perform zero network or database calls.
+
+#### Scenario: Default bundled index loads lazily without network or database access
+
+- **WHEN** `get_api_reference()` or `ApiReferenceEngine.default()` is called in an offline process with no `ArodonataClient` or database configured
+- **THEN** it SHALL decompress the bundled `cp_api_index.json.gz` into memory once, cache the singleton instance for subsequent calls, and expose `meta` (`versions`, `latest`, `commands_count`, `shared_objects_count`, `enums_count`)
+
+### Requirement: Two-Step Version-Aware Command Discovery (Search and Describe)
+
+`ApiReferenceEngine` (and top-level helpers `search_api_commands` / `describe_api_command`) SHALL provide a two-step lookup contract: `search_commands` returning ranked lightweight command summaries filtered by version, category, `crud_type`, and `api_family`, and `describe_command` accepting one or more command names and returning resolved schemas (`fields`, `field_alternatives`, `nested_objects`, `enums`, `example`) dynamically filtered to the target API version.
+
+#### Scenario: Step 1 search filters by API version, CRUD type, and category
+
+- **WHEN** `search_commands("export-access-rulebase", version="v1.9")` and `search_commands("export-access-rulebase", version="v2.2")` are called
+- **THEN** the `v1.9` search SHALL exclude commands added after `v1.9`, while the `v2.2` search SHALL return the matching command summary with `added_in`, `supported_versions`, and `short_description`
+
+#### Scenario: Step 2 describe dynamically filters fields and nested objects by target version
+
+- **WHEN** `describe_command("add-interface", version="v1.9")` and `describe_command("add-interface", version="v2.2")` are called
+- **THEN** the `v1.9` schema SHALL include `v1.9`-only fields (such as `gateway-owner` and `anti-spoofing-enabled`) and omit `v2+`-only fields, while the `v2.2` schema SHALL include only fields and nested objects valid in `v2.2`
+
+#### Scenario: Batch describe accepts multiple command names in a single call
+
+- **WHEN** `describe_command(["add-host", "set-host"], version="v2.2")` is called with a list of command names
+- **THEN** it SHALL return a mapping or list of resolved command descriptions for each requested command (and report any unknown or version-unsupported command names clearly)
+
+### Requirement: Offline Request Payload Validation Against Versioned Schema
+
+`ApiReferenceEngine.validate_payload(command, payload, *, version="v2.2")` (and `validate_api_payload`) SHALL validate a candidate request `payload` dictionary offline against the command's schema for `version`, reporting structured validation errors for unknown or version-unsupported commands and fields, missing `required` fields, unsatisfied or conflicting `field_alternatives`, invalid types, and enum `valid_values` mismatches.
+
+#### Scenario: Payload validation catches missing required fields and version-unsupported parameters
+
+- **WHEN** `validate_payload("add-host", {"color": "invalid-color"}, version="v2.2")` is called
+- **THEN** it SHALL return `valid=False` with actionable errors identifying missing required fields (`name` and `ip-address` / `ipv4-address` / `ipv6-address`) and the invalid enum value for `color`
+
+
+---
+
 ### OpenSpec Capability: `cache-and-sync` (`openspec/specs/cache-and-sync/spec.md`)
 
 # Cache, Synchronization, and Search Specification
@@ -1302,27 +1417,27 @@ Defines the database-backed cache layer (`DatabaseManager`, `SqlCacheAdapter`, `
 
 ### Requirement: Object Cache Refresh Modes and Incremental Sync
 
-`ObjectService` and `DomainSyncCoordinator` SHALL support four `CacheMode` values (`"cache"`, `"smart"`, `"smart-fast"`, and `"force"`), default to syncing `("host", "network", "address-range", "group", "dns-domain")` into `arodonata_objects`, track revision state per `(mgmt_name, domain_name, scope, item_type)` in `arodonata_domain_sync_state` within the same atomic transaction as data writes using dialect `ON CONFLICT` upserts, and expose `refresh_objects` and `stream_refresh_objects`.
+`ObjectService` and `DomainSyncCoordinator` SHALL support four `CacheMode` values (`"cache"`, `"smart"`, `"smart-fast"`, and `"force"`), default to syncing `("host", "network", "address-range", "group", "dns-domain")` into `arodonata_objects`, track revision state per `(mgmt_name, domain_name, scope, item_type)` in `arodonata_domain_sync_state` within the same atomic transaction as data writes using dialect `ON CONFLICT` upserts, expose `refresh_objects` and `stream_refresh_objects`, and emit structured `arlogi` log messages for domain sync progress (`DEBUG` on domain sync start, completion, skip, and batch summary; `WARNING` on domain sync failure).
 
 #### Scenario: Smart/Check refresh reloads only stale domains atomically and handles never-published domains
 
 - **WHEN** `await client.refresh_objects(mode="smart")` or a read helper with `cache_mode="smart"` runs
-- **THEN** the coordinator SHALL compare each domain's `show-last-published-session` publish timestamp (`last_published_at`) and UID (`last_session_uid`, when timestamps match) against the requested `item_type` rows in `arodonata_domain_sync_state` (preserving `last_published_at=None` for never-published domains rather than fabricating `now`), verify the shared session is clean (failing closed if `show-session` fails), and reload only missing or stale `item_type` slices and their `arodonata_domain_sync_state` rows in a single atomic transaction under a renewed per-domain distributed lock
+- **THEN** the coordinator SHALL compare each domain's `show-last-published-session` publish timestamp (`last_published_at`) and UID (`last_session_uid`, when timestamps match) against the requested `item_type` rows in `arodonata_domain_sync_state` (preserving `last_published_at=None` for never-published domains rather than fabricating `now`), verify the shared session is clean (failing closed if `show-session` fails), reload only missing or stale `item_type` slices and their `arodonata_domain_sync_state` rows in a single atomic transaction under a renewed per-domain distributed lock, and log `DEBUG` entries for domain sync progress (`DomainSyncStartedEvent`, `DomainSyncCompletedEvent`, `DomainSyncSkippedEvent`, and `SyncCompletedEvent`)
 
 #### Scenario: Incremental refresh applies show-changes diff or falls back safely
 
 - **WHEN** `await client.refresh_objects(mode="smart-fast")` or a read helper with `cache_mode="smart-fast"` detects stale `item_type` rows with a known baseline in `arodonata_domain_sync_state`
 - **THEN** the service SHALL query `show-changes` preferring `from-session` (`last_session_uid`) over `from-date` (formatting `from-date` as an explicit UTC ISO-8601 string with `Z` suffix when used), unwrap `new-object` / `old-object` change entries, delete removed objects, upsert added/modified objects via dialect `ON CONFLICT`, and update `arodonata_domain_sync_state` atomically; if changes exceed `max_incremental_changes` (default 500) or any error occurs, it SHALL fall back automatically to an atomic type-scoped reload
 
-#### Scenario: Refresh failure visibility and InvalidCredentialsError handling
+#### Scenario: Refresh failure visibility, unreachable server resilience, and InvalidCredentialsError handling
 
-- **WHEN** a domain's staleness probe or refresh fails with an API/authentication error (`InvalidCredentialsError`, etc.) versus encountering `LockAcquisitionError` because another worker is actively refreshing that domain
-- **THEN** genuine errors SHALL be recorded in `RefreshOutcome.failed_domains`, `arodonata_domain_sync_state.last_error`, and `DomainSyncFailedEvent` with `redact_sid(..., known_sids=...)` applied while keeping previously cached objects intact, whereas `LockAcquisitionError` SHALL NOT overwrite `arodonata_domain_sync_state.status` as `"failed"` or emit a false failure event over the active worker's sync
+- **WHEN** a domain's staleness probe or refresh fails with an API/authentication error (`InvalidCredentialsError`, etc.), when one management server in a multi-server refresh (`mgmt_name=None`) fails during domain discovery (`get_domains`), or when a domain encounters `LockAcquisitionError` because another worker is actively refreshing that domain
+- **THEN** genuine errors (including a server whose domain discovery failed) SHALL be recorded in `RefreshOutcome.failed_domains`, `arodonata_domain_sync_state.last_error` (where applicable), and `DomainSyncFailedEvent` (logged at `WARNING` level) with `redact_sid(..., known_sids=...)` applied while keeping previously cached objects intact and continuing synchronization on all reachable servers, whereas `LockAcquisitionError` SHALL NOT overwrite `arodonata_domain_sync_state.status` as `"failed"` or emit a false failure event over the active worker's sync
 
 #### Scenario: Parallel domain refresh per MDS member and background first-use warm-up
 
 - **WHEN** `DomainSyncCoordinator.ensure()` refreshes multiple domains
-- **THEN** domains SHALL be refreshed concurrently via `asyncio.TaskGroup` at up to `max(1, concurrent_limit - 1)` domains at once per MDS member (`active_mds_ip`, cancelling sibling tasks immediately if a fatal `ServerIdentityError` occurs), while `get_domains()` SHALL return the domain list without implicitly starting background object-cache warm-up (warm-up is invoked explicitly via `start_object_cache_warmup`)
+- **THEN** domains SHALL be refreshed concurrently via `asyncio.TaskGroup` at up to `settings.domain_sync_concurrency` (default `min(2, max(1, concurrent_limit - 1))`) domains at once per MDS member (`active_mds_ip`, shared process-wide across coordinators attached to the same database engine while reusing the caller's active MDS permit on nested re-entrant coordinator calls, coalescing concurrent in-process syncs of the same `(mgmt_name, domain_name, scope)`, writing cached rows in bounded Core batches, and cancelling sibling tasks immediately if a fatal `ServerIdentityError` occurs), while `get_domains()` SHALL return the domain list without implicitly starting background object-cache warm-up (warm-up is invoked explicitly via `start_object_cache_warmup`)
 
 ### Requirement: Dedicated Service Cache Table and Selective Refresh
 
@@ -1340,12 +1455,12 @@ Defines the database-backed cache layer (`DatabaseManager`, `SqlCacheAdapter`, `
 
 ### Requirement: Asset and Gateway Cache with Cluster and VSX Relationships
 
-`AssetRefreshService` (`refresh_assets`, `stream_refresh_assets`) and `SqlCacheAdapter` SHALL persist gateways, clusters, cluster members, VSX gateways/clusters (via encapsulated `generic-object` topology queries), and management servers in the `arodonata_assets` table across domains concurrently via `DomainSyncCoordinator` (`scope="assets"`, `item_type="*"`) with both UID primary keys (`id`) and indexed human-readable composite identifiers (`asset_id`), and enrich parent-child relationships (`parent_uid`, `parent_name`, `parent_id`, `parent_asset_id`, `member_uids`, `member_asset_ids`, `virtual_system_uids`, `virtual_system_asset_ids`) via `ClusterRelationshipManager` and `VSXRelationshipManager`, including cross-domain VSX parent/child links on the same management server.
+`AssetRefreshService` (`refresh_assets`, `stream_refresh_assets`) and `SqlCacheAdapter` SHALL persist gateways, clusters, cluster members, VSX gateways/clusters (via encapsulated `generic-object` topology queries), and management servers in `arodonata_assets` concurrently across domains via `DomainSyncCoordinator` (`scope="assets"`, `item_type="*"`) with UID primary keys (`id`) and indexed composite identifiers (`asset_id`).
 
 #### Scenario: Concurrent domain asset collection with interleaved SSE events
 
 - **WHEN** `stream_refresh_assets()` runs across multiple servers and domains
-- **THEN** it SHALL collect domains concurrently per MDS member (`max(1, concurrent_limit - 1)`), persist rows in `arodonata_assets` (avoiding collision with host application `assets` tables), emit typed `SyncProgressEvent` items (convertible to `SSEEvent` via `adapters.sse`) tagged with `mgmt_name` and `domain`, link cluster members and VSX virtual systems to their parent asset UIDs and composite IDs (`parent_id`, `parent_asset_id`, `member_asset_ids`, `virtual_system_asset_ids`), and update `domain_sync_state` (`scope="assets"`, `item_type="*"`)
+- **THEN** it SHALL collect domains concurrently per MDS member (`settings.domain_sync_concurrency`, default `min(2, max(1, concurrent_limit - 1))`), persist rows in `arodonata_assets` (avoiding collision with host application `assets` tables), emit typed `SyncProgressEvent` items (convertible to `SSEEvent` via `adapters.sse`) tagged with `mgmt_name` and `domain`, link cluster members and VSX virtual systems to their parent asset UIDs and composite IDs (`parent_id`, `parent_asset_id`, `member_asset_ids`, `virtual_system_asset_ids`), and update `domain_sync_state` (`scope="assets"`, `item_type="*"`)
 
 #### Scenario: Cross-domain VSX gateway and Virtual System topology reconciliation
 
@@ -1378,17 +1493,81 @@ Defines the database-backed cache layer (`DatabaseManager`, `SqlCacheAdapter`, `
 
 ### Requirement: Cache-First Object Search with Recursive Group Membership Resolution
 
-`SearchService.search_objects()` SHALL classify comma-separated search terms (IPv4 address, CIDR subnet, address range, wildcard pattern, UID, human-readable composite identifier `object_id` / `id`, or object name), support `exact_match: bool = False` for case-insensitive exact name/FQDN matching, query cached objects (including any active `WriteSession` overlay in `contextvars`) across target servers and domains, and traverse parent group memberships up to `max_depth` (default 2), returning a typed `SearchResult` whose `GroupMembershipNode` entries include `id`, `object_id`, `parent_uids`, and `parent_object_ids`.
+`SearchService.search_objects()` SHALL classify comma-separated search terms (IPv4, CIDR, address range, wildcard, UID, composite ID, or name), support `exact_match: bool = False`, query cached objects with active `WriteSession` `contextvars` overlays across target servers/domains, and resolve parent group memberships up to `max_depth` (default 2) into `SearchResult` with dual UID and composite group links.
 
 #### Scenario: Search resolves direct matches and containing groups with human-readable composite IDs
 
 - **WHEN** `await client.search_objects("10.1.10.50", max_depth=2)` or `await client.search_objects("mds:General:hWebHost", max_depth=2)` is called
 - **THEN** it SHALL return a `SearchResult` containing both the matching host/network objects (reflecting any uncommitted `WriteSession` overlay in the current context) and the hierarchy of groups (`memberships`) that directly or transitively contain those objects, with each `GroupMembershipNode` populated with `id`, `object_id`, `parent_uids`, and `parent_object_ids`
 
-#### Scenario: Exact-match name search avoids partial substring matches
+#### Scenario: Exact-match search avoids partial name matches and wider supernets
 
-- **WHEN** `await client.search_objects(".example.com", exact_match=True)` is called on a domain containing `.example.com` and `sub.example.com`
-- **THEN** it SHALL return only `.example.com` (and its parent groups) without matching `sub.example.com`, while wildcard terms (`*.example.com`) continue to match via anchored `fnmatchcase`
+- **WHEN** `await client.search_objects(".example.com", exact_match=True)` is called on a domain containing `.example.com` and `sub.example.com`, or `await client.search_objects("10.192.13.0/24, 192.168.1.10", exact_match=True)` is called on a domain also containing a wider supernet (`10.0.0.0/8`)
+- **THEN** name search SHALL return only `.example.com` without matching `sub.example.com` (while wildcard terms `*.example.com` continue to match via anchored `fnmatchcase`), and IPv4/CIDR search SHALL match only exact hosts/subnets (or narrower subnets contained within a CIDR query) while excluding wider containing supernets such as `10.0.0.0/8`
+
+#### Scenario: Mixed object and gateway type filters partition cleanly between objects and assets
+
+- **WHEN** `await client.search_objects(query, types=["host", "network", "gateway"], cache_mode="smart")` is called
+- **THEN** `ObjectService` SHALL strip asset/service types (`"gateway"`, etc.) before calling Check Point `show-*` object endpoints so `arodonata_objects` refreshes cleanly without `Requested API type: not found`, and `SearchService.search_objects()` SHALL additionally refresh and match gateway/cluster/VSX assets (both primary `ipv4_address` and interface IPv4 addresses) from `arodonata_assets`
+
+### Requirement: Cluster and Cross-Domain VSX Parent-Child Topology Enrichment
+
+`ClusterRelationshipManager` and `VSXRelationshipManager` SHALL enrich cached `arodonata_assets` rows with bidirectional parent-child topology attributes (`parent_uid`, `parent_name`, `parent_id`, `parent_asset_id`, `member_uids`, `member_asset_ids`, `virtual_system_uids`, and `virtual_system_asset_ids`), including cross-domain VSX parent/child links on the same management server.
+
+#### Scenario: Cluster members and VSX virtual systems link bidirectionally to parent containers
+
+- **WHEN** asset refresh reconciles cluster members and VSX virtual systems on `mgmt_name`
+- **THEN** each child member or virtual system SHALL reference its parent's UID and composite `asset_id`, and each parent cluster or VSX container SHALL list all child UIDs and composite `asset_id`s across domains on `mgmt_name`
+
+### Requirement: Exclusive Coordinator-Synchronized Rulebase Cache Writes
+
+Shared `arodonata_rulebase_*` cache tables SHALL be written exclusively under `DomainSyncCoordinator` per-domain distributed locks after `verify_session_clean` succeeds and within an atomic transaction that updates `arodonata_domain_sync_state` (`scope="rulebase"`, `item_type="*"`); read-only consumers (including `arodonata.reports`) SHALL NEVER invoke `CachePort.replace_domain_rulebase` directly out-of-band.
+
+#### Scenario: Concurrent report generation cannot overwrite a newer stamped rulebase snapshot
+
+- **WHEN** `refresh_rulebases` updates `arodonata_rulebase_*` and `arodonata_domain_sync_state` while a concurrent `collect_change_report` call numbers rule changes
+- **THEN** `collect_change_report` SHALL NOT perform unlocked `replace_domain_rulebase` writes that could replace the newer cached rulebase under a fresh `DomainSyncState` stamp
+
+### Requirement: Cross-Domain Group Member Resolution with Ambiguity Detection
+
+`SearchService.get_group_members()` SHALL reject empty or whitespace-only `group_name_or_uid` inputs with `ValidationError`, and when `domain` is `None` (and not encoded in a `mgmt:domain:name` composite ID) SHALL resolve the target container across cached domains including `"Global"` using `cache_mode="cache"`, raising `AmbiguousObjectError` if matching containers exist in more than one domain.
+
+#### Scenario: Cross-domain group member lookup detects multi-domain name collision without whole-MDS sync
+
+- **WHEN** `SearchService.get_group_members(mgmt_name, None, "SharedGroup")` runs against a cache where `"SharedGroup"` exists in two distinct domains
+- **THEN** it SHALL execute zero remote domain refreshes (`cache_mode="cache"`) and raise `AmbiguousObjectError` enumerating the matching domains and composite identifiers
+
+### Requirement: On-Demand Application-Site Object Model and Synchronization
+
+`CPObject` and `ObjectService` SHALL support Check Point `application-site` objects on demand via `show-application-site` and `show-application-sites`, hydrating `primary_category`, `url_list`, and `urls_defined_as_regular_expression` fields from Check Point API responses and cached `raw_data`.
+
+#### Scenario: CPObject hydrates application-site URL list and regex flag from Check Point dict and DB cache
+
+- **WHEN** `CPObject.from_cp_dict()` or `SqlCacheAdapter` hydrates a Check Point `application-site` payload containing `primary-category`, `url-list`, and `urls-defined-as-regular-expression`
+- **THEN** the resulting `CPObject` instance SHALL expose `type == "application-site"`, `primary_category`, `url_list` as `list[str]`, and `urls_defined_as_regular_expression` as `bool | None`
+
+#### Scenario: On-demand refresh and query of application-site objects
+
+- **WHEN** `refresh_objects(types=["application-site"])` or `get_objects(types=["application-site"])` is invoked
+- **THEN** `ObjectService` SHALL query Check Point using `show-application-sites` (and `show-application-site` for single-item lookups), persist the rows in `arodonata_objects` with `item_type="application-site"` in `arodonata_domain_sync_state`, and return the hydrated `CPObject` entries
+
+### Requirement: Gateway Interface Topology Persistence and Coordinator Synchronization
+
+`SqlCacheAdapter` and `DatabaseManager` SHALL persist normalized gateway topology intervals in `arodonata_gateway_topology` (registered in `ARODONATA_TABLE_NAMES`), and `TopologyService` (`refresh_topology`, `stream_refresh_topology`) SHALL synchronize domain topology under `DomainSyncCoordinator` (`scope="topology"`, `item_type="*"`) with atomic per-domain replacement (`replace_domain_topology`).
+
+#### Scenario: Atomic domain topology replacement and sync state recording
+
+- **WHEN** `await client.refresh_topology(mgmt_name="mds1", domains=["Domain4"], mode="force")` completes
+- **THEN** `TopologyService` SHALL ensure domain assets and network objects are fresh, compute all `GatewayTopologyEntry` rows for `"Domain4"`, atomically replace existing `"Domain4"` rows in `arodonata_gateway_topology` alongside the updated `arodonata_domain_sync_state` row (`scope="topology"`, `item_type="*"`), and expose `"topology"` freshness in `SearchService.get_cache_status()`
+
+### Requirement: VSX Slot Generic Object Enrichment for Cross-Domain Virtual Systems
+
+`VSXRelationshipManager` SHALL query `com.checkpoint.objects.vsx_classes.dummy.CpmiVsxSlotObj` (`vsid == 0`) and `com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj` (`vsid > 0`) in addition to `CpmiVsxNetobj`, `CpmiVsxClusterNetobj`, `CpmiVsNetobj`, and `CpmiVsClusterNetobj`, linking cross-domain Virtual Systems via `targetCustomer` and `vsxGateway` and preserving slot `interfaces`, `interfaces_installed`, `routes`, and `routes_installed` on the Virtual System asset.
+
+#### Scenario: VSX slot objects in the VSX domain link a Virtual System in a tenant domain and attach VS routes
+
+- **WHEN** a VSX gateway's domain stores a `CpmiVsxSlotObj` (`vsid=0`, `vsxGateway="vsx-uid"`) and a `CpmiVsSlotObj` (`vsid=1`, `name="VS_Tenant"`, `targetCustomer="TenantDomain"`, `vsxGateway="vsx-uid"`, `routes=[...]`), while the `CpmiVsNetobj` asset `"VS_Tenant"` lives in `"TenantDomain"` without a direct `vsx-gateway` field
+- **THEN** `VSXRelationshipManager` SHALL link `" mds1:TenantDomain:VS_Tenant"` to parent `"mds1:VSXDomain:<vsx-name>"` and merge the slot's `routes` and `interfaces` metadata onto the `"VS_Tenant"` asset's `raw_data`
 
 
 ---
@@ -1405,7 +1584,7 @@ Defines read-only collection (`collect_change_report`), rulebase placement numbe
 
 ### Requirement: Scope Validation and Read-Only Change Collection
 
-`collect_change_report(client, scopes, ...)` SHALL validate `SessionScope` and `RangeScope` inputs strictly (raising `pydantic.ValidationError` or `ChangeReportInputError` on invalid bounds or naive datetimes), query `show-changes` read-only across target management servers and domains, deduplicate sessions named by multiple scopes, and record partial runtime failures as structured `ReportWarning` entries rather than aborting the whole report.
+`collect_change_report(api, cache, scopes, ...)` SHALL validate `SessionScope` and `RangeScope` inputs strictly (raising `pydantic.ValidationError` or `ChangeReportInputError` on invalid bounds or naive datetimes), bind unkeyed `OwnedSession` instances only to single-session scopes, query `show-changes` strictly read-only without directly mutating `CachePort` tables, deduplicate sessions, and record partial runtime failures as `ReportWarning` entries.
 
 #### Scenario: Single-session change collection via to-session query and container filtering
 
@@ -1419,22 +1598,42 @@ Defines read-only collection (`collect_change_report`), rulebase placement numbe
 
 #### Scenario: Reference UID name resolution with bounded show-object lookups
 
-- **WHEN** `show-changes` returns bare UIDs for group members or NAT fields not already named in the session's own change entries
-- **THEN** the collector SHALL resolve up to 200 distinct UIDs per report via read-only `show-object` calls and emit a `names_unresolved` `ReportWarning` if the cap is exceeded or a lookup fails
+- **WHEN** `show-changes` returns bare UIDs in either `new-object` or `old-object` snapshots (including removed `group.members` UUIDs, removed rule cell references, rule layers `layer`, or NAT fields) not already named in the session's own change entries or nested `{uid, name}` dictionaries
+- **THEN** the collector SHALL recursively index nested `{uid, name}` dictionaries across `old-object` and `new-object`, resolve up to 200 distinct remaining bare UIDs per report (checking local cache first, then read-only `show-object` calls), substitute resolved names into rule fields, object summaries, and `FieldDiff` values (`old_value`, `new_value`, `added_items`, `removed_items`), populate `RuleChangeEntry.layer_name` when `layer_uid` resolves to a named layer, and emit a `names_unresolved` `ReportWarning` if the cap is exceeded or a lookup fails
+
+#### Scenario: Multi-session scope does not bind an unkeyed OwnedSession across multiple sessions
+
+- **WHEN** a `SessionScope` lists more than one UID in `session_uids` and supplies a bare `OwnedSession` whose `session_uid` is `None` or empty (or an `OwnedSession` whose explicit `mgmt_name` or `domain` disagrees with the scope)
+- **THEN** `SessionScope.resolve_owned_session` SHALL NOT match that unkeyed or mismatched `OwnedSession` to arbitrary sessions in the scope
 
 ### Requirement: Owned Session Live Numbering and Cached Snapshot Fallback
 
-The change report builder SHALL number added, modified, moved, and deleted rules according to SmartConsole hierarchy using either a caller-supplied unpublished `OwnedSession` (`sid`, `server_ip`) or the domain's cached rulebase snapshot, labeling each session with its exact numbering basis.
+The change report builder SHALL number added, modified, moved, and deleted rules according to SmartConsole hierarchy using a verified `OwnedSession` in-memory snapshot, the domain's cached rulebase snapshot, or a coordinator-delegated / in-memory published rulebase fallback when the cache is cold, skipping placement for object-only sessions and NEVER calling `CachePort.replace_domain_rulebase` directly from `arodonata.reports`.
+
+#### Scenario: Object-only session skips rulebase placement and omits numbering banner
+
+- **WHEN** a collected `SessionChangeReport` contains zero `rule_changes`
+- **THEN** `apply_session_rule_placement` SHALL return immediately without calling `show-session`, `collect_domain_rulebase_snapshot`, or `CachePort.get_domain_rulebase`, setting `numbering_source = "not_applicable"` and `numbering_basis = ""`, and HTML/Markdown rendering SHALL omit the numbering basis banner/line for that session
 
 #### Scenario: Read-only live numbering via OwnedSession with strict SID hygiene
 
-- **WHEN** a `SessionScope` supplies an `OwnedSession` matching an unpublished session in the scope
-- **THEN** the collector SHALL verify ownership via `show-session`, read `show-packages` and `show-*-rulebase` using that SID strictly read-only (never publishing, discarding, or logging out), label the session `"Numbering read live in the owned session at <time> UTC"`, and NEVER include or log the SID in `ChangeReport`, `RawResponse`, HTML, JSON, Markdown, or `repr()`
+- **WHEN** a `SessionScope` supplies an `OwnedSession` matching an unpublished session with rule changes in the scope
+- **THEN** the collector SHALL verify ownership and matching domain via `show-session`, read `show-packages` and `show-*-rulebase` using that SID strictly read-only into memory (never publishing, discarding, logging out, or writing to `CachePort`), label the session `"Numbering read live in the owned session at <time> UTC"` (`numbering_source = "owned_session"`), and NEVER include or log the SID in `ChangeReport`, `RawResponse`, HTML, JSON, Markdown, or `repr()`
+
+#### Scenario: Post-publish live numbering via clean OwnedSession before logout
+
+- **WHEN** a `SessionScope` supplies an `OwnedSession` bound to an already-published session with rule changes (matching `OwnedSession.session_uid == session_uid` or a single-session scope, and matching `mgmt_name`/`domain` when set) and `show-session` on that SID confirms a non-discarded session on the expected domain with `changes` present and `0`, `locks` present and `0`, and `number-of-published-changes == 0`
+- **THEN** the collector SHALL read the published rulebase snapshot live through that SID, number the session's rules strictly in-memory without calling `CachePort.replace_domain_rulebase` and without emitting `owned_session_not_used`, and label the session `"Numbering read live after publish at <time> UTC"` (`numbering_source = "live_published"`)
 
 #### Scenario: Graceful fallback when OwnedSession is already published or expired
 
-- **WHEN** a supplied `OwnedSession` no longer corresponds to an unpublished session or its SID fails
-- **THEN** the collector SHALL record an `owned_session_not_used` or `owned_session_error` warning and fall back to numbering from the rulebase cache
+- **WHEN** a supplied `OwnedSession` fails `show-session`, is `discarded`, reports a different domain than the target session, omits `changes` or `locks`, reports non-zero `changes`, `locks`, or `number-of-published-changes` on a rotated post-publish session, or does not match an unpublished target session's UID
+- **THEN** the collector SHALL record an `owned_session_not_used` or `owned_session_error` warning and fall back to numbering from the domain's cached rulebase snapshot (or cold-cache fallback)
+
+#### Scenario: Cold-cache on-demand live published rulebase fallback
+
+- **WHEN** a session has rule changes, no usable `OwnedSession` handled numbering, and `CachePort.get_domain_rulebase` contains no cached rules or layers for `(mgmt_name, domain_name)`
+- **THEN** when invoked via `ArodonataClient`, the collector SHALL delegate warming to `RulebaseRefreshService` / `DomainSyncCoordinator` (enforcing per-domain distributed lock, dirty-session refusal, and atomic `DomainSyncState` stamping) and read the resulting cached snapshot; if invoked standalone without a coordinator or if warming does not populate the cache, it SHALL attempt a read-only in-memory `collect_domain_rulebase_snapshot` (`numbering_source = "live_published"`, basis `"Numbering read live from published rulebase at <time> UTC"`) without writing to `CachePort`, falling back to `"Numbering from cached rulebase snapshot (unavailable)"` (`numbering_source = "unnumbered"`) only when live collection fails or is empty
 
 ### Requirement: Multi-Format Evidence Rendering and Safe Markup Escaping
 
@@ -1443,12 +1642,50 @@ The change report builder SHALL number added, modified, moved, and deleted rules
 #### Scenario: Self-contained HTML evidence output
 
 - **WHEN** `"html"` is requested in `formats`
-- **THEN** `render_change_report` SHALL produce a single self-contained UTF-8 HTML document (`bytes`) with inline CSS, zero `<script>` tags, zero external network assets, visual change indicators (`NEW`, `DELETED`, yellow field diffs, moved rule badges, disabled `✗` markers), and per-rule field diff detail tables
+- **THEN** `render_change_report` SHALL produce a single self-contained UTF-8 HTML document (`bytes`) with inline CSS, zero `<script>` tags, zero external network assets, SmartConsole-styled dark-blue table headers (`#253245` with white text), full-width pale-yellow access section banner rows (`<tr class="section-row">` on `#eee8aa` background displaying `▾ <section_name> (<section_range>)` and layer context), shaded gray `No.` rule-number cells (`.col-num`), visual change indicators (`NEW`, `DELETED`, `MODIFIED`, `MOVED` badges, disabled `✗` markers, and `Accept`/`Drop` action indicators), inline cell-level diff annotations inside `Rule Changes` and `Object Changes` rows showing removed items (`- <name>` struck-through), added/replacement items (`+ <name>`), and scalar `before → after` transitions, and optional per-rule/per-object `Field Diffs` detail tables when `RenderOptions.include_field_diffs` is `True`
+
+#### Scenario: Inline diff markers in Markdown rule and object tables
+
+- **WHEN** `"markdown"` is requested in `formats` for a report containing modified rules or modified objects with `field_diffs`
+- **THEN** `render_change_report` SHALL render removed items (`[-<name>]`), added/replacement items (`[+<name>]`), and scalar `before -> after` transitions inline inside the Markdown `Rule Changes` (including the `Track` column) and `Object Changes` table cells while escaping pipe characters, newlines, and raw HTML tags
 
 #### Scenario: Round-trip JSON serialization with format_version check
 
 - **WHEN** a `ChangeReport` is serialized to `"json"` and reloaded via `ChangeReport.model_validate_json(...)`
 - **THEN** it SHALL re-render into identical HTML or Markdown without network access, and reject JSON files whose `format_version` is newer than supported by the installed library
+
+### Requirement: Snapshot-Based Field Diff Synthesis and System Noise Filtering
+
+When collecting modified rules and objects from `show-changes`, the collector SHALL synthesize `FieldDiff` entries (`old_value`, `new_value`, `added_items`, `removed_items`) from `old-object` and `new-object` snapshots for any changed tracked fields not already covered by explicit `field-changes`, enrich object summaries, and omit background `"System"` maintenance non-rule objects unless `RenderOptions.include_system_objects` is `True`.
+
+#### Scenario: Rule list cell partial removal and sole-member Any replacement
+
+- **WHEN** `show-changes` returns a modified rule with `old-object` and `new-object` snapshots and no explicit `field-changes` (either removing one or more objects from a multi-item list field such as `source`, `destination`, or `service`, or replacing the sole remaining object with `Any` and disabling the rule)
+- **THEN** the collector SHALL populate `RuleChangeEntry.field_diffs` with the removed object names in `removed_items` (and `Any` in `added_items` when replaced by `Any`), record scalar diffs such as `enabled` and `comments`, and NOT report false-positive cell diffs when an unchanged referenced group has internal member edits
+
+#### Scenario: Explicit field-changes merge cleanly with snapshot diffs
+
+- **WHEN** a `modified-objects` entry provides explicit `field-changes` covering a subset of modified fields alongside `old-object` and `new-object` snapshots with additional changed fields
+- **THEN** the collector SHALL preserve the explicit `field-changes` entries and append synthesized `FieldDiff` entries only for changed tracked fields not already present in `field-changes`
+
+#### Scenario: Non-rule object member diffs and enriched object summaries
+
+- **WHEN** `show-changes` returns modified, added, or deleted non-rule objects (including `group`, `host`, `network`, `address-range`, and `service-*`)
+- **THEN** the collector SHALL compute `FieldDiff` entries (including `added_items` and `removed_items` for `members`, and before/after values for `comments` and address/service attributes) and populate structured `ObjectChangeEntry.summary_fields` and formatted `ObjectChangeEntry.summary` with IPv4/IPv6 addresses, CIDR subnets, address-range bounds, service ports/protocols, resolved `members`, and `comments`
+
+#### Scenario: Background Check Point System maintenance objects excluded by default
+
+- **WHEN** `show-changes` for a non-`"System"` user session includes non-deleted (`added` or `modified`) non-rule objects whose post-change `meta-info.last-modifier` is `"System"` (or nameless/typeless internal `"System"` records such as `IpsProtectionUserSettings`, `cp-trusted-ca-certificate`, or `TrustedCaPackageConf`)
+- **THEN** the collector SHALL exclude those `"System"` non-rule entries from `SessionChangeReport.object_changes` by default (never excluding `deleted` objects and never inspecting `old-object.meta-info.last-modifier`, and including them when `RenderOptions.include_system_objects` is `True`), log the filtered count at `DEBUG` level without emitting a user-facing `ReportWarning`, and preserve the complete sanitized `show-changes` payload in `ChangeReport.raw_responses`
+
+### Requirement: Offline Dry-Run ChangeReport Synthesis from CPCRUD Plan
+
+`arodonata.reports` SHALL provide `build_change_report_from_plan(plan, ...)` to convert a CPCRUD `Plan` offline into a `ChangeReport` compatible with `render_change_report()`, capturing object, group, and rule creates, deletes, and field-level add/remove diffs without opening Check Point sessions.
+
+#### Scenario: Dry-run ChangeReport renders HTML and JSON offline with added and removed item diffs
+
+- **WHEN** a caller passes a multi-action `Plan` containing object creates (`Outcome.CREATE`), group member deltas (`Outcome.UPDATE` with `add`/`remove`), and incremental rule cell diffs (`Outcome.UPDATE` on `source`/`destination`/`service`) to `build_change_report_from_plan(plan)` and renders it via `render_change_report(report, formats=["html", "json"])`
+- **THEN** `build_change_report_from_plan` SHALL produce a valid `ChangeReport` with zero Check Point API calls, populate `ObjectChangeEntry.field_diffs` and `RuleChangeEntry.field_diffs` (`added_items` and `removed_items`), and render self-contained SmartConsole-styled HTML and round-trippable JSON containing no SIDs or errors
 
 
 ---
@@ -1493,7 +1730,7 @@ Defines the primary composition root and unified developer facade (`ArodonataCli
 
 ### Requirement: User-Aware Domain Helper Functions
 
-`ArodonataClient` SHALL provide session and object mutation/lookup methods (`write_session`, `auth_context`, `add_object`, `set_object`, `delete_object`, `find_object`, `get_group_members`) propagating `WriteSession`, `AuthContext`, and `UserContext` via `contextvars`, resolving `find_object` across cached `arodonata_objects` (`CPObject`), `arodonata_services` (`CPService`), and `arodonata_assets` (`Asset`) by UID, name, or composite identifier (`object_id`, `service_id`, `asset_id`, `id`), expanding `get_group_members` across network groups (`arodonata_objects`), service groups (`arodonata_services`), and cluster/VSX containers (`arodonata_assets`, including cross-domain Virtual Systems), auto-wrapping standalone object mutations in an isolated write session, stripping secret request fields from `SessionOverlay`, and masking secrets in `ApiCallResult`.
+`ArodonataClient` SHALL provide `contextvars`-aware session, mutation, and lookup helpers (`write_session`, `auth_context`, `add_object`, `set_object`, `delete_object`, `find_object`, `get_group_members`), auto-wrapping standalone object mutations in an isolated write session, stripping secret request fields from `SessionOverlay`, and redacting secrets in `ApiCallResult`.
 
 #### Scenario: Context manager write_session publishes on success and discards on exception
 
@@ -1533,6 +1770,75 @@ All major client, transport, login, lock, cache, and CPCRUD entry points SHALL b
 - **WHEN** `span_attrs(**attrs)` is called inside a traced operation or an exception with a chained `__cause__` / `__context__` is recorded on a span
 - **THEN** non-`None` attributes SHALL be set on the current OpenTelemetry span under the `arodonata.<key>` namespace with recursive secret/SID redaction applied to mappings, lists, and chained exception messages, operating as a zero-overhead no-op when no `TracerProvider` is configured by the host application
 
+### Requirement: Cache-Only Cross-Domain Entity Lookup and Ambiguity Refusal
+
+`ArodonataClient.find_object()` and `ArodonataClient.get_group_members()` SHALL require a non-empty target identifier (`ValidationError` on empty/blank input), and when `domain` is `None` (and cannot be extracted from a `mgmt:domain:key` composite ID) SHALL query strictly from local cache (`cache_mode="cache"`, `include_global=True`) and raise `AmbiguousObjectError` if more than one domain matches.
+
+#### Scenario: Blank target identifier rejected immediately
+
+- **WHEN** `client.find_object(mgmt_name, domain, "")` or `client.get_group_members(mgmt_name, domain, "   ")` is called with an empty or whitespace-only target string
+- **THEN** the method SHALL raise `ValidationError` immediately without scanning cached or remote domains
+
+#### Scenario: Cross-domain lookup runs cache-only with Global visibility and raises AmbiguousObjectError on multi-domain collision
+
+- **WHEN** `await client.find_object(mgmt_name, None, name_or_uid)` or `await client.get_group_members(mgmt_name, None, group_name_or_uid)` is called without a domain
+- **THEN** it SHALL search cached `arodonata_objects`, `arodonata_services`, and `arodonata_assets` across all cached domains including `"Global"` using `cache_mode="cache"` (triggering zero live domain logins or whole-MDS syncs), return the match when unique to a single domain, and raise `AmbiguousObjectError` listing the candidate domains and composite IDs when multiple domains match
+
+### Requirement: Coordinator-Delegated Cold-Cache Rulebase Warming in Client Change Reports
+
+`ArodonataClient.collect_change_report()` and `ArodonataClient.build_change_report()` SHALL wire cold-cache rulebase placement fallback through `ArodonataClient.refresh_rulebases(..., mode="smart")` so any rulebase cache population triggered during report generation obeys `DomainSyncCoordinator` distributed locks, dirty-session checks, and `DomainSyncState` stamps.
+
+#### Scenario: Cold-cache report collection via ArodonataClient warms rulebase through coordinator
+
+- **WHEN** `await client.collect_change_report(scopes)` processes a session with rule changes on a domain whose `arodonata_rulebase_*` cache is empty and no `OwnedSession` handled placement
+- **THEN** `ArodonataClient` SHALL invoke `refresh_rulebases(mgmt_name=mgmt_name, domains=[domain_name], mode="smart")` via `DomainSyncCoordinator` rather than performing an unlocked direct `replace_domain_rulebase` write
+
+### Requirement: Client Facade API Reference Introspection with Management Version Inference
+
+`ArodonataClient` SHALL expose `api_reference` (`ApiReferenceEngine`) and convenience methods `search_api_commands(...)`, `describe_api_command(...)`, and `validate_api_payload(...)` that automatically infer the default target API `version` from the configured management server's `api_version` when `version=None` (using `mgmt_name` or the sole configured management server, and falling back to the index's `latest` version `"v2.2"` when no server version is configured).
+
+#### Scenario: Client facade infers target API version from configured management server
+
+- **WHEN** `client.describe_api_command("add-interface", mgmt_name="corp-mds")` is called with `version=None` on a client where `"corp-mds"` is configured with `api_version="1.9"`
+- **THEN** `ArodonataClient` SHALL resolve `version="v1.9"` automatically from `"corp-mds"` settings and return the `v1.9`-filtered schema for `add-interface`
+
+### Requirement: Gateway Topology and Candidate Discovery Facade Methods
+
+`ArodonataClient` SHALL accept an optional `gateway_cli` (`GatewayCliPort` or async command callback) for SSH command execution on gateways, expose `topology_service` (`TopologyService`), and provide traced async facade methods `refresh_topology(..., gateways=..., collect_routes=...)`, `stream_refresh_topology(..., gateways=..., collect_routes=...)`, `collect_gateway_routes(...)`, `get_gateway_topology(...)`, `get_topology_diagnostics(...)`, `reconcile_gateway_topology(..., check_policy=...)`, `upsert_topology_annotations(...)`, `get_topology_annotations(...)`, `delete_topology_annotations(...)`, `export_topology_prefixes(...)`, and `find_affected_gateways(sources, destinations, ..., min_confidence=..., include_standby=..., include_policy_inferred=...)` returning typed Pydantic models.
+
+#### Scenario: Consumer resolves affected gateways and policy packages via ArodonataClient
+
+- **WHEN** a downstream consumer calls `await client.find_affected_gateways(sources=["10.1.1.10"], destinations=["10.2.2.20"], mgmt_name="mds1", include_policy_inferred=True, cache_mode="smart")`
+- **THEN** `ArodonataClient` SHALL ensure the topology cache is synchronized according to `cache_mode` and return a ranked list of `AffectedGatewayCandidate` instances containing `mgmt_name`, `domain_name`, `gateway_id`, `gateway_asset_id`, `installed_access_policy`, `policy_packages`, `access_layers`, `confidence`, `is_standby_path`, `confidence_factors`, `warnings`, and `matched_flows` (including `policy_inferred` matches when enabled)
+
+#### Scenario: Host application injects SSH callback and reconciles gateway routes via ArodonataClient
+
+- **WHEN** a host application initializes `ArodonataClient(settings, gateway_cli=ssh_exec_fn)` and calls `await client.collect_gateway_routes(mgmt_name="mds1", domain="Corp", gateways=["gw-01"])` followed by `await client.reconcile_gateway_topology(mgmt_name="mds1", domain="Corp", gateways=["gw-01"], check_policy=True)`
+- **THEN** `ArodonataClient` SHALL invoke `ssh_exec_fn` for `"gw-01"`, persist the parsed route intervals into `arodonata_gateway_topology`, and return a `TopologyReconciliationReport` detailing any discrepancies between SmartConsole topology, live routes, and gateway-targeted policy rules
+
+### Requirement: Single-Flight Background Object and Service Cache Warm-Up
+
+`ArodonataClient.start_object_cache_warmup()` SHALL coalesce concurrent in-flight background warm-up calls sharing the same `(mgmt_name, domains, types, include_global, include_services)` scope, handle background failures with SID-redacted structured logging without emitting unretrieved asyncio task warnings for fire-and-forget callers, and expose active/recent warm-up state via `get_warmup_status()`.
+
+#### Scenario: Concurrent warm-up calls for the same domain coalesce into one task
+
+- **WHEN** a host application invokes `client.start_object_cache_warmup(mgmt_name="mds1", domains=["Corp"], include_services=True)` multiple times while the initial warm-up task for `"Corp"` is still running
+- **THEN** `start_object_cache_warmup` SHALL return the existing in-flight task rather than spawning duplicate concurrent `refresh_objects` / `refresh_services` runs, and `client.get_warmup_status(mgmt_name="mds1")` SHALL report `"Corp"` as `"running"` until completion
+
+#### Scenario: Fire-and-forget warm-up failure logs redacted warning without unretrieved exception
+
+- **WHEN** a caller schedules `client.start_object_cache_warmup(mgmt_name="mds1", domains=["UnreachableCMA"])` without awaiting the returned `asyncio.Task` and the background refresh raises an error
+- **THEN** the client SHALL record the SID-redacted failure in `get_warmup_status()` and emit a structured warning log without producing an `"Task exception was never retrieved"` warning on garbage collection
+
+### Requirement: Lightweight Package Catalog and Targeted Package Rulebase Facade Methods
+
+`ArodonataClient` SHALL expose traced async facade methods `refresh_policy_packages(...)` and `refresh_package_rulebase(...)` in addition to `get_policy_packages(...)` and `get_package_rulebase(...)`, and SHALL forward `source_types` and `include_annotations` filtering parameters on `find_affected_gateways(...)`.
+
+#### Scenario: Consumer refreshes single package access sections and static gateway candidates via facade
+
+- **WHEN** a consumer calls `await client.get_policy_packages("mds1", "Corp", cache_mode="smart")`, `await client.get_package_rulebase("mds1", "Corp", "Corp_Pkg", rulebase_type="access", cache_mode="smart")`, and `await client.find_affected_gateways(sources, destinations, mgmt_name="mds1", source_types=STATIC_TOPOLOGY_SOURCES, include_annotations=False)`
+- **THEN** `ArodonataClient` SHALL return the domain's `PolicyPackageInfo` catalog, the numbered `PackageRulebase` for `"Corp_Pkg"`, and the static-only `AffectedGatewayCandidate` list without triggering full-domain NAT/HTTPS/Threat rulebase syncs or full-domain `show-hosts` downloads
+
 
 ---
 
@@ -1553,7 +1859,7 @@ The library SHALL resolve configuration from explicit constructor keyword argume
 #### Scenario: Constructor keyword overrides environment variable
 
 - **WHEN** `ArodonataSettings` is instantiated with a constructor keyword argument (e.g., `concurrent_limit=8`) while `ARODONATA_CONCURRENT_LIMIT=4` is set in `os.environ`
-- **THEN** the resulting settings instance SHALL use `concurrent_limit == 8`
+- **THEN** the resulting settings instance SHALL use `concurrent_limit == 8`, cap default `domain_sync_concurrency` at `min(2, max(1, concurrent_limit - 1)) == 2` unless overridden via `domain_sync_concurrency` or `ARODONATA_DOMAIN_SYNC_CONCURRENCY`, cap default `route_collect_concurrency` at `min(4, max(1, concurrent_limit // 2)) == 4` unless overridden via `route_collect_concurrency` or `ARODONATA_ROUTE_COLLECT_CONCURRENCY`, and default `max_routes_per_gateway` to `50000` unless overridden via `max_routes_per_gateway` or `ARODONATA_MAX_ROUTES_PER_GATEWAY`
 
 #### Scenario: Environment variable populates field by default
 
@@ -1631,6 +1937,25 @@ The system SHALL support hierarchical dotted-prefix span gating via `ARODONATA_T
 - **WHEN** `ARODONATA_TRACE_MODULES="arodonata:on,arodonata.api.client:off"` is configured
 - **THEN** `trace_modules_rules` SHALL parse into `{"arodonata": True, "arodonata.api.client": False}` and apply to `@traced` spans
 
+### Requirement: Environment-Backed CPCRUD Naming Profile Configuration
+
+`ArodonataSettings` SHALL resolve a default `cpcrud_naming_prefixes` profile from explicit constructor arguments and `ARODONATA_CPCRUD_*` (falling back to `CPCRUD_*`) environment variables without loading `.env` files implicitly, covering host, network, range, group, service, and application-site formatting options.
+
+#### Scenario: Environment variables populate CPCRUD naming profile defaults
+
+- **WHEN** `ARODONATA_CPCRUD_AUTO_NAME_PREFIX_RANGE="Range_"`, `ARODONATA_CPCRUD_RANGE_SEPARATOR="_"`, `ARODONATA_CPCRUD_RANGE_COMPRESS_OCTETS="true"`, `ARODONATA_CPCRUD_AUTO_NAME_PREFIX_GROUP=""`, `ARODONATA_CPCRUD_AUTO_NAME_SUFFIX_GROUP="_Grp"`, `ARODONATA_CPCRUD_AUTO_NAME_PREFIX_APP_SITE="Site_"`, and `ARODONATA_CPCRUD_APP_SITE_WILDCARD_MARKER="_"` are set in `os.environ`
+- **THEN** `ArodonataSettings().cpcrud_naming_prefixes` SHALL reflect those configured prefixes, suffixes, range separator, compression flag, and wildcard marker without reading `.env` files from disk
+
+#### Scenario: Secondary CPCRUD environment aliases are accepted when ARODONATA_CPCRUD variables are absent
+
+- **WHEN** `CPCRUD_AUTO_NAME_PREFIX_RANGE="Range_"` and `CPCRUD_RANGE_COMPRESS_OCTETS="true"` are present without `ARODONATA_CPCRUD_*` counterparts
+- **THEN** `ArodonataSettings().cpcrud_naming_prefixes` SHALL resolve those `CPCRUD_*` values as fallback defaults while prioritizing `ARODONATA_CPCRUD_*` and explicit constructor arguments
+
+#### Scenario: CPCRUDService planning uses ArodonataSettings naming profile by default
+
+- **WHEN** a caller invokes `client.cpcrud.plan(template)` without supplying an explicit `naming_prefixes` argument or template `naming_prefixes` block
+- **THEN** the planner SHALL apply `settings.cpcrud_naming_prefixes` when auto-naming newly created objects and services
+
 
 ---
 
@@ -1698,7 +2023,7 @@ The planner and position helper SHALL resolve access, HTTPS, threat-prevention, 
 
 ### Requirement: Dedicated-Session Execution, Stale Plan Safeguard, and Session Staging
 
-`CPCRUDService` SHALL provide `apply` and `stream_apply`, deriving Web API commands strictly from an allowlist of `(object_type, operation)` pairs, executing actions in an isolated `WriteSession` per `(mgmt_name, domain_name)`, verifying the domain head has not drifted before each pass and immediately before `publish`, shielding `discard` before `logout` on any unhandled `BaseException`, and providing `publish_staged_session` and `discard_staged_session`.
+`CPCRUDService` SHALL execute `apply` and `stream_apply` using allowlisted `(object_type, operation)` commands in an isolated `WriteSession` per domain (defaulting omitted session names to `arodonata-cpcrud*`), re-verify the domain head before each pass and pre-`publish`, shield `discard` before `logout` on any `BaseException`, and adopt staged sessions only after `show-session` provenance verification with non-disruptive takeover by default.
 
 #### Scenario: Stale plan abort when domain published after planning
 
@@ -1718,17 +2043,22 @@ The planner and position helper SHALL resolve access, HTTPS, threat-prevention, 
 #### Scenario: Keep-session staging mode preserves unpublished session for external workflow
 
 - **WHEN** `apply(plan, no_publish=True, keep_session=True)` is called
-- **THEN** the executor SHALL leave the dedicated write session open without publishing, record its details (`sid`, `server_ip`, `session_uid`, `session_name`) in `ApplyReport.staged_sessions` immediately upon session creation, and emit a `StagedSessionEvent` (`CPCRUDEvent`) in `stream_apply()`
+- **THEN** the executor SHALL assign a default `arodonata-cpcrud-staged` session name when none was supplied, leave the dedicated write session open without publishing, record its details (`sid`, `server_ip`, `session_uid`, `session_name`) in `ApplyReport.staged_sessions` and the client's staged-session registry immediately upon creation, and emit a `StagedSessionEvent` in `stream_apply()`
 
 #### Scenario: Staged session publication adopts ownership via take-over-session and invalidates domain cache
 
-- **WHEN** `await client.publish_staged_session(mgmt_name, domain, session_uid=session_uid)` or `client.stream_publish_staged_session(...)` is called for a previously staged session
-- **THEN** the service SHALL adopt ownership of `session_uid` via `take-over-session` (`uid=session_uid`), execute `publish` (`payload={}`) while polling task progress, log out the session, and call `client.invalidate_domain(mgmt_name, domain)`
+- **WHEN** `await client.publish_staged_session(mgmt_name, domain, session_uid=session_uid, ...)` or `client.stream_publish_staged_session(...)` is called for a previously staged session
+- **THEN** the service SHALL reuse a caller-supplied `sid` directly when `show-session {}` confirms `uid == session_uid` in an open state, or otherwise open a dedicated helper session (`arodonata-cpcrud-adopt`), inspect `show-session {}` to record the helper session's `initial_uid` and `current_user`, verify via `show-session {"uid": session_uid}` that the target session is open and eligible for Web API adoption (recorded by `keep_session=True`, carrying an `arodonata*` session name, matching `expected_session_name`, or created via `WEB_API` by the same administrator when `allow_foreign=False`), issue `take-over-session` (`{"uid": session_uid}` without `disconnect-active-session` unless explicit library-only `force_disconnect=True` is passed, falling back to `switch-session` only after provenance verification passes and reporting both errors if both fail), immediately discard the detached initial helper session via `discard {"uid": initial_uid}` so no empty `arodonata-cpcrud-adopt` session remains open on Check Point, execute `publish` while polling task progress, log out cleanly, and call `client.invalidate_domain(mgmt_name, domain)`
 
 #### Scenario: Staged session discard adopts ownership via take-over-session before discarding
 
-- **WHEN** `await client.discard_staged_session(mgmt_name, domain, session_uid=session_uid)` is called for an open or orphaned staged session
-- **THEN** the service SHALL issue `take-over-session` (`uid=session_uid`) prior to `discard` so foreign locks or session ownership divergence do not prevent clean session termination
+- **WHEN** `await client.discard_staged_session(mgmt_name, domain, session_uid=session_uid, ...)` is called for an open or orphaned staged session
+- **THEN** the service SHALL verify open Web API / Arodonata provenance via `show-session` (or reuse an active matching `sid` directly), adopt ownership via non-disruptive `take-over-session` (with `disconnect-active-session` omitted/`False` unless explicit library-only `force_disconnect=True` is passed, and provenance-gated `switch-session` fallback reporting both errors on failure), discard the detached initial `arodonata-cpcrud-adopt` helper session via `discard {"uid": initial_uid}`, execute `discard` on the adopted session, and log out cleanly
+
+#### Scenario: Foreign, active SmartConsole, or already-finalized session UID refused during staged adoption
+
+- **WHEN** `publish_staged_session`, `stream_publish_staged_session`, or `discard_staged_session` is called with a `session_uid` belonging to a human SmartConsole session, another administrator's Web API session (when `allow_foreign=False`), a session whose name mismatches `expected_session_name`, an already `published`/`discarded` session, or an actively connected session while `force_disconnect=False`
+- **THEN** the service SHALL refuse adoption before issuing disruptive `take-over-session` or `switch-session`, log out any fresh helper session it opened, and return a failed `ApiCallResult` (or failure event) without disconnecting the active administrator or publishing/discarding their work
 
 #### Scenario: Post-publish domain cache invalidation and retry_remaining folding
 
@@ -1743,6 +2073,350 @@ The planner and position helper SHALL resolve access, HTTPS, threat-prevention, 
 
 - **WHEN** `inverse(plan, report)` is called after an apply pass where some actions succeeded and others failed or were skipped/stale
 - **THEN** it SHALL produce a dictionary valid against `checkpoint_ops_schema.json` that includes compensating operations ONLY for actions that succeeded in `report`, deletes `CREATE` actions using the concrete `uid` recorded in `report` (skipping any `CREATE` that lacks a real created UID), restores all prior field values from `prior_state` for `UPDATE` actions, and re-creates `DELETE` actions from `prior_state`
+
+### Requirement: Declarative Lifecycle Support for Check Point Application-Site Objects
+
+`CPCRUDService` SHALL validate, read, diff, plan (`add-application-site`, `set-application-site`, `delete-application-site`), and generate compensating rollback operations for Check Point `application-site` objects declared in `objects`, `services`, or `operations` sections, including URL lists and regular-expression flags.
+
+#### Scenario: Schema and semantic validation of application-site operations
+
+- **WHEN** `CPCRUDService.validate()` is called on a template containing an `application-site` operation in `objects`, `services`, or `operations` with `name`, `primary-category` (or `primary_category`), `url-list` (or `url_list`), and `urls-defined-as-regular-expression` (or `urls_defined_as_regular_expression`)
+- **THEN** validation SHALL succeed with zero errors, and SHALL reject `present`/`add` `application-site` operations that omit both `url-list` and `application-signature`
+
+#### Scenario: Planning creation of a new regex application-site object
+
+- **WHEN** `CPCRUDService.plan()` evaluates a `present` or `add` operation for an `application-site` (e.g., `name: "Site_baidu.com"`, `primary-category: "Custom_Application_Site"`, `url-list: ["\\/baidu\\.com", "\\.baidu\\.com"]`, `urls-defined-as-regular-expression: true`) that does not exist in the target domain
+- **THEN** the planner SHALL produce a `PlannedAction` with `Outcome.CREATE`, command `"add-application-site"`, and payload containing `"name"`, `"primary-category"`, `"url-list"`, and `"urls-defined-as-regular-expression": true`, and SHALL register the resolved name for downstream `access-rule` `service` references
+
+#### Scenario: Existing application-site with identical URL list and regex flag is planned as UNCHANGED
+
+- **WHEN** `CPCRUDService.plan()` evaluates an `application-site` operation whose target name already exists in the domain with the same `primary-category`, the same set of URLs in `url-list`, and the same `urls-defined-as-regular-expression` boolean
+- **THEN** the planner SHALL produce `Outcome.UNCHANGED` requiring zero write calls during `apply()`
+
+#### Scenario: Existing application-site with different URL list respects NameConflictPolicy
+
+- **WHEN** `CPCRUDService.plan()` evaluates an `application-site` operation whose target name already exists in the domain with a different `url-list` or `urls-defined-as-regular-expression` value
+- **THEN** the planner SHALL produce `Outcome.ERROR` reporting `differs on [url-list]` when `on_name_conflict="error"`, or `Outcome.UPDATE` with command `"set-application-site"` when `on_name_conflict="update"`
+
+#### Scenario: Inverse rollback template restores or deletes application-site objects
+
+- **WHEN** `CPCRUDService.inverse()` is called for a plan/report containing `CREATE`, `UPDATE`, or `DELETE` actions on `application-site` objects
+- **THEN** it SHALL generate the corresponding compensating `delete`, `set`, or `add` `application-site` operation preserving `primary-category`, `url-list`, `urls-defined-as-regular-expression`, and `description`, ordered after any dependent `access-rule` rollbacks
+
+### Requirement: Targeted Cold-Cache Value Conflict Lookups During Planning
+
+When a domain's object or service cache slice is not stamped fresh during `CPCRUDService.plan()`, value-conflict lookups for hosts, networks, address ranges, and TCP/UDP services SHALL query `show-objects` (`type`, `filter`, `ip-only`) with exact attribute verification and intra-plan overlays instead of paginating `show-hosts`, `show-networks`, or `show-services-tcp` / `show-services-udp`, while ICMP value lookups SHALL use single-page `show-services-icmp` / `show-services-icmp6` listing.
+
+#### Scenario: Cold-cache ICMP lookup matches built-in services without numeric text filter
+
+- **WHEN** `CPCRUDService.plan()` evaluates `add` / `present` for a `service-icmp` (`icmp-type: 8`, `icmp-code: 0`) on cold cache where built-in `echo-request` does not contain `"8"` in its name
+- **THEN** the planner SHALL query `show-services-icmp` (memoized per domain) and match `echo-request` by exact `(icmp_type, icmp_code)` equality
+
+#### Scenario: Cold-cache host and TCP service conflict checks avoid full domain listing
+
+- **WHEN** `CPCRUDService.plan()` evaluates `add` / `present` operations for a `host` (`10.20.30.40`) and a `service-tcp` (`port: "8443"`) in a domain whose `arodonata_objects` and `arodonata_services` caches are empty
+- **THEN** the planner SHALL query `show-objects` (`type="host"`, `filter="10.20.30.40"`, `ip-only=True`) and `show-objects` (`type="service-tcp"`, `filter="8443"`), filter returned candidates by exact IP/port/protocol equality while merging intra-plan virtual additions/deletions, and execute zero full-domain `show-hosts` or `show-services-tcp` queries
+
+#### Scenario: Substring filter candidates are verified by exact value match
+
+- **WHEN** Check Point `show-objects` (`type="service-tcp"`, `filter="80"`) returns both `TCP_80` (`port="80"`) and `TCP_8080` (`port="8080"`), or `show-objects` (`type="network"`, `filter="10.10.0.0"`, `ip-only=True`) returns both `10.10.0.0/24` and `10.10.0.0/16`
+- **THEN** the planner SHALL match only the candidate with exact `(port="80", protocol)` or exact `(subnet4="10.10.0.0", mask_length4=24)` equality
+
+#### Scenario: Graceful fallback when custom ApiPort adapter does not implement show-objects
+
+- **WHEN** a custom or legacy `ApiPort` adapter returns `generic_err_command_not_recognized` for `show-objects` during a cold-cache value lookup, or returns `paging_inconsistent` / transport failure
+- **THEN** `generic_err_command_not_recognized` SHALL fall back to type-scoped `show-hosts` / `show-services-*` listing, whereas genuine API or `paging_inconsistent` errors SHALL still fail closed as `Outcome.ERROR` (`StateLookupError`)
+
+### Requirement: Shorthand Object, Range, Domain, and Wildcard Application Expression Parsing
+
+`arodonata.cpcrud` SHALL parse shorthand host, network, full or compressed-octet address-range, DNS-domain, service, inline group, and wildcard application expressions (`*domain` and `*.domain`) into canonical CPCRUD specifications using `NamingPrefixes` for newly created object names while preserving legacy defaults.
+
+#### Scenario: Compressed same-subnet IPv4 address-range naming and shorthand range input
+
+- **WHEN** `NamingPrefixes` has `address_range="Range_"`, `range_separator="_"`, and `compress_range_same_subnet=True`, and an expression or range object specifies `10.1.1.1` through `10.1.1.9` (including shorthand `10.1.1.1-9`)
+- **THEN** the parser SHALL resolve bounds `("10.1.1.1", "10.1.1.9")` and `format_address_range("10.1.1.1", "10.1.1.9")` SHALL return `"Range_10.1.1.1_9"`, while ranges across distinct `/24` prefixes (such as `10.1.1.1` to `10.1.2.9`) SHALL format as `"Range_10.1.1.1_10.1.2.9"`
+
+#### Scenario: Legacy default NamingPrefixes behavior remains backward compatible
+
+- **WHEN** `NamingPrefixes()` is instantiated with default arguments
+- **THEN** `format_host("10.1.1.1")` SHALL return `"Host_10.1.1.1"`, `format_network("10.1.1.0", 24)` SHALL return `"Net_10.1.1.0_24"`, `format_address_range("10.1.1.1", "10.1.1.9")` SHALL return `"IPR_10.1.1.1-10.1.1.9"`, and `format_group("WebServers")` SHALL return `"grpWebServers"`
+
+#### Scenario: Wildcard application expressions normalize both leading-star and star-dot syntax
+
+- **WHEN** an operator supplies `*chinacloudapi.cn` or `*.chinacloudapi.cn` with `NamingPrefixes(app_site="Site_", app_site_wildcard_marker="_")`
+- **THEN** `format_app_site("chinacloudapi.cn", is_wildcard=True)` SHALL return `"Site__chinacloudapi.cn"` (containing no `*` character) and the parsed `application-site` spec SHALL emit `primary-category: "Custom_Application_Site"`, `urls-defined-as-regular-expression: true`, and `url-list: ["\\/chinacloudapi\\.cn", "\\.chinacloudapi\\.cn"]`
+
+#### Scenario: Group suffix and DNS domain shorthand expressions
+
+- **WHEN** `NamingPrefixes(group="", group_suffix="_Grp")` formats group `"AppAccess"` or the parser evaluates `.abc.com`
+- **THEN** `format_group("AppAccess")` SHALL return `"AppAccess_Grp"` (avoiding double suffix if already ending in `_Grp`), and `.abc.com` SHALL parse as `type: "dns-domain"`, `name: ".abc.com"`, and `is_sub_domain: true`
+
+### Requirement: Incremental URL-List Updates and Value Reuse for Application-Site Objects
+
+`CPCRUDService` SHALL accept `{"add": [...], "remove": [...]}` deltas on `application-site` `url-list` fields, compute idempotent `set-application-site` diffs, block removals that empty `url-list` without `application-signature`, and reuse pre-existing `application-site` objects matching by normalized URL list regardless of name.
+
+#### Scenario: Adding and removing regex entries on an existing application-site
+
+- **WHEN** `plan()` evaluates an `application-site` update for `"Site__chinacloudapi.cn"` currently containing `["\\/chinacloudapi\\.cn", "\\.chinacloudapi\\.cn"]` with `url-list: {"add": ["\\.partner\\.cn"], "remove": ["\\/chinacloudapi\\.cn"]}`
+- **THEN** `Planner` SHALL produce `Outcome.UPDATE` (`set-application-site`) carrying the merged post-delta `url-list` (`["\\.chinacloudapi\\.cn", "\\.partner\\.cn"]`) and a `FieldChange` recording the prior and updated lists
+
+#### Scenario: Removing the last URL from an application-site without an application signature fails closed
+
+- **WHEN** `plan()` evaluates a `url-list: {"remove": [...]}` operation that removes every remaining entry from an `application-site` that lacks `application-signature`
+- **THEN** `Planner` SHALL emit `Outcome.ERROR` explaining that an `application-site` cannot have an empty `url-list` without an `application-signature`
+
+#### Scenario: Legacy-named application-site with identical URL list is reused on value conflict
+
+- **WHEN** `on_ip_conflict="reuse"` is active and `plan()` evaluates `"Site__chinacloudapi.cn"` with `url-list: ["\\/chinacloudapi\\.cn", "\\.chinacloudapi\\.cn"]` while an existing object `"Custom_ChinaCloud"` already holds that identical URL list and regex flag
+- **THEN** `Planner` SHALL produce `Outcome.REUSE` resolving `"Site__chinacloudapi.cn"` to `"Custom_ChinaCloud"` without renaming or duplicating the existing object
+
+### Requirement: Incremental List-Cell Patching and Anti-Any-Widening Guards for Policy Rules
+
+`CPCRUDService` SHALL support `{"add": [...], "remove": [...]}` mutations on list-valued policy rule fields (`source`, `destination`, `service`, `protected-scope`, `site-category`, `install-on`), enforce strict existence on `set`/`update`, block unsafe `"Any"` widening or collision, support `inverse()` rollback, and replicate these behaviors in `FileReplayApiMock`.
+
+#### Scenario: Adding and removing sources, destinations, and services in an existing access rule
+
+- **WHEN** `plan()` evaluates an `access-rule` with `operation: "set"`, `uid` (or `name`/`rule_number`), `source: {"add": ["Host_10.1.1.1"], "remove": ["Host_10.0.0.5"]}`, and `service: {"add": ["TCP_8443"]}` where `"Host_10.1.1.1"` is created earlier in the same template
+- **THEN** `Planner` SHALL plan `Outcome.UPDATE` (`set-access-rule`) with `depends_on` referencing the `"Host_10.1.1.1"` create action and incremental wire payloads (`{"add": ["Host_10.1.1.1"], "remove": ["Host_10.0.0.5"]}` on `source` and `{"add": ["TCP_8443"]}` on `service`), and `build_inverse_template()` SHALL generate a compensating `set-access-rule` restoring the dereferenced `prior_state`
+
+#### Scenario: Removing all remaining objects from a rule traffic or install cell is rejected to prevent Any widening
+
+- **WHEN** `plan()` evaluates an incremental `{"remove": [...]}` patch on `source`, `destination`, `service`, `protected-scope`, `site-category`, or `install-on` that would leave the resulting list empty
+- **THEN** `Planner` SHALL emit `Outcome.ERROR` refusing to empty the cell (preventing Check Point from implicitly widening the rule to `"Any"`)
+
+#### Scenario: Adding specific objects to a rule cell currently set to Any requires explicit removal of Any
+
+- **WHEN** an existing rule has `source: ["Any"]` and `plan()` evaluates `source: {"add": ["Host_10.1.1.1"]}` without `"Any"` in `remove`
+- **THEN** `Planner` SHALL emit `Outcome.ERROR` informing the caller that `"Any"` must be removed explicitly when narrowing a rule cell (and when `"Any"` IS explicitly listed in `remove`, `FieldChange.removed_items` SHALL record `["Any"]` while stripping `"Any"` from the Check Point wire `remove` array)
+
+#### Scenario: Adding Any via an incremental rule delta is rejected
+
+- **WHEN** `plan()` evaluates an incremental `{"add": ["Any"]}` delta on a policy rule list cell
+- **THEN** `Planner` SHALL emit `Outcome.ERROR` refusing to add `"Any"` incrementally
+
+#### Scenario: Unmatched rule with incremental cell deltas fails closed under any verb
+
+- **WHEN** `plan()` evaluates a policy rule with `{"add": ...}` or `{"remove": ...}` cell deltas under `operation: "present"` (or omitted `operation` / `"set"`) and no existing rule matches
+- **THEN** `Planner` SHALL emit `Outcome.ERROR` instead of falling back to `Outcome.CREATE` with `"Any"` traffic cells
+
+#### Scenario: Explicit set or update operation targeting a missing rule, group, object, or service fails closed
+
+- **WHEN** `plan()` evaluates an operation with `operation: "set"` or `operation: "update"` whose target rule, group, service, or object does not exist in the domain
+- **THEN** `Planner` SHALL emit `Outcome.ERROR` reporting that the target does not exist rather than creating a new rule or object
+
+#### Scenario: FileReplayApiMock applies incremental url-list and rule cell updates faithfully
+
+- **WHEN** `FileReplayApiMock` processes `set-application-site` or `set-*-rule` with `{"add": [...], "remove": [...]}` patches or list replacements inside a work session
+- **THEN** subsequent reads and `show-changes` inside the emulator SHALL reflect the updated URL list or dereferenced rule traffic members accurately
+
+
+---
+
+### OpenSpec Capability: `gateway-topology` (`openspec/specs/gateway-topology/spec.md`)
+
+# Gateway Topology and Candidate Matching Specification
+
+## Purpose
+
+Defines Check Point gateway interface topology extraction (`TopologyService`), static and API-based subnet/group/route resolution into `arodonata_gateway_topology`, and affected gateway / policy package candidate matching (`find_affected_gateways`, `locate_gateways`) for traffic flows across simple gateways, clusters, and VSX Virtual Systems.
+
+## Requirements
+
+### Requirement: Policy-Enforcing Gateway Target Selection
+
+`TopologyService` SHALL extract and index interface topology only for policy-enforcing gateway assets (`simple-gateway`, `simple-cluster`, `CpmiGatewayCluster`, `virtual-system`, `CpmiVsNetobj`, and `CpmiVsClusterNetobj`), skipping cluster members (`cluster-member`, `CpmiClusterMember`, `CpmiVsxClusterMember`), physical VSX containers (`vsx-gateway`, `vsx-cluster`, `CpmiVsxNetobj`, `CpmiVsxClusterNetobj`), and management servers (`checkpoint-host`, `mds`).
+
+#### Scenario: Cluster topology is derived from the cluster object while members and VSX hosts are skipped
+
+- **WHEN** `refresh_topology` processes a domain containing a `CpmiGatewayCluster`, its `cluster-member` nodes, a `CpmiVsxNetobj` physical host (`VS0`), and a `CpmiVsNetobj` Virtual System
+- **THEN** `TopologyService` SHALL build topology entries only for the `CpmiGatewayCluster` and the `CpmiVsNetobj` Virtual System, emitting zero topology rows for `cluster-member` or `CpmiVsxNetobj` assets
+
+### Requirement: Static Interface Topology Extraction and Group Expansion
+
+`TopologyService` SHALL normalize interface definitions across `show-gateways-and-servers`, `show-simple-gateway`, `show-simple-cluster`, and `show-generic-object` payloads, extracting Anti-Spoofing enforcement mode (`"prevent"`, `"detect"`, `"off"`, or `"unknown"`), expanding connected subnets (`"network defined by the interface ip and net mask"`), recursively resolving `"specific"` network/group objects from fresh cached objects or via targeted single-object/group API lookups across the domain and `"Global"` without refreshing full `DEFAULT_OBJECT_TYPES` (`show-hosts`, `show-dns-domains`), recording `"external"` interfaces (`leads-to-internet: true`), and logging a warning on unresolvable route-based interfaces.
+
+#### Scenario: Connected subnet and specific group behind interfaces expand into IPv4 intervals
+
+- **WHEN** a gateway has `eth0` configured with `leads-to-internet: true`, `eth1` (`10.10.1.1/24`) configured with `"network defined by the interface ip and net mask"`, and `eth2` configured with `"specific"` referencing group `"G_App_Subnets"` (which contains a host `10.20.1.5`, a subnet `10.20.2.0/24`, and a nested group with range `10.20.3.10-10.20.3.20`) and Anti-Spoofing action `"prevent"`
+- **THEN** `TopologyService` SHALL persist an `"external"` entry (`source_type="external_interface"`, `0.0.0.0/0`) for `eth0`, a connected interval (`10.10.1.0/24`, `source_type="interface_connected"`) for `eth1`, and three expanded intervals (`10.20.1.5/32`, `10.20.2.0/24`, `10.20.3.10-10.20.3.20`, `source_type="interface_specific"`, `anti_spoofing_mode="prevent"`) for `eth2`
+
+#### Scenario: Cold topology refresh resolves specific and VPN domain references on demand without bulk show-hosts
+
+- **WHEN** `refresh_topology` or `stream_refresh_topology` runs on a cold database across domains containing thousands of `host` and `dns-domain` objects, where gateways use connected/external interfaces and a `"specific"` or `vpn-domain` group `"G_App_Subnets"`
+- **THEN** the refresh SHALL synchronize gateway assets and resolve `"G_App_Subnets"` and its transitive member UIDs via targeted object/group lookups (persisting resolved objects without marking whole-domain `"host"` or `"group"` slices as fully synced), and SHALL perform zero full-domain `show-hosts` or `show-dns-domains` paginated queries
+
+#### Scenario: Interface with routing-defined or undefined topology logs a warning and is skipped
+
+- **WHEN** a non-external gateway interface has `ip-address-behind-this-interface` set to `"network defined by routing"` (without static route records) or `"not defined"`
+- **THEN** `TopologyService` SHALL emit a structured warning log identifying the gateway, domain, interface name, and topology setting, and skip static interval creation for that interface
+
+#### Scenario: On-demand detail fallback when gateway summary lacks interface topology
+
+- **WHEN** a policy-enforcing gateway or cluster in `arodonata_assets` has an empty `interfaces` list or lacks topology settings in its `show-gateways-and-servers` summary
+- **THEN** `TopologyService` SHALL query `show-simple-gateway`, `show-simple-cluster`, or `show-generic-object` (`details-level="full"`) for that asset UID to retrieve its complete interface list and topology settings before extracting intervals
+
+### Requirement: VSX Virtual System Static Route Topology Resolution
+
+For VSX Virtual Systems (`virtual-system`, `CpmiVsNetobj`, `CpmiVsClusterNetobj`), `TopologyService` SHALL extract static routes from Check Point Management API generic objects (`CpmiVsSlotObj`, `CpmiVsNetobj`, `CpmiVsClusterNetobj` via `routes`, `routes_installed`, or `routing_table`) and associate each routed destination network with the corresponding VS interface (`source_type="vs_static_route"`).
+
+#### Scenario: VS static route next-hop IP resolves to the matching VS connected interface
+
+- **WHEN** a Virtual System has interface `wrp128` (`192.168.100.2/30`), interface `eth1.50` (`10.50.0.1/24`), a static route for `172.16.80.0/24` with next-hop `10.50.0.254`, and a default route `0.0.0.0/0` with next-hop `192.168.100.1`
+- **THEN** `TopologyService` SHALL bind `172.16.80.0/24` to interface `eth1.50` with `source_type="vs_static_route"` and `topology_zone="internal"`, and mark `wrp128` as an `"external"` interface (`source_type="vs_static_route"`, `0.0.0.0/0`)
+
+### Requirement: Extensible Multi-Source Topology Schema
+
+Each persisted `GatewayTopologyEntry` in `arodonata_gateway_topology` SHALL carry a `source_type` discriminator (`"interface_connected"`, `"interface_specific"`, `"vs_static_route"`, `"vpn_domain"`, `"external_interface"`, `"connected_route"`, `"gaia_static_route"`, `"clish_route"`, `"bgp_route"`, `"ospf_route"`, or `"manual"`) and `anti_spoofing_mode` metadata so static Management API definitions, live CLI-collected routing tables, and manual entries coexist without overwriting unrelated source categories during refresh.
+
+#### Scenario: Multiple topology sources coexist per gateway interface
+
+- **WHEN** an interface has both a connected or specific subnet (`source_type="interface_connected"` or `"interface_specific"`), VPN encryption domain intervals (`source_type="vpn_domain"`), and routed subnets (`source_type="vs_static_route"` or `"bgp_route"`), and `refresh_topology(collect_routes=False)` subsequently refreshes static topology
+- **THEN** `arodonata_gateway_topology` SHALL store and query all intervals for that `(gateway_uid, interface_name)` while preserving each interval's `source_type`, `source_ref`, and existing CLI-collected route entries
+
+### Requirement: Affected Gateway and Policy Package Candidate Matching
+
+`TopologyService.find_affected_gateways()` SHALL resolve `sources` and `destinations` against each gateway's internal intervals first (longest-prefix match) and external interface second (`0.0.0.0/0` fallback), optionally filter evaluated intervals by `source_types` and toggle `TopologyAnnotation` overrides via `include_annotations`, compute delta-based `confidence` scores (`0.0..1.0`) with `confidence_factors` and `is_standby_path` flags, exclude any gateway where `Source` and `Destination` resolve to the same interface (`src_interface == dst_interface`), both fall back to `external`, or fall below `min_confidence`, and return affected gateways with their domain, policy packages, `matched_flows`, and input-ordered `matched_sources` and `matched_destinations`.
+
+#### Scenario: Traffic between two internal interfaces or between internal and external interfaces matches
+
+- **WHEN** `find_affected_gateways(sources=["10.10.1.25"], destinations=["8.8.8.8"])` runs against Gateway A (`10.10.1.0/24` on `eth1`, `external` on `eth0`, policy `"Perimeter_Pkg"` in domain `"Corp"`), Gateway B (`10.10.1.0/24` on `bond0.10`, `8.8.8.0/24` on `bond0.20`, policy `"Core_Pkg"` in domain `"DC"`), and Gateway C (`192.168.1.0/24` on `eth1`, `external` on `eth0`)
+- **THEN** it SHALL return Gateway B (`match_type="internal_to_internal"`, `bond0.10 -> bond0.20`, domain `"DC"`, package `"Core_Pkg"`, `matched_sources=["10.10.1.25"]`, `matched_destinations=["8.8.8.8"]`) and Gateway A (`match_type="internal_to_external"`, `eth1 -> eth0`, domain `"Corp"`, package `"Perimeter_Pkg"`, `matched_sources=["10.10.1.25"]`, `matched_destinations=["8.8.8.8"]`), and exclude Gateway C because both `10.10.1.25` and `8.8.8.8` fall back to Gateway C's `eth0` (`external == external`)
+
+#### Scenario: Traffic where both source and destination sit behind the same internal interface is excluded
+
+- **WHEN** `find_affected_gateways(sources=["10.10.1.10"], destinations=["10.10.1.99"])` runs against a gateway where both addresses match `10.10.1.0/24` on `eth1`
+- **THEN** that gateway SHALL be excluded from the returned candidates because `src_interface == dst_interface == "eth1"`
+
+#### Scenario: Multi-gateway and transit topology filters matched_sources and matched_destinations per gateway in input order
+
+- **WHEN** `find_affected_gateways(sources, destinations)` runs with multiple sources and destinations across a 4-gateway topology (`GW1` and `GW2` serving distinct source branches, `GW3` acting as a transit gateway with upstream branch networks on one interface, its own local subnets on another interface, and downstream networks on a third interface, plus `GW4` behind `GW3`)
+- **THEN** each returned `AffectedGatewayCandidate` SHALL populate `matched_sources` and `matched_destinations` with only the unique `source_query` and `destination_query` strings present in that gateway's cross-interface `matched_flows`, strictly preserving the caller's input order from `sources` and `destinations`, and excluding any gateway where all pairs resolve to the same interface (`src_interface == dst_interface`) or `external == external`
+
+#### Scenario: Policy package resolution combines asset policy metadata and rulebase installation targets
+
+- **WHEN** an affected gateway has `raw_data["policy"]["access-policy-name"] = "Standard_Policy"` and/or is listed in `installation-targets` of a cached `PolicyPackageInfo` in `arodonata_rulebase_package_layer`
+- **THEN** the returned `AffectedGatewayCandidate` SHALL populate `installed_access_policy="Standard_Policy"`, `policy_packages` with all matching package names, and `access_layers` with the ordered access layer names when the domain's rulebase package catalog or snapshot is cached
+
+#### Scenario: Static-only source_types and disabled annotations filter out live route and manual intervals
+
+- **WHEN** `find_affected_gateways(sources, destinations, source_types=STATIC_TOPOLOGY_SOURCES, include_annotations=False)` runs on a cache containing static interface topology, live `bgp_route` entries, and `manual` annotations
+- **THEN** candidate matching SHALL evaluate strictly the intervals matching `source_types` and ignore `TopologyAnnotation` overrides without mutating cached rows
+
+### Requirement: Static Topology Health Diagnostics and One-Arm Classification
+
+`TopologyService.get_topology_diagnostics()` SHALL inspect policy-enforcing gateways and interfaces to report completeness and trust diagnostics (`not_defined`, `routing_defined_without_routes`, `anti_spoofing_detect_or_off`, `unresolved_specific`, `empty_specific`, `missing_ip_mask`, `no_interfaces`), while treating internal-only gateways as valid and classifying single-interface or external-only gateways as `one_arm_topology` (`severity="info"`).
+
+#### Scenario: Diagnostics report incomplete interfaces and Detect-mode anti-spoofing without false positives on internal-only or one-arm gateways
+
+- **WHEN** `get_topology_diagnostics()` evaluates Gateway 1 (`eth1` with `not defined`, `eth2` with `network defined by routing` and no cached routes, `eth3` with `specific` group and Anti-Spoofing set to `Detect`), Gateway 2 (an internal segmentation firewall with `eth1` and `eth2` internal subnets and no `external` interface), and Gateway 3 (a single-interface `one_arm` gateway)
+- **THEN** it SHALL emit warning diagnostics for Gateway 1's `eth1` (`not_defined`), `eth2` (`routing_defined_without_routes`), and `eth3` (`anti_spoofing_detect_or_off`), emit zero warnings for Gateway 2, and report Gateway 3 with `code="one_arm_topology"` at `severity="info"`
+
+### Requirement: Live Gateway Route Collection via SSH Dependency Injection and CPRID Fallback
+
+`TopologyService.collect_gateway_routes()` SHALL collect live IPv4 routing tables (`connected_route`, `gaia_static_route`, `clish_route`, `bgp_route`, `ospf_route`, and `0.0.0.0/0` default routes) by invoking an injected `GatewayCliPort` (or async SSH callback in bash) first, and falling back to Check Point Management API `run-script` (`cprid` via `TaskWaiter`) when no SSH executor is provided or when SSH execution fails and `fallback_to_cprid=True`.
+
+#### Scenario: Cluster and VSX Virtual System route collection via SSH DI and vsenv context switching
+
+- **WHEN** `collect_gateway_routes()` runs for a `CpmiGatewayCluster` (with two `cluster-member` nodes) and a VSX `CpmiVsNetobj` (`vsid=3` hosted on physical parent `VSX-GW-01`)
+- **THEN** it SHALL resolve the cluster to its `cluster-member` node targets and resolve the Virtual System to `VSX-GW-01` (`vsid=3`), executing a bash script that switches context via `vsenv "$vsid" >/dev/null 2>&1 </dev/null`, verifies `$FWDIR` contains `CTX00003`, and runs `ip -4 route show </dev/null` to persist normalized route intervals in `arodonata_gateway_topology`
+
+#### Scenario: Automatic fallback from SSH callback to Management API run-script
+
+- **WHEN** a host application provides an SSH `gateway_cli` callback that raises a connection error for a remote branch gateway while `fallback_to_cprid=True`
+- **THEN** `TopologyService` SHALL execute the route collection script on that gateway via Management API `run-script`, wait for the task via `TaskWaiter`, decode the Base64 output from `task-details[].responseMessage`, and parse the resulting routes
+
+#### Scenario: Per-physical-node VSX serialization, MDS concurrency cap, and single-flight route collection
+
+- **WHEN** `collect_gateway_routes()` runs across multiple VSX Virtual Systems sharing one physical VSX host (`VS0`) alongside independent gateways, or when two callers invoke `collect_gateway_routes()` concurrently with identical scope
+- **THEN** `TopologyService` SHALL serialize CLI/`cprid` execution per physical `node_uid` so at most one command runs at a time on `VS0` without blocking independent gateways up to `route_collect_concurrency`, and coalesce identical concurrent calls into a single in-flight collection
+
+#### Scenario: Large routing table cap and clish bypass protect gateways holding BGP full-view tables
+
+- **WHEN** `collect_gateway_routes()` runs on a gateway whose routing table exceeds `max_routes_per_gateway` (or `10000` kernel routes for `clish`)
+- **THEN** the collection script SHALL skip `clish -c "show route"` when kernel routes exceed `10000` lines, truncate collected routes at `max_routes_per_gateway`, and record a truncation warning in `GatewayRouteCollectionStatus.warnings`
+
+### Requirement: Targeted Per-Gateway Topology and Route Refresh
+
+`TopologyService.refresh_topology()` and `TopologyService.collect_gateway_routes()` SHALL accept an optional `gateways: Sequence[str] | None` filter (matching gateway UID, name, `id`, or `asset_id`) that refreshes and replaces cached topology and route intervals strictly for the specified gateways without re-querying or deleting cached topology rows for other gateways in the domain.
+
+#### Scenario: Refreshing a single modified gateway in a large domain preserves other gateways
+
+- **WHEN** an administrator updates topology or routing on `"gw-branch-42"` and calls `refresh_topology(mgmt_name="mds1", domains=["Corp"], gateways=["gw-branch-42"], collect_routes=True, mode="force")`
+- **THEN** `TopologyService` SHALL query Management API gateway details and collect live routes only for `"gw-branch-42"`, atomically replacing only `"gw-branch-42"` rows in `arodonata_gateway_topology` while leaving all other gateways in `"Corp"` untouched
+
+### Requirement: Static Topology vs Live Routing Reconciliation and Cluster Drift Detection
+
+`TopologyService.reconcile_gateway_topology()` SHALL compare SmartConsole static topology intervals against live CLI-collected routing intervals, across cluster members, and optionally against gateway-targeted policy rules (`check_policy=True`), returning a `TopologyReconciliationReport` classifying discrepancies (`stale_in_topology`, `missing_in_topology`, `interface_mismatch`, `default_route_mismatch`, `cluster_member_drift`, `resolved_by_routing`, `policy_topology_mismatch`) while honoring `TopologyAnnotation` dispositions.
+
+#### Scenario: Reconciliation detects stale anti-spoofing subnets, interface mismatches, and cluster member drift
+
+- **WHEN** SmartConsole static topology on Cluster A declares `10.50.0.0/24` and `10.60.0.0/24` behind `eth1` and `10.70.0.0/24` behind `eth2`, while live routing tables show `10.50.0.0/24` routed via `eth1`, `10.60.0.0/24` absent from all interfaces, `10.70.0.0/24` routed via `eth1` (instead of `eth2`), and `10.80.0.0/24` routed via `eth1` on `member-1` only (absent on `member-2`)
+- **THEN** `reconcile_gateway_topology()` SHALL report `stale_in_topology` for `10.60.0.0/24` on `eth1`, `interface_mismatch` for `10.70.0.0/24`, `missing_in_topology` and `cluster_member_drift` for `10.80.0.0/24` on `eth1`, and suppress `stale_in_topology` if `10.60.0.0/24` is annotated with `disposition="standby_dynamic"`
+
+#### Scenario: Policy reconciliation flags gateway-targeted rules whose explicit networks are absent from gateway topology and routes
+
+- **WHEN** `reconcile_gateway_topology(..., check_policy=True)` evaluates a gateway with internal topology `10.10.0.0/16` and an enabled Access or NAT rule explicitly targeting that gateway in `install_on` whose explicit (non-`Any`) `source` (`192.168.50.0/24`) and `destination` (`192.168.60.0/24`) both fall outside all internal topology and route intervals of that gateway
+- **THEN** `reconcile_gateway_topology()` SHALL emit a `TopologyDiscrepancy` with `discrepancy_type="policy_topology_mismatch"` identifying the gateway, rule, and unmatched networks
+
+### Requirement: Persistent Administrator Topology Annotations and IPAM Prefix Export
+
+The cache layer SHALL persist `TopologyAnnotation` records in `arodonata_topology_annotations` across topology refreshes, supporting gateway/interface-level `trust_static_topology` overrides, prefix-level dispositions (`"confirmed"`, `"standby_dynamic"`, `"ignore"`, `"manual"`), and IPAM enrichment fields (`zone`, `site`, `comment`, `custom_metadata`), and `TopologyService.export_topology_prefixes()` SHALL export the annotated prefix inventory.
+
+#### Scenario: Annotations survive topology refresh and enrich IPAM prefix export
+
+- **WHEN** an administrator saves a `TopologyAnnotation` marking `10.90.0.0/24` on `gw1:eth1` as `disposition="standby_dynamic"`, `zone="DMZ-Partner"`, `site="Branch-SPB"`, `comment="Backup BGP path"`, and marks `10.99.0.0/24` as `disposition="ignore"`, followed by `refresh_topology(mode="force")` and `export_topology_prefixes()`
+- **THEN** the annotations SHALL remain intact after `refresh_topology`, `10.99.0.0/24` SHALL be excluded from active candidate matching, and `export_topology_prefixes()` SHALL include `10.90.0.0/24` with `zone="DMZ-Partner"`, `site="Branch-SPB"`, `comment="Backup BGP path"`, and `disposition="standby_dynamic"`
+
+### Requirement: Extensible Evidence Delta Confidence Scoring
+
+`TopologyService` SHALL compute endpoint and flow confidence in `[0.0, 1.0]` by summing configurable signed evidence deltas (`TopologyConfidenceWeights` for positive route, static topology, annotation, and policy/VPN/bridge hooks, minus conflict penalties) and attaching `confidence`, `is_standby_path`, and `confidence_factors` (`list[ConfidenceDelta]`) to each `TrafficFlowMatch` and `AffectedGatewayCandidate`.
+
+#### Scenario: Delta confidence reflects route agreement, detect-only anti-spoofing, conflicts, and standby annotations
+
+- **WHEN** `find_affected_gateways()` evaluates flows across interfaces with (a) matching live route + SmartConsole `Prevent` topology, (b) live route on `eth1` conflicting with mismatched SmartConsole static topology on `eth2`, and (c) a subnet present only in SmartConsole topology and annotated as `standby_dynamic`
+- **THEN** case (a) SHALL clamp to `confidence=1.0`, case (b) SHALL yield a high but penalized confidence (rising when static topology is marked `trust_static_topology=False`), and case (c) SHALL set `is_standby_path=True` with the `admin_standby_dynamic` delta recorded in `confidence_factors`
+
+### Requirement: VPN Encryption Domain Topology Extraction
+
+During topology extraction, the system SHALL extract each policy-enforcing gateway or cluster `vpn-domain` (`encryption-domain`) reference, recursively expand the referenced network or group object from cached domain and `"Global"` objects into IPv4 intervals with `source_type="vpn_domain"`, and apply the `vpn_encryption_domain` confidence delta when matching endpoints against those intervals.
+
+#### Scenario: Gateway encryption domain group expands into vpn_domain intervals and contributes vpn_encryption_domain confidence
+
+- **WHEN** a gateway or cluster defines `vpn-domain` (or `encryption-domain`) referencing group `"G_VPN_Encryption_Domain"` containing `10.77.1.0/24` and `10.77.2.0/24`, and `refresh_topology` extracts its topology
+- **THEN** `arodonata_gateway_topology` SHALL persist `10.77.1.0/24` and `10.77.2.0/24` with `source_type="vpn_domain"`, and `find_affected_gateways` matching an endpoint inside `10.77.1.0/24` SHALL include the `vpn_encryption_domain` (`+0.45`) delta in `confidence_factors`
+
+### Requirement: Policy and NAT Rule Topology Inference and Confidence Evidence
+
+`find_affected_gateways()` SHALL evaluate enabled, non-negated, non-`Any` Access Control and NAT rules in each gateway's installed policy package (honoring `install_on` targets), awarding `+policy_rule_evidence` in `confidence_factors` to cross-interface L3 candidates and, when `include_policy_inferred=True`, returning one-arm or incomplete-topology gateways whose installed rules explicitly cover the queried `sources` and `destinations` with `match_type="policy_inferred"`.
+
+#### Scenario: Cross-interface L3 gateway receives policy_rule_evidence bonus from matching Access or NAT rules
+
+- **WHEN** `find_affected_gateways(sources=["10.10.1.25"], destinations=["10.20.2.50"])` matches a multi-interface L3 gateway whose installed policy package contains an enabled, non-`Any` Access rule or NAT rule (`original` or `translated` source/destination) covering `10.10.1.25` and `10.20.2.50` and targeting that gateway (or `"Policy Targets"`)
+- **THEN** the matched flow and `AffectedGatewayCandidate` SHALL include `ConfidenceDelta(code="policy_rule_evidence", delta=0.25, ...)` in `confidence_factors`
+
+#### Scenario: One-arm Cisco ACI service-graph gateway is discovered via installed EPG policy while unrelated one-arm gateways are excluded
+
+- **WHEN** a domain contains 10 one-arm Cisco ACI service-graph gateways (`corp-aci-onearm-01` .. `corp-aci-onearm-10`, each having only a single `external` interface) and only `corp-aci-onearm-03` has an installed policy rule explicitly permitting or translating traffic between `10.160.10.0/24` (EPG-Web) and `10.160.20.0/24` (EPG-App)
+- **THEN** `find_affected_gateways(sources=["10.160.10.15"], destinations=["10.160.20.25"], include_policy_inferred=True)` SHALL return `corp-aci-onearm-03` with `match_type="policy_inferred"` and `policy_rule_evidence` in `confidence_factors`, while excluding the remaining 9 one-arm gateways (`corp-aci-onearm-01..02`, `04..10`), and `find_affected_gateways(..., include_policy_inferred=False)` SHALL exclude all 10 one-arm gateways
+
+### Requirement: Enterprise Raw-Replay Scale Verification for Multi-Hop, ECMP, LPM, and Batch Topology Queries
+
+`TopologyService` SHALL accurately synchronize, diagnose, reconcile, and resolve 7–10-hop cross-domain transit chains, parallel ECMP paths, standby BGP paths, nested `/8`–`/32` longest-prefix-match (LPM) hierarchies, and `20x20+` batch source/destination matrices when driven end-to-end from raw Check Point Management API and gateway CLI routing fixtures.
+
+#### Scenario: Cold raw-replay sync, smart-cache reuse, anomaly reconciliation, and administrator annotations
+
+- **WHEN** `refresh_topology(..., collect_routes=True)` executes cold against the multi-domain enterprise raw dataset, followed by a `cache_mode="smart"` / `"cache"` re-run, `get_topology_diagnostics()`, `reconcile_gateway_topology()`, `upsert_topology_annotations()`, and `export_topology_prefixes()`
+- **THEN** the cold sync SHALL populate `SqlCacheAdapter` from raw API/CLI payloads, the subsequent `smart` and `cache` runs SHALL perform zero `show-gateways-and-servers` or SSH calls while `show-last-published-session` is unchanged, diagnostics and reconciliation SHALL detect all planted anomalies (`not_defined`, `routing_defined_without_routes`, `anti_spoofing_detect_or_off`, `one_arm_topology`, `stale_in_topology`, `missing_in_topology`, `interface_mismatch`, `cluster_member_drift`, `default_route_mismatch`) with zero false warnings on internal-only gateways, and administrator annotations (`standby_dynamic`, `ignore`, `manual`, `confirmed`, `trust_static_topology=False`, `zone`, `site`, `comment`) SHALL govern candidate matching and IPAM prefix export
+
+#### Scenario: Deep 7 to 10 hop inter-domain transit chain, ECMP, standby BGP, LPM matryoshka, and 20x20 batch matrix
+
+- **WHEN** `find_affected_gateways()` evaluates (a) a cross-domain flow traversing 7–10 hops (`Branch -> Regional -> WAN_Core -> Perimeter -> Transit -> DC_Spine -> VS Tier-1 -> VS Tier-2 -> DB_Seg`) with parallel ECMP hops and standby BGP gateways (`include_standby=True` vs `False`), (b) packets targeting nested prefixes (`/8`, `/12`, `/16`, `/22`, `/24`, `/28`, `/32`) distributed across distinct interfaces of a single gateway, and (c) a `20+ x 20+` batch of sources and destinations (including nested groups and address ranges)
+- **THEN** it SHALL return all active hops (including both ECMP legs) while filtering standby BGP hops according to `include_standby`, select the exact most-specific interface at every `/8`–`/32` matryoshka level via LPM, and complete the `20+ x 20+` batch query in sub-second time from cache while strictly preserving the caller's input order in `matched_sources` and `matched_destinations`
+
+#### Scenario: Targeted single-gateway refresh after raw API and CLI mutation queries only the target gateway
+
+- **WHEN** the raw API/CLI fixture for a single gateway is modified to add a new routed subnet and `refresh_topology(gateways=[target_gateway], collect_routes=True)` is invoked
+- **THEN** the replay call counters SHALL confirm that only `target_gateway` was queried via Management API and SSH CLI, and `find_affected_gateways()` SHALL immediately reflect the updated routing graph
 
 
 ---
@@ -1844,7 +2518,171 @@ The repository SHALL provide a runnable `examples/` catalog demonstrating Arodon
 #### Scenario: Examples cover core and advanced v2 workflows with crash-safe lab guard
 
 - **WHEN** a developer inspects or executes scripts in `examples/`
-- **THEN** the catalog SHALL include runnable scripts for basic domain/object/service queries (`01`), search and structured queries (`02`), gateway/cluster/VSX relationships (`03`), streaming cache refresh (`04`), rulebase queries and numbering (`05`), session lifecycle (`06`), `auth_context`/`user_context` and `SessionOverlay` read-your-own-writes (`07`), CPCRUD idempotent apply (`08`) and compensating inverse (`09`), change report evidence (`10`), OpenTelemetry tracing with module gating (`11`), and FastAPI MCP embedding (`12`, configured with explicit bearer/host authentication middleware protecting write-capable MCP routes), with all mutating examples wrapped in `guarded_session` so target lab domains are automatically restored on exit
+- **THEN** the catalog SHALL include runnable scripts for basic domain/object/service queries (`01`), search and structured queries (`02`), gateway/cluster/VSX relationships (`03`), streaming cache refresh (`04`), rulebase queries and numbering (`05`), session lifecycle (`06`), `auth_context`/`user_context` and `SessionOverlay` read-your-own-writes (`07`), CPCRUD idempotent apply (`08`) and compensating inverse (`09`), change report evidence (`10`), OpenTelemetry tracing with module gating (`11`), FastAPI MCP embedding (`12`, configured with explicit bearer/host authentication middleware protecting write-capable MCP routes), and gateway interface topology caching and affected gateway candidate matching (`13`), with all mutating examples wrapped in `guarded_session` so target lab domains are automatically restored on exit
+
+### Requirement: Deterministic Enterprise Raw Dataset and Generator
+
+The testing harness SHALL provide a deterministic (fixed-seed) generator and raw fixture dataset (`tests/fixtures/enterprise_raw_dataset/`) containing Check Point Management API JSON payloads (including MDSM global assignments, deterministic `Global` object/group usage in local rules, heterogeneous standalone gateway, HA cluster, Virtual System, and cross-domain VSX distributions across every user domain, unique per-domain gateway/interface IPs and Virtual System internal subnets, and complete `CpmiVsxSlotObj`/`CpmiVsSlotObj` metadata) and gateway CLI routing outputs for an enterprise MDSM topology.
+
+#### Scenario: Raw dataset covers multi-domain API payloads and gateway CLI outputs
+
+- **WHEN** the enterprise raw dataset is generated or loaded from `tests/fixtures/enterprise_raw_dataset/`
+- **THEN** it SHALL provide deterministic raw Check Point API JSON files (`show-domains`, `show-global-assignments`, `show-sessions`, `show-last-published-session`, `show-session`, `show-gateways-and-servers`, `show-simple-gateway`, `show-simple-cluster`, `show-generic-object`, `show-generic-objects`, `show-hosts`, `show-networks`, `show-address-ranges`, `show-groups` nested 6–7 levels deep, `show-services-*`, `show-packages`, `show-access-layers`, `show-access-rulebase`, `show-nat-rulebase`) and raw CLI stdout files (`vsx stat -l`, `ip -4 route show`, `clish -c "show route"`, and Base64 `run-script`/`show-task` payloads) across 9 user MDSM domains plus `Global`
+
+#### Scenario: Raw dataset includes deterministic Global object and group usage in local domain rules without breaking scale invariants
+
+- **WHEN** `ensure_enterprise_raw_dataset()` materializes `tests/fixtures/enterprise_raw_dataset/`
+- **THEN** local user domains SHALL deterministically reference `Global` objects, services, and groups (such as `H_Global_DNS_001`, `G_Global_Branch_Supernet`, `G_Global_DC_Supernet`, `TCP_53`, and `UDP_53`) inside existing Access rule #104 (`uid-arule-<domain>-0104`) and expose `mds/show-global-assignments.json` while preserving existing scale invariants (`10` domains, `341` cached assets, `315` gateways with `simple-gateway`, cluster, and `CpmiVsNetobj` Virtual System assets in every user domain plus at least `15` cross-domain Virtual Systems, `325` CLI routing targets, unique per-domain gateway and interface IPv4 addresses and Virtual System internal `/24` subnets, complete `CpmiVsxSlotObj` and `CpmiVsSlotObj` entries across VSX chassis hosts, `105` access rules in `3` sections per domain, `12` NAT rules per domain, fewer than `250` topology-cached objects, and unmodified rule #1 fixtures)
+
+### Requirement: File-Backed Check Point API and Gateway CLI Replay Doubles
+
+The testing package SHALL provide `FileReplayApiMock` (`ApiPort`) and `FileReplayCliMock` (`GatewayCliPort`) backed by the raw dataset on disk, emulating Check Point pagination (`limit`/`offset`/`from`/`to`/`total`), `details-level`, `uid`/`name`/`class-name` filtering, rulebase slicing with `use-object-dictionary=False` inlining, `where-used` dependency resolution, `run-script` + `show-task`, VSX CLI validation, stateful per-`sid` mutations, and redacted call auditing.
+
+#### Scenario: Paginated API queries and VSX CLI context validation execute against raw fixture files
+
+- **WHEN** `ArodonataClient` queries `FileReplayApiMock` with `limit`/`offset`, `uid`/`name`/`class-name` filters, `where-used`, or `show-access-rulebase` / `show-nat-rulebase` (`use-object-dictionary=True | False`), and executes route collection scripts against `FileReplayCliMock` (or `run-script` + `show-task` fallback)
+- **THEN** `FileReplayApiMock` SHALL return continuity-valid slices (`from`, `to`, `total`), resolve `where-used` direct and indirect group/access-rule/NAT-rule references (and inline `objects-dictionary` dicts when `use-object-dictionary=False`), and return Base64-encoded `show-task` responses from the raw dataset while recording per-command call counters, and `FileReplayCliMock` SHALL verify `vsenv` / `vsx stat -l` and `CTX%05d` `$FWDIR` guards before returning the raw CLI stdout for the target node and VSID
+
+#### Scenario: Stateless read calls without SID continue reading published domain state
+
+- **WHEN** a caller invokes read-only `FileReplayApiMock.api_call(...)` or `api_query(...)` with `sid=None`
+- **THEN** `FileReplayApiMock` SHALL continue serving responses from the domain's published snapshot without failing authentication, ensuring existing unit and topology scale tests remain backward-compatible
+
+### Requirement: Standalone Check Point Web API HTTPS Mock Server for Downstream Applications
+
+The testing package SHALL provide an embeddable and CLI-runnable HTTPS server (`python -m arodonata.testing.mock_server`) sharing unified session, async task, and mutation state with `FileReplayApiMock`, serving `/web_api/{cmd}` with host-rewritten `show-domains`, `X-chkp-sid` session enforcement, and fast state reset controls so downstream applications can run full read and write workflows against `localhost:<port>`.
+
+#### Scenario: Downstream application connects over HTTPS to localhost and syncs multi-domain dataset
+
+- **WHEN** `CheckPointReplayHttpServer` is started on `localhost:<port>` (e.g., `localhost:443` or an ephemeral test port) and a client connects via real `AMgmtClient` / `ApiTransport`
+- **THEN** `/web_api/login` SHALL issue domain-bound session tokens (`X-chkp-sid`), `/web_api/show-domains` SHALL rewrite active CMA/MDS server `ipv4-address` fields to the server's bound host, and subsequent `/web_api/{cmd}` requests (`show-gateways-and-servers`, `show-hosts`, `show-groups`, `show-packages`, `show-access-rulebase`, `run-script`, `show-task`, etc.) SHALL return the corresponding domain's paginated raw dataset without artificial rate limiting or login delays
+
+#### Scenario: Downstream application executes stateful write workflows and resets state via CheckPointReplayHttpServer
+
+- **WHEN** an HTTPS client authenticates via `/web_api/login`, executes mutating `/web_api/{cmd}` calls, polls `/web_api/show-task` for asynchronous commands (`publish`, `show-changes`, `verify-policy`, `install-policy`, `assign-global-assignment`, `assign-global-policy`, `run-script`), and subsequently resets server state between test scenarios
+- **THEN** `/web_api/{cmd}` SHALL enforce HTTP `401` (`generic_err_missing_required_header` or `generic_err_invalid_session_id`) on missing or invalidated `X-chkp-sid` headers, reflect committed changes immediately across subsequent HTTPS requests, and restore clean state via `snapshot_state()`, `restore_state()`, `reset()`, or opt-in `/__testing__/*` endpoints
+
+### Requirement: Per-Session Staging Overlay and Read-Your-Own-Writes Isolation
+
+`FileReplayApiMock` and `CheckPointReplayHttpServer` MUST isolate uncommitted write operations inside a copy-on-write per-`sid` staging overlay (`login`, `create_dedicated_session`, `/web_api/login`) until `publish`, while enforcing Check Point `"read-only": true` restrictions and cross-session object locks.
+
+#### Scenario: Uncommitted mutations are visible to the mutating SID and isolated from other sessions
+
+- **WHEN** Session A (`sid_a`) creates, modifies, or deletes objects, groups, or rules without calling `publish`, and both Session A and Session B (`sid_b`, a read-only session, or `sid=None`) read from the same domain
+- **THEN** reads using `sid_a` SHALL reflect all uncommitted mutations in Session A's staging overlay, while reads using `sid_b`, a `"read-only": true` session, or `sid=None` SHALL observe only the last published domain state
+
+#### Scenario: Read-only sessions and object locks reject conflicting write commands
+
+- **WHEN** a client sends a mutating command using a `"read-only": true` session SID, OR Session B attempts to modify or delete an existing object or rule UID currently modified or deleted by open uncommitted Session A
+- **THEN** the emulator SHALL reject the read-only write with HTTP `400` (`err_validation_failed`) and reject the conflicting edit with HTTP `400` (`generic_err_object_locked`)
+
+### Requirement: Session Lifecycle, Adoption, Discard, and Change History Emulation
+
+The emulator SHALL support `login`, `logout` / `logout_sid`, `set-session`, `take-over-session`, `switch-session`, `publish`, `discard`, `show-session`, `show-sessions`, `show-last-published-session`, and `show-changes` with atomic publish commits, post-publish work-session rotation, rollback on discard or logout without publish, and structured change deltas.
+
+#### Scenario: Publish commits overlay atomically, rotates active work session, and records change history
+
+- **WHEN** a write session calls `publish` (`{}` or `{"uid": <session_uid>}`)
+- **THEN** the emulator SHALL atomically apply the session's overlay into published domain state, update `show-last-published-session` and prepend the published revision (including `published-changes` and `number-of-published-changes`) to `show-sessions`, record structured deltas for `show-changes`, return a completed `tasks` response when `wait_for_task=True` or a pollable `task-id` when `wait_for_task=False`, and bind `sid` to a fresh `"open"` work session (`changes=0`, `locks=0`, `number-of-published-changes=0`, no `publish-time`)
+
+#### Scenario: Discard, logout without publish, set-session, take-over-session, and switch-session manage uncommitted state
+
+- **WHEN** a client updates session metadata via `set-session`, adopts or switches an open session via `take-over-session` (`uid`, optional `disconnect-active-session`) or `switch-session` (`uid`), or invokes `discard` (`{}` or `{"uid": <target_session_uid>}`) or `logout` / `logout_sid` before `publish`
+- **THEN** `set-session` SHALL persist session `name` and `description` in `show-session`, session adoption SHALL transfer the staging overlay and invalidate disconnected active SIDs with HTTP `401` (`generic_err_invalid_session_id`), and `discard` or `logout` SHALL roll back all uncommitted overlay changes and release session object locks
+
+#### Scenario: Querying show-changes returns structured deltas for staged and published sessions
+
+- **WHEN** a client invokes `show-changes` targeting a published session (`to-session`, optional `from-session`, `from-date`, `to-date`) or an uncommitted staged session
+- **THEN** the emulator SHALL return Check Point `changes[].operations` buckets (`added-objects`, `modified-objects`, `deleted-objects`, `added-rules`, `modified-rules`, `deleted-rules`) with `old-object`, `new-object`, `field-changes`, `layer`, `package`, `rule-number`, and `old-rule-number` metadata, wrapped as a completed task when `wait_for_task=True` or a `task-id` for `show-task` when `wait_for_task=False`
+
+### Requirement: Stateful Object, Service, and Group CRUD Operations
+
+The emulator SHALL support `add-*`, `set-*`, `delete-*`, and singular `show-*` commands for `host`, `network`, `address-range`, `dns-domain`, `application-site`, `group`, `service-tcp`, `service-udp`, `service-icmp`, `service-icmp6`, `service-other`, and `service-group`, plus `show-unused-objects` and `delete-unused-objects`.
+
+#### Scenario: CRUD lifecycle for network objects, services, and groups
+
+- **WHEN** a write session creates, renames (`new-name`), updates (`set-*` including `members` full replacement or `{"add": ..., "remove": ...}`, `groups` updates, and `set-if-exists`), and deletes supported network objects, services, or groups
+- **THEN** the emulator SHALL enforce Check Point uniqueness validation (`ignore-warnings` awareness for duplicate values, error on duplicate names), maintain bidirectional group membership consistency across staged reads, and return Check Point `generic_err_object_not_found` for unknown UIDs or names
+
+#### Scenario: Unused object discovery and cleanup via show-unused-objects and delete-unused-objects
+
+- **WHEN** a client calls `show-unused-objects` or a write session calls `delete-unused-objects` (with optional object or group filters)
+- **THEN** `show-unused-objects` SHALL return domain objects with zero references in groups, Access rules, NAT rules, or gateway interfaces, and `delete-unused-objects` SHALL remove only unreferenced local objects into the active staging overlay while leaving referenced or `Global` objects untouched
+
+### Requirement: Referential Integrity Enforcement on Object and Service Deletion
+
+The emulator MUST reject `delete-*` on any object, service, or group that is still referenced within the effective domain by any group, Access rule (enabled or disabled), NAT rule, or gateway interface topology.
+
+#### Scenario: Deleting a referenced object, service, or group fails with Check Point validation error
+
+- **WHEN** a write session calls `delete-host`, `delete-network`, `delete-address-range`, `delete-dns-domain`, `delete-application-site`, `delete-group`, or `delete-service-*` for an entity still referenced by a group, Access rule, NAT rule, or gateway topology
+- **THEN** the emulator SHALL reject the deletion with HTTP `400` and Check Point error code `generic_err_object_cannot_be_deleted` (including `blocking-errors` identifying the referencing entities, compatible with `err_validation_failed` checks) and leave the target entity intact
+
+#### Scenario: Deleting an object succeeds after removing all group and rule references
+
+- **WHEN** a Decommission workflow first removes the target object from referencing groups (`set-group` with `members.remove`), removes it from multi-member rule cells or disables/deletes sole-member rules (`set-*-rule` / `delete-*-rule`), and then invokes `delete-*`
+- **THEN** `delete-*` SHALL succeed because zero staged references remain in the session overlay
+
+### Requirement: Access and NAT Rulebase CRUD, Positioning, and Automatic Consistency
+
+The emulator SHALL support `show-access-rule`, `add-access-rule`, `set-access-rule`, `delete-access-rule`, `add-access-section`, `set-access-section`, `delete-access-section`, `show-access-layer`, `add-access-layer`, `set-access-layer`, `delete-access-layer` (including inline layers), `show-https-rulebase`, `show-threat-rulebase`, `https-rule` / `threat-rule` CRUD, `show-nat-rule`, `add-nat-rule`, `set-nat-rule`, `delete-nat-rule`, `add-nat-section`, `set-nat-section`, `delete-nat-section`, and `verify-policy` / `install-policy` task simulation, automatically recomputing rule numbers, section ranges, live `objects-dictionary`, `show-objects`, `show-object`, and `where-used`.
+
+#### Scenario: Access rule and section CRUD maintains rule-numbers, section bounds, and objects-dictionary
+
+- **WHEN** a write session adds, edits, reorders (`position` / `new-position` with `"top"`, `"bottom"`, 1-based integer `rule-number`, `{"top": section}`, `{"bottom": section}`, `{"above": ref}`, `{"below": ref}`), enables/disables, or deletes Access rules or sections, or mutates rule cells via full replacement or `{"add": ..., "remove": ...}`
+- **THEN** the emulator SHALL strip `"Any"` (`97aeb369-9aea-11d5-bd16-0090272ccb30`) when concrete members are added, revert emptied cells to `"Any"`, recompute sequential 1-based `rule-number` values and section `from`/`to` bounds (plus layer `total`), and return live `objects-dictionary` entries (or inline dicts for `use-object-dictionary=False`) on subsequent `show-access-rule` and `show-access-rulebase` reads
+
+#### Scenario: NAT rule CRUD normalizes Original and Any sentinels and updates NAT rule numbers
+
+- **WHEN** a write session creates, updates, repositions, or deletes NAT rules or sections in a package using `"Original"`, `"Any"`, sentinel UIDs (`85c0f50f-6d8a-4528-88ab-5fb11d8fe16c`, `97aeb369-9aea-11d5-bd16-0090272ccb30`), object names, or object UIDs
+- **THEN** the emulator SHALL normalize and store sentinel/object UIDs cleanly, recompute sequential NAT `rule-number` values, section `from`/`to` bounds, and package `objects-dictionary`, and serve updated rules via `show-nat-rule` and `show-nat-rulebase`
+
+#### Scenario: Post-mutation reads stay consistent across where-used, show-objects, show-object, and inline rulebases
+
+- **WHEN** any group membership or Access/NAT rule cell is mutated in a session overlay or published into domain state
+- **THEN** subsequent calls to `where-used` (direct and indirect), `show-objects`, `show-object`, singular `show-*`, and `show-*-rulebase` (`use-object-dictionary=True | False`) with visibility into that state SHALL immediately reflect added, renamed, re-bound, or removed references
+
+### Requirement: MDSM Global Domain Visibility, Write Protection, and Policy Assignment
+
+In MDSM mode, `Global` domain entities SHALL be readable from local domain sessions and visible in rule references, whereas attempts to modify or delete `Global` objects or rules from a local domain session MUST fail with a realistic Check Point read-only / domain-ownership error, and `assign-global-assignment` / `assign-global-policy` SHALL be supported.
+
+#### Scenario: Local domain queries resolve Global objects while bulk domain syncs remain domain-scoped
+
+- **WHEN** a client queries `show-object`, `show-objects`, singular `show-*`, `where-used`, or `show-*-rulebase` in a local domain (such as `Branch` or `Perimeter`) that references `Global` objects, services, or groups
+- **THEN** those lookups and `objects-dictionary` entries SHALL resolve the `Global` entities tagged with `"domain": {"uid": "uid-dom-global", "name": "Global", "domain-type": "global domain"}`, while bulk per-domain sync endpoints (`show-hosts`, `show-networks`, `show-groups`, `show-services-*`) remain scoped to the queried domain
+
+#### Scenario: Local domain sessions cannot modify or delete Global objects or Global rules
+
+- **WHEN** a write session opened on a local domain invokes `set-*` or `delete-*` targeting a `Global`-owned object, service, group, or Global rule/layer (by UID or name)
+- **THEN** the emulator SHALL reject the mutation with HTTP `400` (`generic_err_object_read_only` / `err_validation_failed`) without altering `Global` state, whereas a write session opened directly on the `Global` domain MAY mutate unreferenced `Global` objects (while still enforcing cross-domain referential integrity on deletion)
+
+#### Scenario: Global policy assignment emulates Check Point task execution and assignment metadata
+
+- **WHEN** a client executes `assign-global-assignment` (or `assign-global-policy`) and `show-global-assignment` / `show-global-assignments`
+- **THEN** the emulator SHALL update global assignment metadata for the specified `global-domains` and `dependent-domains` and return a Check Point task response (`{"tasks": [...]}` for `wait_for_task=True` or pollable `{"task-id": ...}` / `{"tasks": [{"task-id": ...}]}` for `wait_for_task=False`)
+
+### Requirement: Fast In-Memory State Snapshot, Restore, and Reset
+
+`FileReplayApiMock` and `CheckPointReplayHttpServer` SHALL provide fast in-memory state snapshot, restore, and reset primitives so test suites roll back all domain mutations, active sessions, tasks, and attached CLI overrides between scenarios without re-reading or regenerating disk fixtures.
+
+#### Scenario: Snapshot, restore, and reset roll back emulator and CLI state in milliseconds
+
+- **WHEN** a test captures `snap = api_mock.snapshot_state()` (or via `CheckPointReplayHttpServer` method or `/__testing__/snapshot`), mutates or publishes domain state, modifies attached `FileReplayCliMock` overrides, and calls `api_mock.restore_state(snap)` or `reset()` (or `/__testing__/restore` / `/__testing__/reset`)
+- **THEN** all published domain data, MDSM assignments, session bindings, work sessions, `show-changes` history, dynamic tasks, and attached CLI overrides SHALL revert cleanly in memory without disk I/O or dataset regeneration
+
+### Requirement: SID-Redacted Call Auditing and OpenTelemetry Span Hygiene
+
+The emulator SHALL record SID-redacted call audit entries (`call_log`), expose test assertion helpers, and emit provider-agnostic OpenTelemetry spans (`arodonata.core.telemetry`) without owning a global `TracerProvider` or leaking credentials or raw session IDs.
+
+#### Scenario: Enriched call_log and assertion helpers verify domain safety and query efficiency
+
+- **WHEN** tests run E2E workflows against `FileReplayApiMock` or `CheckPointReplayHttpServer` and inspect `call_log`, `get_calls(...)`, or invoke `assert_no_global_mutations()`, `assert_no_full_object_scans()`, `assert_command_called(...)`, or `assert_command_not_called(...)`
+- **THEN** every `call_log` entry SHALL contain `mgmt_name`, `domain`, `command`, `is_mutating`, a deterministic non-secret `sid_ref` (`"sid#..."`), `session_uid`, `read_only_session`, sanitized `payload`, `payload_summary`, `status_code`, `success`, and `error_code` with zero raw `sid`, `api-key`, or `password` values, and assertion helpers SHALL raise descriptive failures if unexpected `Global` mutations or unpaginated bulk `show-hosts` / `show-networks` scans occur
+
+#### Scenario: OpenTelemetry spans propagate over FileReplayApiMock and CheckPointReplayHttpServer without SID leakage
+
+- **WHEN** an external host test configures `InMemorySpanExporter` on its own `TracerProvider` and runs `ArodonataClient` E2E write/publish/diff workflows over both `FileReplayApiMock` and `CheckPointReplayHttpServer`
+- **THEN** Arodonata and replay spans SHALL record expected span names, `arodonata.*` attributes, and success/error statuses without initializing any global `TracerProvider` and with zero occurrences of raw `sid`, `X-chkp-sid`, `api-key`, or `password` strings across all span names, attributes, events, and status descriptions
 
 
 ---
@@ -1890,17 +2728,17 @@ The `arodonata.mcp` package SHALL provide a standalone CLI (`arodonata-mcp`) and
 
 ### Requirement: Structured Object Aggregation and Cache Status Tools
 
-The `arodonata[mcp]` server SHALL expose a structured query and schema-introspection tool (`query_objects` supporting `aggregate="list" | "count" | "describe"`) for cross-domain filtering, grouping, and counting over `arodonata_objects`, `arodonata_services`, and `arodonata_assets` without raw SQL, along with a unified `cache_control` tool (`action="status" | "refresh"`) reporting freshness per domain and scope from `domain_sync_state` or triggering scoped synchronization.
+The `arodonata[mcp]` server SHALL expose a structured query and schema-introspection tool (`query_objects` supporting `aggregate="list" | "count" | "describe"`) for cross-domain filtering, grouping, and counting over `arodonata_objects`, `arodonata_services`, and `arodonata_assets` without raw SQL, along with a unified `cache_control` tool (`action="status" | "refresh"`) reporting freshness per domain and scope from `domain_sync_state` or triggering scoped synchronization. It SHALL normalize `group_by` field aliases (`domain` -> `domain_name`, `mgmt` / `server` / `management` -> `mgmt_name`, `object_type` / `asset_type` / `service_type` -> `type`, `orig_domain` -> `original_domain`) and expand asset type aliases (`gateway`, `cluster`, `member`, `vsx`, `vs`, `server`) to include Check Point `Cpmi*` classes (`CpmiGatewayPlain`, `CpmiGatewayCluster`, `CpmiClusterMember`, `CpmiVsxClusterMember`, `CpmiVsxNetobj`, `CpmiVsxClusterNetobj`, `CpmiVsNetobj`, `CpmiVsClusterNetobj`, `CpmiHostCkp`) with case-insensitive matching.
 
 #### Scenario: Aggregate object counts across domains in a single tool call
 
-- **WHEN** `query_objects(types=["host", "network"], group_by=["domain_name", "type"], aggregate="count")` is called
-- **THEN** the tool SHALL execute a parameterized query over the cached tables (distinguishing domain-owned vs Global objects via `original_domain`) and return the grouped counts in a single response
+- **WHEN** `query_objects(types=["host", "network"], group_by=["domain_name", "type"], aggregate="count")` is called (or with `group_by=["domain", "type"]` and asset aliases such as `types=["cluster", "vsx", "vs"]`)
+- **THEN** the tool SHALL execute a parameterized query over the cached tables (distinguishing domain-owned vs Global objects via `original_domain`), resolve `group_by` aliases and `Cpmi*` asset classes case-insensitively, and return the grouped counts in a single response (populating both requested alias keys and canonical keys when an alias is used)
 
 #### Scenario: Progressive-disclosure schema description via query_objects
 
-- **WHEN** `query_objects(mgmt_name=..., domain=..., aggregate="describe")` is called
-- **THEN** it SHALL return available domains, management servers, per-type object/service/asset counts, and the list of filterable and groupable fields from the cached tables
+- **WHEN** `query_objects(mgmt_name=..., domain=..., aggregate="describe")` is called (defaulting to `cache_mode="smart"`)
+- **THEN** if the object cache for the target scope has not been synchronized (`0` `scope="objects"` sync states, even if partial on-demand topology objects exist), it SHALL warm `arodonata_objects` first when `cache_mode != "cache"`, and return available domains, management servers, per-type object/service/asset counts, and the list of filterable and groupable fields from the cached tables
 
 #### Scenario: Cache status inspection across scopes
 
@@ -1909,20 +2747,21 @@ The `arodonata[mcp]` server SHALL expose a structured query and schema-introspec
 
 ### Requirement: Multi-Server Tool Surface and Cache-Backed Envelopes
 
-The MCP server SHALL expose a consolidated cache-aligned tool surface (`list_domains`, `list_objects`, `list_services`, `list_assets`, `show_object`, `show_rulebase`, `locate_rules`, `search_objects`, `get_group_members`, `query_objects`, `cache_control`, `change_report`, `api_call`, and opt-in CPCRUD tools), pre-validating `domain` names against `arodonata_domains` before login, normalizing short and canonical `types`/`obj_type` values, resolving `show_object` across `arodonata_objects`, `arodonata_services`, `arodonata_assets`, and `arodonata_rulebase_layer` / `arodonata_rulebase_package_layer` with strict explicit wildcard matching and paginated substring candidate fallback, returning the domain's package and layer catalog in `show_rulebase` when `package`/`layer` is omitted or unmatched, enforcing a read-only command allowlist in `api_call` when `ARODONATA_MCP_ALLOW_WRITE_API=false`, isolating allowed write `api_call` invocations in a dedicated session, and passing `known_sids` into error redaction.
+The MCP server SHALL expose a consolidated cache-aligned tool surface (`list_domains`, `list_objects`, `list_services`, `list_assets`, `show_object`, `show_rulebase`, `locate_rules`, `search_objects`, `get_group_members`, `query_objects`, `cache_control`, `change_report`, `api_call`, and opt-in CPCRUD tools), pre-validating explicit `domain` names against `arodonata_domains` and normalizing short and canonical object/service/asset types (including case-insensitive `Cpmi*` equivalence expansion across `list_assets`, `search_objects`, and `query_objects`).
 
-#### Scenario: List tool response envelope includes source and cache age
+#### Scenario: List and search tool response envelope includes source, accurate cache age, and cold-cache auto-upgrade
 
-- **WHEN** a collection listing tool (`list_domains`, `list_objects`, `list_services`, or `list_assets`) returns a page of objects (including with short or canonical `types` filters such as `types=["tcp", "udp"]` on `list_services` or `parent="..."` on `list_assets`)
-- **THEN** the JSON text response SHALL include `from`, `to`, `total`, `source` (`"cache"` or `"live"`), `cache_age_seconds`, and `objects` sliced by `limit` and `offset`
+- **WHEN** a collection listing or search tool (`list_domains`, `list_objects`, `list_services`, `list_assets`, `search_objects`, or `query_objects`) executes
+- **THEN** the JSON text response SHALL include `from`, `to`, `total`, `source` (`"cache"` or `"live"`), `cache_age_seconds` (`null` when no `synced_at` timestamp exists in `arodonata_domain_sync_state` rather than `0.0`), and `objects` sliced by `limit` and `offset`; when `cache_mode="cache"` is passed on an uninitialized scope (`0` sync states for that scope, or `0` cached domain rows for `domains`), the tool SHALL automatically upgrade to `"smart"` so cold caches are populated on first query; and when `mgmt_name` is omitted in `search_objects`, the search SHALL span all configured `mgmt_names` rather than only `mgmt_names[0]`
 
 #### Scenario: Single-entity show_object resolves across objects, services, assets, and layers with wildcard and substring fallback
 
 - **WHEN** `show_object(uid_or_name=..., mgmt_name=..., domain=..., limit=20, offset=0)` is called
-- **THEN** it SHALL search `arodonata_objects`, `arodonata_services`, `arodonata_assets` (returning cached gateway/cluster `interfaces`, `network_security_blades`, `member_uids`, and `virtual_system_uids`), and `arodonata_rulebase_layer` / `arodonata_rulebase_package_layer`:
-  - if `uid_or_name` contains no `*` or `?` and matches an exact UID or name, it SHALL return that single entity with `match_type="exact"` and full details;
-  - if `uid_or_name` contains an explicit wildcard (`*` or `?`), it SHALL evaluate `fnmatchcase` strictly against the pattern without adding implicit leading or trailing wildcards (`match_type="wildcard"`), returning the full object when `total == 1` or a paginated candidate slice (`limit` default `20`, max `500`) when `total > 1`;
-  - if `uid_or_name` contains no wildcard and has no exact match in cache, it SHALL search for case-insensitive substring matches across cached names (`match_type="substring_candidates"`) and return up to `limit` (default `20`, max `500`) compact candidate summaries with `from`, `to`, and `total` so the caller can refine the next query without overflowing context
+- **THEN** it SHALL search `arodonata_objects`, `arodonata_services`, `arodonata_assets`, and `arodonata_rulebase_layer` / `arodonata_rulebase_package_layer` (using `cache_mode="cache"` and including `"Global"` whenever `domain` is omitted):
+  - if `uid_or_name` contains no `*` or `?` and matches in exactly one domain, it SHALL return that single entity with `match_type="exact"` and full details;
+  - if `domain` is omitted and `uid_or_name` matches exact entities in more than one domain, it SHALL return `match_type="ambiguous"` with `object=None` and `objects` listing the matching candidates across domains so the caller can disambiguate;
+  - if `uid_or_name` contains an explicit wildcard (`*` or `?`), it SHALL evaluate `fnmatchcase` strictly (`match_type="wildcard"`), returning the full object when `total == 1` or a paginated candidate slice when `total > 1`;
+  - if `uid_or_name` contains no wildcard and has no exact match in cache, it SHALL return up to `limit` compact case-insensitive substring candidates (`match_type="substring_candidates"`)
 
 #### Scenario: Rulebase tool switches between cached SmartConsole view and live query
 
@@ -1944,7 +2783,7 @@ The MCP server SHALL expose a consolidated cache-aligned tool surface (`list_dom
 
 ### Requirement: Tamper-Proof MCP CPCRUD Plan Execution and Staged Session Lifecycle Tools
 
-When `ARODONATA_MCP_CPCRUD=true`, the MCP server SHALL verify that every plan passed to `cpcrud_apply` or `cpcrud_inverse` was generated by `cpcrud_plan` (via server-side `plan_id` storage or HMAC-SHA256 signature verification), omit `force` and `validate_schema` from MCP tools, cap `retry_remaining` (`<= 3`), and expose a unified `cpcrud_staged_session(session_uid, action="publish" | "discard", ...)` tool.
+When `ARODONATA_MCP_CPCRUD=true`, the MCP server SHALL verify that every plan passed to `cpcrud_apply` or `cpcrud_inverse` was issued/signed by `cpcrud_plan`, omit `force`, `validate_schema`, and `server_ip` from MCP CPCRUD tools, cap `retry_remaining` (`<= 3`), and restrict `cpcrud_staged_session(session_uid, action="publish" | "discard", ...)` exclusively to session UIDs staged by `cpcrud_apply(keep_session=True)` in this server process.
 
 #### Scenario: Model-forged or modified plan rejected by cpcrud_apply
 
@@ -1953,8 +2792,40 @@ When `ARODONATA_MCP_CPCRUD=true`, the MCP server SHALL verify that every plan pa
 
 #### Scenario: Staged CPCRUD session published or discarded via dedicated MCP tools
 
-- **WHEN** `cpcrud_apply(..., no_publish=True, keep_session=True)` stages changes in a dedicated session and the caller subsequently invokes `cpcrud_staged_session(session_uid=..., action="publish" | "discard", mgmt_name=..., domain=...)`
-- **THEN** the tool SHALL adopt the staged session via `take-over-session` and either publish (invalidating the domain cache) or discard uncommitted changes and log out cleanly so no locks remain orphaned
+- **WHEN** `cpcrud_apply(..., no_publish=True, keep_session=True)` stages changes in a dedicated session (recording `(mgmt_name, domain_key, session_uid)` in the server's staged-session registry) and the caller subsequently invokes `cpcrud_staged_session(session_uid=..., action="publish" | "discard", mgmt_name=..., domain=...)`
+- **THEN** the tool SHALL verify `session_uid` is registered in this MCP server's staged-session store, adopt the session non-disruptively without exposing `server_ip` or `force_disconnect`, publish (invalidating the domain cache) or discard uncommitted changes, remove the completed entry from the staged store, and log out cleanly
+
+#### Scenario: Unregistered or foreign session UID rejected by cpcrud_staged_session
+
+- **WHEN** `cpcrud_staged_session` is called with a `session_uid` that was not created by `cpcrud_apply(..., no_publish=True, keep_session=True)` in this MCP server instance (for example, a SmartConsole administrator's session UID discovered via `show-sessions`)
+- **THEN** `cpcrud_staged_session` SHALL raise `ToolFailure` immediately without opening a Check Point session or calling `take-over-session`, `switch-session`, `publish`, or `discard`
+
+### Requirement: Cache-Only Cross-Domain Group Lookup and Ambiguity Reporting in MCP
+
+When `get_group_members` is called without `domain` (and `group_name_or_uid` is not a `mgmt:domain:name` composite ID), the MCP server SHALL resolve the target group across cached domains including `"Global"` using `cache_mode="cache"` without triggering whole-MDS logins, and SHALL return a structured `match_type="ambiguous"` candidate response when matching groups exist in more than one domain.
+
+#### Scenario: Cross-domain MCP get_group_members reports ambiguity without whole-MDS sync
+
+- **WHEN** `get_group_members(group_name_or_uid="SharedAdmins")` is invoked without `domain` and `"SharedAdmins"` exists in multiple cached domains
+- **THEN** the tool SHALL perform zero remote domain refreshes and return `match_type="ambiguous"` with the candidate domain/composite-ID list so the caller can re-query with an explicit `domain` or `mgmt:domain:name`
+
+### Requirement: Unified Progressive-Disclosure MCP API Reference Tool
+
+The `arodonata[mcp]` server SHALL expose a single consolidated `api_reference` tool supporting `action="search" | "describe" | "validate"` (with automatic `version` inference from `mgmt_name` when `version` is omitted), enabling MCP clients and agents to search Check Point commands (`action="search"`), inspect version-filtered command parameters, nested objects, and examples (`action="describe"`), and validate candidate request payloads offline before calling `api_call` (`action="validate"`).
+
+#### Scenario: Two-step MCP discovery and payload validation via api_reference tool
+
+- **WHEN** an MCP client calls `api_reference(action="search", query="host", crud_type="add")`, then `api_reference(action="describe", command="add-host", version="v2.2")`, and finally `api_reference(action="validate", command="add-host", payload={"name": "web-01", "ip-address": "192.0.2.10"})`
+- **THEN** `action="search"` SHALL return compact matching command summaries, `action="describe"` SHALL return the full `v2.2` field schema, `field_alternatives`, `nested_objects`, and canonical example for `add-host`, and `action="validate"` SHALL return `valid=True` with `errors=[]`
+
+### Requirement: MCP Gateway Topology Control and Affected Gateway Discovery Tool
+
+The `arodonata[mcp]` server SHALL support `scope="topology"` (with optional `gateways` and `collect_routes` parameters) in `cache_control(action="status" | "refresh", ...)` and expose `locate_gateways(sources, destinations, mgmt_name=..., domain=..., min_confidence=..., include_standby=..., include_policy_inferred=..., cache_mode="smart")` returning affected Check Point gateways, domains, policy packages, matched interfaces, delta-based `confidence` scores, `confidence_factors`, `is_standby_path` flags, and `topology_warnings`.
+
+#### Scenario: MCP client locates candidate gateways and policy packages for a traffic flow
+
+- **WHEN** an MCP client invokes `locate_gateways(sources=["10.10.1.5"], destinations=["172.16.20.10"], mgmt_name="mds1", include_policy_inferred=True)`
+- **THEN** the tool SHALL return a structured JSON envelope listing the affected gateways (both cross-interface L3 matches and `policy_inferred` one-arm or incomplete-topology matches when enabled), along with each gateway's `domain_name`, `installed_access_policy`, `policy_packages`, `access_layers`, `confidence`, `is_standby_path`, `confidence_factors`, per-flow `(src_interface -> dst_interface)` match details, `include_policy_inferred`, and any domain `topology_warnings`
 
 
 ---
@@ -2016,6 +2887,34 @@ Defines multi-domain rulebase snapshot caching (`RulebaseRefreshService`, `Domai
 - **WHEN** `rule_to_cpcrud_operation(rule)` or `filter_rulebase(..., format="cpcrud")` is called on a cached `AccessRuleEntry`, `NatRuleEntry`, `HttpsRuleEntry`, or `ThreatRuleEntry`
 - **THEN** it SHALL return an operation dictionary (`operation`, `type`, `layer` or `package`, `key`, `data`) that passes `CPCRUDService.validate()` and normalizes Check Point NAT `"Original"` / `"Any"` sentinel UIDs
 
+### Requirement: Lightweight Policy Package Catalog Synchronization
+
+The rulebase service SHALL synchronize and return policy package metadata (`get_policy_packages`, `refresh_policy_packages`) using a package-only synchronization slice (`scope="rulebase"`, `item_type="packages"`) when the full domain rulebase snapshot (`item_type="*"`) is not yet fresh, querying `show-packages` without downloading NAT, HTTPS, threat-prevention, or access rulebases.
+
+#### Scenario: Cold-cache get_policy_packages queries show-packages without fetching rulebases
+
+- **WHEN** `get_policy_packages(mgmt_name, domain_name, cache_mode="smart")` runs on a domain whose `scope="rulebase"` cache has neither a fresh `"*"` snapshot nor a fresh `"packages"` slice
+- **THEN** the system SHALL verify the shared session is clean under the domain lock, fetch `show-packages`, atomically replace the domain's package-catalog metadata and update `item_type="packages"` sync state without marking `item_type="*"` as synced, and perform zero `show-access-rulebase`, `show-nat-rulebase`, `show-https-rulebase`, or `show-threat-rulebase` calls
+
+#### Scenario: Fresh full rulebase snapshot satisfies get_policy_packages from cache
+
+- **WHEN** `get_policy_packages(mgmt_name, domain_name, cache_mode="smart")` runs on a domain whose full `scope="rulebase"`, `item_type="*"` snapshot already matches the domain's published session head
+- **THEN** the system SHALL return the cached `PolicyPackageInfo` list without issuing `show-packages` again
+
+### Requirement: Targeted Single-Package Rulebase Synchronization
+
+When `get_package_rulebase` (or `refresh_package_rulebase`) runs with `cache_mode != "cache"` on a domain lacking a fresh full `item_type="*"` snapshot, the system SHALL synchronize only the target package's catalog entry and the layers reachable for the requested `(package, rulebase_type)` slice (`item_type="package:<rulebase_type>:<package_uid>"`), skipping unrelated packages, standalone unused layers, and other rulebase types.
+
+#### Scenario: Cold-cache access rulebase read for one package skips NAT, HTTPS, Threat, and sibling packages
+
+- **WHEN** `get_package_rulebase(mgmt_name, domain_name, package="Branch_Pkg", rulebase_type="access", cache_mode="smart")` runs in a domain containing multiple policy packages, NAT policies, HTTPS layers, threat layers, and standalone layers
+- **THEN** the system SHALL fetch only package metadata, the ordered access layers of `"Branch_Pkg"`, any Global placeholder access expansion in `"Branch_Pkg"` context, and any inline access sub-layers referenced by rules in `"Branch_Pkg"`, persist those layers and record `item_type="package:access:<package_uid>"` without stamping `item_type="*"`, and return SmartConsole-numbered sections and rules identical to a full domain snapshot
+
+#### Scenario: Locate rules still requires or triggers full domain rulebase snapshot
+
+- **WHEN** `locate_rules(mgmt_name, domain_name, ...)` or `refresh_rulebases(...)` runs after a targeted single-package sync populated `item_type="package:access:<package_uid>"`
+- **THEN** the system SHALL treat `item_type="*"` as unsynced until a full domain rulebase snapshot completes, ensuring cross-package rule location never omits unsynced sibling packages
+
 
 ---
 
@@ -2031,22 +2930,22 @@ Defines the lifecycle of Check Point API sessions (`LoginCoordinator`, `SessionC
 
 ### Requirement: Persistent SID Caching and Auto-Recovery
 
-The system SHALL persist shared read-only session identifiers (`sid`) in `arodonata_sid_cache` keyed by `f"{mgmt_name}:{domain_key}:{auth_identity}"` (where `auth_identity` is an HMAC-SHA256 credential digest), re-authenticate when a cached session expires, evict a cached SID when `keepalive` returns `success=False`, and reject or isolate mutating commands so they never use `arodonata_sid_cache`.
+The system SHALL authenticate shared `arodonata_sid_cache` sessions with `"read-only": true`, key rows by `f"{mgmt_name}:{domain_key}:{auth_identity}"` (excluding `SIDCacheEntry.sid` from model dumps and defaulting `SIDCacheEntry.id` to include `auth_identity`), evict only the affected `auth_identity` row on expiry, failover, keepalive failure, or logout failure, and refuse mutating commands on `arodonata_sid_cache`.
 
 #### Scenario: Reuse of unexpired cached session scoped by authentication identity
 
-- **WHEN** a read-only API call targets `(mgmt_name, domain)` under resolved credentials (`auth_identity`) and a cached SID exists in `arodonata_sid_cache` with the exact `f"{mgmt_name}:{domain_key}:{auth_identity}"` key whose age is less than `session_expire_seconds`
-- **THEN** `LoginCoordinator` SHALL reuse that SID without performing a new login call, whereas a call with a different password, different API key, or `auth_identity=None` SHALL NEVER match or overwrite that cached SID
+- **WHEN** a read-only API call targets `(mgmt_name, domain)` under resolved credentials (`auth_identity`)
+- **THEN** `LoginCoordinator` SHALL authenticate new `arodonata_sid_cache` sessions with `"read-only": true`, reuse an unexpired row matching exact `f"{mgmt_name}:{domain_key}:{auth_identity}"`, omit raw `sid` from `SIDCacheEntry.model_dump()` / `model_dump_json()`, and NEVER match or overwrite another principal's cached SID
 
 #### Scenario: Transparent re-login on session expiration error
 
-- **WHEN** a read-only API call using a cached SID receives a session expiration error or a background `keepalive` returns `success=False`
-- **THEN** the client SHALL immediately evict only that specific `(mgmt_name, domain_key, auth_identity)` row from `arodonata_sid_cache` and, for active read-only API calls, acquire a fresh session via `LoginCoordinator` and retry the call once transparently
+- **WHEN** a read-only API call using a cached SID encounters session expiration or CMA failover, a background `keepalive` returns `success=False`, or `logout_all` evicts an unloggable cached SID
+- **THEN** the client SHALL evict ONLY that specific `(mgmt_name, domain_key, auth_identity)` row from `arodonata_sid_cache` (leaving other administrators' cached SIDs for the same domain intact) and, for active read-only API calls, acquire a fresh session via `LoginCoordinator` and retry once
 
 #### Scenario: Dedicated write sessions bypass global SID cache
 
 - **WHEN** `create_dedicated_session` or `write_session` is called for isolated write workflows
-- **THEN** `LoginCoordinator` SHALL authenticate a fresh session with retry/backoff resilience, return `(sid, server_ip)` without storing the SID in `arodonata_sid_cache`, keep the SID registered in `_active_dedicated_sids` until `logout_sid()` succeeds, and shield `discard`/`logout_sid()` against `asyncio.CancelledError` (`BaseException`)
+- **THEN** `LoginCoordinator` SHALL authenticate a fresh read-write session (`"read-only"` omitted/`False`) with retry/backoff resilience, return `(sid, server_ip)` without storing the SID in `arodonata_sid_cache`, keep the SID registered in `_active_dedicated_sids` until `logout_sid()` succeeds, and shield `discard`/`logout_sid()` against `asyncio.CancelledError` (`BaseException`)
 
 #### Scenario: Mutating commands refused on shared cached SID path
 
@@ -2069,12 +2968,12 @@ The system SHALL support hybrid authentication (shared read-only credentials wit
 
 ### Requirement: Per-MDS-Member Login Gate and Throttle Recovery
 
-The system SHALL serialize and rate-limit logins per hosting MDS member (`active_mds_ip`, falling back to configured server IP) via `LoginGate`, enforcing a minimum inter-login spacing and shared throttle cooldown inside the gate, bounding local `asyncio.Lock` acquisition by `wait_timeout`, and executing CMA failover IP refreshes (`refresh_domain_active_ip`) and retry backoff sleeps outside the gate so recursive system-domain logins on the same MDS IP never deadlock.
+The system SHALL serialize and rate-limit logins per hosting MDS member (`active_mds_ip`, falling back to configured server IP) via `LoginGate`, enforcing a minimum inter-login spacing and shared throttle cooldown inside the gate, logging a `WARNING` when entering a login throttle cooldown, bounding local `asyncio.Lock` acquisition by `wait_timeout`, and executing CMA failover IP refreshes (`refresh_domain_active_ip`) and retry backoff sleeps outside the gate so recursive system-domain logins on the same MDS IP never deadlock.
 
 #### Scenario: Throttled login waits out Check Point throttle window
 
 - **WHEN** a login attempt is rejected due to Check Point login throttling or times out during the read phase
-- **THEN** `LoginGate` SHALL record the per-MDS cooldown window (`login_throttle_window`, default 70s, or exponential read-timeout backoff) so subsequent queued callers respect the cooldown before sending another `login`, and `LoginCoordinator` SHALL release the gate before sleeping and retrying within `login_max_wait` (default 900s)
+- **THEN** `LoginGate` SHALL record the per-MDS cooldown window (`login_throttle_window`, default 70s, or exponential read-timeout backoff) and log a `WARNING` message with the server IP and cooldown duration so subsequent queued callers respect the cooldown before sending another `login`, and `LoginCoordinator` SHALL release the gate before sleeping and retrying within `login_max_wait` (default 900s)
 
 #### Scenario: Cold-cache CMA failover during login does not deadlock LoginGate
 
@@ -2088,12 +2987,12 @@ The system SHALL serialize and rate-limit logins per hosting MDS member (`active
 
 ### Requirement: Per-MDS-Member Concurrency Semaphore
 
-The `RateLimiter` SHALL cap in-flight API requests per MDS member to `concurrent_limit` (default 4, max 20) using database-backed slot locks (with TTL `>= max(api_timeout, login_timeout) + 60s`) and FIFO in-process waiter queues, guaranteeing local FIFO slot release in `finally` even if database lock release raises an error or is cancelled.
+The `RateLimiter` SHALL cap in-flight API requests per MDS member to `concurrent_limit` (default 4, max 20) using database-backed slot locks (with TTL `>= max(api_timeout, login_timeout) + 60s`) and FIFO in-process waiter queues, suppressing database `Exception` errors during shielded DB lock release while always releasing the local FIFO slot and propagating `asyncio.CancelledError`.
 
 #### Scenario: Fair waiter wakeup on slot release
 
-- **WHEN** all `concurrent_limit` slots for an MDS member are occupied, multiple coroutines are waiting, and the active slot holder exits (even if the database lock release raises an exception or `asyncio.CancelledError`)
-- **THEN** `RateLimiter` SHALL always release the local FIFO slot in `finally` (shielding DB lock cleanup) and wake the longest-waiting coroutine in arrival order within the client, or raise a timeout error if no slot becomes free within `rate_limit_slot_timeout`
+- **WHEN** all `concurrent_limit` slots for an MDS member are occupied, multiple coroutines are waiting, and the active slot holder exits (including when DB lock release raises an `Exception` or the task receives `asyncio.CancelledError`)
+- **THEN** `RateLimiter` SHALL shield DB lock cleanup (`suppress(Exception)`), ALWAYS release the local FIFO slot in `finally` to wake the longest-waiting coroutine in arrival order, and re-raise `asyncio.CancelledError` if cancellation occurred rather than swallowing it
 
 #### Scenario: Coalesced background keepalive sweeps
 
@@ -2102,7 +3001,7 @@ The `RateLimiter` SHALL cap in-flight API requests per MDS member to `concurrent
 
 ### Requirement: Stale Session Cleanup and Startup Session Seed
 
-`SessionCleaner` SHALL clean up stale or abandoned Arodonata-owned API sessions on configured management servers on startup (when static credentials are available) and upon max-sessions refusal, strictly restricting `discard` to sessions created by Arodonata (`application == "arodonata"` or `arodonata` session-name prefix) that have `changes == 0` and `locks == 0`.
+`SessionCleaner` SHALL clean up stale or abandoned Arodonata-owned API sessions on configured management servers on startup (when static credentials are available) and upon max-sessions refusal, logging `DEBUG` entries when discarding stale Arodonata sessions, and strictly restricting `discard` to sessions created by Arodonata (`application == "arodonata"` or `arodonata` session-name prefix) that have `changes == 0` and `locks == 0`.
 
 #### Scenario: Startup cleanup seeds system domain SID when cache is empty
 
@@ -2121,7 +3020,7 @@ The `RateLimiter` SHALL cap in-flight API requests per MDS member to `concurrent
 
 ### Requirement: Multi-Domain Discovery, Failover IP Resolution, and Global Domain Support
 
-`DomainService` SHALL discover and cache all domains on MDS servers (`show-domains`), synthesize an explicit `Global` domain row (`show-global-domain`), and track each domain's `active_ip`, `active_mds_ip`, and standby servers.
+`DomainService` and `LoginCoordinator` SHALL discover and cache domains on MDS servers (`show-domains`, `show-mdss`, `show-global-domain`), log `DEBUG` messages when discovering/caching domains and resolving active domain CMA/MDS IPs, track each domain's `active_ip`, `active_mds_ip`, and standby servers, and validate any caller-supplied `explicit_server_ip` against configured endpoint hosts and discovered MDS/domain server addresses for `mgmt_name`.
 
 #### Scenario: Opt-in Global domain visibility
 
@@ -2131,12 +3030,17 @@ The `RateLimiter` SHALL cap in-flight API requests per MDS member to `concurrent
 #### Scenario: Periodic domain list refresh via DomainListRefreshTracker
 
 - **WHEN** `get_domains` or smart cache refresh runs
-- **THEN** the domain list (`show-domains`) SHALL be re-fetched from the management server when the `domains` table is empty, when the 1-hour domain-list TTL has elapsed, or when `mode="force"` is requested
+- **THEN** the domain list (`show-domains`) SHALL be re-fetched from the management server when the `domains` table is empty, when the 1-hour domain-list TTL has elapsed, or when `mode="force"` is requested, retrying with `details-level="standard"` if `details-level="full"` is rejected by Check Point RBAC (preserving any previously cached `active_ip`, `active_mds_ip`, `standby_ips`, and `servers`), logging `DEBUG` messages at discovery start and after caching the discovered domain records, and logging a `WARNING` with the server error code and message if discovery fails
 
 #### Scenario: Cold-cache CMA IP resolution and active domain server failover re-resolution
 
 - **WHEN** a customer or `Global` domain login runs before `domains` is cached (cold cache) or when a domain's cached `active_ip` fails with a failover/unreachable error code
-- **THEN** `LoginCoordinator` SHALL query the MDS system domain (`show-domains`, `show-mdss`, and `show-global-domain`) to resolve and cache the domain's `active_ip` (CMA IP) and `active_mds_ip` in the `domains` table before authenticating against the domain
+- **THEN** `LoginCoordinator` SHALL query the MDS system domain (`show-domains`, `show-mdss`, and `show-global-domain`) to resolve and cache the domain's `active_ip` (CMA IP) and `active_mds_ip` in the `domains` table and log a `DEBUG` entry before authenticating against the domain
+
+#### Scenario: Untrusted explicit_server_ip rejected before connection or SID transmission
+
+- **WHEN** `resolve_target_ips` (via `api_call`, `get_readonly_session`, `create_dedicated_session`, `keepalive_sid`, or `logout_sid`) receives an `explicit_server_ip` that does not match `mgmt_name`'s configured endpoint host or any cached domain `active_ip`, `active_mds_ip`, or `standby_ips` / MDS member IP for `mgmt_name`
+- **THEN** `LoginCoordinator` SHALL reject the target with `ValidationError` before opening a TLS connection, learning a TOFU certificate, or transmitting `X-chkp-sid`
 
 
 ---
@@ -2216,17 +3120,27 @@ The native `aiohttp` transport SHALL enforce explicit TCP/TLS connect (`connect_
 
 ### Requirement: Verified Connection Pooling for Read-Only Commands
 
-`ApiTransport` SHALL pool and reuse fingerprint-verified keep-alive HTTPS connections (`VerifiedConnectionPool`) per `(server_ip, port)` for up to 10 seconds idle exclusively for read-only `show-*` commands, reaping expired idle sockets and bounding per-protocol fingerprint tracking without memory growth while always establishing a fresh connection for login, logout, keepalive, publish, discard, and mutating commands.
+`ApiTransport` SHALL pool fingerprint-verified keep-alive HTTPS connections (`VerifiedConnectionPool`) for up to 10 seconds idle and fewer than 95 requests per socket across read-only `show-*` commands and non-boundary dedicated-session commands (`session_scope`), closing idle sockets before non-pooled commands and never exposing raw SIDs in pool keys or `repr()`.
 
 #### Scenario: Consecutive show commands reuse verified keep-alive connection
 
-- **WHEN** two `show-*` API calls target the same `(server_ip, port)` within 10 seconds and the pooled socket remains open
+- **WHEN** two `show-*` API calls target the same `(server_ip, port)` within 10 seconds and the pooled socket remains open below 95 requests
 - **THEN** the second call SHALL reuse the pooled verified connection without repeating the TCP/TLS handshake
 
 #### Scenario: Mutating commands and idle connections bypass reuse
 
-- **WHEN** a non-`show-*` command is executed or a pooled connection has been idle for more than 10 seconds
-- **THEN** `ApiTransport` SHALL close any expired pooled socket, evict closed protocol fingerprint entries, and open a fresh TLS-verified connection
+- **WHEN** a session-boundary command (`login`, `logout`, `keepalive`, `publish`, `discard`, `continue-session`, `switch-session`, `take-over-session`, `disconnect`), an un-scoped non-`show-*` command, or a command after a >10s idle gap executes
+- **THEN** `ApiTransport` SHALL close matching idle pooled sockets before initiating a new handshake, evict closed protocol tracking entries, send `Connection: close`, and open a fresh TLS-verified connection
+
+#### Scenario: Sequential commands within a dedicated session reuse session-scoped keep-alive connection
+
+- **WHEN** non-boundary commands (such as `show-session`, `add-*`, `set-*`, `delete-*`, or `show-task`) run with a dedicated `session_scope` on the same `(server_ip, port)` within 10 seconds and fewer than 95 requests
+- **THEN** they SHALL reuse the pooled verified connection isolated to that `session_scope` (without setting `Connection: close`), while concurrent shared read-only calls or distinct `session_scope` values remain isolated
+
+#### Scenario: Pooled socket rotates cleanly before server max-keepalive request limit
+
+- **WHEN** a pooled socket reaches 95 HTTP requests in `FingerprintTCPConnector` or reports `should_close`
+- **THEN** the transport SHALL close that socket on release instead of re-pooling it, so the next request opens a fresh TLS-verified connection before hitting the server's 100-request keep-alive limit
 
 ### Requirement: Self-Managed Asynchronous Task Polling
 

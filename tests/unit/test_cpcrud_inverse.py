@@ -436,3 +436,60 @@ def test_build_inverse_template_application_site_create_update_delete() -> None:
         "name": "Site_baidu.com",
         "uid": "site-uid-1",
     }
+
+
+def test_build_inverse_template_rule_incremental_update_and_rename() -> None:
+    """`build_inverse_template` restores dereferenced `prior_state` lists and prior rule name cleanly."""
+    plan = Plan(
+        actions=[
+            PlannedAction(
+                action_id="act-upd-rule",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="set",
+                object_type="access-rule",
+                name="Allow App",
+                requested_name="Allow App",
+                resolved_name="Allow App v2",
+                target_uid="r-uid-100",
+                layer="Network",
+                outcome=Outcome.UPDATE,
+                command="set-access-rule",
+                payload={
+                    "uid": "r-uid-100",
+                    "layer": "Network",
+                    "new-name": "Allow App v2",
+                    "source": {"add": ["Host_10.1.1.1"], "remove": ["Host_10.0.0.5"]},
+                },
+                prior_state={
+                    "uid": "r-uid-100",
+                    "name": "Allow App",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "source": ["Host_10.0.0.5"],
+                    "destination": ["Any"],
+                    "service": ["TCP_80"],
+                    "rule_action": "Accept",
+                    "track": "Log",
+                },
+            )
+        ]
+    )
+
+    inverse = build_inverse_template(plan)
+    assert validate_template(inverse) == []
+    assert inverse["operations"] == [
+        {
+            "operation": "set",
+            "type": "access-rule",
+            "layer": "Network",
+            "uid": "r-uid-100",
+            "name": "Allow App v2",
+            "new-name": "Allow App",
+            "source": ["Host_10.0.0.5"],
+            "destination": ["Any"],
+            "service": ["TCP_80"],
+            "rule_action": "Accept",
+            "track": "Log",
+        }
+    ]

@@ -39,6 +39,41 @@ _ANY_ALIASES: frozenset[str] = frozenset(
     }
 )
 
+RULE_DELTA_CELL_KEYS: tuple[str, ...] = (
+    "source",
+    "destination",
+    "service",
+    "install_on",
+    "install-on",
+    "protected_scope",
+    "protected-scope",
+    "site_category",
+    "site-category",
+)
+
+
+def rule_spec_has_delta_mapping(spec: Mapping[str, Any]) -> bool:
+    """Return `True` if `spec` contains an incremental `{add, remove}` mapping on any rule list cell."""
+    return any(isinstance(spec.get(k), Mapping) for k in RULE_DELTA_CELL_KEYS)
+
+
+def build_effective_obj_dict(
+    raw_data: Mapping[str, Any] | None,
+    obj_dict: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Mapping[str, Any]]:
+    """Merge `_resolved_objects` from `raw_data` with `obj_dict` into a unified lookup dictionary."""
+    eff_obj_dict: dict[str, Mapping[str, Any]] = {}
+    if isinstance(raw_data, Mapping):
+        raw_resolved = raw_data.get("_resolved_objects")
+        if isinstance(raw_resolved, Mapping):
+            for k, v in raw_resolved.items():
+                if isinstance(v, Mapping):
+                    eff_obj_dict[str(k)] = v
+    if obj_dict:
+        for k, v in obj_dict.items():
+            eff_obj_dict[str(k)] = v
+    return eff_obj_dict
+
 
 def normalize_nat_original_sentinel(
     value: Any,
@@ -124,6 +159,8 @@ def normalize_traffic_list(
     """Normalize a rule traffic field (`source`, `destination`, `service`) into a sorted canonical tuple of names."""
     if value is None:
         return ("Any",)
+    if isinstance(value, Mapping) and ("add" in value or "remove" in value):
+        raise ValueError("Incremental {add, remove} delta mapping cannot be normalized as a full traffic list.")
     items = value if isinstance(value, (list, tuple, set)) else [value]
     normalized: list[str] = []
     for item in items:
@@ -134,6 +171,33 @@ def normalize_traffic_list(
     if not normalized or all(x.lower() == "any" for x in normalized):
         return ("Any",)
     return tuple(sorted(dict.fromkeys(normalized)))
+
+
+def deref_rule_list(
+    items: Sequence[str] | None,
+    raw_fallback: Any,
+    eff_obj_dict: Mapping[str, Mapping[str, Any]],
+    *,
+    default_any: bool = False,
+) -> list[str]:
+    """Dereference UIDs/dicts in a rule list cell via `eff_obj_dict`, preserving order and deduplicating."""
+    if items:
+        raw_items: Sequence[Any] = items
+    elif isinstance(raw_fallback, list):
+        raw_items = raw_fallback
+    elif raw_fallback is not None:
+        raw_items = [raw_fallback]
+    else:
+        raw_items = []
+    resolved: list[str] = []
+    for elem in raw_items:
+        name = normalize_any_sentinel(elem, eff_obj_dict)
+        if name:
+            resolved.append(name)
+    dedup = list(dict.fromkeys(resolved))
+    if (not dedup or all(x.lower() == "any" for x in dedup)) and default_any:
+        return ["Any"]
+    return dedup
 
 
 def normalize_nat_traffic_ref(
@@ -267,6 +331,7 @@ def match_rule(
     rulebase_type: RulebaseType,
     obj_dict: Mapping[str, Mapping[str, Any]] | None = None,
     name_resolutions: Mapping[str, str] | None = None,
+    strict_name: bool = False,
 ) -> RuleEntryUnion | None:
     """Match a desired rule specification against existing rules by explicit key (`uid`, `name`, `rule_number`) or traffic tuple."""
     req_uid = str(spec.get("uid") or "").strip()
@@ -288,6 +353,13 @@ def match_rule(
         for r in rules:
             if r.rule_number == req_num_str or str(r.position) == req_num_str:
                 return r
+        return None
+
+    if req_name and strict_name:
+        return None
+
+    # Incremental list-delta payloads cannot match by full traffic tuple
+    if rule_spec_has_delta_mapping(spec):
         return None
 
     # Traffic tuple matching when no explicit uid/rule_number matched (and either name wasn't set or didn't match)
@@ -324,7 +396,10 @@ def match_rule(
 __all__ = [
     "NAT_ANY_OBJECT_UID",
     "NAT_ORIGINAL_OBJECT_UID",
+    "RULE_DELTA_CELL_KEYS",
     "RuleEntryUnion",
+    "build_effective_obj_dict",
+    "deref_rule_list",
     "desired_access_traffic_tuple",
     "desired_nat_traffic_tuple",
     "existing_access_traffic_tuple",
@@ -334,4 +409,5 @@ __all__ = [
     "normalize_nat_original_sentinel",
     "normalize_nat_traffic_ref",
     "normalize_traffic_list",
+    "rule_spec_has_delta_mapping",
 ]

@@ -86,6 +86,12 @@ class StateLookupError(ArodonataError):
     """Raised when a cache or live API state lookup fails during planning."""
 
 
+def normalize_app_site_url_key(url: str, *, is_regex: bool) -> str:
+    """Return canonical comparison key for an `application-site` URL entry (case-folded when `is_regex=False`)."""
+    clean = str(url).strip()
+    return clean if is_regex else clean.lower()
+
+
 def is_not_found_error(
     status_code: int,
     error_code: str | None,
@@ -698,14 +704,23 @@ class HybridStateReader:
         urls_defined_as_regular_expression: bool = False,
     ) -> list[CPObject]:
         """Find all existing `application-site` objects matching normalized `url_list` and regex flag."""
-        target_urls = {str(u).strip() for u in url_list if str(u).strip()}
+        target_regex = bool(urls_defined_as_regular_expression)
+        target_urls = frozenset(
+            normalize_app_site_url_key(str(u), is_regex=target_regex) for u in url_list if str(u).strip()
+        )
         if not target_urls:
             return []
-        target_regex = bool(urls_defined_as_regular_expression)
         sites = await self.list_objects_of_type(mgmt_name, domain_name, "application-site")
         matches: list[CPObject] = []
         for site in sites:
-            site_urls = {str(u).strip() for u in site.url_list if str(u).strip()}
+            raw_urls: Any = site.url_list
+            if not raw_urls and isinstance(site.raw_data, dict):
+                raw_urls = site.raw_data.get("url-list") or site.raw_data.get("url_list") or []
+            site_urls = frozenset(
+                normalize_app_site_url_key(str(u), is_regex=target_regex)
+                for u in (raw_urls if isinstance(raw_urls, list) else [])
+                if str(u).strip()
+            )
             site_regex = bool(site.urls_defined_as_regular_expression)
             if site_urls == target_urls and site_regex == target_regex:
                 matches.append(site)
@@ -1101,5 +1116,6 @@ __all__ = [
     "TYPE_TO_SHOW_PLURAL_CMD",
     "TYPE_TO_SHOW_SINGLE_CMD",
     "is_not_found_error",
+    "normalize_app_site_url_key",
     "normalize_mask_length",
 ]

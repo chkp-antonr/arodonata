@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager, suppress
 from datetime import datetime
 from typing import Any, Literal
@@ -98,7 +98,7 @@ from arodonata.core.services import (
     VSXRelationshipManager,
 )
 from arodonata.core.telemetry import span_attrs, traced
-from arodonata.cpcrud import CPCRUDService
+from arodonata.cpcrud import CPCRUDService, Plan
 from arodonata.reports import (
     MAX_UID_LOOKUPS,
     ChangeReport,
@@ -108,6 +108,9 @@ from arodonata.reports import (
 )
 from arodonata.reports import (
     build_change_report as _build_change_report,
+)
+from arodonata.reports import (
+    build_change_report_from_plan as _build_change_report_from_plan,
 )
 from arodonata.reports import (
     collect_change_report as _collect_change_report,
@@ -1891,6 +1894,23 @@ class ArodonataClient:
             max_uid_lookups=max_uid_lookups,
             now_fn=self._now,
             refresh_rulebase_fn=_warm_rulebase,
+        )
+
+    @traced
+    def build_change_report_from_plan(
+        self,
+        plan: Plan,
+        *,
+        title: str | None = None,
+        header_fields: Mapping[str, str] | None = None,
+        include_unchanged: bool = False,
+    ) -> ChangeReport:
+        """Synthesize an offline `ChangeReport` directly from a CPCRUD `Plan` for dry-run previews."""
+        return _build_change_report_from_plan(
+            plan,
+            title=title,
+            header_fields=header_fields,
+            include_unchanged=include_unchanged,
         )
 
     @traced

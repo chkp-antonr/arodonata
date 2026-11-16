@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 import urllib.parse
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -134,6 +135,256 @@ class TopologyConfidenceWeights(BaseModel):
     conflict_routed_to_other_interface_static: float = -0.50
     conflict_routed_to_other_interface_route: float = -0.10
     conflict_cluster_member_drift: float = -0.20
+
+
+class NamingPrefixes(BaseModel):
+    """Convention prefixes and formatting rules used when CPCRUD auto-names objects or services."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    host: str = "Host_"
+    network: str = "Net_"
+    address_range: str = Field(default="IPR_", validation_alias="address_range")
+    range_separator: str = "-"
+    compress_range_same_subnet: bool = False
+    group: str = "grp"
+    group_suffix: str = ""
+    tcp: str = "TCP_"
+    udp: str = "UDP_"
+    icmp: str = "ICMP_"
+    app_site: str = "Site_"
+    app_site_wildcard_marker: str = "_"
+
+    def model_post_init(self, __context: Any) -> None:
+        # Support optional alias keys passed via model_validate
+        pass
+
+    @classmethod
+    def _normalize_mapping_keys(cls, data: Mapping[str, Any]) -> dict[str, Any]:
+        norm: dict[str, Any] = dict(data)
+        alias_pairs = (
+            ("address-range", "address_range"),
+            ("range-separator", "range_separator"),
+            ("compress-range-same-subnet", "compress_range_same_subnet"),
+            ("group-suffix", "group_suffix"),
+            ("app-site", "app_site"),
+            ("app-site-wildcard-marker", "app_site_wildcard_marker"),
+            ("service_tcp", "tcp"),
+            ("service-tcp", "tcp"),
+            ("service_udp", "udp"),
+            ("service-udp", "udp"),
+            ("service_icmp", "icmp"),
+            ("service-icmp", "icmp"),
+        )
+        for src_key, dst_key in alias_pairs:
+            if src_key in norm:
+                if dst_key not in norm:
+                    norm[dst_key] = norm[src_key]
+                norm.pop(src_key, None)
+        return norm
+
+    @classmethod
+    def from_mapping(cls, data: Any, *, base: NamingPrefixes | None = None) -> NamingPrefixes:
+        """Construct `NamingPrefixes` accepting short, kebab-case, and `service_*` keys."""
+        if isinstance(data, cls):
+            return data
+        if not isinstance(data, Mapping):
+            return base if base is not None else cls()
+        merged: dict[str, Any] = base.model_dump() if base is not None else {}
+        merged.update(cls._normalize_mapping_keys(data))
+        return cls.model_validate(merged)
+
+    def format_host(self, ip_address: str) -> str:
+        """Generate convention-compliant host name (`Host_<ip>`)."""
+        clean = ip_address.strip().replace(":", "_")
+        return f"{self.host}{clean}"
+
+    def format_network(self, subnet: str, mask_length: int | str) -> str:
+        """Generate convention-compliant network name (`Net_<subnet>_<mask_len>`)."""
+        clean_sub = subnet.strip().replace(":", "_")
+        return f"{self.network}{clean_sub}_{mask_length}"
+
+    def format_address_range(self, first_ip: str, last_ip: str) -> str:
+        """Generate convention-compliant address range name (`IPR_<first>-<last>` or compressed same-`/24`)."""
+        f_clean = first_ip.strip()
+        l_clean = last_ip.strip()
+        if self.compress_range_same_subnet:
+            try:
+                f_addr = ipaddress.IPv4Address(f_clean)
+                l_addr = ipaddress.IPv4Address(l_clean)
+                f_octets = f_addr.exploded.split(".")
+                l_octets = l_addr.exploded.split(".")
+                if f_octets[:3] == l_octets[:3]:
+                    return f"{self.address_range}{f_addr.exploded}{self.range_separator}{l_octets[3]}"
+            except ValueError:
+                pass
+        return f"{self.address_range}{f_clean}{self.range_separator}{l_clean}"
+
+    def format_group(self, base_name: str) -> str:
+        """Generate convention-compliant group name applying configured prefix and suffix without duplication."""
+        clean = base_name.strip()
+        if self.group and not clean.startswith(self.group):
+            clean = f"{self.group}{clean}"
+        if self.group_suffix and not clean.endswith(self.group_suffix):
+            clean = f"{clean}{self.group_suffix}"
+        return clean
+
+    def format_tcp(self, port: str | int) -> str:
+        """Generate convention-compliant TCP service name (`TCP_<port>`)."""
+        return f"{self.tcp}{str(port).strip()}"
+
+    def format_udp(self, port: str | int) -> str:
+        """Generate convention-compliant UDP service name (`UDP_<port>`)."""
+        return f"{self.udp}{str(port).strip()}"
+
+    def format_icmp(self, icmp_type: int | str, icmp_code: int | None = None) -> str:
+        """Generate convention-compliant ICMP service name (`ICMP_<type>` or `ICMP_<type>_<code>`)."""
+        if icmp_code is not None:
+            return f"{self.icmp}{icmp_type}_{icmp_code}"
+        return f"{self.icmp}{icmp_type}"
+
+    def format_app_site(self, domain: str, *, is_wildcard: bool = False) -> str:
+        """Generate Check Point-safe application-site name (replacing wildcard `*` with marker)."""
+        clean = domain.strip()
+        if clean.startswith("*."):
+            clean = clean[2:]
+            eff_wild = True
+        elif clean.startswith("*"):
+            clean = clean[1:]
+            eff_wild = True
+        else:
+            clean = clean.lstrip(".")
+            eff_wild = is_wildcard
+        clean = clean.replace("*", "").lstrip(".")
+        marker = self.app_site_wildcard_marker if eff_wild else ""
+        return f"{self.app_site}{marker}{clean}"
+
+
+_CPCRUD_NAMING_STRING_ENV_VARS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "host",
+        (
+            "ARODONATA_CPCRUD_AUTO_NAME_PREFIX_HOST",
+            "ARODONATA_CPCRUD_PREFIX_HOST",
+            "CPCRUD_AUTO_NAME_PREFIX_HOST",
+            "CPCRUD_PREFIX_HOST",
+        ),
+    ),
+    (
+        "network",
+        (
+            "ARODONATA_CPCRUD_AUTO_NAME_PREFIX_NETWORK",
+            "ARODONATA_CPCRUD_AUTO_NAME_PREFIX_NET",
+            "ARODONATA_CPCRUD_PREFIX_NETWORK",
+            "CPCRUD_AUTO_NAME_PREFIX_NETWORK",
+            "CPCRUD_AUTO_NAME_PREFIX_NET",
+            "CPCRUD_PREFIX_NETWORK",
+        ),
+    ),
+    (
+        "address_range",
+        (
+            "ARODONATA_CPCRUD_AUTO_NAME_PREFIX_RANGE",
+            "ARODONATA_CPCRUD_AUTO_NAME_PREFIX_ADDRESS_RANGE",
+            "ARODONATA_CPCRUD_PREFIX_RANGE",
+            "CPCRUD_AUTO_NAME_PREFIX_RANGE",
+            "CPCRUD_AUTO_NAME_PREFIX_ADDRESS_RANGE",
+            "CPCRUD_PREFIX_RANGE",
+        ),
+    ),
+    ("range_separator", ("ARODONATA_CPCRUD_RANGE_SEPARATOR", "CPCRUD_RANGE_SEPARATOR")),
+    (
+        "group",
+        (
+            "ARODONATA_CPCRUD_AUTO_NAME_PREFIX_GROUP",
+            "ARODONATA_CPCRUD_PREFIX_GROUP",
+            "CPCRUD_AUTO_NAME_PREFIX_GROUP",
+            "CPCRUD_PREFIX_GROUP",
+        ),
+    ),
+    (
+        "group_suffix",
+        (
+            "ARODONATA_CPCRUD_AUTO_NAME_SUFFIX_GROUP",
+            "ARODONATA_CPCRUD_GROUP_SUFFIX",
+            "CPCRUD_AUTO_NAME_SUFFIX_GROUP",
+            "CPCRUD_GROUP_SUFFIX",
+        ),
+    ),
+    (
+        "tcp",
+        (
+            "ARODONATA_CPCRUD_AUTO_NAME_PREFIX_TCP",
+            "ARODONATA_CPCRUD_AUTO_NAME_PREFIX_SERVICE_TCP",
+            "CPCRUD_AUTO_NAME_PREFIX_TCP",
+            "CPCRUD_AUTO_NAME_PREFIX_SERVICE_TCP",
+        ),
+    ),
+    (
+        "udp",
+        (
+            "ARODONATA_CPCRUD_AUTO_NAME_PREFIX_UDP",
+            "ARODONATA_CPCRUD_AUTO_NAME_PREFIX_SERVICE_UDP",
+            "CPCRUD_AUTO_NAME_PREFIX_UDP",
+            "CPCRUD_AUTO_NAME_PREFIX_SERVICE_UDP",
+        ),
+    ),
+    (
+        "icmp",
+        (
+            "ARODONATA_CPCRUD_AUTO_NAME_PREFIX_ICMP",
+            "ARODONATA_CPCRUD_AUTO_NAME_PREFIX_SERVICE_ICMP",
+            "CPCRUD_AUTO_NAME_PREFIX_ICMP",
+            "CPCRUD_AUTO_NAME_PREFIX_SERVICE_ICMP",
+        ),
+    ),
+    (
+        "app_site",
+        (
+            "ARODONATA_CPCRUD_AUTO_NAME_PREFIX_APP_SITE",
+            "ARODONATA_CPCRUD_PREFIX_APP_SITE",
+            "CPCRUD_AUTO_NAME_PREFIX_APP_SITE",
+            "CPCRUD_PREFIX_APP_SITE",
+        ),
+    ),
+    ("app_site_wildcard_marker", ("ARODONATA_CPCRUD_APP_SITE_WILDCARD_MARKER", "CPCRUD_APP_SITE_WILDCARD_MARKER")),
+)
+
+_CPCRUD_NAMING_BOOL_ENV_VARS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "compress_range_same_subnet",
+        (
+            "ARODONATA_CPCRUD_RANGE_COMPRESS_OCTETS",
+            "ARODONATA_CPCRUD_COMPRESS_RANGE_SAME_SUBNET",
+            "CPCRUD_RANGE_COMPRESS_OCTETS",
+            "CPCRUD_COMPRESS_RANGE_SAME_SUBNET",
+        ),
+    ),
+)
+
+
+def _parse_env_bool(var_name: str, raw: str) -> bool:
+    cleaned = raw.strip().lower()
+    if cleaned in ("1", "true", "yes", "on"):
+        return True
+    if cleaned in ("0", "false", "no", "off"):
+        return False
+    raise ConfigurationError(f"Invalid boolean value for {var_name!r}: {raw!r}.")
+
+
+def _resolve_cpcrud_naming_prefixes_env_overrides() -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+    for field_name, env_names in _CPCRUD_NAMING_STRING_ENV_VARS:
+        for var_name in env_names:
+            if var_name in os.environ:
+                overrides[field_name] = os.environ[var_name]
+                break
+    for field_name, env_names in _CPCRUD_NAMING_BOOL_ENV_VARS:
+        for var_name in env_names:
+            if var_name in os.environ:
+                overrides[field_name] = _parse_env_bool(var_name, os.environ[var_name])
+                break
+    return overrides
 
 
 class ArodonataSettings(BaseSettings):
@@ -324,10 +575,14 @@ class ArodonataSettings(BaseSettings):
         validation_alias=AliasChoices("ARODONATA_SQLITE_BUSY_TIMEOUT_MS"),
     )
 
-    # Optional CPCRUD schema override
+    # Optional CPCRUD schema override and default naming profile
     cpcrud_schema_path: str | None = Field(
         default=None,
         validation_alias=AliasChoices("ARODONATA_CPCRUD_SCHEMA_PATH"),
+    )
+    cpcrud_naming_prefixes: NamingPrefixes = Field(
+        default_factory=NamingPrefixes,
+        validation_alias=AliasChoices("ARODONATA_CPCRUD_NAMING_PREFIXES", "CPCRUD_NAMING_PREFIXES"),
     )
 
     # OpenTelemetry module span gating
@@ -373,6 +628,43 @@ class ArodonataSettings(BaseSettings):
             if explicit_val is not None:
                 values["_explicit_auth_mode"] = explicit_val
         return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_cpcrud_naming_prefixes(cls, values: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(values, dict):
+            return values
+        copied = dict(values)
+        env_overrides = _resolve_cpcrud_naming_prefixes_env_overrides()
+
+        raw_key: str | None = None
+        for cand_key in ("ARODONATA_CPCRUD_NAMING_PREFIXES", "CPCRUD_NAMING_PREFIXES", "cpcrud_naming_prefixes"):
+            if cand_key in copied:
+                raw_key = cand_key
+                break
+
+        if raw_key is None:
+            copied["ARODONATA_CPCRUD_NAMING_PREFIXES"] = NamingPrefixes.from_mapping(env_overrides)
+            return copied
+
+        raw_val = copied[raw_key]
+        if isinstance(raw_val, NamingPrefixes):
+            return copied
+        if isinstance(raw_val, str):
+            try:
+                parsed = json.loads(raw_val)
+            except json.JSONDecodeError as exc:
+                raise ConfigurationError(f"Invalid JSON for {raw_key}: {exc}") from exc
+            if not isinstance(parsed, Mapping):
+                raise ConfigurationError(f"{raw_key} must decode to a JSON object.")
+            merged = {**env_overrides, **NamingPrefixes._normalize_mapping_keys(parsed)}
+            copied[raw_key] = NamingPrefixes.from_mapping(merged)
+        elif isinstance(raw_val, Mapping):
+            merged = {**env_overrides, **NamingPrefixes._normalize_mapping_keys(raw_val)}
+            copied[raw_key] = NamingPrefixes.from_mapping(merged)
+        elif raw_val is None:
+            copied[raw_key] = NamingPrefixes.from_mapping(env_overrides)
+        return copied
 
     @model_validator(mode="after")
     def _validate_topology_and_auth_mode(self) -> ArodonataSettings:

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **config,cpcrud**: Extended `NamingPrefixes` (`src/arodonata/core/config.py`, re-exported in `arodonata.cpcrud.models`) with `range_separator`, `compress_range_same_subnet`, `group_suffix`, `app_site`, `app_site_wildcard_marker`, `format_group()`, and `format_app_site()`, and wired `ArodonataSettings.cpcrud_naming_prefixes` (`ARODONATA_CPCRUD_*` and fallback `CPCRUD_*` environment variables without implicit `.env` loading) as the default profile in `CPCRUDService` and `Planner`.
+- **cpcrud**: Added `arodonata.cpcrud.expressions` (`parse_object_expression`, `parse_range_token`, `parse_app_site_expression`, `parse_service_expression`, `parse_group_expression`, `expand_group_expression`, `normalize_wildcard_domain`, `wildcard_domain_to_cp_regex_urls`) for pure shorthand parsing of hosts, CIDRs, compressed same-`/24` ranges, `.domain` DNS objects, `*domain`/`*.domain` Check Point regex `application-site` specs, services, and recursive nested inline groups.
+- **cpcrud,testing**: Added `{"add": [...], "remove": [...]}` incremental patch support in `checkpoint_ops_schema.json`, `FieldChange` (`added_items`, `removed_items`), `differ.py` (`application-site.url-list` and Access/HTTPS/Threat/NAT rule cells `source`, `destination`, `service`, `protected-scope`, `site-category`, `install-on`), `Planner` (`depends_on` ordering, UID dereferencing in `_build_prior_rule_state`, case-folded non-regex `url-list` value reuse via `normalize_app_site_url_key`), `inverse.py` rule rename rollback, and `FileReplayApiMock` (`_emulator_crud.py`, `_emulator_changes.py`).
+- **reports,client**: Added offline Dry-Run `ChangeReport` synthesis via `build_change_report_from_plan()` (`src/arodonata/reports/plan_report.py`, re-exported via `arodonata.reports`, `arodonata`, and `ArodonataClient.build_change_report_from_plan`) for pre-session HTML, Markdown, and JSON previews via `render_change_report()`.
+
+### Fixed
+
+- **cpcrud**: Enforced fail-closed `Outcome.ERROR` / `DiffSafetyError` invariants preventing unsafe `"Any"` widening (blocking removals that empty rule cells or `application-site.url-list` without `application-signature`, requiring explicit `"Any"` removal when narrowing `"Any"` cells while stripping `"Any"` from Check Point wire `remove`, blocking incremental `{"add": ["Any"]}`, rejecting `set`/`update` targeting missing entities, rejecting unmatched rules carrying `{add, remove}` cell deltas under any verb, and preserving `rule_number` positional renames under `strict_name`).
+
 ## v2.6.4 (2026-11-16)
 
 ### Feat

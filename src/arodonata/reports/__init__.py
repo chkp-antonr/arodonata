@@ -25,6 +25,7 @@ from arodonata.reports.models import (
     WarningCode,
 )
 from arodonata.reports.placement import apply_session_rule_placement
+from arodonata.reports.plan_report import build_change_report_from_plan
 from arodonata.reports.renderer import (
     SUPPORTED_REPORT_FORMATS,
     build_change_report,
@@ -55,6 +56,7 @@ __all__ = [
     "WarningCode",
     "apply_session_rule_placement",
     "build_change_report",
+    "build_change_report_from_plan",
     "collect_change_report",
     "is_bare_uid",
     "render_change_report",

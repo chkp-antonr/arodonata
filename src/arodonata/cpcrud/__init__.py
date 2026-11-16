@@ -1,12 +1,23 @@
 """Declarative Check Point Policy-as-Code CRUD engine (`src/arodonata/cpcrud/`)."""
 
 from arodonata.cpcrud.differ import (
+    DiffSafetyError,
     compute_object_diff,
     compute_rule_diff,
     compute_service_diff,
     resolve_member_reference,
 )
 from arodonata.cpcrud.executor import Executor
+from arodonata.cpcrud.expressions import (
+    expand_group_expression,
+    normalize_wildcard_domain,
+    parse_app_site_expression,
+    parse_group_expression,
+    parse_object_expression,
+    parse_range_token,
+    parse_service_expression,
+    wildcard_domain_to_cp_regex_urls,
+)
 from arodonata.cpcrud.inverse import build_inverse_template
 from arodonata.cpcrud.models import (
     ActionResult,
@@ -57,6 +68,7 @@ __all__ = [
     "ApplyReport",
     "CPCRUDService",
     "ConflictPolicy",
+    "DiffSafetyError",
     "DomainStamp",
     "Executor",
     "FieldChange",
@@ -83,6 +95,7 @@ __all__ = [
     "desired_nat_traffic_tuple",
     "existing_access_traffic_tuple",
     "existing_nat_traffic_tuple",
+    "expand_group_expression",
     "is_cleanup_rule",
     "is_not_found_error",
     "load_cpcrud_schema",
@@ -92,8 +105,15 @@ __all__ = [
     "normalize_nat_original_sentinel",
     "normalize_nat_traffic_ref",
     "normalize_traffic_list",
+    "normalize_wildcard_domain",
+    "parse_app_site_expression",
+    "parse_group_expression",
+    "parse_object_expression",
+    "parse_range_token",
+    "parse_service_expression",
     "parse_template_input",
     "resolve_member_reference",
     "resolve_rule_position",
     "validate_template",
+    "wildcard_domain_to_cp_regex_urls",
 ]

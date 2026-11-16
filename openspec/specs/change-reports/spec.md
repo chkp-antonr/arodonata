@@ -101,3 +101,12 @@ When collecting modified rules and objects from `show-changes`, the collector SH
 
 - **WHEN** `show-changes` for a non-`"System"` user session includes non-deleted (`added` or `modified`) non-rule objects whose post-change `meta-info.last-modifier` is `"System"` (or nameless/typeless internal `"System"` records such as `IpsProtectionUserSettings`, `cp-trusted-ca-certificate`, or `TrustedCaPackageConf`)
 - **THEN** the collector SHALL exclude those `"System"` non-rule entries from `SessionChangeReport.object_changes` by default (never excluding `deleted` objects and never inspecting `old-object.meta-info.last-modifier`, and including them when `RenderOptions.include_system_objects` is `True`), log the filtered count at `DEBUG` level without emitting a user-facing `ReportWarning`, and preserve the complete sanitized `show-changes` payload in `ChangeReport.raw_responses`
+
+### Requirement: Offline Dry-Run ChangeReport Synthesis from CPCRUD Plan
+
+`arodonata.reports` SHALL provide `build_change_report_from_plan(plan, ...)` to convert a CPCRUD `Plan` offline into a `ChangeReport` compatible with `render_change_report()`, capturing object, group, and rule creates, deletes, and field-level add/remove diffs without opening Check Point sessions.
+
+#### Scenario: Dry-run ChangeReport renders HTML and JSON offline with added and removed item diffs
+
+- **WHEN** a caller passes a multi-action `Plan` containing object creates (`Outcome.CREATE`), group member deltas (`Outcome.UPDATE` with `add`/`remove`), and incremental rule cell diffs (`Outcome.UPDATE` on `source`/`destination`/`service`) to `build_change_report_from_plan(plan)` and renders it via `render_change_report(report, formats=["html", "json"])`
+- **THEN** `build_change_report_from_plan` SHALL produce a valid `ChangeReport` with zero Check Point API calls, populate `ObjectChangeEntry.field_diffs` and `RuleChangeEntry.field_diffs` (`added_items` and `removed_items`), and render self-contained SmartConsole-styled HTML and round-trippable JSON containing no SIDs or errors
