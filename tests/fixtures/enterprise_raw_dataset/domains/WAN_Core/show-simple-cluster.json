@@ -1,1 +1,49 @@
-{}
+{
+  "uid-wan-core-edge-cluster": {
+    "uid": "uid-wan-core-edge-cluster",
+    "name": "wan-core-edge-cluster",
+    "type": "CpmiGatewayCluster",
+    "ipv4-address": "172.29.3.10",
+    "cluster-members": [
+      {
+        "uid": "uid-wan-core-edge-1a",
+        "name": "wan-core-edge-1a",
+        "type": "cluster-member",
+        "ipv4-address": "172.29.3.11",
+        "cluster-uid": "uid-wan-core-edge-cluster"
+      },
+      {
+        "uid": "uid-wan-core-edge-1b",
+        "name": "wan-core-edge-1b",
+        "type": "cluster-member",
+        "ipv4-address": "172.29.3.12",
+        "cluster-uid": "uid-wan-core-edge-cluster"
+      }
+    ],
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "WAN_Core_Transit_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.29.3.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.183.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  }
+}

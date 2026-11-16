@@ -71,6 +71,26 @@
           "uid": "uid-ix-transit-11",
           "name": "ix-transit-gw-11",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-transit-ix-cluster",
+          "name": "transit-ix-cluster",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-transit-vs-ix-01",
+          "name": "transit-vs-ix-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-transit-vs-ix-02",
+          "name": "transit-vs-ix-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-transit-vs-peering-03",
+          "name": "transit-vs-peering-03",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [
@@ -155,6 +175,26 @@
           "uid": "uid-ix-transit-11",
           "name": "ix-transit-gw-11",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-transit-ix-cluster",
+          "name": "transit-ix-cluster",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-transit-vs-ix-01",
+          "name": "transit-vs-ix-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-transit-vs-ix-02",
+          "name": "transit-vs-ix-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-transit-vs-peering-03",
+          "name": "transit-vs-peering-03",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [

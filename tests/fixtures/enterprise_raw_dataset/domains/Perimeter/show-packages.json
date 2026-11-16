@@ -81,6 +81,26 @@
           "uid": "uid-perim-dmz-14",
           "name": "perim-dmz-gw-14",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-vs-dmz-01",
+          "name": "perim-vs-dmz-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-perim-vs-dmz-02",
+          "name": "perim-vs-dmz-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-perim-vs-waf-01",
+          "name": "perim-vs-waf-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-perim-vs-b2c-02",
+          "name": "perim-vs-b2c-02",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [
@@ -175,6 +195,26 @@
           "uid": "uid-perim-dmz-14",
           "name": "perim-dmz-gw-14",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-perim-vs-dmz-01",
+          "name": "perim-vs-dmz-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-perim-vs-dmz-02",
+          "name": "perim-vs-dmz-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-perim-vs-waf-01",
+          "name": "perim-vs-waf-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-perim-vs-b2c-02",
+          "name": "perim-vs-b2c-02",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [

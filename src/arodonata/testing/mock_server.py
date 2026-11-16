@@ -1,8 +1,8 @@
 """Standalone and embeddable Check Point Management HTTPS mock server (`mock_server.py`).
 
 Allows downstream applications (MMP, FPCR, or custom scripts) to point `ArodonataClient` at
-`localhost:443` (or any custom `host:port`) and interact with the full 10-domain, 276-gateway,
-2,600-object, 1,000-rule enterprise dataset over real HTTPS without hardware appliances,
+`localhost:443` (or any custom `host:port`) and interact with the full 10-domain, 315-gateway,
+2,950+-object, 1,050+-rule enterprise dataset over real HTTPS without hardware appliances,
 artificial rate limits, or login throttling delays.
 
 CLI usage:

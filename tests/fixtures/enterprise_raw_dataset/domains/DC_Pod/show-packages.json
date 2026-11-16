@@ -141,6 +141,41 @@
           "uid": "uid-dc-vs-pod-45",
           "name": "dc-vs-pod-45",
           "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-pod-bm-gw-01",
+          "name": "dc-pod-bm-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-pod-bm-gw-02",
+          "name": "dc-pod-bm-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-pod-vm-gw-03",
+          "name": "dc-pod-vm-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-pod-maestro-sg-04",
+          "name": "dc-pod-maestro-sg-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-pod-east-cluster",
+          "name": "dc-pod-east-cluster",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-dc-pod-local-vs01",
+          "name": "dc-pod-local-vs01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-pod-local-vs02",
+          "name": "dc-pod-local-vs02",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [
@@ -294,6 +329,41 @@
         {
           "uid": "uid-dc-vs-pod-45",
           "name": "dc-vs-pod-45",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-pod-bm-gw-01",
+          "name": "dc-pod-bm-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-pod-bm-gw-02",
+          "name": "dc-pod-bm-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-pod-vm-gw-03",
+          "name": "dc-pod-vm-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-pod-maestro-sg-04",
+          "name": "dc-pod-maestro-sg-04",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-pod-east-cluster",
+          "name": "dc-pod-east-cluster",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-dc-pod-local-vs01",
+          "name": "dc-pod-local-vs01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-pod-local-vs02",
+          "name": "dc-pod-local-vs02",
           "type": "CpmiVsNetobj"
         }
       ],

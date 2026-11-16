@@ -97,7 +97,7 @@ The repository SHALL provide a runnable `examples/` catalog demonstrating Arodon
 
 ### Requirement: Deterministic Enterprise Raw Dataset and Generator
 
-The testing harness SHALL provide a deterministic (fixed-seed) generator and raw fixture dataset (`tests/fixtures/enterprise_raw_dataset/`) containing Check Point Management API JSON payloads (including MDSM global assignments and deterministic `Global` object/group usage in local rules without altering baseline domain, asset, gateway, rulebase, or topology counts) and gateway CLI routing outputs for an enterprise MDSM topology.
+The testing harness SHALL provide a deterministic (fixed-seed) generator and raw fixture dataset (`tests/fixtures/enterprise_raw_dataset/`) containing Check Point Management API JSON payloads (including MDSM global assignments, deterministic `Global` object/group usage in local rules, heterogeneous standalone gateway, HA cluster, Virtual System, and cross-domain VSX distributions across every user domain, unique per-domain gateway/interface IPs and Virtual System internal subnets, and complete `CpmiVsxSlotObj`/`CpmiVsSlotObj` metadata) and gateway CLI routing outputs for an enterprise MDSM topology.
 
 #### Scenario: Raw dataset covers multi-domain API payloads and gateway CLI outputs
 
@@ -107,7 +107,7 @@ The testing harness SHALL provide a deterministic (fixed-seed) generator and raw
 #### Scenario: Raw dataset includes deterministic Global object and group usage in local domain rules without breaking scale invariants
 
 - **WHEN** `ensure_enterprise_raw_dataset()` materializes `tests/fixtures/enterprise_raw_dataset/`
-- **THEN** local user domains SHALL deterministically reference `Global` objects, services, and groups (such as `H_Global_DNS_001`, `G_Global_Branch_Supernet`, `G_Global_DC_Supernet`, `TCP_53`, and `UDP_53`) inside existing Access rule #104 (`uid-arule-<domain>-0104`) and expose `mds/show-global-assignments.json` while preserving existing scale invariants (`10` domains, `284` cached assets, `276` gateways, `105` access rules in `3` sections per domain, `12` NAT rules per domain, fewer than `250` topology-cached objects, and unmodified rule #1 fixtures)
+- **THEN** local user domains SHALL deterministically reference `Global` objects, services, and groups (such as `H_Global_DNS_001`, `G_Global_Branch_Supernet`, `G_Global_DC_Supernet`, `TCP_53`, and `UDP_53`) inside existing Access rule #104 (`uid-arule-<domain>-0104`) and expose `mds/show-global-assignments.json` while preserving existing scale invariants (`10` domains, `341` cached assets, `315` gateways with `simple-gateway`, cluster, and `CpmiVsNetobj` Virtual System assets in every user domain plus at least `15` cross-domain Virtual Systems, `325` CLI routing targets, unique per-domain gateway and interface IPv4 addresses and Virtual System internal `/24` subnets, complete `CpmiVsxSlotObj` and `CpmiVsSlotObj` entries across VSX chassis hosts, `105` access rules in `3` sections per domain, `12` NAT rules per domain, fewer than `250` topology-cached objects, and unmodified rule #1 fixtures)
 
 ### Requirement: File-Backed Check Point API and Gateway CLI Replay Doubles
 
@@ -134,7 +134,7 @@ The testing package SHALL provide an embeddable and CLI-runnable HTTPS server (`
 
 #### Scenario: Downstream application executes stateful write workflows and resets state via CheckPointReplayHttpServer
 
-- **WHEN** an HTTPS client authenticates via `/web_api/login`, executes mutating `/web_api/{cmd}` calls, polls `/web_api/show-task` for asynchronous commands (`publish`, `show-changes`, `assign-global-assignment`, `assign-global-policy`, `run-script`), and subsequently resets server state between test scenarios
+- **WHEN** an HTTPS client authenticates via `/web_api/login`, executes mutating `/web_api/{cmd}` calls, polls `/web_api/show-task` for asynchronous commands (`publish`, `show-changes`, `verify-policy`, `install-policy`, `assign-global-assignment`, `assign-global-policy`, `run-script`), and subsequently resets server state between test scenarios
 - **THEN** `/web_api/{cmd}` SHALL enforce HTTP `401` (`generic_err_missing_required_header` or `generic_err_invalid_session_id`) on missing or invalidated `X-chkp-sid` headers, reflect committed changes immediately across subsequent HTTPS requests, and restore clean state via `snapshot_state()`, `restore_state()`, `reset()`, or opt-in `/__testing__/*` endpoints
 
 ### Requirement: Per-Session Staging Overlay and Read-Your-Own-Writes Isolation
@@ -200,7 +200,7 @@ The emulator MUST reject `delete-*` on any object, service, or group that is sti
 
 ### Requirement: Access and NAT Rulebase CRUD, Positioning, and Automatic Consistency
 
-The emulator SHALL support `show-access-rule`, `add-access-rule`, `set-access-rule`, `delete-access-rule`, `add-access-section`, `set-access-section`, `delete-access-section`, `show-nat-rule`, `add-nat-rule`, `set-nat-rule`, `delete-nat-rule`, `add-nat-section`, `set-nat-section`, and `delete-nat-section`, automatically recomputing rule numbers, section ranges, live `objects-dictionary`, `show-objects`, `show-object`, and `where-used`.
+The emulator SHALL support `show-access-rule`, `add-access-rule`, `set-access-rule`, `delete-access-rule`, `add-access-section`, `set-access-section`, `delete-access-section`, `show-access-layer`, `add-access-layer`, `set-access-layer`, `delete-access-layer` (including inline layers), `show-https-rulebase`, `show-threat-rulebase`, `https-rule` / `threat-rule` CRUD, `show-nat-rule`, `add-nat-rule`, `set-nat-rule`, `delete-nat-rule`, `add-nat-section`, `set-nat-section`, `delete-nat-section`, and `verify-policy` / `install-policy` task simulation, automatically recomputing rule numbers, section ranges, live `objects-dictionary`, `show-objects`, `show-object`, and `where-used`.
 
 #### Scenario: Access rule and section CRUD maintains rule-numbers, section bounds, and objects-dictionary
 

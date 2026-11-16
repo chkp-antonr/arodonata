@@ -1,1 +1,115 @@
-{}
+{
+  "com.checkpoint.objects.classes.dummy.CpmiVsNetobj": [
+    {
+      "uid": "uid-transit-vs-ix-01",
+      "name": "transit-vs-ix-01",
+      "type": "CpmiVsNetobj",
+      "vsid": 22,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "vsx-gateway": {
+        "uid": "uid-dc-vsx-chassis-02",
+        "name": "dc-vsx-chassis-02"
+      },
+      "ipv4-address": "10.185.45.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "Transit_Interconnect_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.242.32",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.22",
+          "ipv4-address": "10.185.45.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-transit-vs-ix-02",
+      "name": "transit-vs-ix-02",
+      "type": "CpmiVsNetobj",
+      "vsid": 23,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "vsx-gateway": {
+        "uid": "uid-dc-vsx-chassis-02",
+        "name": "dc-vsx-chassis-02"
+      },
+      "ipv4-address": "10.185.46.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "Transit_Interconnect_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.242.33",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.23",
+          "ipv4-address": "10.185.46.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-transit-vs-peering-03",
+      "name": "transit-vs-peering-03",
+      "type": "CpmiVsNetobj",
+      "vsid": 21,
+      "parent-uid": "uid-perim-vsx-chassis-01",
+      "vsx-gateway": {
+        "uid": "uid-perim-vsx-chassis-01",
+        "name": "perim-vsx-chassis-01"
+      },
+      "ipv4-address": "10.185.62.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "Transit_Interconnect_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.245.31",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.21",
+          "ipv4-address": "10.185.62.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    }
+  ]
+}

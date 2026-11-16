@@ -1,0 +1,29 @@
+VSX Gateway Status
+==================
+VSID:            0
+Name:            reg-vsx-hub-01
+Type:            VSX Gateway
+
+VSID:            1
+Name:            reg-vs-campus-01
+Type:            Virtual System
+
+VSID:            2
+Name:            reg-vs-campus-02
+Type:            Virtual System
+
+VSID:            11
+Name:            br-vs-hub-01
+Type:            Virtual System
+
+VSID:            12
+Name:            br-vs-hub-02
+Type:            Virtual System
+
+VSID:            13
+Name:            br-vs-hub-03
+Type:            Virtual System
+
+VSID:            21
+Name:            wan-vs-peering-01
+Type:            Virtual System

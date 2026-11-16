@@ -706,6 +706,41 @@
           "uid": "uid-branch-gw-140",
           "name": "br-reg-gw-140",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-br-hq-cluster-01",
+          "name": "br-hq-cluster-01",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-br-metro-cluster-02",
+          "name": "br-metro-cluster-02",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-br-vs-hub-01",
+          "name": "br-vs-hub-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-br-vs-hub-02",
+          "name": "br-vs-hub-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-br-vs-hub-03",
+          "name": "br-vs-hub-03",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-br-vs-guest-01",
+          "name": "br-vs-guest-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-br-vs-iot-02",
+          "name": "br-vs-iot-02",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [
@@ -1425,6 +1460,41 @@
           "uid": "uid-branch-gw-140",
           "name": "br-reg-gw-140",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-br-hq-cluster-01",
+          "name": "br-hq-cluster-01",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-br-metro-cluster-02",
+          "name": "br-metro-cluster-02",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-br-vs-hub-01",
+          "name": "br-vs-hub-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-br-vs-hub-02",
+          "name": "br-vs-hub-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-br-vs-hub-03",
+          "name": "br-vs-hub-03",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-br-vs-guest-01",
+          "name": "br-vs-guest-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-br-vs-iot-02",
+          "name": "br-vs-iot-02",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [

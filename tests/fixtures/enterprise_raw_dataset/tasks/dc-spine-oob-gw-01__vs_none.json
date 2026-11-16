@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-dc-spine-oob-gw-01-0",
+      "task-name": "arodonata-route-collect-dc-spine-oob-gw-01",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-dc-spine-oob-gw-01-0",
+          "gatewayId": "dc-spine-oob-gw-01",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4yOS42LjI1NCBkZXYgZXRoMCBwcm90byBzdGF0aWMKMTAuMTg2LjEuMC8yNCBkZXYgZXRoMSBwcm90byBrZXJuZWwgc2NvcGUgbGluayBzcmMgMTAuMTg2LjEuMQo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cg==",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-db-seg-vault-1a-0",
+      "task-name": "arodonata-route-collect-db-seg-vault-1a",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-db-seg-vault-1a-0",
+          "gatewayId": "db-seg-vault-1a",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CjEwLjE4OC4xMC4wLzI0IGRldiBldGgxIHByb3RvIGtlcm5lbCBzY29wZSBsaW5rIHNyYyAxMC4xODguMTAuMQoxMC4xODguMjAuMC8yNCBkZXYgZXRoMiBwcm90byBrZXJuZWwgc2NvcGUgbGluayBzcmMgMTAuMTg4LjIwLjEKPT09QVJPRE9OQVRBX0lQX1JPVVRFX0VORD09PQo=",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

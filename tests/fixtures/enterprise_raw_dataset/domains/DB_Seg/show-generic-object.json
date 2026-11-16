@@ -569,5 +569,205 @@
         }
       }
     ]
+  },
+  "uid-db-seg-vault-cluster": {
+    "uid": "uid-db-seg-vault-cluster",
+    "name": "db-seg-vault-cluster",
+    "type": "CpmiGatewayCluster",
+    "ipv4-address": "10.188.10.1",
+    "cluster-members": [
+      {
+        "uid": "uid-db-seg-vault-1a",
+        "name": "db-seg-vault-1a",
+        "type": "cluster-member",
+        "ipv4-address": "10.188.10.11",
+        "cluster-uid": "uid-db-seg-vault-cluster"
+      },
+      {
+        "uid": "uid-db-seg-vault-1b",
+        "name": "db-seg-vault-1b",
+        "type": "cluster-member",
+        "ipv4-address": "10.188.10.12",
+        "cluster-uid": "uid-db-seg-vault-cluster"
+      }
+    ],
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.188.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.188.20.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-vault-1a": {
+    "uid": "uid-db-seg-vault-1a",
+    "name": "db-seg-vault-1a",
+    "type": "cluster-member",
+    "ipv4-address": "10.188.10.11",
+    "cluster-uid": "uid-db-seg-vault-cluster"
+  },
+  "uid-db-seg-vault-1b": {
+    "uid": "uid-db-seg-vault-1b",
+    "name": "db-seg-vault-1b",
+    "type": "cluster-member",
+    "ipv4-address": "10.188.10.12",
+    "cluster-uid": "uid-db-seg-vault-cluster"
+  },
+  "uid-db-seg-vs-vault-01": {
+    "uid": "uid-db-seg-vs-vault-01",
+    "name": "db-seg-vs-vault-01",
+    "type": "CpmiVsNetobj",
+    "vsid": 51,
+    "parent-uid": "uid-dc-vsx-chassis-01",
+    "vsx-gateway": {
+      "uid": "uid-dc-vsx-chassis-01",
+      "name": "dc-vsx-chassis-01"
+    },
+    "ipv4-address": "10.188.41.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1.51",
+        "ipv4-address": "10.188.41.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2.51",
+        "ipv4-address": "10.198.41.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-vs-vault-02": {
+    "uid": "uid-db-seg-vs-vault-02",
+    "name": "db-seg-vs-vault-02",
+    "type": "CpmiVsNetobj",
+    "vsid": 52,
+    "parent-uid": "uid-dc-vsx-chassis-01",
+    "vsx-gateway": {
+      "uid": "uid-dc-vsx-chassis-01",
+      "name": "dc-vsx-chassis-01"
+    },
+    "ipv4-address": "10.188.42.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1.52",
+        "ipv4-address": "10.188.42.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2.52",
+        "ipv4-address": "10.198.42.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-db-seg-vs-pod-03": {
+    "uid": "uid-db-seg-vs-pod-03",
+    "name": "db-seg-vs-pod-03",
+    "type": "CpmiVsNetobj",
+    "vsid": 11,
+    "parent-uid": "uid-dc-pod-vsx-local-01",
+    "vsx-gateway": {
+      "uid": "uid-dc-pod-vsx-local-01",
+      "name": "dc-pod-vsx-local-01"
+    },
+    "ipv4-address": "10.188.65.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1.11",
+        "ipv4-address": "10.188.65.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2.11",
+        "ipv4-address": "10.198.65.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
   }
 }

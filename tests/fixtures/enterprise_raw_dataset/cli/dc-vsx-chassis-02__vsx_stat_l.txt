@@ -1,0 +1,81 @@
+VSX Gateway Status
+==================
+VSID:            0
+Name:            dc-vsx-chassis-02
+Type:            VSX Gateway
+
+VSID:            2
+Name:            dc-vsx-spine-vs02
+Type:            Virtual System
+
+VSID:            3
+Name:            dc-vsx-spine-vs03
+Type:            Virtual System
+
+VSID:            4
+Name:            dc-vsx-spine-vs04
+Type:            Virtual System
+
+VSID:            5
+Name:            dc-vsx-spine-vs05
+Type:            Virtual System
+
+VSID:            6
+Name:            dc-vsx-spine-vs06
+Type:            Virtual System
+
+VSID:            7
+Name:            dc-vsx-spine-vs07
+Type:            Virtual System
+
+VSID:            8
+Name:            dc-vsx-spine-vs08
+Type:            Virtual System
+
+VSID:            9
+Name:            dc-vsx-spine-vs09
+Type:            Virtual System
+
+VSID:            10
+Name:            dc-vsx-spine-vs10
+Type:            Virtual System
+
+VSID:            11
+Name:            dc-vsx-spine-vs11
+Type:            Virtual System
+
+VSID:            12
+Name:            dc-vsx-spine-vs12
+Type:            Virtual System
+
+VSID:            13
+Name:            dc-vsx-spine-vs13
+Type:            Virtual System
+
+VSID:            14
+Name:            dc-vsx-spine-vs14
+Type:            Virtual System
+
+VSID:            15
+Name:            dc-vsx-spine-vs15
+Type:            Virtual System
+
+VSID:            21
+Name:            wan-vs-backbone-02
+Type:            Virtual System
+
+VSID:            22
+Name:            transit-vs-ix-01
+Type:            Virtual System
+
+VSID:            23
+Name:            transit-vs-ix-02
+Type:            Virtual System
+
+VSID:            31
+Name:            perim-vs-dmz-01
+Type:            Virtual System
+
+VSID:            32
+Name:            perim-vs-dmz-02
+Type:            Virtual System

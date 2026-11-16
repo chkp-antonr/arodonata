@@ -488,9 +488,170 @@
           }
         }
       ]
+    },
+    {
+      "uid": "uid-perim-vsx-chassis-01",
+      "name": "perim-vsx-chassis-01",
+      "type": "CpmiVsxNetobj",
+      "ipv4-address": "172.29.4.50",
+      "virtual-systems": [
+        "uid-perim-vs-waf-01",
+        "uid-perim-vs-b2c-02",
+        "uid-partner-vs-b2b-02",
+        "uid-partner-vs-api-03",
+        "uid-transit-vs-peering-03"
+      ]
+    },
+    {
+      "uid": "uid-perim-vs-dmz-01",
+      "name": "perim-vs-dmz-01",
+      "type": "CpmiVsNetobj",
+      "vsid": 31,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "vsx-gateway": {
+        "uid": "uid-dc-vsx-chassis-02",
+        "name": "dc-vsx-chassis-02"
+      },
+      "ipv4-address": "10.184.47.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "Perimeter_Edge_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.242.41",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.31",
+          "ipv4-address": "10.184.47.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-perim-vs-dmz-02",
+      "name": "perim-vs-dmz-02",
+      "type": "CpmiVsNetobj",
+      "vsid": 32,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "vsx-gateway": {
+        "uid": "uid-dc-vsx-chassis-02",
+        "name": "dc-vsx-chassis-02"
+      },
+      "ipv4-address": "10.184.48.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "Perimeter_Edge_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.242.42",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.32",
+          "ipv4-address": "10.184.48.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-perim-vs-waf-01",
+      "name": "perim-vs-waf-01",
+      "type": "CpmiVsNetobj",
+      "vsid": 1,
+      "parent-uid": "uid-perim-vsx-chassis-01",
+      "vsx-gateway": {
+        "uid": "uid-perim-vsx-chassis-01",
+        "name": "perim-vsx-chassis-01"
+      },
+      "ipv4-address": "10.184.58.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "Perimeter_Edge_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.245.11",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.1",
+          "ipv4-address": "10.184.58.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-perim-vs-b2c-02",
+      "name": "perim-vs-b2c-02",
+      "type": "CpmiVsNetobj",
+      "vsid": 2,
+      "parent-uid": "uid-perim-vsx-chassis-01",
+      "vsx-gateway": {
+        "uid": "uid-perim-vsx-chassis-01",
+        "name": "perim-vsx-chassis-01"
+      },
+      "ipv4-address": "10.184.59.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "Perimeter_Edge_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.245.12",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.2",
+          "ipv4-address": "10.184.59.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
     }
   ],
   "from": 1,
-  "to": 17,
-  "total": 17
+  "to": 22,
+  "total": 22
 }

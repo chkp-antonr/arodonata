@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-dc-pod-east-1a-0",
+      "task-name": "arodonata-route-collect-dc-pod-east-1a",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-dc-pod-east-1a-0",
+          "gatewayId": "dc-pod-east-1a",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4yOS43LjI1NCBkZXYgZXRoMCBwcm90byBzdGF0aWMKMTAuMTg3LjEwLjAvMjQgZGV2IGV0aDEgcHJvdG8ga2VybmVsIHNjb3BlIGxpbmsgc3JjIDEwLjE4Ny4xMC4xCj09PUFST0RPTkFUQV9JUF9ST1VURV9FTkQ9PT0K",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

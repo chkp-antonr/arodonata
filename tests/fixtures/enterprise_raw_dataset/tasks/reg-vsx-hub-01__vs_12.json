@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-reg-vsx-hub-01-12",
+      "task-name": "arodonata-route-collect-reg-vsx-hub-01",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-reg-vsx-hub-01-12",
+          "gatewayId": "reg-vsx-hub-01",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE5Mi4xNjguMjQzLjEgZGV2IHdycDAgcHJvdG8gc3RhdGljCjEwLjE4MS41Mi4wLzI0IGRldiBldGgxLjEyIHByb3RvIGtlcm5lbCBzY29wZSBsaW5rIHNyYyAxMC4xODEuNTIuMQo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cg==",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

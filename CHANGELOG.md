@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **testing**: Upgraded `dataset_generator.py` and `tests/fixtures/enterprise_raw_dataset/` to `DATASET_VERSION = "1.2.0"` (`341` total domain assets, `315` policy-enforcing gateways, `325` CLI routing targets), adding `+7` standalone `simple-gateway` appliances, `+7` `CpmiGatewayCluster` HA clusters (`14` cluster members), `+4` `CpmiVsxNetobj` VSX chassis hosts, and `+25` local and cross-domain `CpmiVsNetobj` Virtual Systems with unique per-domain gateway/interface IPs and Virtual System internal `/24` subnets and complete `CpmiVsxSlotObj` / `CpmiVsSlotObj` coverage across all VSX chassis hosts so every user MDSM domain (`Branch`, `Regional`, `WAN_Core`, `Perimeter`, `Transit`, `DC_Spine`, `DC_Pod`, `DB_Seg`, `Partner_DMZ`) exercises heterogeneous appliance, cluster, Virtual System, and cross-domain VSX topologies.
+- **testing**: Extended `FileReplayApiMock` (`_emulator_crud.py`, `_emulator_models.py`, `replay_mock.py`) with `verify-policy` and `install-policy` task simulation, `access-layer` / inline-layer CRUD (`add-access-layer`, `set-access-layer`, `delete-access-layer`, `show-access-layer`), and `show-https-rulebase` / `show-threat-rulebase` (`https-rule`, `threat-rule`) CRUD and `where-used` resolution (#87).
+
+### Fixed
+
+- **cpcrud,client**: Propagated `ArodonataClient.logout_sid()` notifications through `CPCRUDService.notify_sid_logged_out()` and `Executor.notify_sid_logged_out()` so `StagedSessionInfo.clear_sid()` clears logged-out SIDs while preserving session provenance for external `publish` or `discard` adoption (#87).
+
 ## v2.6.3 (2026-11-14)
 
 ### Feat

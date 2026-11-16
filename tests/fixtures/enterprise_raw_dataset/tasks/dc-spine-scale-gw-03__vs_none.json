@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-dc-spine-scale-gw-03-0",
+      "task-name": "arodonata-route-collect-dc-spine-scale-gw-03",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-dc-spine-scale-gw-03-0",
+          "gatewayId": "dc-spine-scale-gw-03",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4yOS42LjI1NCBkZXYgZXRoMCBwcm90byBzdGF0aWMKMTAuMTg2LjMuMC8yNCBkZXYgZXRoMSBwcm90byBrZXJuZWwgc2NvcGUgbGluayBzcmMgMTAuMTg2LjMuMQo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cg==",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

@@ -1,1 +1,56 @@
-{}
+{
+  "uid-db-seg-vault-cluster": {
+    "uid": "uid-db-seg-vault-cluster",
+    "name": "db-seg-vault-cluster",
+    "type": "CpmiGatewayCluster",
+    "ipv4-address": "10.188.10.1",
+    "cluster-members": [
+      {
+        "uid": "uid-db-seg-vault-1a",
+        "name": "db-seg-vault-1a",
+        "type": "cluster-member",
+        "ipv4-address": "10.188.10.11",
+        "cluster-uid": "uid-db-seg-vault-cluster"
+      },
+      {
+        "uid": "uid-db-seg-vault-1b",
+        "name": "db-seg-vault-1b",
+        "type": "cluster-member",
+        "ipv4-address": "10.188.10.12",
+        "cluster-uid": "uid-db-seg-vault-cluster"
+      }
+    ],
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DB_Vault_Seg_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth1",
+        "ipv4-address": "10.188.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      },
+      {
+        "name": "eth2",
+        "ipv4-address": "10.188.20.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  }
+}

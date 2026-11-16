@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-dc-pod-maestro-sg-04-0",
+      "task-name": "arodonata-route-collect-dc-pod-maestro-sg-04",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-dc-pod-maestro-sg-04-0",
+          "gatewayId": "dc-pod-maestro-sg-04",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4yOS43LjI1NCBkZXYgZXRoMCBwcm90byBzdGF0aWMKMTAuMTg3LjQuMC8yNCBkZXYgZXRoMSBwcm90byBrZXJuZWwgc2NvcGUgbGluayBzcmMgMTAuMTg3LjQuMQo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cg==",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

@@ -905,6 +905,137 @@
           }
         }
       ]
+    },
+    {
+      "uid": "uid-dc-pod-local-vs01",
+      "name": "dc-pod-local-vs01",
+      "type": "CpmiVsNetobj",
+      "vsid": 1,
+      "parent-uid": "uid-dc-pod-vsx-local-01",
+      "vsx-gateway": {
+        "uid": "uid-dc-pod-vsx-local-01",
+        "name": "dc-pod-vsx-local-01"
+      },
+      "ipv4-address": "10.187.63.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.246.11",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.1",
+          "ipv4-address": "10.187.63.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-pod-local-vs02",
+      "name": "dc-pod-local-vs02",
+      "type": "CpmiVsNetobj",
+      "vsid": 2,
+      "parent-uid": "uid-dc-pod-vsx-local-01",
+      "vsx-gateway": {
+        "uid": "uid-dc-pod-vsx-local-01",
+        "name": "dc-pod-vsx-local-01"
+      },
+      "ipv4-address": "10.187.64.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Pod_Tier_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.246.12",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.2",
+          "ipv4-address": "10.187.64.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    }
+  ],
+  "com.checkpoint.objects.classes.dummy.CpmiVsxNetobj": [
+    {
+      "uid": "uid-dc-pod-vsx-local-01",
+      "name": "dc-pod-vsx-local-01",
+      "type": "CpmiVsxNetobj",
+      "ipv4-address": "172.29.7.50",
+      "virtual-systems": [
+        "uid-dc-pod-local-vs01",
+        "uid-dc-pod-local-vs02",
+        "uid-db-seg-vs-pod-03"
+      ]
+    }
+  ],
+  "com.checkpoint.objects.vsx_classes.dummy.CpmiVsxSlotObj": [
+    {
+      "uid": "uid-slot0-dc-pod-vsx-local-01",
+      "name": "dc-pod-vsx-local-01",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsxSlotObj",
+      "vsid": 0,
+      "vsxGateway": "uid-dc-pod-vsx-local-01"
+    }
+  ],
+  "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj": [
+    {
+      "uid": "uid-slot-dc-pod-local-vs01",
+      "name": "dc-pod-vsx-local-01_dc-pod-local-vs01",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 1,
+      "vsxGateway": "uid-slot0-dc-pod-vsx-local-01",
+      "targetCustomer": {
+        "name": "DC_Pod",
+        "uid": "uid-dom-dc_pod"
+      }
+    },
+    {
+      "uid": "uid-slot-dc-pod-local-vs02",
+      "name": "dc-pod-vsx-local-01_dc-pod-local-vs02",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 2,
+      "vsxGateway": "uid-slot0-dc-pod-vsx-local-01",
+      "targetCustomer": {
+        "name": "DC_Pod",
+        "uid": "uid-dom-dc_pod"
+      }
+    },
+    {
+      "uid": "uid-slot-db-seg-vs-pod-03",
+      "name": "dc-pod-vsx-local-01_db-seg-vs-pod-03",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 11,
+      "vsxGateway": "uid-slot0-dc-pod-vsx-local-01",
+      "targetCustomer": {
+        "name": "DB_Seg",
+        "uid": "uid-dom-db_seg"
+      }
     }
   ]
 }

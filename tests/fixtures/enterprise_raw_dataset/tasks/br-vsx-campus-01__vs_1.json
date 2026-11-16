@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-br-vsx-campus-01-1",
+      "task-name": "arodonata-route-collect-br-vsx-campus-01",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-br-vsx-campus-01-1",
+          "gatewayId": "br-vsx-campus-01",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE5Mi4xNjguMjQ0LjEgZGV2IHdycDAgcHJvdG8gc3RhdGljCjEwLjE4MS41NS4wLzI0IGRldiBldGgxLjEgcHJvdG8ga2VybmVsIHNjb3BlIGxpbmsgc3JjIDEwLjE4MS41NS4xCj09PUFST0RPTkFUQV9JUF9ST1VURV9FTkQ9PT0K",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

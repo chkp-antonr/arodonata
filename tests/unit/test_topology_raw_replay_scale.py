@@ -97,10 +97,10 @@ async def test_enterprise_topology_raw_replay_scale_pipeline(tmp_path: Path) -> 
         assert len(cold_outcome.refreshed_domains) == 10
         assert not cold_outcome.failed_domains
 
-        # Verify SQL cache population: 284 total assets (276 policy-enforcing gateways) & ONLY gateway-referenced
+        # Verify SQL cache population: 341 total assets (315 policy-enforcing gateways) & ONLY gateway-referenced
         # `"specific"` / `vpn-domain` objects resolved on demand (ZERO bulk `show-hosts` or `show-dns-domains`!)
         cached_assets = await client.cache.get_assets(mgmt_name="mds")
-        assert len(cached_assets) == 284
+        assert len(cached_assets) == 341
         assert api_mock.command_counts["show-hosts"] == 0
         assert api_mock.command_counts["show-dns-domains"] == 0
         assert api_mock.command_counts["show-networks"] == 0
@@ -179,7 +179,7 @@ async def test_enterprise_topology_raw_replay_scale_pipeline(tmp_path: Path) -> 
             mgmt_name="mds",
             cache_mode="cache",
         )
-        assert recon_report.gateway_count == 276
+        assert recon_report.gateway_count == 315
         disc_by_gw_type_cidr = {
             (d.gateway_name, d.discrepancy_type, d.cidr_or_range): d for d in recon_report.discrepancies
         }

@@ -2,15 +2,15 @@
 
 `arodonata.testing` provides a deterministic, enterprise-scale raw Check Point Management API and Gateway CLI fixture dataset (`tests/fixtures/enterprise_raw_dataset/`), in-memory replay adapters (`FileReplayApiMock`, `FileReplayCliMock`), and a standalone/embeddable HTTPS server (`CheckPointReplayHttpServer`).
 
-This allows downstream applications such as **MMP** and **FPCR** to point `ArodonataClient` at `localhost:443` (or any custom `host:port`) and receive 10 MDSM domains, 276 policy-enforcing gateways, 2,950+ objects (including 7-level nested groups), 1,050+ access rules, 120 NAT rules, and live gateway CLI routes via real HTTPS without requiring physical Check Point appliances or waiting for artificial rate limits / login throttling.
+This allows downstream applications such as **MMP** and **FPCR** to point `ArodonataClient` at `localhost:443` (or any custom `host:port`) and receive 10 MDSM domains, 315 policy-enforcing gateways, 2,950+ objects (including 7-level nested groups), 1,050+ access rules, 120 NAT rules, and live gateway CLI routes via real HTTPS without requiring physical Check Point appliances or waiting for artificial rate limits / login throttling.
 
 ## 1. Enterprise Dataset Overview (`tests/fixtures/enterprise_raw_dataset/`)
 
-Generated deterministically with `DEFAULT_SEED = 20261108` via `ensure_enterprise_raw_dataset()`:
+Generated deterministically with `DEFAULT_SEED = 20261108` (`DATASET_VERSION = "1.2.0"`) via `ensure_enterprise_raw_dataset()`:
 
 - **Domains (10 total)**: 9 user domains (`Branch`, `Regional`, `WAN_Core`, `Perimeter`, `Transit`, `DC_Spine`, `DC_Pod`, `DB_Seg`, `Partner_DMZ`) plus `Global`.
-- **Gateways & Assets (284 total assets / 276 policy-enforcing gateways)**:
-  - Simple gateways (`simple-gateway`), clusters (`simple-cluster` with `cluster-member` nodes), VSX physical chassis (`vsx-cluster` / `CpmiVsxNetobj` / `CpmiVsxSlotObj`), and VSX Virtual Systems (`virtual-system` / `CpmiVsNetobj` / `CpmiVsSlotObj`).
+- **Gateways & Assets (341 total assets / 315 policy-enforcing gateways, 325 CLI routing targets)**:
+  - Simple gateways (`simple-gateway`), clusters (`simple-cluster` / `CpmiGatewayCluster` with `cluster-member` nodes), VSX physical chassis (`vsx-cluster` / `CpmiVsxNetobj` / `CpmiVsxSlotObj`), and VSX Virtual Systems (`virtual-system` / `CpmiVsNetobj` / `CpmiVsSlotObj`) distributed heterogeneously across every user domain (`Branch` through `Partner_DMZ`), including 15+ cross-domain VSX Virtual Systems.
   - Covers all Check Point interface topology representations (`interfaces`, `interfaces_installed`, `leads-to-internet`, `leads-to-specific-network`, `anti-spoofing-settings`, `routes_installed`).
 - **Network & Service Objects (2,951 network objects, 210 services)**:
   - Hosts, networks, address ranges, DNS domains, and nested object groups up to 7 levels deep (`G_L1_*` through `G_L7_*`).
@@ -88,7 +88,7 @@ async with ArodonataClient(api=api_mock, gateway_cli=cli_mock) as client:
 Both `FileReplayApiMock` and `CheckPointReplayHttpServer` emulate stateful Check Point Management & MDSM behavior on top of the loaded dataset:
 
 - **Per-`sid` Staging Overlays & Session Lifecycle**: Sessions opened via `login`, `/web_api/login`, or `create_dedicated_session` receive an isolated copy-on-write staging overlay and acquire per-object UID locks on modification. Supports `read-only` sessions, `set-session`, `take-over-session` (including disconnecting the prior active SID), `switch-session`, `discard`, `logout` / `logout_sid`, `publish` (with conflict-checked rebase fallback and post-publish work-session rotation), `show-session`, `show-sessions`, `show-last-published-session`, and `show-changes`.
-- **Stateful Object, Service, Group & Rule CRUD**: Supports `show-*` / `add-*` / `set-*` / `delete-*` for `host`, `network`, `address-range`, `dns-domain`, `application-site`, `group`, `service-tcp`, `service-udp`, `service-icmp`, `service-icmp6`, `service-other`, `service-group`, `access-rule`, `access-section`, `nat-rule`, `nat-section`, plus `show-unused-objects` and `delete-unused-objects`.
+- **Stateful Object, Service, Group & Rule CRUD**: Supports `show-*` / `add-*` / `set-*` / `delete-*` for `host`, `network`, `address-range`, `dns-domain`, `application-site`, `group`, `service-tcp`, `service-udp`, `service-icmp`, `service-icmp6`, `service-other`, `service-group`, `access-rule`, `access-section`, `access-layer` (including inline layers), `https-rule`, `threat-rule`, `nat-rule`, `nat-section`, plus `show-https-rulebase`, `show-threat-rulebase`, `verify-policy`, `install-policy`, `show-unused-objects`, and `delete-unused-objects`.
 - **Referential Integrity & Consistency**: Enforces Check Point deletion blocking (`generic_err_object_cannot_be_deleted` with `blocking-errors`) whenever an object or group is referenced by groups, Access rules, or NAT rules, and keeps `where-used`, `show-objects`, `show-object`, and `objects-dictionary` synchronized after every change.
 - **MDSM `Global` Read/Write Protection**: `Global` objects and groups are visible across local user domains (`show-object`, `show-objects`, `where-used`, `show-access-rulebase`), while local-domain `set-*` / `delete-*` calls targeting `Global` entities are rejected with `generic_err_object_read_only`. Also supports `show-global-assignments`, `show-global-assignment`, `assign-global-assignment`, and `assign-global-policy`.
 

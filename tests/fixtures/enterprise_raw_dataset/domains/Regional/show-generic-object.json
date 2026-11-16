@@ -649,5 +649,203 @@
         }
       }
     ]
+  },
+  "uid-reg-vsx-hub-01": {
+    "uid": "uid-reg-vsx-hub-01",
+    "name": "reg-vsx-hub-01",
+    "type": "CpmiVsxNetobj",
+    "ipv4-address": "172.29.2.50",
+    "virtual-systems": [
+      "uid-reg-vs-campus-01",
+      "uid-reg-vs-campus-02",
+      "uid-br-vs-hub-01",
+      "uid-br-vs-hub-02",
+      "uid-br-vs-hub-03",
+      "uid-wan-vs-peering-01"
+    ]
+  },
+  "uid-slot0-reg-vsx-hub-01": {
+    "uid": "uid-slot0-reg-vsx-hub-01",
+    "name": "reg-vsx-hub-01",
+    "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsxSlotObj",
+    "vsid": 0,
+    "vsxGateway": "uid-reg-vsx-hub-01"
+  },
+  "uid-reg-vs-campus-01": {
+    "uid": "uid-reg-vs-campus-01",
+    "name": "reg-vs-campus-01",
+    "type": "CpmiVsNetobj",
+    "vsid": 1,
+    "parent-uid": "uid-reg-vsx-hub-01",
+    "vsx-gateway": {
+      "uid": "uid-reg-vsx-hub-01",
+      "name": "reg-vsx-hub-01"
+    },
+    "ipv4-address": "10.182.49.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "wrp0",
+        "ipv4-address": "192.168.243.11",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1.1",
+        "ipv4-address": "10.182.49.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-slot-reg-vs-campus-01": {
+    "uid": "uid-slot-reg-vs-campus-01",
+    "name": "reg-vsx-hub-01_reg-vs-campus-01",
+    "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+    "vsid": 1,
+    "vsxGateway": "uid-slot0-reg-vsx-hub-01",
+    "targetCustomer": {
+      "name": "Regional",
+      "uid": "uid-dom-regional"
+    }
+  },
+  "uid-reg-vs-campus-02": {
+    "uid": "uid-reg-vs-campus-02",
+    "name": "reg-vs-campus-02",
+    "type": "CpmiVsNetobj",
+    "vsid": 2,
+    "parent-uid": "uid-reg-vsx-hub-01",
+    "vsx-gateway": {
+      "uid": "uid-reg-vsx-hub-01",
+      "name": "reg-vsx-hub-01"
+    },
+    "ipv4-address": "10.182.50.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "wrp0",
+        "ipv4-address": "192.168.243.12",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1.2",
+        "ipv4-address": "10.182.50.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-slot-reg-vs-campus-02": {
+    "uid": "uid-slot-reg-vs-campus-02",
+    "name": "reg-vsx-hub-01_reg-vs-campus-02",
+    "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+    "vsid": 2,
+    "vsxGateway": "uid-slot0-reg-vsx-hub-01",
+    "targetCustomer": {
+      "name": "Regional",
+      "uid": "uid-dom-regional"
+    }
+  },
+  "uid-slot-br-vs-hub-01": {
+    "uid": "uid-slot-br-vs-hub-01",
+    "name": "reg-vsx-hub-01_br-vs-hub-01",
+    "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+    "vsid": 11,
+    "vsxGateway": "uid-slot0-reg-vsx-hub-01",
+    "targetCustomer": {
+      "name": "Branch",
+      "uid": "uid-dom-branch"
+    }
+  },
+  "uid-slot-br-vs-hub-02": {
+    "uid": "uid-slot-br-vs-hub-02",
+    "name": "reg-vsx-hub-01_br-vs-hub-02",
+    "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+    "vsid": 12,
+    "vsxGateway": "uid-slot0-reg-vsx-hub-01",
+    "targetCustomer": {
+      "name": "Branch",
+      "uid": "uid-dom-branch"
+    }
+  },
+  "uid-slot-br-vs-hub-03": {
+    "uid": "uid-slot-br-vs-hub-03",
+    "name": "reg-vsx-hub-01_br-vs-hub-03",
+    "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+    "vsid": 13,
+    "vsxGateway": "uid-slot0-reg-vsx-hub-01",
+    "targetCustomer": {
+      "name": "Branch",
+      "uid": "uid-dom-branch"
+    }
+  },
+  "uid-slot-wan-vs-peering-01": {
+    "uid": "uid-slot-wan-vs-peering-01",
+    "name": "reg-vsx-hub-01_wan-vs-peering-01",
+    "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+    "vsid": 21,
+    "vsxGateway": "uid-slot0-reg-vsx-hub-01",
+    "targetCustomer": {
+      "name": "WAN_Core",
+      "uid": "uid-dom-wan_core"
+    }
+  },
+  "uid-reg-vs-branch-agg-03": {
+    "uid": "uid-reg-vs-branch-agg-03",
+    "name": "reg-vs-branch-agg-03",
+    "type": "CpmiVsNetobj",
+    "vsid": 11,
+    "parent-uid": "uid-br-vsx-campus-01",
+    "vsx-gateway": {
+      "uid": "uid-br-vsx-campus-01",
+      "name": "br-vsx-campus-01"
+    },
+    "ipv4-address": "10.182.57.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Regional_Hub_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "wrp0",
+        "ipv4-address": "192.168.244.21",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1.11",
+        "ipv4-address": "10.182.57.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
   }
 }

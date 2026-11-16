@@ -1,0 +1,17 @@
+VSX Gateway Status
+==================
+VSID:            0
+Name:            br-vsx-campus-01
+Type:            VSX Gateway
+
+VSID:            1
+Name:            br-vs-guest-01
+Type:            Virtual System
+
+VSID:            2
+Name:            br-vs-iot-02
+Type:            Virtual System
+
+VSID:            11
+Name:            reg-vs-branch-agg-03
+Type:            Virtual System
