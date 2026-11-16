@@ -244,3 +244,129 @@ def test_validate_template_application_site_in_objects_services_and_operations()
     assert len(errs) == 1
     assert "objects[0]" in errs[0]
     assert "url-list" in errs[0]
+
+
+def test_validate_template_incremental_url_list_and_rule_cell_deltas_and_field_change_defaults() -> None:
+    """`validate_template` accepts `{"add": ..., "remove": ...}` on `url-list` and all 6 rule list cells, rejecting invalid delta dicts."""
+    from arodonata.cpcrud.models import FieldChange
+
+    fc = FieldChange(field="source", old_value=["Any"], new_value=["Host_1"])
+    assert fc.added_items == []
+    assert fc.removed_items == []
+
+    valid_incremental_tpl: dict[str, Any] = {
+        "version": 1,
+        "mgmt_name": "mds1",
+        "domain": "Corp",
+        "objects": [
+            {
+                "operation": "set",
+                "type": "application-site",
+                "name": "Site__chinacloudapi.cn",
+                "url-list": {"add": [r"\.partner\.cn"], "remove": [r"\/chinacloudapi\.cn"]},
+            }
+        ],
+        "services": [
+            {
+                "operation": "update",
+                "type": "application-site",
+                "name": "Site_svc",
+                "url_list": {"add": ["extra.example.com"]},
+            }
+        ],
+        "rules": [
+            {
+                "operation": "set",
+                "type": "access-rule",
+                "layer": "Network",
+                "name": "Allow App",
+                "source": {"add": ["Host_10.1.1.1"], "remove": ["Host_10.0.0.5"]},
+                "destination": {"add": ["Net_10.2.0.0_16"]},
+                "service": {"remove": ["TCP_80"]},
+                "install_on": {"add": ["gw-1"]},
+            },
+            {
+                "operation": "set",
+                "type": "threat-rule",
+                "layer": "Threat Layer",
+                "name": "Threat Scope",
+                "protected-scope": {"add": ["Net_10.3.0.0_16"], "remove": ["Net_Old"]},
+                "install-on": {"remove": ["gw-old"]},
+            },
+            {
+                "operation": "set",
+                "type": "https-rule",
+                "layer": "HTTPS Layer",
+                "name": "HTTPS Inspect",
+                "site_category": {"add": ["Finance"], "remove": ["Social Networking"]},
+                "site-category": {"add": ["Banking"]},
+                "protected_scope": {"add": ["Any"]},
+            },
+        ],
+    }
+    assert validate_template(valid_incremental_tpl) == []
+
+    # Empty {} or unknown keys inside {add, remove} must be rejected
+    invalid_delta_tpl: dict[str, Any] = {
+        "version": 1,
+        "mgmt_name": "mds1",
+        "domain": "Corp",
+        "objects": [
+            {
+                "operation": "set",
+                "type": "application-site",
+                "name": "Site_bad",
+                "url-list": {},
+            }
+        ],
+        "rules": [
+            {
+                "operation": "set",
+                "type": "access-rule",
+                "layer": "Network",
+                "name": "Bad Rule",
+                "source": {"add": ["Host_1"], "bogus": ["x"]},
+            }
+        ],
+    }
+    bad_errs = validate_template(invalid_delta_tpl)
+    assert len(bad_errs) >= 2
+    assert any("objects[0].url-list" in e for e in bad_errs)
+    assert any("rules[0].source" in e for e in bad_errs)
+
+    # action="add" on application-site with only remove (and no application-signature) fails semantic validation
+    add_only_remove_tpl: dict[str, Any] = {
+        "version": 1,
+        "mgmt_name": "mds1",
+        "domain": "Corp",
+        "objects": [
+            {
+                "action": "add",
+                "type": "application-site",
+                "name": "Site_empty_add",
+                "url-list": {"remove": ["old.example.com"]},
+            }
+        ],
+    }
+    sem_errs = validate_template(add_only_remove_tpl)
+    assert len(sem_errs) == 1
+    assert "url-list" in sem_errs[0]
+
+    # Explicit action="add" on a rule with incremental {add, remove} cell deltas fails semantic validation
+    add_rule_delta_tpl: dict[str, Any] = {
+        "version": 1,
+        "mgmt_name": "mds1",
+        "domain": "Corp",
+        "rules": [
+            {
+                "operation": "add",
+                "type": "access-rule",
+                "layer": "Network",
+                "name": "Bad Add Rule",
+                "source": {"add": ["Host_1"]},
+            }
+        ],
+    }
+    rule_sem_errs = validate_template(add_rule_delta_tpl)
+    assert len(rule_sem_errs) == 1
+    assert "rules[0]" in rule_sem_errs[0]

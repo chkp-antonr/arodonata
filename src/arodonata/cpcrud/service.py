@@ -60,6 +60,7 @@ class CPCRUDService:
             api=self._api,
             cache=self._cache,
             default_mgmt_name=default_mgmt,
+            default_naming_prefixes=self._settings.cpcrud_naming_prefixes,
             now_fn=self._now,
         )
         self._executor = Executor(

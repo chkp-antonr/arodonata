@@ -1023,3 +1023,305 @@ async def test_planner_cold_cache_uses_show_objects_without_full_show_hosts_or_s
     assert api_mock.api_call_counts.get(("Branch", "show-services-icmp"), 0) == 1
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_cpcrud_service_plan_uses_settings_naming_prefixes_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`CPCRUDService.plan()` uses `settings.cpcrud_naming_prefixes` by default and honors template/arg overrides."""
+    from arodonata import ArodonataClient, ArodonataSettings
+    from arodonata.testing.replay_mock import FileReplayApiMock
+
+    monkeypatch.setenv("ARODONATA_CPCRUD_AUTO_NAME_PREFIX_RANGE", "Range_")
+    monkeypatch.setenv("ARODONATA_CPCRUD_RANGE_SEPARATOR", "_")
+    monkeypatch.setenv("ARODONATA_CPCRUD_RANGE_COMPRESS_OCTETS", "true")
+
+    api_mock = FileReplayApiMock()
+    branch_files = api_mock._domain_data["Branch"]
+    branch_files["show-address-ranges"] = {
+        "objects": [
+            {
+                "uid": "rng-legacy-1",
+                "name": "Legacy_Range_10_1_1_1_9",
+                "type": "address-range",
+                "ipv4-address-first": "10.1.1.1",
+                "ipv4-address-last": "10.1.1.9",
+            }
+        ]
+    }
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="127.0.0.1", api_key="mock-key")
+    async with ArodonataClient(settings=settings, api=api_mock) as client:
+        template = {
+            "version": 1,
+            "mgmt_name": "mds1",
+            "domain": "Branch",
+            "on_ip_conflict": "create_new",
+            "objects": [
+                {
+                    "type": "address-range",
+                    "name": "req_rng",
+                    "ipv4-address-first": "10.1.1.1",
+                    "ipv4-address-last": "10.1.1.9",
+                }
+            ],
+        }
+        plan_default = await client.cpcrud.plan(template)
+        assert plan_default.actions[0].outcome == Outcome.CREATE
+        assert plan_default.actions[0].resolved_name == "Range_10.1.1.1_9"
+
+        plan_tpl_override = await client.cpcrud.plan(
+            {
+                **template,
+                "naming_prefixes": {
+                    "address-range": "TplRng_",
+                    "compress-range-same-subnet": False,
+                    "range-separator": "-",
+                },
+            }
+        )
+        assert plan_tpl_override.actions[0].outcome == Outcome.CREATE
+        assert plan_tpl_override.actions[0].resolved_name == "TplRng_10.1.1.1-10.1.1.9"
+
+        plan_arg_override = await client.cpcrud.plan(
+            template,
+            naming_prefixes={"address-range": "ArgRng_"},
+        )
+        assert plan_arg_override.actions[0].outcome == Outcome.CREATE
+        assert plan_arg_override.actions[0].resolved_name == "ArgRng_10.1.1.1_9"
+
+
+@pytest.mark.asyncio
+async def test_planner_strict_set_missing_targets_fail_closed() -> None:
+    """`operation='set'` or `'update'` targeting absent object, service, group, or rule fails closed with `Outcome.ERROR`."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = PlannerFakeApi()
+    await _seed_fresh_cache(cache)
+
+    planner = Planner(api=api, cache=cache, default_mgmt_name="mds1")
+    plan = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "objects": [
+                {"operation": "set", "type": "host", "name": "Missing_Host", "ipv4-address": "10.9.9.9"},
+            ],
+            "services": [
+                {"operation": "update", "type": "service-tcp", "name": "Missing_TCP", "port": "9443"},
+            ],
+            "groups": [
+                {"operation": "set", "type": "group", "name": "Missing_Grp", "members": ["Any"]},
+                {"operation": "update", "type": "service-group", "name": "Missing_SvcGrp", "members": ["TCP_80"]},
+            ],
+            "rules": [
+                # Even if traffic matches an existing rule, strict_name=True must NOT hijack it when name doesn't match
+                {
+                    "operation": "set",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "Missing Rule Name",
+                    "source": ["Host_10.1.1.10"],
+                    "destination": ["Any"],
+                    "service": ["TCP_80"],
+                    "rule_action": "Accept",
+                }
+            ],
+        }
+    )
+
+    assert len(plan.actions) == 5
+    for act in plan.actions:
+        assert act.outcome == Outcome.ERROR
+        assert act.is_write_action is False
+        assert "not found for update" in (act.error or "")
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_planner_incremental_url_list_and_rule_cell_updates_with_depends_on_and_guards() -> None:
+    """`Planner` handles incremental `url-list` and rule cell `{add, remove}` patches, `depends_on`, UID dereferencing, and safety errors."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = PlannerFakeApi()
+
+    # Use raw UIDs in rulebase + objects-dictionary to verify `_build_prior_rule_state` dereferencing
+    api.access_rulebase_payload["objects-dictionary"] = [
+        {"uid": "h-old-5", "name": "Host_10.0.0.5", "type": "host"},
+        {"uid": NAT_ANY_OBJECT_UID, "name": "Any", "type": "CpmiAnyObject"},
+        {"uid": "s-http", "name": "TCP_80", "type": "service-tcp"},
+    ]
+    api.access_rulebase_payload["rulebase"][0]["rulebase"][0]["source"] = ["h-old-5"]
+    api.access_rulebase_payload["rulebase"][0]["rulebase"][0]["destination"] = [NAT_ANY_OBJECT_UID]
+    api.access_rulebase_payload["rulebase"][0]["rulebase"][0]["service"] = ["s-http"]
+
+    await _seed_fresh_cache(
+        cache,
+        objects=[
+            CPObject.from_cp_dict(
+                "mds1",
+                "Corp",
+                {
+                    "uid": "site-cc-1",
+                    "name": "Site__chinacloudapi.cn",
+                    "type": "application-site",
+                    "primary-category": "Custom_Application_Site",
+                    "url-list": [r"\/chinacloudapi\.cn", r"\.chinacloudapi\.cn"],
+                    "urls-defined-as-regular-expression": True,
+                },
+            ),
+            CPObject.from_cp_dict(
+                "mds1",
+                "Corp",
+                {"uid": "h-old-5", "name": "Host_10.0.0.5", "type": "host", "ipv4-address": "10.0.0.5"},
+            ),
+            CPObject.from_cp_dict(
+                "mds1",
+                "Corp",
+                {
+                    "uid": "site-legacy-cc",
+                    "name": "Custom_Legacy_Static",
+                    "type": "application-site",
+                    "primary-category": "Custom_Application_Site",
+                    "url-list": ["HTTPS://Partner.Example.com"],
+                    "urls-defined-as-regular-expression": False,
+                },
+            ),
+        ],
+    )
+
+    planner = Planner(api=api, cache=cache, default_mgmt_name="mds1")
+    plan = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "on_ip_conflict": "reuse",
+            "objects": [
+                {"id": "create-h1", "type": "host", "name": "Host_10.1.1.1", "ipv4-address": "10.1.1.1"},
+                {
+                    "operation": "set",
+                    "type": "application-site",
+                    "name": "Site__chinacloudapi.cn",
+                    "url-list": {"add": [r"\.partner\.cn"], "remove": [r"\/chinacloudapi\.cn"]},
+                },
+                {
+                    "type": "application-site",
+                    "name": "Site_partner_alias",
+                    "url-list": ["https://partner.example.com"],
+                    "urls-defined-as-regular-expression": False,
+                },
+            ],
+            "services": [
+                {"id": "create-8443", "type": "service-tcp", "name": "TCP_8443", "port": "8443"},
+            ],
+            "rules": [
+                {
+                    "operation": "set",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "Allow Web",
+                    "source": {"add": ["Host_10.1.1.1"], "remove": ["Host_10.0.0.5"]},
+                    "service": {"add": ["TCP_8443"]},
+                }
+            ],
+        }
+    )
+
+    by_name = {a.requested_name: a for a in plan.actions}
+    assert by_name["Site__chinacloudapi.cn"].outcome == Outcome.UPDATE
+    assert by_name["Site__chinacloudapi.cn"].payload["url-list"] == [r"\.chinacloudapi\.cn", r"\.partner\.cn"]
+    assert by_name["Site_partner_alias"].outcome == Outcome.REUSE
+    assert by_name["Site_partner_alias"].resolved_name == "Custom_Legacy_Static"
+
+    rule_act = by_name["Allow Web"]
+    assert rule_act.outcome == Outcome.UPDATE
+    assert rule_act.command == "set-access-rule"
+    assert "create-h1" in rule_act.depends_on
+    assert "create-8443" in rule_act.depends_on
+    assert rule_act.payload["source"] == {"add": ["Host_10.1.1.1"], "remove": ["Host_10.0.0.5"]}
+    assert rule_act.payload["service"] == {"add": ["TCP_8443"]}
+    assert rule_act.prior_state is not None
+    assert rule_act.prior_state["source"] == ["Host_10.0.0.5"]
+    assert rule_act.prior_state["destination"] == ["Any"]
+    assert rule_act.prior_state["service"] == ["TCP_80"]
+
+    # Safety errors surface as Outcome.ERROR
+    err_plan = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "objects": [
+                {
+                    "operation": "set",
+                    "type": "application-site",
+                    "name": "Site__chinacloudapi.cn",
+                    "url-list": {"remove": [r"\/chinacloudapi\.cn", r"\.chinacloudapi\.cn"]},
+                }
+            ],
+            "rules": [
+                {
+                    "operation": "set",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "Allow Web",
+                    "source": {"remove": ["Host_10.0.0.5"]},
+                },
+                {
+                    "operation": "set",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "Allow Web",
+                    "destination": {"add": ["Host_10.0.0.5"]},
+                },
+                {
+                    # Unmatched rule with delta cell under default 'present' verb must NOT create Any rule
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "Typo Missing Rule",
+                    "source": {"add": ["Host_10.1.1.1"]},
+                },
+                {
+                    # Unnamed rule with delta cell under default 'present' verb must fail closed
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "source": {"add": ["Host_10.1.1.1"]},
+                },
+            ],
+        }
+    )
+    assert err_plan.actions[0].outcome == Outcome.ERROR
+    assert "empty url-list" in (err_plan.actions[0].error or "")
+    assert err_plan.actions[1].outcome == Outcome.ERROR
+    assert err_plan.actions[1].requested_name == "Allow Web"
+    assert err_plan.actions[1].resolved_name == "Allow Web"
+    assert "widens to 'Any'" in (err_plan.actions[1].error or "")
+    assert err_plan.actions[2].outcome == Outcome.ERROR
+    assert "include 'Any' in 'remove'" in (err_plan.actions[2].error or "")
+    assert err_plan.actions[3].outcome == Outcome.ERROR
+    assert "Cannot create access-rule" in (err_plan.actions[3].error or "")
+    assert err_plan.actions[4].outcome == Outcome.ERROR
+    assert "Cannot create access-rule" in (err_plan.actions[4].error or "")
+
+    # Positional rule_number update + rename works even under strict_name
+    rename_by_num_plan = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "rules": [
+                {
+                    "operation": "set",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "rule_number": 1,
+                    "name": "Allow Web v2",
+                    "source": {"add": ["Host_10.0.0.5"]},
+                }
+            ],
+        }
+    )
+    assert rename_by_num_plan.actions[0].outcome == Outcome.UPDATE
+    assert rename_by_num_plan.actions[0].payload["new-name"] == "Allow Web v2"
+
+    await db.close()

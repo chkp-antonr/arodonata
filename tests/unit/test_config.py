@@ -227,3 +227,65 @@ def test_secret_masking_in_dump_repr_database_url_and_cwd_independent_known_host
     path_b = ArodonataSettings().tls_known_hosts_path
     assert path_a == path_b
     assert Path(path_a).is_absolute()
+
+
+def test_cpcrud_naming_prefixes_from_arodonata_env_and_no_dotenv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`ArodonataSettings.cpcrud_naming_prefixes` reads `ARODONATA_CPCRUD_*` from `os.environ` without loading `.env`."""
+    (tmp_path / ".env").write_text("ARODONATA_CPCRUD_AUTO_NAME_PREFIX_HOST=IgnoredDotEnv_\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    monkeypatch.setenv("ARODONATA_CPCRUD_AUTO_NAME_PREFIX_RANGE", "Range_")
+    monkeypatch.setenv("ARODONATA_CPCRUD_RANGE_SEPARATOR", "_")
+    monkeypatch.setenv("ARODONATA_CPCRUD_RANGE_COMPRESS_OCTETS", "true")
+    monkeypatch.setenv("ARODONATA_CPCRUD_AUTO_NAME_PREFIX_GROUP", "")
+    monkeypatch.setenv("ARODONATA_CPCRUD_AUTO_NAME_SUFFIX_GROUP", "_Grp")
+    monkeypatch.setenv("ARODONATA_CPCRUD_AUTO_NAME_PREFIX_APP_SITE", "Site_")
+    monkeypatch.setenv("ARODONATA_CPCRUD_APP_SITE_WILDCARD_MARKER", "_")
+    # Secondary CPCRUD_* must lose to ARODONATA_CPCRUD_*
+    monkeypatch.setenv("CPCRUD_AUTO_NAME_PREFIX_RANGE", "SecondaryRange_")
+
+    settings = ArodonataSettings()
+    prefixes = settings.cpcrud_naming_prefixes
+    assert prefixes.host == "Host_"
+    assert prefixes.address_range == "Range_"
+    assert prefixes.range_separator == "_"
+    assert prefixes.compress_range_same_subnet is True
+    assert prefixes.group == ""
+    assert prefixes.group_suffix == "_Grp"
+    assert prefixes.app_site == "Site_"
+    assert prefixes.app_site_wildcard_marker == "_"
+    assert prefixes.format_address_range("10.1.1.1", "10.1.1.9") == "Range_10.1.1.1_9"
+    assert prefixes.format_group("AppAccess") == "AppAccess_Grp"
+    assert prefixes.format_app_site("*chinacloudapi.cn") == "Site__chinacloudapi.cn"
+
+
+def test_cpcrud_naming_prefixes_secondary_cpcrud_fallback_and_constructor_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Secondary `CPCRUD_*` vars apply when `ARODONATA_CPCRUD_*` are absent; constructor args and validation work."""
+    monkeypatch.setenv("CPCRUD_AUTO_NAME_PREFIX_RANGE", "Range_")
+    monkeypatch.setenv("CPCRUD_RANGE_COMPRESS_OCTETS", "true")
+
+    fallback_settings = ArodonataSettings()
+    assert fallback_settings.cpcrud_naming_prefixes.address_range == "Range_"
+    assert fallback_settings.cpcrud_naming_prefixes.compress_range_same_subnet is True
+
+    # Constructor partial dict overrides env vars
+    dict_override = ArodonataSettings(cpcrud_naming_prefixes={"address_range": "CustomRange_"})
+    assert dict_override.cpcrud_naming_prefixes.address_range == "CustomRange_"
+    assert dict_override.cpcrud_naming_prefixes.compress_range_same_subnet is True
+
+    # Constructor NamingPrefixes instance wins cleanly
+    from arodonata.cpcrud.models import NamingPrefixes
+
+    explicit_override = ArodonataSettings(cpcrud_naming_prefixes=NamingPrefixes(host="H_"))
+    assert explicit_override.cpcrud_naming_prefixes.host == "H_"
+    assert explicit_override.cpcrud_naming_prefixes.address_range == "IPR_"
+
+    # Invalid boolean raises ConfigurationError
+    monkeypatch.setenv("ARODONATA_CPCRUD_RANGE_COMPRESS_OCTETS", "maybe")
+    with pytest.raises(ConfigurationError, match="Invalid boolean"):
+        ArodonataSettings()

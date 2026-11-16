@@ -1,0 +1,23 @@
+# Tasks: Incremental Rule and URL-List Diffs, Naming Profiles, and Dry-Run Plan ChangeReports
+
+## 1. Environment-Backed Naming Profiles & Canonical Expression Parser
+
+- [x] 1.1 Extend `NamingPrefixes` (`src/arodonata/cpcrud/models.py`) and `NamingPrefixes` definition in `src/arodonata/cpcrud/checkpoint_ops_schema.json` with `range_separator`, `compress_range_same_subnet`, `group_suffix`, `app_site`, `app_site_wildcard_marker`, `format_group()`, and `format_app_site()` while preserving default outputs (`IPR_10.1.1.1-10.1.1.9`, `grp...`, `Site_...`); verify unit tests in `tests/unit/test_cpcrud_naming.py` covering both default and customer profiles (`Range_10.1.1.1_9`, `GroupName_Grp`, `Site__chinacloudapi.cn`).
+- [x] 1.2 Wire `cpcrud_naming_prefixes` into `ArodonataSettings` (`src/arodonata/core/config.py`) with `ARODONATA_CPCRUD_*` and fallback `CPCRUD_*` environment aliases (no implicit `.env` loading) and pass `self._settings.cpcrud_naming_prefixes` as default into `CPCRUDService.plan()` (`src/arodonata/cpcrud/service.py`); verify with unit tests in `tests/unit/test_config.py` and `tests/unit/test_cpcrud_planner.py`.
+- [x] 1.3 Add `src/arodonata/cpcrud/expressions.py` (re-exported via `src/arodonata/cpcrud/__init__.py`) implementing pure parsing for hosts, CIDRs, full/compressed IPv4 ranges (`10.1.1.1-9` and `10.1.1.1-10.1.1.9`), DNS domains (`.abc.com`), wildcard application sites (`*chinacloudapi.cn`, `*.chinacloudapi.cn`, `SiteName(*d1, *.d2)`), services, and inline groups; verify all parser cases and error paths with unit tests in `tests/unit/test_cpcrud_expressions.py`.
+
+## 2. Incremental `url-list` and Rule Cell Diffs with Safety Guards
+
+- [x] 2.1 Update `checkpoint_ops_schema.json` (`ObjectOperation`, `ServiceOperation`, `RuleOperation`) so `url_list` / `url-list` and list-valued rule cells (`source`, `destination`, `service`, `protected_scope`/`protected-scope`, `site_category`/`site-category`, `install_on`/`install-on`) accept `{"add": [...], "remove": [...]}` alongside list values, and add `added_items`/`removed_items` defaults on `FieldChange` (`models.py`); verify offline `validate_template()` tests in `tests/unit/test_cpcrud_validator.py`.
+- [x] 2.2 Implement unified incremental list-delta computation in `src/arodonata/cpcrud/differ.py` for `application-site.url-list` (merged post-delta payload + non-empty URL guard when `application-signature` is absent) and rule list cells (`source`, `destination`, `service`, `protected-scope`, `site-category`, `install-on`, with `name_resolutions` substitution, anti-`Any`-widening guard on empty result, and `"Any"` cell collision guard); verify unit diff tests in `tests/unit/test_cpcrud_differ.py`.
+- [x] 2.3 Update `src/arodonata/cpcrud/planner.py` (`_extract_rule_references`, strict `verb == "set"` existence failure across objects/services/groups/rules, surfacing `Differ` safety violations as `Outcome.ERROR`, dereferencing UIDs in `_build_prior_rule_state`, and ensuring `value-first` `application-site` lookup/reuse respects normalized URL lists) and `src/arodonata/cpcrud/inverse.py` (generating compensating `set-*-rule` and `set-application-site` templates); verify planner and inverse round-trip tests in `tests/unit/test_cpcrud_planner.py` and `tests/unit/test_cpcrud_inverse.py`.
+- [x] 2.4 Extend `FileReplayApiMock` in `src/arodonata/testing/_emulator_crud.py` to apply incremental `{"add": [...], "remove": [...]}` deltas for `set-application-site` `url-list` and `set-*-rule` traffic/install fields; verify end-to-end replay tests (`plan -> apply -> show-changes -> inverse`) in `tests/unit/test_cpcrud_incremental_replay.py`.
+
+## 3. Offline Dry-Run `ChangeReport` Synthesis & Verification Gates
+
+- [x] 3.1 Implement `build_change_report_from_plan(plan, *, title=None, header_fields=None, include_unchanged=False)` in `src/arodonata/reports/plan_report.py` (re-exported from `src/arodonata/reports/__init__.py`) and verify offline HTML/JSON/Markdown rendering via `render_change_report()` with unit tests in `tests/unit/test_reports_plan_report.py`.
+- [x] 3.2 Update relevant API reference / usage documentation in `docs-notebooklm/` if applicable and run full repository quality gates (`uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src`, `uv run pytest`, `npx markdownlint-cli "**/*.md" --ignore node_modules --ignore .venv --fix`, and `openspec validate --specs --no-interactive`), confirming zero failures.
+
+## Workflow follow-up
+
+- Sync delta specs (`configuration`, `cpcrud`, `change-reports`) and archive `incremental-rule-url-diffs-and-naming-profiles` once implementation and review pass.

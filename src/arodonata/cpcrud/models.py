@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
+from arodonata.core.config import NamingPrefixes
 from arodonata.core.errors import REDACTED_PLACEHOLDER, sanitize_mapping
 from arodonata.core.models.common import to_naive_utc, utc_now
 
@@ -27,76 +28,6 @@ class Outcome(StrEnum):
     SKIPPED = "skipped"
     SKIPPED_DEPENDENCY = "skipped_dependency"
     PLAN_STALE = "plan_stale"
-
-
-class NamingPrefixes(BaseModel):
-    """Convention prefixes used when `on_ip_conflict='create_new'` auto-names an object or service."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    host: str = "Host_"
-    network: str = "Net_"
-    address_range: str = Field(default="IPR_", validation_alias="address_range")
-    group: str = "grp"
-    tcp: str = "TCP_"
-    udp: str = "UDP_"
-    icmp: str = "ICMP_"
-
-    def model_post_init(self, __context: Any) -> None:
-        # Support optional alias keys passed via model_validate
-        pass
-
-    @classmethod
-    def from_mapping(cls, data: Any) -> NamingPrefixes:
-        """Construct `NamingPrefixes` accepting both short (`tcp`) and `service_*` (`service_tcp`) keys."""
-        if isinstance(data, cls):
-            return data
-        if not isinstance(data, dict):
-            return cls()
-        norm: dict[str, Any] = dict(data)
-        if "address-range" in norm and "address_range" not in norm:
-            norm["address_range"] = norm["address-range"]
-        if "service_tcp" in norm and "tcp" not in norm:
-            norm["tcp"] = norm["service_tcp"]
-        if "service-tcp" in norm and "tcp" not in norm:
-            norm["tcp"] = norm["service-tcp"]
-        if "service_udp" in norm and "udp" not in norm:
-            norm["udp"] = norm["service_udp"]
-        if "service-udp" in norm and "udp" not in norm:
-            norm["udp"] = norm["service-udp"]
-        if "service_icmp" in norm and "icmp" not in norm:
-            norm["icmp"] = norm["service_icmp"]
-        if "service-icmp" in norm and "icmp" not in norm:
-            norm["icmp"] = norm["service-icmp"]
-        return cls.model_validate(norm)
-
-    def format_host(self, ip_address: str) -> str:
-        """Generate convention-compliant host name (`Host_<ip>`)."""
-        clean = ip_address.strip().replace(":", "_")
-        return f"{self.host}{clean}"
-
-    def format_network(self, subnet: str, mask_length: int | str) -> str:
-        """Generate convention-compliant network name (`Net_<subnet>_<mask_len>`)."""
-        clean_sub = subnet.strip().replace(":", "_")
-        return f"{self.network}{clean_sub}_{mask_length}"
-
-    def format_address_range(self, first_ip: str, last_ip: str) -> str:
-        """Generate convention-compliant address range name (`IPR_<first>-<last>`)."""
-        return f"{self.address_range}{first_ip.strip()}-{last_ip.strip()}"
-
-    def format_tcp(self, port: str | int) -> str:
-        """Generate convention-compliant TCP service name (`TCP_<port>`)."""
-        return f"{self.tcp}{str(port).strip()}"
-
-    def format_udp(self, port: str | int) -> str:
-        """Generate convention-compliant UDP service name (`UDP_<port>`)."""
-        return f"{self.udp}{str(port).strip()}"
-
-    def format_icmp(self, icmp_type: int | str, icmp_code: int | None = None) -> str:
-        """Generate convention-compliant ICMP service name (`ICMP_<type>` or `ICMP_<type>_<code>`)."""
-        if icmp_code is not None:
-            return f"{self.icmp}{icmp_type}_{icmp_code}"
-        return f"{self.icmp}{icmp_type}"
 
 
 class ConflictPolicy(BaseModel):
@@ -139,6 +70,8 @@ class FieldChange(BaseModel):
     field: str
     old_value: Any = None
     new_value: Any = None
+    added_items: list[str] = Field(default_factory=list)
+    removed_items: list[str] = Field(default_factory=list)
 
 
 class PlannedAction(BaseModel):

@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from arodonata.core.errors import ValidationError
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import (
     AccessRuleEntry,
@@ -21,10 +22,17 @@ from arodonata.core.models.services import CPService
 from arodonata.cpcrud.models import FieldChange
 from arodonata.cpcrud.rule_identity import (
     RuleEntryUnion,
+    build_effective_obj_dict,
+    deref_rule_list,
+    normalize_any_sentinel,
     normalize_nat_traffic_ref,
     normalize_traffic_list,
 )
-from arodonata.cpcrud.state_reader import normalize_mask_length
+from arodonata.cpcrud.state_reader import normalize_app_site_url_key, normalize_mask_length
+
+
+class DiffSafetyError(ValidationError):
+    """Raised when an incremental diff violates Check Point safety invariants."""
 
 
 def resolve_member_reference(
@@ -182,16 +190,39 @@ def compute_object_diff(
                 update_payload["primary-category"] = clean_cat
 
         raw_req_urls = desired.get("url-list") if "url-list" in desired else desired.get("url_list")
-        if isinstance(raw_req_urls, list):
-            req_urls = [str(u).strip() for u in raw_req_urls if str(u).strip()]
-            exist_urls = [str(u).strip() for u in existing.url_list if str(u).strip()]
-            if set(req_urls) != set(exist_urls):
-                diffs["url-list"] = FieldChange(
-                    field="url-list",
-                    old_value=list(existing.url_list),
-                    new_value=req_urls,
-                )
-                update_payload["url-list"] = req_urls
+        if raw_req_urls is not None:
+            raw_exist_urls: Sequence[Any] = existing.url_list
+            if not raw_exist_urls and isinstance(existing.raw_data, Mapping):
+                fallback_urls = existing.raw_data.get("url-list") or existing.raw_data.get("url_list")
+                if isinstance(fallback_urls, list):
+                    raw_exist_urls = fallback_urls
+            exist_urls = list(dict.fromkeys(str(u).strip() for u in raw_exist_urls if str(u).strip()))
+            raw_req_regex_for_url = (
+                desired.get("urls-defined-as-regular-expression")
+                if "urls-defined-as-regular-expression" in desired
+                else desired.get("urls_defined_as_regular_expression")
+            )
+            eff_is_regex = (
+                bool(raw_req_regex_for_url)
+                if raw_req_regex_for_url is not None
+                else bool(existing.urls_defined_as_regular_expression)
+            )
+            req_sig_raw = desired.get("application-signature") or desired.get("application_signature")
+            exist_sig_raw = (
+                existing.raw_data.get("application-signature") or existing.raw_data.get("application_signature")
+                if isinstance(existing.raw_data, Mapping)
+                else None
+            )
+            effective_has_sig = bool(str(req_sig_raw or "").strip() or str(exist_sig_raw or "").strip())
+            _compute_url_list_diff(
+                existing.name,
+                raw_req_urls,
+                exist_urls,
+                is_regex=eff_is_regex,
+                has_signature=effective_has_sig,
+                diffs=diffs,
+                update_payload=update_payload,
+            )
 
         if "urls-defined-as-regular-expression" in desired or "urls_defined_as_regular_expression" in desired:
             raw_req_regex = (
@@ -355,6 +386,27 @@ def compute_service_diff(
     return diffs, update_payload
 
 
+def _build_member_uid_to_name_map(
+    existing_members: Sequence[str],
+    raw_data: Mapping[str, Any],
+    current_names: Sequence[str],
+) -> dict[str, str]:
+    uid_to_name: dict[str, str] = {}
+    raw_members = raw_data.get("members")
+    if isinstance(raw_members, list):
+        for elem in raw_members:
+            if isinstance(elem, Mapping):
+                u = str(elem.get("uid") or "").strip()
+                n = str(elem.get("name") or "").strip()
+                if u and n:
+                    uid_to_name[u] = n
+    if len(existing_members) == len(current_names):
+        for u, n in zip(existing_members, current_names, strict=False):
+            if u and n and u not in uid_to_name:
+                uid_to_name[str(u)] = str(n)
+    return uid_to_name
+
+
 def _compute_group_members_diff(
     desired: Mapping[str, Any],
     existing_members: Sequence[str],
@@ -373,19 +425,32 @@ def _compute_group_members_diff(
 
     if isinstance(req_members, list):
         resolved_req = [resolve_member_reference(str(m), name_resolutions) for m in req_members]
-        # Compare order-insensitively by resolved name or UID
-        if set(resolved_req) != set(current_names) and set(resolved_req) != current_uids:
+        uid_to_name = _build_member_uid_to_name_map(existing_members, raw_data, current_names)
+        canonical_req = [uid_to_name.get(m, m) for m in resolved_req]
+        # Compare order-insensitively across both resolved names and UIDs
+        if (
+            set(resolved_req) != set(current_names)
+            and set(resolved_req) != current_uids
+            and set(canonical_req) != set(current_names)
+        ):
+            canonical_req_set = set(canonical_req)
+            added_items = list(
+                dict.fromkeys(m for m in canonical_req if m not in current_set and m not in set(current_names))
+            )
+            removed_items = list(dict.fromkeys(m for m in current_names if m not in canonical_req_set))
             diffs["members"] = FieldChange(
                 field="members",
                 old_value=list(current_names),
                 new_value=resolved_req,
+                added_items=added_items,
+                removed_items=removed_items,
             )
             update_payload["members"] = resolved_req
     elif isinstance(req_members, dict):
         to_add = [resolve_member_reference(str(m), name_resolutions) for m in (req_members.get("add") or [])]
         to_remove = [resolve_member_reference(str(m), name_resolutions) for m in (req_members.get("remove") or [])]
-        missing_adds = [m for m in to_add if m not in current_set]
-        present_removes = [m for m in to_remove if m in current_set]
+        missing_adds = list(dict.fromkeys(m for m in to_add if m not in current_set))
+        present_removes = list(dict.fromkeys(m for m in to_remove if m in current_set))
         if missing_adds or present_removes:
             member_op: dict[str, list[str]] = {}
             if missing_adds:
@@ -396,8 +461,181 @@ def _compute_group_members_diff(
                 field="members",
                 old_value=list(current_names),
                 new_value=member_op,
+                added_items=missing_adds,
+                removed_items=present_removes,
             )
             update_payload["members"] = member_op
+
+
+def _dedup_urls_by_key(urls: Sequence[str], *, is_regex: bool) -> list[str]:
+    seen_keys: set[str] = set()
+    out: list[str] = []
+    for raw_u in urls:
+        clean = str(raw_u).strip()
+        if not clean:
+            continue
+        key = normalize_app_site_url_key(clean, is_regex=is_regex)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            out.append(clean)
+    return out
+
+
+def _compute_url_list_diff(
+    obj_name: str,
+    raw_req_urls: Any,
+    exist_urls: list[str],
+    *,
+    is_regex: bool = True,
+    has_signature: bool,
+    diffs: dict[str, FieldChange],
+    update_payload: dict[str, Any],
+) -> None:
+    exist_by_key = {normalize_app_site_url_key(u, is_regex=is_regex): u for u in exist_urls}
+    exist_keys = set(exist_by_key.keys())
+
+    if isinstance(raw_req_urls, list):
+        merged_raw = _dedup_urls_by_key([str(u) for u in raw_req_urls], is_regex=is_regex)
+        merged_urls = [exist_by_key.get(normalize_app_site_url_key(u, is_regex=is_regex), u) for u in merged_raw]
+    elif isinstance(raw_req_urls, Mapping):
+        raw_adds = _dedup_urls_by_key([str(u) for u in (raw_req_urls.get("add") or [])], is_regex=is_regex)
+        raw_rem_keys = {
+            normalize_app_site_url_key(str(u), is_regex=is_regex)
+            for u in (raw_req_urls.get("remove") or [])
+            if str(u).strip()
+        }
+        kept = [u for u in exist_urls if normalize_app_site_url_key(u, is_regex=is_regex) not in raw_rem_keys]
+        merged_urls = _dedup_urls_by_key([*kept, *raw_adds], is_regex=is_regex)
+    else:
+        return
+
+    if not merged_urls and not has_signature:
+        raise DiffSafetyError(
+            f"application-site {obj_name!r} cannot have an empty url-list without an application-signature."
+        )
+
+    merged_keys = {normalize_app_site_url_key(u, is_regex=is_regex) for u in merged_urls}
+    if merged_keys != exist_keys:
+        effective_adds = [u for u in merged_urls if normalize_app_site_url_key(u, is_regex=is_regex) not in exist_keys]
+        effective_removes = [
+            u for u in exist_urls if normalize_app_site_url_key(u, is_regex=is_regex) not in merged_keys
+        ]
+        diffs["url-list"] = FieldChange(
+            field="url-list",
+            old_value=list(exist_urls),
+            new_value=merged_urls,
+            added_items=effective_adds,
+            removed_items=effective_removes,
+        )
+        update_payload["url-list"] = merged_urls
+
+
+def _resolve_rule_delta_items(
+    raw_items: Any,
+    *,
+    eff_obj_dict: Mapping[str, Mapping[str, Any]],
+    name_resolutions: Mapping[str, str] | None,
+) -> list[str]:
+    if raw_items is None:
+        return []
+    seq = raw_items if isinstance(raw_items, (list, tuple, set)) else [raw_items]
+    out: list[str] = []
+    for item in seq:
+        norm = normalize_any_sentinel(item, eff_obj_dict)
+        resolved = resolve_member_reference(norm, name_resolutions)
+        if resolved:
+            out.append(resolved)
+    return list(dict.fromkeys(out))
+
+
+def _compute_rule_list_cell_diff(
+    field_key: str,
+    raw_desired_val: Any,
+    exist_list: Sequence[str] | None,
+    raw_exist: Mapping[str, Any],
+    *,
+    eff_obj_dict: Mapping[str, Mapping[str, Any]],
+    name_resolutions: Mapping[str, str] | None,
+    diffs: dict[str, FieldChange],
+    update_payload: dict[str, Any],
+) -> None:
+    if isinstance(raw_desired_val, Mapping):
+        exist_names = deref_rule_list(exist_list, raw_exist.get(field_key), eff_obj_dict, default_any=True)
+        req_adds = _resolve_rule_delta_items(
+            raw_desired_val.get("add"),
+            eff_obj_dict=eff_obj_dict,
+            name_resolutions=name_resolutions,
+        )
+        req_removes = _resolve_rule_delta_items(
+            raw_desired_val.get("remove"),
+            eff_obj_dict=eff_obj_dict,
+            name_resolutions=name_resolutions,
+        )
+
+        if any(x.lower() == "any" for x in req_adds):
+            raise DiffSafetyError(
+                f"Cannot include 'Any' in incremental 'add' on rule field {field_key!r}: "
+                "adding 'Any' widens or corrupts the rule cell; pass full list ['Any'] if widening is intended."
+            )
+
+        exist_has_any = any(x.lower() == "any" for x in exist_names)
+        non_any_adds = [x for x in req_adds if x.lower() != "any"]
+        removes_any = any(x.lower() == "any" for x in req_removes)
+        if exist_has_any and non_any_adds and not removes_any:
+            raise DiffSafetyError(
+                f"Cannot add {non_any_adds} to {field_key!r} while it is set to 'Any'; "
+                "include 'Any' in 'remove' explicitly when narrowing a rule cell."
+            )
+
+        rem_set = set(req_removes)
+        kept = [x for x in exist_names if x not in rem_set]
+        post_items = list(dict.fromkeys([*kept, *req_adds]))
+        if not post_items:
+            raise DiffSafetyError(
+                f"Refusing to remove all items from rule field {field_key!r}: "
+                "an empty rule cell silently widens to 'Any' in Check Point."
+            )
+
+        exist_set = set(exist_names)
+        post_set = set(post_items)
+        effective_adds = [x for x in req_adds if x not in exist_set and x in post_set]
+        effective_removes = [x for x in exist_names if x not in post_set]
+        if effective_adds or effective_removes:
+            # Strip 'Any' sentinel from Check Point wire `remove`; keeping `effective_removes` on FieldChange.
+            wire_removes = [x for x in effective_removes if x.lower() != "any"]
+            delta_op: dict[str, list[str]] = {}
+            if effective_adds:
+                delta_op["add"] = effective_adds
+            if wire_removes:
+                delta_op["remove"] = wire_removes
+            diffs[field_key] = FieldChange(
+                field=field_key,
+                old_value=list(exist_names),
+                new_value=delta_op,
+                added_items=effective_adds,
+                removed_items=effective_removes,
+            )
+            update_payload[field_key] = delta_op
+        return
+
+    norm_des_t = normalize_traffic_list(raw_desired_val, name_resolutions=name_resolutions)
+    norm_exist_t = normalize_traffic_list(
+        exist_list or raw_exist.get(field_key),
+        obj_dict=eff_obj_dict,
+    )
+    if norm_des_t != norm_exist_t:
+        old_set = set(norm_exist_t)
+        new_set = set(norm_des_t)
+        added_items = [x for x in norm_des_t if x not in old_set]
+        removed_items = [x for x in norm_exist_t if x not in new_set]
+        diffs[field_key] = FieldChange(
+            field=field_key,
+            old_value=list(norm_exist_t),
+            new_value=list(norm_des_t),
+            added_items=added_items,
+            removed_items=removed_items,
+        )
+        update_payload[field_key] = list(norm_des_t)
 
 
 def _compute_common_metadata_diff(
@@ -476,6 +714,7 @@ def compute_rule_diff(
             update_payload["comments"] = req_comm
 
     raw_exist = existing.raw_data or {}
+    eff_obj_dict = build_effective_obj_dict(raw_exist, obj_dict)
 
     if rulebase_type == "nat" and isinstance(existing, NatRuleEntry):
         # NAT rule diff with Original and Any sentinel normalization
@@ -518,18 +757,16 @@ def compute_rule_diff(
             ("service", existing.service),
         ):
             if field_key in desired and desired[field_key] is not None:
-                norm_des_t = normalize_traffic_list(desired[field_key], name_resolutions=name_resolutions)
-                norm_exist_t = normalize_traffic_list(
-                    exist_list or raw_exist.get(field_key),
-                    obj_dict=obj_dict,
+                _compute_rule_list_cell_diff(
+                    field_key,
+                    desired[field_key],
+                    exist_list,
+                    raw_exist,
+                    eff_obj_dict=eff_obj_dict,
+                    name_resolutions=name_resolutions,
+                    diffs=diffs,
+                    update_payload=update_payload,
                 )
-                if norm_des_t != norm_exist_t:
-                    diffs[field_key] = FieldChange(
-                        field=field_key,
-                        old_value=list(norm_exist_t),
-                        new_value=list(norm_des_t),
-                    )
-                    update_payload[field_key] = list(norm_des_t)
 
         # Action diff
         raw_act = desired.get("rule_action")
@@ -577,15 +814,16 @@ def compute_rule_diff(
         if "site_category" in desired or "site-category" in desired:
             raw_sc = desired.get("site_category") if "site_category" in desired else desired.get("site-category")
             if raw_sc is not None:
-                norm_des_sc = normalize_traffic_list(raw_sc, name_resolutions=name_resolutions)
-                norm_exist_sc = normalize_traffic_list(
-                    existing.site_category or raw_exist.get("site-category"), obj_dict=obj_dict
+                _compute_rule_list_cell_diff(
+                    "site-category",
+                    raw_sc,
+                    existing.site_category,
+                    raw_exist,
+                    eff_obj_dict=eff_obj_dict,
+                    name_resolutions=name_resolutions,
+                    diffs=diffs,
+                    update_payload=update_payload,
                 )
-                if norm_des_sc != norm_exist_sc:
-                    diffs["site-category"] = FieldChange(
-                        field="site-category", old_value=list(norm_exist_sc), new_value=list(norm_des_sc)
-                    )
-                    update_payload["site-category"] = list(norm_des_sc)
         if "certificate" in desired and desired["certificate"] is not None:
             req_cert = str(desired["certificate"]).strip()
             if req_cert != str(existing.certificate or "").strip():
@@ -597,36 +835,36 @@ def compute_rule_diff(
     if isinstance(existing, ThreatRuleEntry) and ("protected_scope" in desired or "protected-scope" in desired):
         raw_ps = desired.get("protected_scope") if "protected_scope" in desired else desired.get("protected-scope")
         if raw_ps is not None:
-            norm_des_ps = normalize_traffic_list(raw_ps, name_resolutions=name_resolutions)
-            norm_exist_ps = normalize_traffic_list(
-                existing.protected_scope or raw_exist.get("protected-scope"), obj_dict=obj_dict
+            _compute_rule_list_cell_diff(
+                "protected-scope",
+                raw_ps,
+                existing.protected_scope,
+                raw_exist,
+                eff_obj_dict=eff_obj_dict,
+                name_resolutions=name_resolutions,
+                diffs=diffs,
+                update_payload=update_payload,
             )
-            if norm_des_ps != norm_exist_ps:
-                diffs["protected-scope"] = FieldChange(
-                    field="protected-scope", old_value=list(norm_exist_ps), new_value=list(norm_des_ps)
-                )
-                update_payload["protected-scope"] = list(norm_des_ps)
 
     if "install_on" in desired or "install-on" in desired:
         raw_inst = desired.get("install_on") if "install_on" in desired else desired.get("install-on")
         if raw_inst is not None:
-            norm_des_inst = normalize_traffic_list(raw_inst, name_resolutions=name_resolutions)
-            norm_exist_inst = normalize_traffic_list(
-                existing.install_on or raw_exist.get("install-on"),
-                obj_dict=obj_dict,
+            _compute_rule_list_cell_diff(
+                "install-on",
+                raw_inst,
+                existing.install_on,
+                raw_exist,
+                eff_obj_dict=eff_obj_dict,
+                name_resolutions=name_resolutions,
+                diffs=diffs,
+                update_payload=update_payload,
             )
-            if norm_des_inst != norm_exist_inst:
-                diffs["install-on"] = FieldChange(
-                    field="install-on",
-                    old_value=list(norm_exist_inst),
-                    new_value=list(norm_des_inst),
-                )
-                update_payload["install-on"] = list(norm_des_inst)
 
     return diffs, update_payload
 
 
 __all__ = [
+    "DiffSafetyError",
     "compute_object_diff",
     "compute_rule_diff",
     "compute_service_diff",

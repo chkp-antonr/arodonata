@@ -333,7 +333,12 @@ def _invert_rule_action(
         uid_val = target_uid or prior.get("uid")
         if uid_val:
             op["uid"] = str(uid_val)
-        if prior.get("name") is not None:
+        prior_name = str(prior.get("name") or "")
+        current_name = str((action.payload or {}).get("new-name") or action.resolved_name or action.name or "")
+        if current_name and prior_name and current_name != prior_name:
+            op["name"] = current_name
+            op["new-name"] = prior_name
+        elif prior.get("name") is not None:
             op["name"] = str(prior["name"])
 
         for k in (

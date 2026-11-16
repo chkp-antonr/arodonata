@@ -15,6 +15,7 @@ import jsonschema
 import yaml
 
 from arodonata.core.errors import ConfigurationError
+from arodonata.cpcrud.rule_identity import rule_spec_has_delta_mapping
 
 _DEFAULT_SCHEMA_PATH = Path(__file__).with_name("checkpoint_ops_schema.json")
 _SCHEMA_CACHE: dict[str, dict[str, Any]] = {}
@@ -108,9 +109,26 @@ def validate_template(
     return formatted
 
 
+def _resolve_rule_semantic_verb(item: dict[str, Any]) -> str:
+    raw_op = item.get("operation") or item.get("state")
+    if raw_op is None:
+        cand = item.get("action")
+        if isinstance(cand, str) and cand.strip().lower() in (
+            "present",
+            "absent",
+            "add",
+            "set",
+            "update",
+            "delete",
+        ):
+            raw_op = cand
+    return str(raw_op or "present").strip().lower()
+
+
 def _validate_semantic_rules(parsed: dict[str, Any]) -> list[str]:
-    """Perform semantic validation on normalized operations (e.g. `application-site` required fields)."""
+    """Perform semantic validation on normalized operations (e.g. `application-site` required fields and deltas)."""
     errors: list[str] = []
+    rule_types = ("access-rule", "nat-rule", "https-rule", "threat-rule", "access", "nat", "https", "threat")
 
     def _check_bucket(items: Any, path_prefix: str) -> None:
         if not isinstance(items, list):
@@ -119,21 +137,44 @@ def _validate_semantic_rules(parsed: dict[str, Any]) -> list[str]:
             if not isinstance(item, dict):
                 continue
             item_type = str(item.get("type") or "").strip().lower()
-            if item_type != "application-site":
-                continue
-            action = str(item.get("action") or item.get("operation") or item.get("state") or "present").strip().lower()
-            if action == "add":
-                raw_urls = item.get("url-list") if "url-list" in item else item.get("url_list")
-                has_urls = isinstance(raw_urls, list) and any(str(u).strip() for u in raw_urls)
-                raw_sig = item.get("application-signature") or item.get("application_signature")
-                has_sig = bool(str(raw_sig or "").strip())
-                if not has_urls and not has_sig:
+            if item_type == "application-site":
+                action = (
+                    str(item.get("action") or item.get("operation") or item.get("state") or "present").strip().lower()
+                )
+                if action == "add":
+                    raw_urls = item.get("url-list") if "url-list" in item else item.get("url_list")
+                    if isinstance(raw_urls, list):
+                        has_urls = any(str(u).strip() for u in raw_urls)
+                    elif isinstance(raw_urls, dict):
+                        raw_add = raw_urls.get("add")
+                        has_urls = isinstance(raw_add, list) and any(str(u).strip() for u in raw_add)
+                    else:
+                        has_urls = False
+                    raw_sig = item.get("application-signature") or item.get("application_signature")
+                    has_sig = bool(str(raw_sig or "").strip())
+                    if not has_urls and not has_sig:
+                        errors.append(
+                            f"{path_prefix}[{idx}]: 'application-site' with action {action!r} requires "
+                            "'url-list' (or 'url_list') or 'application-signature' (or 'application_signature')."
+                        )
+            elif item_type in rule_types:
+                verb = _resolve_rule_semantic_verb(item)
+                if verb == "add" and rule_spec_has_delta_mapping(item):
                     errors.append(
-                        f"{path_prefix}[{idx}]: 'application-site' with action {action!r} requires "
-                        "'url-list' (or 'url_list') or 'application-signature' (or 'application_signature')."
+                        f"{path_prefix}[{idx}]: {item_type!r} with action 'add' cannot use incremental "
+                        "{'add', 'remove'} cell deltas; use operation 'set' / 'update' (or 'present' for existing rules)."
+                    )
+            elif item_type in ("group", "service-group"):
+                verb = (
+                    str(item.get("action") or item.get("operation") or item.get("state") or "present").strip().lower()
+                )
+                raw_members = item.get("members")
+                if verb == "add" and isinstance(raw_members, dict) and "remove" in raw_members:
+                    errors.append(
+                        f"{path_prefix}[{idx}]: {item_type!r} with action 'add' cannot specify 'remove' in 'members'."
                     )
 
-    for bucket in ("objects", "services", "operations"):
+    for bucket in ("objects", "services", "groups", "rules", "operations"):
         _check_bucket(parsed.get(bucket), bucket)
 
     for target_key in ("targets", "domains"):
@@ -141,7 +182,7 @@ def _validate_semantic_rules(parsed: dict[str, Any]) -> list[str]:
         if isinstance(targets, list):
             for t_idx, target in enumerate(targets):
                 if isinstance(target, dict):
-                    for bucket in ("objects", "services", "operations"):
+                    for bucket in ("objects", "services", "groups", "rules", "operations"):
                         _check_bucket(target.get(bucket), f"{target_key}[{t_idx}].{bucket}")
 
     return errors

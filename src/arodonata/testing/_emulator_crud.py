@@ -1023,6 +1023,7 @@ def _apply_entity_fields(
         "members",
         "groups",
         "tags",
+        "url-list",
     }
     if spec.obj_type == "network":
         _normalize_subnet_fields(obj, req)
@@ -1045,6 +1046,42 @@ def _apply_entity_fields(
             obj["tags"] = cur_tags
         else:
             obj["tags"] = copy.deepcopy(_as_list(raw_tags))
+
+    if spec.obj_type == "application-site" and "url-list" in req:
+        raw_urls = req["url-list"]
+        eff_is_regex = bool(
+            req["urls-defined-as-regular-expression"]
+            if "urls-defined-as-regular-expression" in req
+            else obj.get("urls-defined-as-regular-expression", False)
+        )
+
+        def _url_key(raw_u: str) -> str:
+            return raw_u if eff_is_regex else raw_u.lower()
+
+        if isinstance(raw_urls, Mapping) and ("add" in raw_urls or "remove" in raw_urls):
+            cur_urls = [str(u).strip() for u in _as_list(obj.get("url-list")) if str(u).strip()]
+            rem_keys = {_url_key(str(u).strip()) for u in _as_list(raw_urls.get("remove")) if str(u).strip()}
+            kept_urls = [u for u in cur_urls if _url_key(u) not in rem_keys]
+            adds = [str(u).strip() for u in _as_list(raw_urls.get("add")) if str(u).strip()]
+            candidates = [*kept_urls, *adds]
+        else:
+            candidates = [str(u).strip() for u in _as_list(raw_urls) if str(u).strip()]
+
+        seen_url_keys: set[str] = set()
+        new_urls: list[str] = []
+        for cand in candidates:
+            u_key = _url_key(cand)
+            if u_key not in seen_url_keys:
+                seen_url_keys.add(u_key)
+                new_urls.append(cand)
+        has_sig = bool(str(req.get("application-signature") or obj.get("application-signature") or "").strip())
+        if not new_urls and not has_sig:
+            return cp_error(
+                "err_validation_failed",
+                "application-site url-list cannot be empty without application-signature",
+                status_code=400,
+            )
+        obj["url-list"] = new_urls
 
     if spec.is_group and "members" in req:
         raw_members = req["members"]
@@ -1785,6 +1822,7 @@ def _apply_cell_list_update(
     dom_name: str,
     existing_dict_map: Mapping[str, Mapping[str, Any]],
     revert_empty_to_any: bool = True,
+    allow_literal_strings: bool = False,
 ) -> tuple[list[str], ApiCallResult | None]:
     if isinstance(spec_val, Mapping) and ("add" in spec_val or "remove" in spec_val):
         rem_uids: set[str] = set()
@@ -1812,11 +1850,14 @@ def _apply_cell_list_update(
                 existing_dict_map=existing_dict_map,
             )
             if a_uid is None:
-                return current_uids, cp_error(
-                    "generic_err_object_not_found",
-                    f"Referenced object [{missing}] not found in {dom_name}",
-                    status_code=404,
-                )
+                if allow_literal_strings and missing:
+                    a_uid = missing
+                else:
+                    return current_uids, cp_error(
+                        "generic_err_object_not_found",
+                        f"Referenced object [{missing}] not found in {dom_name}",
+                        status_code=404,
+                    )
             if a_uid != ANY_UID and kept == [ANY_UID]:
                 kept = []
             if a_uid not in kept:
@@ -1835,11 +1876,14 @@ def _apply_cell_list_update(
             existing_dict_map=existing_dict_map,
         )
         if r_uid is None:
-            return current_uids, cp_error(
-                "generic_err_object_not_found",
-                f"Referenced object [{missing}] not found in {dom_name}",
-                status_code=404,
-            )
+            if allow_literal_strings and missing:
+                r_uid = missing
+            else:
+                return current_uids, cp_error(
+                    "generic_err_object_not_found",
+                    f"Referenced object [{missing}] not found in {dom_name}",
+                    status_code=404,
+                )
         if r_uid not in replaced:
             replaced.append(r_uid)
     if not replaced and revert_empty_to_any:
@@ -2200,6 +2244,7 @@ def handle_rulebase_crud(
                         global_files=global_files,
                         dom_name=dom_name,
                         existing_dict_map=existing_dict_map,
+                        allow_literal_strings=(opt_col == "site-category"),
                     )
                     if col_err is not None:
                         return col_err, None
@@ -2317,6 +2362,7 @@ def handle_rulebase_crud(
                         global_files=global_files,
                         dom_name=dom_name,
                         existing_dict_map=existing_dict_map,
+                        allow_literal_strings=(col == "site-category"),
                     )
                     if err is not None:
                         parent_list[parent_idx] = snapshot_rule

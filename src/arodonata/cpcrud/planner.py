@@ -35,6 +35,7 @@ from arodonata.core.ports import ApiPort, CachePort
 from arodonata.core.services.sync_coordinator import parse_cp_publish_timestamp
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.cpcrud.differ import (
+    DiffSafetyError,
     compute_object_diff,
     compute_rule_diff,
     compute_service_diff,
@@ -43,6 +44,7 @@ from arodonata.cpcrud.differ import (
 from arodonata.cpcrud.models import (
     ConflictPolicy,
     DomainStamp,
+    FieldChange,
     IpConflictPolicy,
     NameConflictPolicy,
     NamingPrefixes,
@@ -53,9 +55,12 @@ from arodonata.cpcrud.models import (
 from arodonata.cpcrud.position_helper import resolve_rule_position
 from arodonata.cpcrud.rule_identity import (
     RuleEntryUnion,
+    build_effective_obj_dict,
+    deref_rule_list,
     match_rule,
     normalize_nat_traffic_ref,
     normalize_traffic_list,
+    rule_spec_has_delta_mapping,
 )
 from arodonata.cpcrud.state_reader import (
     OBJECT_ITEM_TYPES,
@@ -66,6 +71,46 @@ from arodonata.cpcrud.state_reader import (
 )
 
 LOOKUP_ERROR_PREFIX = "lookup failed, nothing planned (re-plan to retry): "
+
+
+def _make_error_action(
+    *,
+    action_id: str,
+    mgmt_name: str,
+    domain_name: str,
+    operation: str,
+    object_type: str,
+    name: str,
+    desired_spec: Mapping[str, Any],
+    error: str,
+    requested_name: str | None = None,
+    resolved_name: str | None = None,
+    target_uid: str | None = None,
+    layer: str | None = None,
+    package: str | None = None,
+    prior_state: dict[str, Any] | None = None,
+    diffs: dict[str, FieldChange] | None = None,
+) -> PlannedAction:
+    return PlannedAction(
+        action_id=action_id,
+        mgmt_name=mgmt_name,
+        domain_name=domain_name,
+        operation=operation,
+        object_type=object_type,
+        name=name,
+        requested_name=requested_name if requested_name is not None else name,
+        resolved_name=resolved_name if resolved_name is not None else name,
+        target_uid=target_uid,
+        layer=layer,
+        package=package,
+        outcome=Outcome.ERROR,
+        status="error",
+        diffs=diffs or {},
+        prior_state=prior_state,
+        desired_spec=dict(desired_spec),
+        message=error,
+        error=error,
+    )
 
 
 def _normalize_verb(spec: Mapping[str, Any], *, is_rule: bool = False) -> str:
@@ -142,6 +187,8 @@ def _extract_rule_references(spec: Mapping[str, Any]) -> set[str]:
         "install-on",
         "protected_scope",
         "protected-scope",
+        "site_category",
+        "site-category",
     ):
         val = spec.get(list_key)
         if isinstance(val, str) and val.strip():
@@ -150,6 +197,12 @@ def _extract_rule_references(spec: Mapping[str, Any]) -> set[str]:
             for item in val:
                 if isinstance(item, str) and item.strip():
                     refs.add(item.strip())
+        elif isinstance(val, Mapping):
+            add_items = val.get("add")
+            if isinstance(add_items, list):
+                for item in add_items:
+                    if isinstance(item, str) and item.strip():
+                        refs.add(item.strip())
     for str_key in (
         "original_source",
         "original-source",
@@ -319,8 +372,12 @@ def _build_prior_rule_state(
     rulebase_type: RulebaseType,
     layer: str | None,
     package: str | None,
+    obj_dict: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Capture reversible state from an existing rule for `build_inverse_template`."""
+    raw_exist = rule.raw_data or {}
+    eff_obj_dict = build_effective_obj_dict(raw_exist, obj_dict)
+
     state: dict[str, Any] = {
         "uid": rule.uid,
         "name": rule.name,
@@ -336,39 +393,86 @@ def _build_prior_rule_state(
         state["package"] = package
     if isinstance(rule, NatRuleEntry):
         state["method"] = rule.method or "static"
-        state["original-source"] = rule.original_source or "Any"
-        state["original-destination"] = rule.original_destination or "Any"
-        state["original-service"] = rule.original_service or "Any"
-        state["translated-source"] = rule.translated_source or "Original"
-        state["translated-destination"] = rule.translated_destination or "Original"
-        state["translated-service"] = rule.translated_service or "Original"
-        if rule.install_on:
-            state["install-on"] = list(rule.install_on)
+        state["original-source"] = normalize_nat_traffic_ref(
+            rule.original_source if rule.original_source is not None else raw_exist.get("original-source"),
+            is_translated=False,
+            obj_dict=eff_obj_dict,
+        )
+        state["original-destination"] = normalize_nat_traffic_ref(
+            rule.original_destination
+            if rule.original_destination is not None
+            else raw_exist.get("original-destination"),
+            is_translated=False,
+            obj_dict=eff_obj_dict,
+        )
+        state["original-service"] = normalize_nat_traffic_ref(
+            rule.original_service if rule.original_service is not None else raw_exist.get("original-service"),
+            is_translated=False,
+            obj_dict=eff_obj_dict,
+        )
+        state["translated-source"] = normalize_nat_traffic_ref(
+            rule.translated_source if rule.translated_source is not None else raw_exist.get("translated-source"),
+            is_translated=True,
+            obj_dict=eff_obj_dict,
+        )
+        state["translated-destination"] = normalize_nat_traffic_ref(
+            rule.translated_destination
+            if rule.translated_destination is not None
+            else raw_exist.get("translated-destination"),
+            is_translated=True,
+            obj_dict=eff_obj_dict,
+        )
+        state["translated-service"] = normalize_nat_traffic_ref(
+            rule.translated_service if rule.translated_service is not None else raw_exist.get("translated-service"),
+            is_translated=True,
+            obj_dict=eff_obj_dict,
+        )
+        inst_list = deref_rule_list(rule.install_on, raw_exist.get("install-on"), eff_obj_dict)
+        if inst_list:
+            state["install-on"] = inst_list
     else:
-        state["source"] = list(rule.source) if rule.source else ["Any"]
-        state["destination"] = list(rule.destination) if rule.destination else ["Any"]
-        state["service"] = list(rule.service) if rule.service else ["Any"]
+        state["source"] = deref_rule_list(rule.source, raw_exist.get("source"), eff_obj_dict, default_any=True)
+        state["destination"] = deref_rule_list(
+            rule.destination, raw_exist.get("destination"), eff_obj_dict, default_any=True
+        )
+        state["service"] = deref_rule_list(rule.service, raw_exist.get("service"), eff_obj_dict, default_any=True)
         if rule.action:
-            state["rule_action"] = rule.action
+            act_val = rule.action
+            if act_val in eff_obj_dict:
+                act_val = str(eff_obj_dict[act_val].get("name") or act_val)
+            state["rule_action"] = act_val
         if rule.track:
-            state["track"] = rule.track
-        if rule.install_on:
-            state["install-on"] = list(rule.install_on)
+            trk_val = rule.track
+            if trk_val in eff_obj_dict:
+                trk_val = str(eff_obj_dict[trk_val].get("name") or trk_val)
+            state["track"] = trk_val
+        inst_list = deref_rule_list(rule.install_on, raw_exist.get("install-on"), eff_obj_dict)
+        if inst_list:
+            state["install-on"] = inst_list
         if isinstance(rule, AccessRuleEntry):
             state["source-negate"] = bool(rule.source_negate)
             state["destination-negate"] = bool(rule.destination_negate)
             state["service-negate"] = bool(rule.service_negate)
-            if rule.inline_layer_name or rule.inline_layer_uid:
-                state["inline-layer"] = rule.inline_layer_name or rule.inline_layer_uid
+            inline_ref = rule.inline_layer_name or rule.inline_layer_uid
+            if inline_ref:
+                if inline_ref in eff_obj_dict:
+                    inline_ref = str(eff_obj_dict[inline_ref].get("name") or inline_ref)
+                state["inline-layer"] = inline_ref
         elif isinstance(rule, HttpsRuleEntry):
-            if rule.site_category:
-                state["site-category"] = list(rule.site_category)
+            sc_list = deref_rule_list(rule.site_category, raw_exist.get("site-category"), eff_obj_dict)
+            if sc_list:
+                state["site-category"] = sc_list
             if rule.certificate:
                 state["certificate"] = rule.certificate
             if rule.inline_layer_uid:
-                state["inline-layer"] = rule.inline_layer_uid
-        elif isinstance(rule, ThreatRuleEntry) and rule.protected_scope:
-            state["protected-scope"] = list(rule.protected_scope)
+                inline_ref = rule.inline_layer_uid
+                if inline_ref in eff_obj_dict:
+                    inline_ref = str(eff_obj_dict[inline_ref].get("name") or inline_ref)
+                state["inline-layer"] = inline_ref
+        elif isinstance(rule, ThreatRuleEntry):
+            ps_list = deref_rule_list(rule.protected_scope, raw_exist.get("protected-scope"), eff_obj_dict)
+            if ps_list:
+                state["protected-scope"] = ps_list
     return state
 
 
@@ -381,11 +485,13 @@ class Planner:
         api: ApiPort,
         cache: CachePort,
         default_mgmt_name: str | None = None,
+        default_naming_prefixes: NamingPrefixes | None = None,
         now_fn: Callable[[], datetime] = utc_now,
     ) -> None:
         self._api = api
         self._cache = cache
         self._default_mgmt_name = default_mgmt_name or ""
+        self._default_naming_prefixes = default_naming_prefixes or NamingPrefixes()
         self._now = now_fn
 
     async def _collect_known_sids(self, mgmt_name: str) -> list[str]:
@@ -632,14 +738,17 @@ class Planner:
             if isinstance(naming_prefixes, NamingPrefixes):
                 eff_prefixes = naming_prefixes
             elif isinstance(naming_prefixes, Mapping):
-                eff_prefixes = NamingPrefixes.from_mapping(dict(naming_prefixes))
+                eff_prefixes = NamingPrefixes.from_mapping(dict(naming_prefixes), base=self._default_naming_prefixes)
+            elif t.get("naming_prefixes"):
+                eff_prefixes = NamingPrefixes.from_mapping(t.get("naming_prefixes"), base=self._default_naming_prefixes)
             else:
-                eff_prefixes = NamingPrefixes.from_mapping(t.get("naming_prefixes") or {})
+                eff_prefixes = self._default_naming_prefixes
 
-            # Track per-domain failed object/service names and action IDs for dependency skipping
+            # Track per-domain failed object/service names, action IDs, and write action IDs for dependency resolution
             failed_refs_by_domain: dict[tuple[str, str], set[str]] = {}
             failed_action_ids_by_domain: dict[tuple[str, str], set[str]] = {}
             domain_resolutions: dict[tuple[str, str], dict[str, str]] = {}
+            action_ids_by_ref_by_domain: dict[tuple[str, str], dict[str, str]] = {}
 
             steps = self._collect_ordered_steps(t)
             for kind, step_spec in steps:
@@ -695,12 +804,22 @@ class Planner:
                 # Check explicit `depends_on` or implicit references to failed actions
                 explicit_deps = [str(d) for d in (step_spec.get("depends_on") or []) if str(d)]
                 broken_deps = [d for d in explicit_deps if d in failed_ids or d in failed_refs]
+                step_refs: set[str] = set()
                 if kind == "group":
-                    grp_refs = _extract_group_references(step_spec)
-                    broken_deps.extend(sorted(r for r in grp_refs if r in failed_refs))
+                    step_refs = _extract_group_references(step_spec)
+                    broken_deps.extend(sorted(r for r in step_refs if r in failed_refs))
                 elif kind == "rule":
-                    rule_refs = _extract_rule_references(step_spec)
-                    broken_deps.extend(sorted(r for r in rule_refs if r in failed_refs))
+                    step_refs = _extract_rule_references(step_spec)
+                    broken_deps.extend(sorted(r for r in step_refs if r in failed_refs))
+
+                ref_action_ids = action_ids_by_ref_by_domain.setdefault(dom_key, {})
+                inferred_deps: list[str] = []
+                for ref in sorted(step_refs):
+                    resolved_ref = res_map.get(ref, ref)
+                    for cand in (ref, resolved_ref):
+                        aid = ref_action_ids.get(cand)
+                        if aid and aid not in inferred_deps:
+                            inferred_deps.append(aid)
 
                 if broken_deps:
                     raw_name = str(step_spec.get("name") or step_spec.get("uid") or "")
@@ -773,6 +892,10 @@ class Planner:
                         res_map=res_map,
                     )
 
+                merged_deps = list(dict.fromkeys([*explicit_deps, *inferred_deps, *act.depends_on]))
+                if merged_deps and merged_deps != act.depends_on:
+                    act = act.model_copy(update={"depends_on": merged_deps})
+
                 actions.append(act)
                 if act.outcome in (Outcome.ERROR, Outcome.SKIPPED_DEPENDENCY):
                     if act.requested_name:
@@ -780,9 +903,14 @@ class Planner:
                     if act.name:
                         failed_refs.add(act.name)
                     failed_ids.add(act.action_id)
-                elif act.requested_name and act.resolved_name and act.requested_name != act.resolved_name:
-                    res_map[act.requested_name] = act.resolved_name
-                    global_name_resolutions[act.requested_name] = act.resolved_name
+                else:
+                    if act.requested_name and act.resolved_name and act.requested_name != act.resolved_name:
+                        res_map[act.requested_name] = act.resolved_name
+                        global_name_resolutions[act.requested_name] = act.resolved_name
+                    if act.outcome in (Outcome.CREATE, Outcome.UPDATE):
+                        for ref_key in (act.requested_name, act.resolved_name, act.name):
+                            if ref_key:
+                                ref_action_ids[ref_key] = act.action_id
 
         return Plan(
             created_at=self._now(),
@@ -861,7 +989,23 @@ class Planner:
 
             # Case A: Object with requested name/UID already exists
             if existing is not None:
-                diffs, update_payload = compute_object_diff(spec, existing, name_resolutions=res_map)
+                try:
+                    diffs, update_payload = compute_object_diff(spec, existing, name_resolutions=res_map)
+                except DiffSafetyError as exc:
+                    return _make_error_action(
+                        action_id=action_id,
+                        mgmt_name=mgmt_name,
+                        domain_name=domain_name,
+                        operation=verb,
+                        object_type=obj_type,
+                        name=existing.name,
+                        requested_name=display_name,
+                        resolved_name=existing.name,
+                        target_uid=existing.uid,
+                        prior_state=_build_prior_object_state(existing),
+                        desired_spec=spec,
+                        error=str(exc),
+                    )
                 if not diffs:
                     return PlannedAction(
                         action_id=action_id,
@@ -949,6 +1093,18 @@ class Planner:
                     message=f"Update {obj_type} {existing.name!r} ({', '.join(sorted(diffs.keys()))}).",
                 )
 
+            if verb == "set":
+                return _make_error_action(
+                    action_id=action_id,
+                    mgmt_name=mgmt_name,
+                    domain_name=domain_name,
+                    operation="set",
+                    object_type=obj_type,
+                    name=display_name,
+                    desired_spec=spec,
+                    error=f"{obj_type} {display_name!r} not found for update.",
+                )
+
             # Case B: Name does not exist -> check IP/subnet/range/url-list conflict
             ip_matches: list[CPObject] = []
             auto_name: str | None = None
@@ -997,8 +1153,7 @@ class Planner:
                     )
                     auto_name = prefixes.format_address_range(f_val.strip(), l_val.strip())
             elif obj_type == "application-site":
-                raw_urls = spec.get("url-list") if "url-list" in spec else spec.get("url_list")
-                url_vals = [str(u).strip() for u in raw_urls if str(u).strip()] if isinstance(raw_urls, list) else []
+                url_vals = _extract_add_url_list(spec)
                 raw_regex = (
                     spec.get("urls-defined-as-regular-expression")
                     if "urls-defined-as-regular-expression" in spec
@@ -1055,33 +1210,33 @@ class Planner:
                         desired_spec=dict(spec),
                         message=f"Reuse existing {obj_type} {matched_obj.name!r} for requested {req_name!r}.",
                     )
-                if policy.on_ip_conflict == "create_new" and auto_name:
-                    target_create_name = auto_name
+                if policy.on_ip_conflict == "create_new" and (auto_name or obj_type == "application-site"):
+                    target_create_name = auto_name or req_name
                     extra_create_flags["ignore-warnings"] = True
                     # Check if the convention-named object itself already exists
-                    existing_auto = await reader.get_object_by_name(mgmt_name, domain_name, obj_type, auto_name)
-                    if existing_auto is not None:
-                        res_map[req_name] = existing_auto.name
-                        return PlannedAction(
-                            action_id=action_id,
-                            mgmt_name=mgmt_name,
-                            domain_name=domain_name,
-                            operation=verb,
-                            object_type=obj_type,
-                            name=existing_auto.name,
-                            requested_name=req_name,
-                            resolved_name=existing_auto.name,
-                            target_uid=existing_auto.uid,
-                            outcome=Outcome.UNCHANGED,
-                            prior_state=_build_prior_object_state(existing_auto),
-                            desired_spec=dict(spec),
-                            message=f"Auto-named {obj_type} {existing_auto.name!r} already exists.",
-                        )
+                    if auto_name:
+                        existing_auto = await reader.get_object_by_name(mgmt_name, domain_name, obj_type, auto_name)
+                        if existing_auto is not None:
+                            res_map[req_name] = existing_auto.name
+                            return PlannedAction(
+                                action_id=action_id,
+                                mgmt_name=mgmt_name,
+                                domain_name=domain_name,
+                                operation=verb,
+                                object_type=obj_type,
+                                name=existing_auto.name,
+                                requested_name=req_name,
+                                resolved_name=existing_auto.name,
+                                target_uid=existing_auto.uid,
+                                outcome=Outcome.UNCHANGED,
+                                prior_state=_build_prior_object_state(existing_auto),
+                                desired_spec=dict(spec),
+                                message=f"Auto-named {obj_type} {existing_auto.name!r} already exists.",
+                            )
 
             # Case C: Plan CREATE
             if obj_type == "application-site":
-                raw_urls = spec.get("url-list") if "url-list" in spec else spec.get("url_list")
-                has_urls = isinstance(raw_urls, list) and any(str(u).strip() for u in raw_urls)
+                has_urls = bool(_extract_add_url_list(spec))
                 raw_sig = spec.get("application-signature") or spec.get("application_signature")
                 has_sig = bool(str(raw_sig or "").strip())
                 if not has_urls and not has_sig:
@@ -1220,7 +1375,23 @@ class Planner:
                 )
 
             if existing is not None:
-                diffs, update_payload = compute_service_diff(spec, existing, name_resolutions=res_map)
+                try:
+                    diffs, update_payload = compute_service_diff(spec, existing, name_resolutions=res_map)
+                except DiffSafetyError as exc:
+                    return _make_error_action(
+                        action_id=action_id,
+                        mgmt_name=mgmt_name,
+                        domain_name=domain_name,
+                        operation=verb,
+                        object_type=svc_type,
+                        name=existing.name,
+                        requested_name=display_name,
+                        resolved_name=existing.name,
+                        target_uid=existing.uid,
+                        prior_state=_build_prior_service_state(existing),
+                        desired_spec=spec,
+                        error=str(exc),
+                    )
                 if not diffs:
                     return PlannedAction(
                         action_id=action_id,
@@ -1295,6 +1466,18 @@ class Planner:
                     prior_state=_build_prior_service_state(existing),
                     desired_spec=dict(spec),
                     message=f"Update {svc_type} {existing.name!r} ({', '.join(sorted(diffs.keys()))}).",
+                )
+
+            if verb == "set":
+                return _make_error_action(
+                    action_id=action_id,
+                    mgmt_name=mgmt_name,
+                    domain_name=domain_name,
+                    operation="set",
+                    object_type=svc_type,
+                    name=display_name,
+                    desired_spec=spec,
+                    error=f"{svc_type} {display_name!r} not found for update.",
                 )
 
             # Check port/protocol or ICMP conflict under another name
@@ -1499,7 +1682,23 @@ class Planner:
                     )
 
                 if existing_svc is not None:
-                    diffs, update_payload = compute_service_diff(spec, existing_svc, name_resolutions=res_map)
+                    try:
+                        diffs, update_payload = compute_service_diff(spec, existing_svc, name_resolutions=res_map)
+                    except DiffSafetyError as exc:
+                        return _make_error_action(
+                            action_id=action_id,
+                            mgmt_name=mgmt_name,
+                            domain_name=domain_name,
+                            operation=verb,
+                            object_type="service-group",
+                            name=existing_svc.name,
+                            requested_name=display_name,
+                            resolved_name=existing_svc.name,
+                            target_uid=existing_svc.uid,
+                            prior_state=_build_prior_service_state(existing_svc),
+                            desired_spec=spec,
+                            error=str(exc),
+                        )
                     if not diffs:
                         return PlannedAction(
                             action_id=action_id,
@@ -1553,6 +1752,18 @@ class Planner:
                         prior_state=_build_prior_service_state(existing_svc),
                         desired_spec=dict(spec),
                         message=f"Update service-group {existing_svc.name!r}.",
+                    )
+
+                if verb == "set":
+                    return _make_error_action(
+                        action_id=action_id,
+                        mgmt_name=mgmt_name,
+                        domain_name=domain_name,
+                        operation="set",
+                        object_type="service-group",
+                        name=display_name,
+                        desired_spec=spec,
+                        error=f"service-group {display_name!r} not found for update.",
                     )
 
                 add_payload = _build_add_group_payload(req_name, spec, name_resolutions=res_map)
@@ -1620,7 +1831,23 @@ class Planner:
                 )
 
             if existing_grp is not None:
-                diffs, update_payload = compute_object_diff(spec, existing_grp, name_resolutions=res_map)
+                try:
+                    diffs, update_payload = compute_object_diff(spec, existing_grp, name_resolutions=res_map)
+                except DiffSafetyError as exc:
+                    return _make_error_action(
+                        action_id=action_id,
+                        mgmt_name=mgmt_name,
+                        domain_name=domain_name,
+                        operation=verb,
+                        object_type="group",
+                        name=existing_grp.name,
+                        requested_name=display_name,
+                        resolved_name=existing_grp.name,
+                        target_uid=existing_grp.uid,
+                        prior_state=_build_prior_object_state(existing_grp),
+                        desired_spec=spec,
+                        error=str(exc),
+                    )
                 if not diffs:
                     return PlannedAction(
                         action_id=action_id,
@@ -1674,6 +1901,18 @@ class Planner:
                     prior_state=_build_prior_object_state(existing_grp),
                     desired_spec=dict(spec),
                     message=f"Update group {existing_grp.name!r}.",
+                )
+
+            if verb == "set":
+                return _make_error_action(
+                    action_id=action_id,
+                    mgmt_name=mgmt_name,
+                    domain_name=domain_name,
+                    operation="set",
+                    object_type="group",
+                    name=display_name,
+                    desired_spec=spec,
+                    error=f"group {display_name!r} not found for update.",
                 )
 
             add_payload = _build_add_group_payload(req_name, spec, name_resolutions=res_map)
@@ -1769,6 +2008,7 @@ class Planner:
                 rulebase_type=rb_type,
                 obj_dict=paged.objects_dictionary,
                 name_resolutions=res_map,
+                strict_name=(verb == "set"),
             )
 
             if verb == "delete":
@@ -1804,19 +2044,49 @@ class Planner:
                     outcome=Outcome.DELETE,
                     command=f"delete-{rule_type}",
                     payload=del_payload,
-                    prior_state=_build_prior_rule_state(existing, rulebase_type=rb_type, layer=layer, package=package),
+                    prior_state=_build_prior_rule_state(
+                        existing,
+                        rulebase_type=rb_type,
+                        layer=layer,
+                        package=package,
+                        obj_dict=paged.objects_dictionary,
+                    ),
                     desired_spec=dict(spec),
                     message=f"Delete {rule_type} {existing.name or existing.uid!r}.",
                 )
 
             if existing is not None:
-                diffs, update_payload = compute_rule_diff(
-                    spec,
-                    existing,
-                    rulebase_type=rb_type,
-                    obj_dict=paged.objects_dictionary,
-                    name_resolutions=res_map,
-                )
+                try:
+                    diffs, update_payload = compute_rule_diff(
+                        spec,
+                        existing,
+                        rulebase_type=rb_type,
+                        obj_dict=paged.objects_dictionary,
+                        name_resolutions=res_map,
+                    )
+                except DiffSafetyError as exc:
+                    return _make_error_action(
+                        action_id=action_id,
+                        mgmt_name=mgmt_name,
+                        domain_name=domain_name,
+                        operation=verb,
+                        object_type=rule_type,
+                        name=existing.name or display_name,
+                        requested_name=display_name,
+                        resolved_name=existing.name or display_name,
+                        target_uid=existing.uid,
+                        layer=layer,
+                        package=package,
+                        prior_state=_build_prior_rule_state(
+                            existing,
+                            rulebase_type=rb_type,
+                            layer=layer,
+                            package=package,
+                            obj_dict=paged.objects_dictionary,
+                        ),
+                        desired_spec=spec,
+                        error=str(exc),
+                    )
                 if not diffs:
                     return PlannedAction(
                         action_id=action_id,
@@ -1830,7 +2100,11 @@ class Planner:
                         package=package,
                         outcome=Outcome.UNCHANGED,
                         prior_state=_build_prior_rule_state(
-                            existing, rulebase_type=rb_type, layer=layer, package=package
+                            existing,
+                            rulebase_type=rb_type,
+                            layer=layer,
+                            package=package,
+                            obj_dict=paged.objects_dictionary,
                         ),
                         desired_spec=dict(spec),
                         message=f"{rule_type} {existing.name or existing.uid!r} is unchanged.",
@@ -1853,7 +2127,11 @@ class Planner:
                         outcome=Outcome.ERROR,
                         diffs=diffs,
                         prior_state=_build_prior_rule_state(
-                            existing, rulebase_type=rb_type, layer=layer, package=package
+                            existing,
+                            rulebase_type=rb_type,
+                            layer=layer,
+                            package=package,
+                            obj_dict=paged.objects_dictionary,
                         ),
                         desired_spec=dict(spec),
                         message=err_msg,
@@ -1880,9 +2158,46 @@ class Planner:
                     command=f"set-{rule_type}",
                     payload=update_payload,
                     diffs=diffs,
-                    prior_state=_build_prior_rule_state(existing, rulebase_type=rb_type, layer=layer, package=package),
+                    prior_state=_build_prior_rule_state(
+                        existing,
+                        rulebase_type=rb_type,
+                        layer=layer,
+                        package=package,
+                        obj_dict=paged.objects_dictionary,
+                    ),
                     desired_spec=dict(spec),
                     message=f"Update {rule_type} {existing.name or existing.uid!r} ({', '.join(sorted(diffs.keys()))}).",
+                )
+
+            if verb == "set":
+                return _make_error_action(
+                    action_id=action_id,
+                    mgmt_name=mgmt_name,
+                    domain_name=domain_name,
+                    operation="set",
+                    object_type=rule_type,
+                    name=display_name,
+                    layer=layer,
+                    package=package,
+                    desired_spec=spec,
+                    error=f"{rule_type} {display_name!r} not found for update.",
+                )
+
+            if rule_spec_has_delta_mapping(spec):
+                return _make_error_action(
+                    action_id=action_id,
+                    mgmt_name=mgmt_name,
+                    domain_name=domain_name,
+                    operation=verb,
+                    object_type=rule_type,
+                    name=display_name,
+                    layer=layer,
+                    package=package,
+                    desired_spec=spec,
+                    error=(
+                        f"Cannot create {rule_type} {display_name!r} from incremental {{add, remove}} rule cell patch; "
+                        "target rule was not found."
+                    ),
                 )
 
             # Create new rule with cleanup-rule-aware position resolution
@@ -1936,6 +2251,18 @@ class Planner:
             )
 
 
+def _extract_add_url_list(spec: Mapping[str, Any]) -> list[str]:
+    """Extract initial `url-list` entries from a list or `{add, remove}` mapping."""
+    raw_urls = spec.get("url-list") if "url-list" in spec else spec.get("url_list")
+    if isinstance(raw_urls, list):
+        return list(dict.fromkeys(str(u).strip() for u in raw_urls if str(u).strip()))
+    if isinstance(raw_urls, Mapping):
+        raw_add = raw_urls.get("add")
+        if isinstance(raw_add, list):
+            return list(dict.fromkeys(str(u).strip() for u in raw_add if str(u).strip()))
+    return []
+
+
 def _build_add_object_payload(
     obj_type: str,
     name: str,
@@ -1970,8 +2297,7 @@ def _build_add_object_payload(
         is_sub = spec.get("is_sub_domain") if "is_sub_domain" in spec else spec.get("is-sub-domain")
         payload["is-sub-domain"] = bool(is_sub) if is_sub is not None else False
     elif obj_type == "application-site":
-        raw_urls = spec.get("url-list") if "url-list" in spec else spec.get("url_list")
-        url_list = [str(u).strip() for u in raw_urls if str(u).strip()] if isinstance(raw_urls, list) else []
+        url_list = _extract_add_url_list(spec)
         raw_cat = spec.get("primary-category") or spec.get("primary_category")
         if isinstance(raw_cat, str) and raw_cat.strip():
             payload["primary-category"] = raw_cat.strip()
@@ -2092,6 +2418,8 @@ def _build_add_rule_payload(
     position: str | int | dict[str, str],
     name_resolutions: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
+    if rule_spec_has_delta_mapping(spec):
+        raise DiffSafetyError("Cannot build add-*-rule payload with incremental {add, remove} cell deltas.")
     payload: dict[str, Any] = {"position": position}
     if spec.get("name"):
         payload["name"] = str(spec["name"]).strip()
