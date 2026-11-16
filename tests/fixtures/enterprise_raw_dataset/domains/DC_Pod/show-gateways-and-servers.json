@@ -1112,7 +1112,7 @@
         "uid": "uid-dc-pod-vsx-local-01",
         "name": "dc-pod-vsx-local-01"
       },
-      "ipv4-address": "10.187.31.1",
+      "ipv4-address": "10.187.63.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "DC_Pod_Tier_Pkg"
@@ -1126,7 +1126,7 @@
         },
         {
           "name": "eth1.1",
-          "ipv4-address": "10.187.31.1",
+          "ipv4-address": "10.187.63.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -1149,7 +1149,7 @@
         "uid": "uid-dc-pod-vsx-local-01",
         "name": "dc-pod-vsx-local-01"
       },
-      "ipv4-address": "10.187.32.1",
+      "ipv4-address": "10.187.64.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "DC_Pod_Tier_Pkg"
@@ -1163,7 +1163,7 @@
         },
         {
           "name": "eth1.2",
-          "ipv4-address": "10.187.32.1",
+          "ipv4-address": "10.187.64.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {

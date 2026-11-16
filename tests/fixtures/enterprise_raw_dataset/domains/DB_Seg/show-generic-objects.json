@@ -10,7 +10,7 @@
         "uid": "uid-dc-vsx-chassis-01",
         "name": "dc-vsx-chassis-01"
       },
-      "ipv4-address": "10.188.81.1",
+      "ipv4-address": "10.188.41.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "DB_Vault_Seg_Pkg"
@@ -18,7 +18,7 @@
       "interfaces": [
         {
           "name": "eth1.51",
-          "ipv4-address": "10.188.81.1",
+          "ipv4-address": "10.188.41.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -31,7 +31,7 @@
         },
         {
           "name": "eth2.51",
-          "ipv4-address": "10.198.81.1",
+          "ipv4-address": "10.198.41.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -54,7 +54,7 @@
         "uid": "uid-dc-vsx-chassis-01",
         "name": "dc-vsx-chassis-01"
       },
-      "ipv4-address": "10.188.82.1",
+      "ipv4-address": "10.188.42.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "DB_Vault_Seg_Pkg"
@@ -62,7 +62,7 @@
       "interfaces": [
         {
           "name": "eth1.52",
-          "ipv4-address": "10.188.82.1",
+          "ipv4-address": "10.188.42.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -75,7 +75,7 @@
         },
         {
           "name": "eth2.52",
-          "ipv4-address": "10.198.82.1",
+          "ipv4-address": "10.198.42.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -98,7 +98,7 @@
         "uid": "uid-dc-pod-vsx-local-01",
         "name": "dc-pod-vsx-local-01"
       },
-      "ipv4-address": "10.188.41.1",
+      "ipv4-address": "10.188.65.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "DB_Vault_Seg_Pkg"
@@ -106,7 +106,7 @@
       "interfaces": [
         {
           "name": "eth1.11",
-          "ipv4-address": "10.188.41.1",
+          "ipv4-address": "10.188.65.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -119,7 +119,7 @@
         },
         {
           "name": "eth2.11",
-          "ipv4-address": "10.198.41.1",
+          "ipv4-address": "10.198.65.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {

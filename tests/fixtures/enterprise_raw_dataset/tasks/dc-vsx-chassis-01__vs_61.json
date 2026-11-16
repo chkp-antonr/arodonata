@@ -12,7 +12,7 @@
           "gatewayId": "dc-vsx-chassis-01",
           "statusCode": "succeeded",
           "statusDescription": "succeeded",
-          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE5Mi4xNjguMjQxLjEgZGV2IHdycDAgcHJvdG8gc3RhdGljCjEwLjE4OS45MS4wLzI0IGRldiBldGgxLjYxIHByb3RvIGtlcm5lbCBzY29wZSBsaW5rIHNyYyAxMC4xODkuOTEuMQo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cg==",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE5Mi4xNjguMjQxLjEgZGV2IHdycDAgcHJvdG8gc3RhdGljCjEwLjE4OS40My4wLzI0IGRldiBldGgxLjYxIHByb3RvIGtlcm5lbCBzY29wZSBsaW5rIHNyYyAxMC4xODkuNDMuMQo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cg==",
           "responseError": ""
         }
       ]

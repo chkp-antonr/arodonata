@@ -512,7 +512,7 @@
         "uid": "uid-dc-vsx-chassis-02",
         "name": "dc-vsx-chassis-02"
       },
-      "ipv4-address": "10.184.61.1",
+      "ipv4-address": "10.184.47.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Perimeter_Edge_Pkg"
@@ -526,7 +526,7 @@
         },
         {
           "name": "eth1.31",
-          "ipv4-address": "10.184.61.1",
+          "ipv4-address": "10.184.47.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -549,7 +549,7 @@
         "uid": "uid-dc-vsx-chassis-02",
         "name": "dc-vsx-chassis-02"
       },
-      "ipv4-address": "10.184.62.1",
+      "ipv4-address": "10.184.48.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Perimeter_Edge_Pkg"
@@ -563,7 +563,7 @@
         },
         {
           "name": "eth1.32",
-          "ipv4-address": "10.184.62.1",
+          "ipv4-address": "10.184.48.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -586,7 +586,7 @@
         "uid": "uid-perim-vsx-chassis-01",
         "name": "perim-vsx-chassis-01"
       },
-      "ipv4-address": "10.184.31.1",
+      "ipv4-address": "10.184.58.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Perimeter_Edge_Pkg"
@@ -600,7 +600,7 @@
         },
         {
           "name": "eth1.1",
-          "ipv4-address": "10.184.31.1",
+          "ipv4-address": "10.184.58.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -623,7 +623,7 @@
         "uid": "uid-perim-vsx-chassis-01",
         "name": "perim-vsx-chassis-01"
       },
-      "ipv4-address": "10.184.32.1",
+      "ipv4-address": "10.184.59.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Perimeter_Edge_Pkg"
@@ -637,7 +637,7 @@
         },
         {
           "name": "eth1.2",
-          "ipv4-address": "10.184.32.1",
+          "ipv4-address": "10.184.59.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {

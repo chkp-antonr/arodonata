@@ -624,7 +624,161 @@
       }
     },
     {
-      "uid": "uid-slot-uid-db-seg-vs-vault-01",
+      "uid": "uid-slot-spine-vs02",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs02",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 2,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-spine-vs03",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs03",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 3,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-spine-vs04",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs04",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 4,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-spine-vs05",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs05",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 5,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-spine-vs06",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs06",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 6,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-spine-vs07",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs07",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 7,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-spine-vs08",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs08",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 8,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-spine-vs09",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs09",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 9,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-spine-vs10",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs10",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 10,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-spine-vs11",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs11",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 11,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-spine-vs12",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs12",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 12,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-spine-vs13",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs13",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 13,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-spine-vs14",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs14",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 14,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-spine-vs15",
+      "name": "dc-vsx-chassis-02_dc-vsx-spine-vs15",
+      "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+      "vsid": 15,
+      "vsxGateway": "uid-slot0-chassis-02",
+      "targetCustomer": {
+        "name": "DC_Spine",
+        "uid": "uid-dom-dc_spine"
+      }
+    },
+    {
+      "uid": "uid-slot-db-seg-vs-vault-01",
       "name": "dc-vsx-chassis-01_db-seg-vs-vault-01",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 51,
@@ -635,7 +789,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-db-seg-vs-vault-02",
+      "uid": "uid-slot-db-seg-vs-vault-02",
       "name": "dc-vsx-chassis-01_db-seg-vs-vault-02",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 52,
@@ -646,7 +800,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-partner-vs-extranet-01",
+      "uid": "uid-slot-partner-vs-extranet-01",
       "name": "dc-vsx-chassis-01_partner-vs-extranet-01",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 61,
@@ -657,7 +811,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-wan-vs-backbone-02",
+      "uid": "uid-slot-wan-vs-backbone-02",
       "name": "dc-vsx-chassis-02_wan-vs-backbone-02",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 21,
@@ -668,7 +822,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-transit-vs-ix-01",
+      "uid": "uid-slot-transit-vs-ix-01",
       "name": "dc-vsx-chassis-02_transit-vs-ix-01",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 22,
@@ -679,7 +833,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-transit-vs-ix-02",
+      "uid": "uid-slot-transit-vs-ix-02",
       "name": "dc-vsx-chassis-02_transit-vs-ix-02",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 23,
@@ -690,7 +844,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-perim-vs-dmz-01",
+      "uid": "uid-slot-perim-vs-dmz-01",
       "name": "dc-vsx-chassis-02_perim-vs-dmz-01",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 31,
@@ -701,7 +855,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-perim-vs-dmz-02",
+      "uid": "uid-slot-perim-vs-dmz-02",
       "name": "dc-vsx-chassis-02_perim-vs-dmz-02",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 32,

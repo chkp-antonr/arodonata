@@ -32,7 +32,7 @@
         "uid": "uid-reg-vsx-hub-01",
         "name": "reg-vsx-hub-01"
       },
-      "ipv4-address": "10.181.41.1",
+      "ipv4-address": "10.181.51.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Branch_Standard_Pkg"
@@ -46,7 +46,7 @@
         },
         {
           "name": "eth1.11",
-          "ipv4-address": "10.181.41.1",
+          "ipv4-address": "10.181.51.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -69,7 +69,7 @@
         "uid": "uid-reg-vsx-hub-01",
         "name": "reg-vsx-hub-01"
       },
-      "ipv4-address": "10.181.42.1",
+      "ipv4-address": "10.181.52.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Branch_Standard_Pkg"
@@ -83,7 +83,7 @@
         },
         {
           "name": "eth1.12",
-          "ipv4-address": "10.181.42.1",
+          "ipv4-address": "10.181.52.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -106,7 +106,7 @@
         "uid": "uid-reg-vsx-hub-01",
         "name": "reg-vsx-hub-01"
       },
-      "ipv4-address": "10.181.43.1",
+      "ipv4-address": "10.181.53.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Branch_Standard_Pkg"
@@ -120,7 +120,7 @@
         },
         {
           "name": "eth1.13",
-          "ipv4-address": "10.181.43.1",
+          "ipv4-address": "10.181.53.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -143,7 +143,7 @@
         "uid": "uid-br-vsx-campus-01",
         "name": "br-vsx-campus-01"
       },
-      "ipv4-address": "10.181.31.1",
+      "ipv4-address": "10.181.55.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Branch_Standard_Pkg"
@@ -157,7 +157,7 @@
         },
         {
           "name": "eth1.1",
-          "ipv4-address": "10.181.31.1",
+          "ipv4-address": "10.181.55.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -180,7 +180,7 @@
         "uid": "uid-br-vsx-campus-01",
         "name": "br-vsx-campus-01"
       },
-      "ipv4-address": "10.181.32.1",
+      "ipv4-address": "10.181.56.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Branch_Standard_Pkg"
@@ -194,7 +194,7 @@
         },
         {
           "name": "eth1.2",
-          "ipv4-address": "10.181.32.1",
+          "ipv4-address": "10.181.56.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -210,7 +210,7 @@
   ],
   "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj": [
     {
-      "uid": "uid-slot-uid-br-vs-guest-01",
+      "uid": "uid-slot-br-vs-guest-01",
       "name": "br-vsx-campus-01_br-vs-guest-01",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 1,
@@ -221,7 +221,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-br-vs-iot-02",
+      "uid": "uid-slot-br-vs-iot-02",
       "name": "br-vsx-campus-01_br-vs-iot-02",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 2,
@@ -232,7 +232,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-reg-vs-branch-agg-03",
+      "uid": "uid-slot-reg-vs-branch-agg-03",
       "name": "br-vsx-campus-01_reg-vs-branch-agg-03",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 11,

@@ -7283,7 +7283,7 @@
         "uid": "uid-reg-vsx-hub-01",
         "name": "reg-vsx-hub-01"
       },
-      "ipv4-address": "10.181.41.1",
+      "ipv4-address": "10.181.51.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Branch_Standard_Pkg"
@@ -7297,7 +7297,7 @@
         },
         {
           "name": "eth1.11",
-          "ipv4-address": "10.181.41.1",
+          "ipv4-address": "10.181.51.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -7320,7 +7320,7 @@
         "uid": "uid-reg-vsx-hub-01",
         "name": "reg-vsx-hub-01"
       },
-      "ipv4-address": "10.181.42.1",
+      "ipv4-address": "10.181.52.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Branch_Standard_Pkg"
@@ -7334,7 +7334,7 @@
         },
         {
           "name": "eth1.12",
-          "ipv4-address": "10.181.42.1",
+          "ipv4-address": "10.181.52.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -7357,7 +7357,7 @@
         "uid": "uid-reg-vsx-hub-01",
         "name": "reg-vsx-hub-01"
       },
-      "ipv4-address": "10.181.43.1",
+      "ipv4-address": "10.181.53.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Branch_Standard_Pkg"
@@ -7371,7 +7371,7 @@
         },
         {
           "name": "eth1.13",
-          "ipv4-address": "10.181.43.1",
+          "ipv4-address": "10.181.53.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -7394,7 +7394,7 @@
         "uid": "uid-br-vsx-campus-01",
         "name": "br-vsx-campus-01"
       },
-      "ipv4-address": "10.181.31.1",
+      "ipv4-address": "10.181.55.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Branch_Standard_Pkg"
@@ -7408,7 +7408,7 @@
         },
         {
           "name": "eth1.1",
-          "ipv4-address": "10.181.31.1",
+          "ipv4-address": "10.181.55.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -7431,7 +7431,7 @@
         "uid": "uid-br-vsx-campus-01",
         "name": "br-vsx-campus-01"
       },
-      "ipv4-address": "10.181.32.1",
+      "ipv4-address": "10.181.56.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Branch_Standard_Pkg"
@@ -7445,7 +7445,7 @@
         },
         {
           "name": "eth1.2",
-          "ipv4-address": "10.181.32.1",
+          "ipv4-address": "10.181.56.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {

@@ -1118,7 +1118,7 @@
       "uid": "uid-dc-pod-vsx-local-01",
       "name": "dc-pod-vsx-local-01"
     },
-    "ipv4-address": "10.187.31.1",
+    "ipv4-address": "10.187.63.1",
     "policy": {
       "access-policy-installed": true,
       "access-policy-name": "DC_Pod_Tier_Pkg"
@@ -1132,7 +1132,7 @@
       },
       {
         "name": "eth1.1",
-        "ipv4-address": "10.187.31.1",
+        "ipv4-address": "10.187.63.1",
         "ipv4-mask-length": 24,
         "topology": "internal",
         "topology-settings": {
@@ -1145,8 +1145,8 @@
       }
     ]
   },
-  "uid-slot-uid-dc-pod-local-vs01": {
-    "uid": "uid-slot-uid-dc-pod-local-vs01",
+  "uid-slot-dc-pod-local-vs01": {
+    "uid": "uid-slot-dc-pod-local-vs01",
     "name": "dc-pod-vsx-local-01_dc-pod-local-vs01",
     "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
     "vsid": 1,
@@ -1166,7 +1166,7 @@
       "uid": "uid-dc-pod-vsx-local-01",
       "name": "dc-pod-vsx-local-01"
     },
-    "ipv4-address": "10.187.32.1",
+    "ipv4-address": "10.187.64.1",
     "policy": {
       "access-policy-installed": true,
       "access-policy-name": "DC_Pod_Tier_Pkg"
@@ -1180,7 +1180,7 @@
       },
       {
         "name": "eth1.2",
-        "ipv4-address": "10.187.32.1",
+        "ipv4-address": "10.187.64.1",
         "ipv4-mask-length": 24,
         "topology": "internal",
         "topology-settings": {
@@ -1193,8 +1193,8 @@
       }
     ]
   },
-  "uid-slot-uid-dc-pod-local-vs02": {
-    "uid": "uid-slot-uid-dc-pod-local-vs02",
+  "uid-slot-dc-pod-local-vs02": {
+    "uid": "uid-slot-dc-pod-local-vs02",
     "name": "dc-pod-vsx-local-01_dc-pod-local-vs02",
     "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
     "vsid": 2,
@@ -1204,8 +1204,8 @@
       "uid": "uid-dom-dc_pod"
     }
   },
-  "uid-slot-uid-db-seg-vs-pod-03": {
-    "uid": "uid-slot-uid-db-seg-vs-pod-03",
+  "uid-slot-db-seg-vs-pod-03": {
+    "uid": "uid-slot-db-seg-vs-pod-03",
     "name": "dc-pod-vsx-local-01_db-seg-vs-pod-03",
     "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
     "vsid": 11,

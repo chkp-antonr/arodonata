@@ -35,7 +35,7 @@
         "uid": "uid-reg-vsx-hub-01",
         "name": "reg-vsx-hub-01"
       },
-      "ipv4-address": "10.182.31.1",
+      "ipv4-address": "10.182.49.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Regional_Hub_Pkg"
@@ -49,7 +49,7 @@
         },
         {
           "name": "eth1.1",
-          "ipv4-address": "10.182.31.1",
+          "ipv4-address": "10.182.49.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -72,7 +72,7 @@
         "uid": "uid-reg-vsx-hub-01",
         "name": "reg-vsx-hub-01"
       },
-      "ipv4-address": "10.182.32.1",
+      "ipv4-address": "10.182.50.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Regional_Hub_Pkg"
@@ -86,7 +86,7 @@
         },
         {
           "name": "eth1.2",
-          "ipv4-address": "10.182.32.1",
+          "ipv4-address": "10.182.50.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -109,7 +109,7 @@
         "uid": "uid-br-vsx-campus-01",
         "name": "br-vsx-campus-01"
       },
-      "ipv4-address": "10.182.41.1",
+      "ipv4-address": "10.182.57.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Regional_Hub_Pkg"
@@ -123,7 +123,7 @@
         },
         {
           "name": "eth1.11",
-          "ipv4-address": "10.182.41.1",
+          "ipv4-address": "10.182.57.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -139,7 +139,7 @@
   ],
   "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj": [
     {
-      "uid": "uid-slot-uid-reg-vs-campus-01",
+      "uid": "uid-slot-reg-vs-campus-01",
       "name": "reg-vsx-hub-01_reg-vs-campus-01",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 1,
@@ -150,7 +150,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-reg-vs-campus-02",
+      "uid": "uid-slot-reg-vs-campus-02",
       "name": "reg-vsx-hub-01_reg-vs-campus-02",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 2,
@@ -161,7 +161,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-br-vs-hub-01",
+      "uid": "uid-slot-br-vs-hub-01",
       "name": "reg-vsx-hub-01_br-vs-hub-01",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 11,
@@ -172,7 +172,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-br-vs-hub-02",
+      "uid": "uid-slot-br-vs-hub-02",
       "name": "reg-vsx-hub-01_br-vs-hub-02",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 12,
@@ -183,7 +183,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-br-vs-hub-03",
+      "uid": "uid-slot-br-vs-hub-03",
       "name": "reg-vsx-hub-01_br-vs-hub-03",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 13,
@@ -194,7 +194,7 @@
       }
     },
     {
-      "uid": "uid-slot-uid-wan-vs-peering-01",
+      "uid": "uid-slot-wan-vs-peering-01",
       "name": "reg-vsx-hub-01_wan-vs-peering-01",
       "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
       "vsid": 21,

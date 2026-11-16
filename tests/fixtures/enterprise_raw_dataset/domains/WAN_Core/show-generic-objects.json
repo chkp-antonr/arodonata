@@ -10,7 +10,7 @@
         "uid": "uid-dc-vsx-chassis-02",
         "name": "dc-vsx-chassis-02"
       },
-      "ipv4-address": "10.183.51.1",
+      "ipv4-address": "10.183.44.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "WAN_Core_Transit_Pkg"
@@ -24,7 +24,7 @@
         },
         {
           "name": "eth1.21",
-          "ipv4-address": "10.183.51.1",
+          "ipv4-address": "10.183.44.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -47,7 +47,7 @@
         "uid": "uid-reg-vsx-hub-01",
         "name": "reg-vsx-hub-01"
       },
-      "ipv4-address": "10.183.51.1",
+      "ipv4-address": "10.183.54.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "WAN_Core_Transit_Pkg"
@@ -61,7 +61,7 @@
         },
         {
           "name": "eth1.21",
-          "ipv4-address": "10.183.51.1",
+          "ipv4-address": "10.183.54.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {

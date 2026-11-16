@@ -675,7 +675,7 @@
         "uid": "uid-reg-vsx-hub-01",
         "name": "reg-vsx-hub-01"
       },
-      "ipv4-address": "10.182.31.1",
+      "ipv4-address": "10.182.49.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Regional_Hub_Pkg"
@@ -689,7 +689,7 @@
         },
         {
           "name": "eth1.1",
-          "ipv4-address": "10.182.31.1",
+          "ipv4-address": "10.182.49.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -712,7 +712,7 @@
         "uid": "uid-reg-vsx-hub-01",
         "name": "reg-vsx-hub-01"
       },
-      "ipv4-address": "10.182.32.1",
+      "ipv4-address": "10.182.50.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Regional_Hub_Pkg"
@@ -726,7 +726,7 @@
         },
         {
           "name": "eth1.2",
-          "ipv4-address": "10.182.32.1",
+          "ipv4-address": "10.182.50.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {
@@ -749,7 +749,7 @@
         "uid": "uid-br-vsx-campus-01",
         "name": "br-vsx-campus-01"
       },
-      "ipv4-address": "10.182.41.1",
+      "ipv4-address": "10.182.57.1",
       "policy": {
         "access-policy-installed": true,
         "access-policy-name": "Regional_Hub_Pkg"
@@ -763,7 +763,7 @@
         },
         {
           "name": "eth1.11",
-          "ipv4-address": "10.182.41.1",
+          "ipv4-address": "10.182.57.1",
           "ipv4-mask-length": 24,
           "topology": "internal",
           "topology-settings": {

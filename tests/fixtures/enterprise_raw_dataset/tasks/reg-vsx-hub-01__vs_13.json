@@ -12,7 +12,7 @@
           "gatewayId": "reg-vsx-hub-01",
           "statusCode": "succeeded",
           "statusDescription": "succeeded",
-          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE5Mi4xNjguMjQzLjEgZGV2IHdycDAgcHJvdG8gc3RhdGljCjEwLjE4MS40My4wLzI0IGRldiBldGgxLjEzIHByb3RvIGtlcm5lbCBzY29wZSBsaW5rIHNyYyAxMC4xODEuNDMuMQo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cg==",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE5Mi4xNjguMjQzLjEgZGV2IHdycDAgcHJvdG8gc3RhdGljCjEwLjE4MS41My4wLzI0IGRldiBldGgxLjEzIHByb3RvIGtlcm5lbCBzY29wZSBsaW5rIHNyYyAxMC4xODEuNTMuMQo9PT1BUk9ET05BVEFfSVBfUk9VVEVfRU5EPT09Cg==",
           "responseError": ""
         }
       ]

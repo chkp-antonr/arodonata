@@ -489,7 +489,7 @@
       "uid": "uid-dc-vsx-chassis-01",
       "name": "dc-vsx-chassis-01"
     },
-    "ipv4-address": "10.189.91.1",
+    "ipv4-address": "10.189.43.1",
     "policy": {
       "access-policy-installed": true,
       "access-policy-name": "Partner_DMZ_Pkg"
@@ -503,7 +503,7 @@
       },
       {
         "name": "eth1.61",
-        "ipv4-address": "10.189.91.1",
+        "ipv4-address": "10.189.43.1",
         "ipv4-mask-length": 24,
         "topology": "internal",
         "topology-settings": {
@@ -526,7 +526,7 @@
       "uid": "uid-perim-vsx-chassis-01",
       "name": "perim-vsx-chassis-01"
     },
-    "ipv4-address": "10.189.41.1",
+    "ipv4-address": "10.189.60.1",
     "policy": {
       "access-policy-installed": true,
       "access-policy-name": "Partner_DMZ_Pkg"
@@ -540,7 +540,7 @@
       },
       {
         "name": "eth1.11",
-        "ipv4-address": "10.189.41.1",
+        "ipv4-address": "10.189.60.1",
         "ipv4-mask-length": 24,
         "topology": "internal",
         "topology-settings": {
@@ -563,7 +563,7 @@
       "uid": "uid-perim-vsx-chassis-01",
       "name": "perim-vsx-chassis-01"
     },
-    "ipv4-address": "10.189.42.1",
+    "ipv4-address": "10.189.61.1",
     "policy": {
       "access-policy-installed": true,
       "access-policy-name": "Partner_DMZ_Pkg"
@@ -577,7 +577,7 @@
       },
       {
         "name": "eth1.12",
-        "ipv4-address": "10.189.42.1",
+        "ipv4-address": "10.189.61.1",
         "ipv4-mask-length": 24,
         "topology": "internal",
         "topology-settings": {
