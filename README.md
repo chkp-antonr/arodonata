@@ -33,6 +33,7 @@ uv add "arodonata @ git+https://github.com/chkp-antonr/arodonata.git@master_v1"
   - [Consolidated MCP Server & Tools](docs/mcp/index.md)
   - [Architecture Overview](docs/architecture/index.md) · [Caching & Sync](docs/architecture/caching-and-sync.md) · [Sessions & `SessionOverlay`](docs/architecture/sessions-and-mdm.md) · [CPCRUD Engine](docs/architecture/cpcrud.md)
   - [Configuration Reference](docs/configuration/index.md) · [Multi-Server Setup](docs/configuration/multi-server.md) · [TLS Verification](docs/configuration/tls-verification.md)
+  - [Enterprise Replay Mock Server](docs/guides/enterprise-replay-mock-server.md) · [Mock Testing Scenarios & Rule Creation Guide](docs/guides/mock-testing-scenarios.md)
 - **Portable Single-File HTML Documentation**:
   - [`docs/_html/arodonata-v2-docs.html`](docs/_html/arodonata-v2-docs.html) — standalone offline HTML file with dark/light theme toggle, sidebar navigation across all 32 documentation pages, and interactive pan/zoom pre-rendered SVG Mermaid diagrams.
 - **NotebookLM / LLM Context Bundles (`docs-notebooklm/`)**:

@@ -115,6 +115,8 @@ nav:
       - Configuration Overview: configuration/index.md
       - Multi-Server Topology: configuration/multi-server.md
       - TLS Verification: configuration/tls-verification.md
+      - Enterprise Replay Mock Server: guides/enterprise-replay-mock-server.md
+      - Mock Testing Scenarios: guides/mock-testing-scenarios.md
       - MCP Server & Tools: mcp/index.md
   - Architecture:
       - Overview: architecture/index.md

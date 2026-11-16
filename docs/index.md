@@ -59,6 +59,8 @@ asyncio.run(main())
 - **User Guides & MCP**:
   - [Declarative CPCRUD Operations](user-guide/cpcrud.md)
   - [Auditable Change Reports](user-guide/change-report.md)
+  - [Enterprise Replay Mock Server](guides/enterprise-replay-mock-server.md)
+  - [Mock Testing Scenarios & Rule Creation Guide](guides/mock-testing-scenarios.md)
   - [Model Context Protocol (MCP) Server & Consolidated Tool Surface](mcp/index.md)
 - **Configuration**: [Environment Variables & Settings](configuration/index.md), [Multi-Server Topology](configuration/multi-server.md), and [TLS Verification (`pinned` / `tofu` / `lab-memory`)](configuration/tls-verification.md).
 - **Examples (`01`..`12`)**: [Runnable Examples Catalog](examples/index.md).

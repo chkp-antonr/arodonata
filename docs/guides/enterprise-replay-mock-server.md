@@ -4,6 +4,8 @@
 
 This allows downstream applications such as **MMP** and **FPCR** to point `ArodonataClient` at `localhost:443` (or any custom `host:port`) and receive 10 MDSM domains, 315 policy-enforcing gateways, 2,950+ objects (including 7-level nested groups), 1,050+ access rules, 120 NAT rules, and live gateway CLI routes via real HTTPS without requiring physical Check Point appliances or waiting for artificial rate limits / login throttling.
 
+> **Practical Test Scenarios**: Looking for concrete source/destination IP flows across multiple gateways, pre-existing object/service reuse examples for `Evidence` verification, and planted topology discrepancies in **FPCR v2**? See [Mock Testing Scenarios & Rule Creation Guide](mock-testing-scenarios.md).
+
 ## 1. Enterprise Dataset Overview (`tests/fixtures/enterprise_raw_dataset/`)
 
 Generated deterministically with `DEFAULT_SEED = 20261108` (`DATASET_VERSION = "1.2.0"`) via `ensure_enterprise_raw_dataset()`:
@@ -41,18 +43,14 @@ When started, the server automatically:
 ### Connecting `ArodonataClient` (or MMP / FPCR) to the Mock Server
 
 ```python
-from arodonata import ArodonataClient, ArodonataSettings, ServerEndpointConfig
+from arodonata import ArodonataClient, ArodonataSettings
 
 settings = ArodonataSettings(
-    servers={
-        "mds": ServerEndpointConfig(
-            name="mds",
-            host="127.0.0.1",
-            port=8443,
-            username="admin",
-            password="mock-password",
-        )
-    },
+    database_url="sqlite+aiosqlite:////tmp/arodonata_mock.sqlite",
+    mgmt_name="mds",
+    mgmt_ip="127.0.0.1",
+    mgmt_port=8443,
+    api_key="mock-key",
     tls_trust="tofu",
     tls_known_hosts_path="/tmp/mock_known_hosts",
 )
@@ -73,13 +71,20 @@ async with ArodonataClient(settings=settings) as client:
 For fast, zero-socket unit and scale tests, inject `FileReplayApiMock` (`ApiPort`) and `FileReplayCliMock` (`GatewayCliPort`) directly into `ArodonataClient`:
 
 ```python
-from arodonata import ArodonataClient
+from arodonata import ArodonataClient, ArodonataSettings
 from arodonata.testing import FileReplayApiMock, FileReplayCliMock
 
 cli_mock = FileReplayCliMock()
 api_mock = FileReplayApiMock(cli_mock=cli_mock)
+settings = ArodonataSettings(
+    database_url="sqlite+aiosqlite:///:memory:",
+    mgmt_name="mds",
+    mgmt_ip="127.0.0.1",
+    mgmt_port=8443,
+    api_key="mock-key",
+)
 
-async with ArodonataClient(api=api_mock, gateway_cli=cli_mock) as client:
+async with ArodonataClient(settings=settings, api=api_mock, gateway_cli=cli_mock) as client:
     await client.topology_service.refresh_topology(mgmt_name="mds", collect_routes=True)
 ```
 
