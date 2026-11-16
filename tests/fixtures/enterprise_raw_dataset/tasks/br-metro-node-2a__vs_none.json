@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "task-id": "task-br-metro-node-2a-0",
+      "task-name": "arodonata-route-collect-br-metro-node-2a",
+      "status": "succeeded",
+      "progress-percentage": 100,
+      "suppressed": false,
+      "task-details": [
+        {
+          "uid": "td-task-br-metro-node-2a-0",
+          "gatewayId": "br-metro-node-2a",
+          "statusCode": "succeeded",
+          "statusDescription": "succeeded",
+          "responseMessage": "PT09QVJPRE9OQVRBX0lQX1JPVVRFX1NUQVJUPT09CmRlZmF1bHQgdmlhIDE3Mi4yOS4xLjI1NCBkZXYgZXRoMCBwcm90byBzdGF0aWMKMTAuMTgxLjIwLjAvMjQgZGV2IGV0aDEgcHJvdG8ga2VybmVsIHNjb3BlIGxpbmsgc3JjIDEwLjE4MS4yMC4xCj09PUFST0RPTkFUQV9JUF9ST1VURV9FTkQ9PT0K",
+          "responseError": ""
+        }
+      ]
+    }
+  ]
+}

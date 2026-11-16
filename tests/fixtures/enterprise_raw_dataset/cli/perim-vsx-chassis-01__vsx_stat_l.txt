@@ -1,0 +1,25 @@
+VSX Gateway Status
+==================
+VSID:            0
+Name:            perim-vsx-chassis-01
+Type:            VSX Gateway
+
+VSID:            1
+Name:            perim-vs-waf-01
+Type:            Virtual System
+
+VSID:            2
+Name:            perim-vs-b2c-02
+Type:            Virtual System
+
+VSID:            11
+Name:            partner-vs-b2b-02
+Type:            Virtual System
+
+VSID:            12
+Name:            partner-vs-api-03
+Type:            Virtual System
+
+VSID:            21
+Name:            transit-vs-peering-03
+Type:            Virtual System

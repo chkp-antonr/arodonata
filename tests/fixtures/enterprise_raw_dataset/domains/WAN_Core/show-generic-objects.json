@@ -1,1 +1,78 @@
-{}
+{
+  "com.checkpoint.objects.classes.dummy.CpmiVsNetobj": [
+    {
+      "uid": "uid-wan-vs-backbone-02",
+      "name": "wan-vs-backbone-02",
+      "type": "CpmiVsNetobj",
+      "vsid": 21,
+      "parent-uid": "uid-dc-vsx-chassis-02",
+      "vsx-gateway": {
+        "uid": "uid-dc-vsx-chassis-02",
+        "name": "dc-vsx-chassis-02"
+      },
+      "ipv4-address": "10.183.51.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.242.31",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.21",
+          "ipv4-address": "10.183.51.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-wan-vs-peering-01",
+      "name": "wan-vs-peering-01",
+      "type": "CpmiVsNetobj",
+      "vsid": 21,
+      "parent-uid": "uid-reg-vsx-hub-01",
+      "vsx-gateway": {
+        "uid": "uid-reg-vsx-hub-01",
+        "name": "reg-vsx-hub-01"
+      },
+      "ipv4-address": "10.183.51.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "WAN_Core_Transit_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "wrp0",
+          "ipv4-address": "192.168.243.31",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1.21",
+          "ipv4-address": "10.183.51.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    }
+  ]
+}

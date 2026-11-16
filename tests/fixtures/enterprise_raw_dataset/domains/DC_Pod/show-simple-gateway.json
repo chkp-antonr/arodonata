@@ -1,1 +1,126 @@
-{}
+{
+  "uid-dc-pod-bm-gw-01": {
+    "uid": "uid-dc-pod-bm-gw-01",
+    "name": "dc-pod-bm-gw-01",
+    "type": "simple-gateway",
+    "ipv4-address": "172.29.7.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DC_Pod_Tier_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.29.7.1",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.187.1.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-dc-pod-bm-gw-02": {
+    "uid": "uid-dc-pod-bm-gw-02",
+    "name": "dc-pod-bm-gw-02",
+    "type": "simple-gateway",
+    "ipv4-address": "172.29.7.2",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DC_Pod_Tier_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.29.7.2",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.187.2.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-dc-pod-vm-gw-03": {
+    "uid": "uid-dc-pod-vm-gw-03",
+    "name": "dc-pod-vm-gw-03",
+    "type": "simple-gateway",
+    "ipv4-address": "172.29.7.3",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DC_Pod_Tier_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.29.7.3",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.187.3.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-dc-pod-maestro-sg-04": {
+    "uid": "uid-dc-pod-maestro-sg-04",
+    "name": "dc-pod-maestro-sg-04",
+    "type": "simple-gateway",
+    "ipv4-address": "172.29.7.4",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "DC_Pod_Tier_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.29.7.4",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.187.4.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  }
+}

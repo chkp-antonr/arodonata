@@ -81,6 +81,26 @@
           "uid": "uid-dc-vsx-spine-vs15",
           "name": "dc-vsx-spine-vs15",
           "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-spine-oob-gw-01",
+          "name": "dc-spine-oob-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-spine-oob-gw-02",
+          "name": "dc-spine-oob-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-spine-scale-gw-03",
+          "name": "dc-spine-scale-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-spine-core-cluster",
+          "name": "dc-spine-core-cluster",
+          "type": "CpmiGatewayCluster"
         }
       ],
       "access-layers": [
@@ -175,6 +195,26 @@
           "uid": "uid-dc-vsx-spine-vs15",
           "name": "dc-vsx-spine-vs15",
           "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-dc-spine-oob-gw-01",
+          "name": "dc-spine-oob-gw-01",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-spine-oob-gw-02",
+          "name": "dc-spine-oob-gw-02",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-spine-scale-gw-03",
+          "name": "dc-spine-scale-gw-03",
+          "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-dc-spine-core-cluster",
+          "name": "dc-spine-core-cluster",
+          "type": "CpmiGatewayCluster"
         }
       ],
       "access-layers": [

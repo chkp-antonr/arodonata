@@ -115,3 +115,15 @@ Type:            Virtual System
 VSID:            45
 Name:            dc-vs-pod-45
 Type:            Virtual System
+
+VSID:            51
+Name:            db-seg-vs-vault-01
+Type:            Virtual System
+
+VSID:            52
+Name:            db-seg-vs-vault-02
+Type:            Virtual System
+
+VSID:            61
+Name:            partner-vs-extranet-01
+Type:            Virtual System

@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.2.0",
   "seed": 20261108,
   "domains": [
     "Global",
@@ -27,13 +27,13 @@
   "counts": {
     "total_domains": 10,
     "user_domains": 9,
-    "total_assets": 284,
-    "policy_enforcing_gateways": 276,
+    "total_assets": 341,
+    "policy_enforcing_gateways": 315,
     "total_network_objects": 2951,
     "total_service_objects": 210,
     "total_access_rules": 1050,
     "total_nat_rules": 120,
-    "total_cli_targets": 279
+    "total_cli_targets": 325
   },
   "cprid_fallback_gateways": [
     "br-reg-gw-138",

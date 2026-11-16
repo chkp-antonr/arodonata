@@ -86,6 +86,21 @@
           "uid": "uid-part-ext-05",
           "name": "partner-ext-gw-05",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-partner-vs-extranet-01",
+          "name": "partner-vs-extranet-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-partner-vs-b2b-02",
+          "name": "partner-vs-b2b-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-partner-vs-api-03",
+          "name": "partner-vs-api-03",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [
@@ -185,6 +200,21 @@
           "uid": "uid-part-ext-05",
           "name": "partner-ext-gw-05",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-partner-vs-extranet-01",
+          "name": "partner-vs-extranet-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-partner-vs-b2b-02",
+          "name": "partner-vs-b2b-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-partner-vs-api-03",
+          "name": "partner-vs-api-03",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [

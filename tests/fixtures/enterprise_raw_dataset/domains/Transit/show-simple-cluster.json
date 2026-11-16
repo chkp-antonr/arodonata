@@ -1,1 +1,49 @@
-{}
+{
+  "uid-transit-ix-cluster": {
+    "uid": "uid-transit-ix-cluster",
+    "name": "transit-ix-cluster",
+    "type": "CpmiGatewayCluster",
+    "ipv4-address": "172.29.5.10",
+    "cluster-members": [
+      {
+        "uid": "uid-transit-ix-1a",
+        "name": "transit-ix-1a",
+        "type": "cluster-member",
+        "ipv4-address": "172.29.5.11",
+        "cluster-uid": "uid-transit-ix-cluster"
+      },
+      {
+        "uid": "uid-transit-ix-1b",
+        "name": "transit-ix-1b",
+        "type": "cluster-member",
+        "ipv4-address": "172.29.5.12",
+        "cluster-uid": "uid-transit-ix-cluster"
+      }
+    ],
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "Transit_Interconnect_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.29.5.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.185.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  }
+}

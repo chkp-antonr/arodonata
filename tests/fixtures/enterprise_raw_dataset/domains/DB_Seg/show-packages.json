@@ -81,6 +81,26 @@
           "uid": "uid-db-seg-fw-15",
           "name": "db-seg-internal-fw-15",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-vault-cluster",
+          "name": "db-seg-vault-cluster",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-db-seg-vs-vault-01",
+          "name": "db-seg-vs-vault-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-db-seg-vs-vault-02",
+          "name": "db-seg-vs-vault-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-db-seg-vs-pod-03",
+          "name": "db-seg-vs-pod-03",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [
@@ -175,6 +195,26 @@
           "uid": "uid-db-seg-fw-15",
           "name": "db-seg-internal-fw-15",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-db-seg-vault-cluster",
+          "name": "db-seg-vault-cluster",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-db-seg-vs-vault-01",
+          "name": "db-seg-vs-vault-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-db-seg-vs-vault-02",
+          "name": "db-seg-vs-vault-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-db-seg-vs-pod-03",
+          "name": "db-seg-vs-pod-03",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [

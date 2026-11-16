@@ -33,7 +33,10 @@
         "uid-dc-vs-pod-42",
         "uid-dc-vs-pod-43",
         "uid-dc-vs-pod-44",
-        "uid-dc-vs-pod-45"
+        "uid-dc-vs-pod-45",
+        "uid-db-seg-vs-vault-01",
+        "uid-db-seg-vs-vault-02",
+        "uid-partner-vs-extranet-01"
       ]
     },
     {
@@ -68,7 +71,12 @@
         "uid-dc-vsx-spine-vs12",
         "uid-dc-vsx-spine-vs13",
         "uid-dc-vsx-spine-vs14",
-        "uid-dc-vsx-spine-vs15"
+        "uid-dc-vsx-spine-vs15",
+        "uid-wan-vs-backbone-02",
+        "uid-transit-vs-ix-01",
+        "uid-transit-vs-ix-02",
+        "uid-perim-vs-dmz-01",
+        "uid-perim-vs-dmz-02"
       ]
     },
     {
@@ -532,9 +540,163 @@
           }
         }
       ]
+    },
+    {
+      "uid": "uid-dc-spine-oob-gw-01",
+      "name": "dc-spine-oob-gw-01",
+      "type": "simple-gateway",
+      "ipv4-address": "172.29.6.1",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.29.6.1",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.186.1.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-spine-oob-gw-02",
+      "name": "dc-spine-oob-gw-02",
+      "type": "simple-gateway",
+      "ipv4-address": "172.29.6.2",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.29.6.2",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.186.2.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-spine-scale-gw-03",
+      "name": "dc-spine-scale-gw-03",
+      "type": "simple-gateway",
+      "ipv4-address": "172.29.6.3",
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.29.6.3",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.186.3.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-spine-core-cluster",
+      "name": "dc-spine-core-cluster",
+      "type": "CpmiGatewayCluster",
+      "ipv4-address": "172.29.6.10",
+      "cluster-members": [
+        {
+          "uid": "uid-dc-spine-core-1a",
+          "name": "dc-spine-core-1a",
+          "type": "cluster-member",
+          "ipv4-address": "172.29.6.11",
+          "cluster-uid": "uid-dc-spine-core-cluster"
+        },
+        {
+          "uid": "uid-dc-spine-core-1b",
+          "name": "dc-spine-core-1b",
+          "type": "cluster-member",
+          "ipv4-address": "172.29.6.12",
+          "cluster-uid": "uid-dc-spine-core-cluster"
+        }
+      ],
+      "policy": {
+        "access-policy-installed": true,
+        "access-policy-name": "DC_Spine_VS_Pkg"
+      },
+      "interfaces": [
+        {
+          "name": "eth0",
+          "ipv4-address": "172.29.6.10",
+          "ipv4-mask-length": 24,
+          "topology": "external"
+        },
+        {
+          "name": "eth1",
+          "ipv4-address": "10.186.10.1",
+          "ipv4-mask-length": 24,
+          "topology": "internal",
+          "topology-settings": {
+            "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+          },
+          "anti-spoofing": true,
+          "anti-spoofing-settings": {
+            "action": "prevent"
+          }
+        }
+      ]
+    },
+    {
+      "uid": "uid-dc-spine-core-1a",
+      "name": "dc-spine-core-1a",
+      "type": "cluster-member",
+      "ipv4-address": "172.29.6.11",
+      "cluster-uid": "uid-dc-spine-core-cluster"
+    },
+    {
+      "uid": "uid-dc-spine-core-1b",
+      "name": "dc-spine-core-1b",
+      "type": "cluster-member",
+      "ipv4-address": "172.29.6.12",
+      "cluster-uid": "uid-dc-spine-core-cluster"
     }
   ],
   "from": 1,
-  "to": 17,
-  "total": 17
+  "to": 23,
+  "total": 23
 }

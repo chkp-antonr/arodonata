@@ -508,5 +508,140 @@
         }
       }
     ]
+  },
+  "uid-wan-core-edge-cluster": {
+    "uid": "uid-wan-core-edge-cluster",
+    "name": "wan-core-edge-cluster",
+    "type": "CpmiGatewayCluster",
+    "ipv4-address": "172.29.3.10",
+    "cluster-members": [
+      {
+        "uid": "uid-wan-core-edge-1a",
+        "name": "wan-core-edge-1a",
+        "type": "cluster-member",
+        "ipv4-address": "172.29.3.11",
+        "cluster-uid": "uid-wan-core-edge-cluster"
+      },
+      {
+        "uid": "uid-wan-core-edge-1b",
+        "name": "wan-core-edge-1b",
+        "type": "cluster-member",
+        "ipv4-address": "172.29.3.12",
+        "cluster-uid": "uid-wan-core-edge-cluster"
+      }
+    ],
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "WAN_Core_Transit_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "eth0",
+        "ipv4-address": "172.29.3.10",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1",
+        "ipv4-address": "10.183.10.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-wan-core-edge-1a": {
+    "uid": "uid-wan-core-edge-1a",
+    "name": "wan-core-edge-1a",
+    "type": "cluster-member",
+    "ipv4-address": "172.29.3.11",
+    "cluster-uid": "uid-wan-core-edge-cluster"
+  },
+  "uid-wan-core-edge-1b": {
+    "uid": "uid-wan-core-edge-1b",
+    "name": "wan-core-edge-1b",
+    "type": "cluster-member",
+    "ipv4-address": "172.29.3.12",
+    "cluster-uid": "uid-wan-core-edge-cluster"
+  },
+  "uid-wan-vs-backbone-02": {
+    "uid": "uid-wan-vs-backbone-02",
+    "name": "wan-vs-backbone-02",
+    "type": "CpmiVsNetobj",
+    "vsid": 21,
+    "parent-uid": "uid-dc-vsx-chassis-02",
+    "vsx-gateway": {
+      "uid": "uid-dc-vsx-chassis-02",
+      "name": "dc-vsx-chassis-02"
+    },
+    "ipv4-address": "10.183.51.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "WAN_Core_Transit_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "wrp0",
+        "ipv4-address": "192.168.242.31",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1.21",
+        "ipv4-address": "10.183.51.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
+  },
+  "uid-wan-vs-peering-01": {
+    "uid": "uid-wan-vs-peering-01",
+    "name": "wan-vs-peering-01",
+    "type": "CpmiVsNetobj",
+    "vsid": 21,
+    "parent-uid": "uid-reg-vsx-hub-01",
+    "vsx-gateway": {
+      "uid": "uid-reg-vsx-hub-01",
+      "name": "reg-vsx-hub-01"
+    },
+    "ipv4-address": "10.183.51.1",
+    "policy": {
+      "access-policy-installed": true,
+      "access-policy-name": "WAN_Core_Transit_Pkg"
+    },
+    "interfaces": [
+      {
+        "name": "wrp0",
+        "ipv4-address": "192.168.243.31",
+        "ipv4-mask-length": 24,
+        "topology": "external"
+      },
+      {
+        "name": "eth1.21",
+        "ipv4-address": "10.183.51.1",
+        "ipv4-mask-length": 24,
+        "topology": "internal",
+        "topology-settings": {
+          "ip-address-behind-this-interface": "network defined by the interface ip and net mask"
+        },
+        "anti-spoofing": true,
+        "anti-spoofing-settings": {
+          "action": "prevent"
+        }
+      }
+    ]
   }
 }

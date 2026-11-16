@@ -106,6 +106,21 @@
           "uid": "uid-reg-hub-20",
           "name": "reg-hub-gw-20",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-vs-campus-01",
+          "name": "reg-vs-campus-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-reg-vs-campus-02",
+          "name": "reg-vs-campus-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-reg-vs-branch-agg-03",
+          "name": "reg-vs-branch-agg-03",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [
@@ -225,6 +240,21 @@
           "uid": "uid-reg-hub-20",
           "name": "reg-hub-gw-20",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-reg-vs-campus-01",
+          "name": "reg-vs-campus-01",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-reg-vs-campus-02",
+          "name": "reg-vs-campus-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-reg-vs-branch-agg-03",
+          "name": "reg-vs-branch-agg-03",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [

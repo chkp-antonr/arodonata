@@ -1,4 +1,4 @@
-"""Unit tests verifying Enterprise Raw Dataset v1.1.0 Global cross-domain references and invariants."""
+"""Unit tests verifying Enterprise Raw Dataset v1.2.0 Global cross-domain references and invariants."""
 
 from __future__ import annotations
 
@@ -14,15 +14,15 @@ from arodonata.testing.dataset_generator import (
 
 
 def test_dataset_v110_global_refs_and_assignments() -> None:
-    """Dataset v1.1.0 includes `show-global-assignments.json` and Global refs in rule #104 across user domains."""
+    """Dataset v1.2.0 includes `show-global-assignments.json`, Global refs, and heterogeneous domain mix."""
     root = ensure_enterprise_raw_dataset()
     assert root == Path(DEFAULT_DATASET_DIR)
 
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == DATASET_VERSION == "1.1.0"
+    assert manifest["version"] == DATASET_VERSION == "1.2.0"
     assert manifest["counts"]["total_domains"] == 10
-    assert manifest["counts"]["total_assets"] == 284
-    assert manifest["counts"]["policy_enforcing_gateways"] == 276
+    assert manifest["counts"]["total_assets"] == 341
+    assert manifest["counts"]["policy_enforcing_gateways"] == 315
     assert manifest["counts"]["total_access_rules"] == 1050
     assert manifest["counts"]["total_nat_rules"] == 120
 
@@ -70,3 +70,32 @@ def test_dataset_v110_global_refs_and_assignments() -> None:
     perim_rule_1 = perim_layer["rulebase"][0]["rulebase"][0]
     assert perim_rule_1["uid"] == "uid-arule-perimeter-0001"
     assert perim_rule_1["source"] == ["uid-perimeter-bulk-host-001"]
+
+    # Every user domain contains heterogeneous gateway types (appliance, cluster, Virtual System) and cross-domain VSs
+    cluster_types = {"CpmiGatewayCluster", "simple-cluster"}
+    host_domain_by_uid: dict[str, str] = {}
+    vs_parent_pairs: list[tuple[str, str]] = []
+    for dom in USER_DOMAINS:
+        gws_payload = json.loads(
+            (root / "domains" / dom / "show-gateways-and-servers.json").read_text(encoding="utf-8")
+        )
+        gw_types = {str(obj.get("type") or "") for obj in gws_payload["objects"]}
+        assert "simple-gateway" in gw_types, f"{dom} missing simple-gateway"
+        assert gw_types & cluster_types, f"{dom} missing cluster gateway"
+        assert "CpmiVsNetobj" in gw_types, f"{dom} missing Virtual System"
+        for obj in gws_payload["objects"]:
+            if obj.get("type") == "CpmiVsxNetobj":
+                host_domain_by_uid[str(obj["uid"])] = dom
+            elif obj.get("type") == "CpmiVsNetobj":
+                p_uid = str(obj.get("parent-uid") or (obj.get("vsx-gateway") or {}).get("uid") or "")
+                vs_parent_pairs.append((dom, p_uid))
+
+    cross_domain_vs = [
+        (dom, host_domain_by_uid[p_uid])
+        for dom, p_uid in vs_parent_pairs
+        if host_domain_by_uid.get(p_uid) and host_domain_by_uid[p_uid] != dom
+    ]
+    assert len(cross_domain_vs) >= 15
+    assert ("DB_Seg", "DC_Spine") in cross_domain_vs
+    assert ("Branch", "Regional") in cross_domain_vs
+    assert ("Regional", "Branch") in cross_domain_vs

@@ -1,0 +1,17 @@
+VSX Gateway Status
+==================
+VSID:            0
+Name:            dc-pod-vsx-local-01
+Type:            VSX Gateway
+
+VSID:            1
+Name:            dc-pod-local-vs01
+Type:            Virtual System
+
+VSID:            2
+Name:            dc-pod-local-vs02
+Type:            Virtual System
+
+VSID:            11
+Name:            db-seg-vs-pod-03
+Type:            Virtual System

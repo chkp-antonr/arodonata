@@ -3,7 +3,8 @@
 Generates `tests/fixtures/enterprise_raw_dataset/` with fixed seed (`20261108`) containing:
 - 9 user MDSM domains (`Branch`, `Regional`, `WAN_Core`, `Perimeter`, `Transit`, `DC_Spine`,
   `DC_Pod`, `DB_Seg`, `Partner_DMZ`) plus `Global`.
-- 276 policy-enforcing gateways (286 total assets including cluster members and physical VSX chassis).
+- 315 policy-enforcing gateways (341 total domain assets including cluster members and physical VSX chassis),
+  with heterogeneous appliance, HA cluster, Virtual System, and cross-domain VSX distribution across every domain.
 - 2,600+ network and service objects across domains, including 7-level nested object groups and address ranges.
 - 1,050+ access and NAT rules across domain and Global policy packages with sections and inline layers.
 - Raw CLI routing outputs (`ip -4 route show`, `clish -c "show route"`, `vsx stat -l`) covering
@@ -22,7 +23,7 @@ from typing import Any
 
 import platformdirs
 
-DATASET_VERSION = "1.1.0"
+DATASET_VERSION = "1.2.0"
 DEFAULT_SEED = 20261108
 
 USER_DOMAINS: tuple[str, ...] = (
@@ -1966,6 +1967,379 @@ def generate_enterprise_raw_dataset(
         )
 
     # ------------------------------------------------------------------
+    # 11B. Heterogeneous Multi-Domain Mix & Cross-Domain VSX Matrix (+57 assets)
+    # ------------------------------------------------------------------
+    domain_pkg_names: dict[str, str] = {
+        "Global": "Global_Standard_Pkg",
+        "Branch": "Branch_Standard_Pkg",
+        "Regional": "Regional_Hub_Pkg",
+        "WAN_Core": "WAN_Core_Transit_Pkg",
+        "Perimeter": "Perimeter_Edge_Pkg",
+        "Transit": "Transit_Interconnect_Pkg",
+        "DC_Spine": "DC_Spine_VS_Pkg",
+        "DC_Pod": "DC_Pod_Tier_Pkg",
+        "DB_Seg": "DB_Vault_Seg_Pkg",
+        "Partner_DMZ": "Partner_DMZ_Pkg",
+    }
+    domain_idx_map = {dom_name: idx for idx, dom_name in enumerate(USER_DOMAINS, start=1)}
+
+    def _internal_if(name: str, ip_addr: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "ipv4-address": ip_addr,
+            "ipv4-mask-length": 24,
+            "topology": "internal",
+            "topology-settings": {
+                "ip-address-behind-this-interface": "network defined by the interface ip and net mask",
+            },
+            "anti-spoofing": True,
+            "anti-spoofing-settings": {"action": "prevent"},
+        }
+
+    # A. +7 standalone simple gateways across DC_Spine & DC_Pod
+    extra_simple_gws: tuple[tuple[str, str, str, int], ...] = (
+        ("DC_Spine", "dc-spine-oob-gw-01", "uid-dc-spine-oob-gw-01", 1),
+        ("DC_Spine", "dc-spine-oob-gw-02", "uid-dc-spine-oob-gw-02", 2),
+        ("DC_Spine", "dc-spine-scale-gw-03", "uid-dc-spine-scale-gw-03", 3),
+        ("DC_Pod", "dc-pod-bm-gw-01", "uid-dc-pod-bm-gw-01", 1),
+        ("DC_Pod", "dc-pod-bm-gw-02", "uid-dc-pod-bm-gw-02", 2),
+        ("DC_Pod", "dc-pod-vm-gw-03", "uid-dc-pod-vm-gw-03", 3),
+        ("DC_Pod", "dc-pod-maestro-sg-04", "uid-dc-pod-maestro-sg-04", 4),
+    )
+    for dom, gw_name, gw_uid, host_id in extra_simple_gws:
+        d_i = domain_idx_map[dom]
+        ext_ip = f"172.29.{d_i}.{host_id}"
+        int_ip = f"10.{180 + d_i}.{host_id}.1"
+        _add_gw(
+            dom,
+            {
+                "uid": gw_uid,
+                "name": gw_name,
+                "type": "simple-gateway",
+                "ipv4-address": ext_ip,
+                "policy": {"access-policy-installed": True, "access-policy-name": domain_pkg_names[dom]},
+                "interfaces": [
+                    {"name": "eth0", "ipv4-address": ext_ip, "ipv4-mask-length": 24, "topology": "external"},
+                    _internal_if("eth1", int_ip),
+                ],
+            },
+        )
+        cli_outputs[(gw_name, None)] = _make_cli_output(
+            [
+                f"default via 172.29.{d_i}.254 dev eth0 proto static",
+                f"10.{180 + d_i}.{host_id}.0/24 dev eth1 proto kernel scope link src {int_ip}",
+            ]
+        )
+
+    # B. +7 HA clusters + 14 cluster members (+21 assets) across Branch, WAN_Core, Transit, DC_Spine, DC_Pod, DB_Seg
+    extra_clusters: tuple[tuple[str, str, str, str, str, str, str, int, bool], ...] = (
+        (
+            "Branch",
+            "br-hq-cluster-01",
+            "uid-br-hq-cluster-01",
+            "br-hq-node-1a",
+            "uid-br-hq-node-1a",
+            "br-hq-node-1b",
+            "uid-br-hq-node-1b",
+            10,
+            False,
+        ),
+        (
+            "Branch",
+            "br-metro-cluster-02",
+            "uid-br-metro-cluster-02",
+            "br-metro-node-2a",
+            "uid-br-metro-node-2a",
+            "br-metro-node-2b",
+            "uid-br-metro-node-2b",
+            20,
+            False,
+        ),
+        (
+            "WAN_Core",
+            "wan-core-edge-cluster",
+            "uid-wan-core-edge-cluster",
+            "wan-core-edge-1a",
+            "uid-wan-core-edge-1a",
+            "wan-core-edge-1b",
+            "uid-wan-core-edge-1b",
+            10,
+            False,
+        ),
+        (
+            "Transit",
+            "transit-ix-cluster",
+            "uid-transit-ix-cluster",
+            "transit-ix-1a",
+            "uid-transit-ix-1a",
+            "transit-ix-1b",
+            "uid-transit-ix-1b",
+            10,
+            False,
+        ),
+        (
+            "DC_Spine",
+            "dc-spine-core-cluster",
+            "uid-dc-spine-core-cluster",
+            "dc-spine-core-1a",
+            "uid-dc-spine-core-1a",
+            "dc-spine-core-1b",
+            "uid-dc-spine-core-1b",
+            10,
+            False,
+        ),
+        (
+            "DC_Pod",
+            "dc-pod-east-cluster",
+            "uid-dc-pod-east-cluster",
+            "dc-pod-east-1a",
+            "uid-dc-pod-east-1a",
+            "dc-pod-east-1b",
+            "uid-dc-pod-east-1b",
+            10,
+            False,
+        ),
+        (
+            "DB_Seg",
+            "db-seg-vault-cluster",
+            "uid-db-seg-vault-cluster",
+            "db-seg-vault-1a",
+            "uid-db-seg-vault-1a",
+            "db-seg-vault-1b",
+            "uid-db-seg-vault-1b",
+            10,
+            True,
+        ),
+    )
+    for dom, cl_name, cl_uid, m1_name, m1_uid, m2_name, m2_uid, base, internal_only in extra_clusters:
+        d_i = domain_idx_map[dom]
+        if internal_only:
+            vip = f"10.{180 + d_i}.{base}.1"
+            m1_ip, m2_ip = f"10.{180 + d_i}.{base}.11", f"10.{180 + d_i}.{base}.12"
+            ifs = [_internal_if("eth1", vip), _internal_if("eth2", f"10.{180 + d_i}.{base + 10}.1")]
+            routes = [
+                f"10.{180 + d_i}.{base}.0/24 dev eth1 proto kernel scope link src {vip}",
+                f"10.{180 + d_i}.{base + 10}.0/24 dev eth2 proto kernel scope link src 10.{180 + d_i}.{base + 10}.1",
+            ]
+        else:
+            vip = f"172.29.{d_i}.{base}"
+            m1_ip, m2_ip = f"172.29.{d_i}.{base + 1}", f"172.29.{d_i}.{base + 2}"
+            int_ip = f"10.{180 + d_i}.{base}.1"
+            ifs = [
+                {"name": "eth0", "ipv4-address": vip, "ipv4-mask-length": 24, "topology": "external"},
+                _internal_if("eth1", int_ip),
+            ]
+            routes = [
+                f"default via 172.29.{d_i}.254 dev eth0 proto static",
+                f"10.{180 + d_i}.{base}.0/24 dev eth1 proto kernel scope link src {int_ip}",
+            ]
+        m1 = {"uid": m1_uid, "name": m1_name, "type": "cluster-member", "ipv4-address": m1_ip, "cluster-uid": cl_uid}
+        m2 = {"uid": m2_uid, "name": m2_name, "type": "cluster-member", "ipv4-address": m2_ip, "cluster-uid": cl_uid}
+        cl_obj = {
+            "uid": cl_uid,
+            "name": cl_name,
+            "type": "CpmiGatewayCluster",
+            "ipv4-address": vip,
+            "cluster-members": [m1, m2],
+            "policy": {"access-policy-installed": True, "access-policy-name": domain_pkg_names[dom]},
+            "interfaces": ifs,
+        }
+        _add_gw(dom, cl_obj)
+        _add_gw(dom, m1)
+        _add_gw(dom, m2)
+        cli_outputs[(m1_name, None)] = _make_cli_output(routes)
+        cli_outputs[(m2_name, None)] = _make_cli_output(routes)
+
+    # C. +4 VSX chassis hosts & +25 local/cross-domain Virtual Systems (+29 assets)
+    _add_generic(
+        "DC_Spine",
+        "com.checkpoint.objects.vsx_classes.dummy.CpmiVsxSlotObj",
+        {
+            "uid": "uid-slot0-chassis-02",
+            "name": "dc-vsx-chassis-02",
+            "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsxSlotObj",
+            "vsid": 0,
+            "vsxGateway": "uid-dc-vsx-chassis-02",
+        },
+    )
+    extra_vsx_hosts: tuple[tuple[str, str, str, str, str, int], ...] = (
+        ("Regional", "reg-vsx-hub-01", "uid-reg-vsx-hub-01", "uid-slot0-reg-vsx-hub-01", "172.29.2.50", 3),
+        ("Branch", "br-vsx-campus-01", "uid-br-vsx-campus-01", "uid-slot0-br-vsx-campus-01", "172.29.1.50", 4),
+        (
+            "Perimeter",
+            "perim-vsx-chassis-01",
+            "uid-perim-vsx-chassis-01",
+            "uid-slot0-perim-vsx-chassis-01",
+            "172.29.4.50",
+            5,
+        ),
+        ("DC_Pod", "dc-pod-vsx-local-01", "uid-dc-pod-vsx-local-01", "uid-slot0-dc-pod-vsx-local-01", "172.29.7.50", 6),
+    )
+    vsx_host_meta: dict[str, dict[str, Any]] = {
+        "dc-vsx-chassis-01": {
+            "domain": "DC_Spine",
+            "uid": "uid-dc-vsx-chassis-01",
+            "slot0_uid": "uid-slot0-chassis-01",
+            "wrp_idx": 1,
+            "vs_list": chassis1_vs_uids,
+        },
+        "dc-vsx-chassis-02": {
+            "domain": "DC_Spine",
+            "uid": "uid-dc-vsx-chassis-02",
+            "slot0_uid": "uid-slot0-chassis-02",
+            "wrp_idx": 2,
+            "vs_list": chassis2_vs_uids,
+        },
+    }
+    vsx_stat_extra_lines: dict[str, list[str]] = {
+        "dc-vsx-chassis-01": [],
+        "dc-vsx-chassis-02": [
+            "VSX Gateway Status",
+            "==================",
+            "VSID:            0",
+            "Name:            dc-vsx-chassis-02",
+            "Type:            VSX Gateway",
+            *[
+                entry
+                for idx in range(2, 16)
+                for entry in (
+                    "",
+                    f"VSID:            {idx}",
+                    f"Name:            dc-vsx-spine-vs{idx:02d}",
+                    "Type:            Virtual System",
+                )
+            ],
+        ],
+    }
+    for host_dom, host_name, host_uid, slot0_uid, mgmt_ip, wrp_idx in extra_vsx_hosts:
+        vs_uids: list[str] = []
+        vsx_obj = {
+            "uid": host_uid,
+            "name": host_name,
+            "type": "CpmiVsxNetobj",
+            "ipv4-address": mgmt_ip,
+            "virtual-systems": vs_uids,
+        }
+        _add_gw(host_dom, vsx_obj)
+        _add_generic(host_dom, "com.checkpoint.objects.classes.dummy.CpmiVsxNetobj", vsx_obj)
+        _add_generic(
+            host_dom,
+            "com.checkpoint.objects.vsx_classes.dummy.CpmiVsxSlotObj",
+            {
+                "uid": slot0_uid,
+                "name": host_name,
+                "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsxSlotObj",
+                "vsid": 0,
+                "vsxGateway": host_uid,
+            },
+        )
+        vsx_host_meta[host_name] = {
+            "domain": host_dom,
+            "uid": host_uid,
+            "slot0_uid": slot0_uid,
+            "wrp_idx": wrp_idx,
+            "vs_list": vs_uids,
+        }
+        vsx_stat_extra_lines[host_name] = [
+            "VSX Gateway Status",
+            "==================",
+            "VSID:            0",
+            f"Name:            {host_name}",
+            "Type:            VSX Gateway",
+        ]
+
+    extra_virtual_systems: tuple[tuple[str, str, str, str, int, bool], ...] = (
+        ("dc-vsx-chassis-01", "DB_Seg", "db-seg-vs-vault-01", "uid-db-seg-vs-vault-01", 51, True),
+        ("dc-vsx-chassis-01", "DB_Seg", "db-seg-vs-vault-02", "uid-db-seg-vs-vault-02", 52, True),
+        ("dc-vsx-chassis-01", "Partner_DMZ", "partner-vs-extranet-01", "uid-partner-vs-extranet-01", 61, False),
+        ("dc-vsx-chassis-02", "WAN_Core", "wan-vs-backbone-02", "uid-wan-vs-backbone-02", 21, False),
+        ("dc-vsx-chassis-02", "Transit", "transit-vs-ix-01", "uid-transit-vs-ix-01", 22, False),
+        ("dc-vsx-chassis-02", "Transit", "transit-vs-ix-02", "uid-transit-vs-ix-02", 23, False),
+        ("dc-vsx-chassis-02", "Perimeter", "perim-vs-dmz-01", "uid-perim-vs-dmz-01", 31, False),
+        ("dc-vsx-chassis-02", "Perimeter", "perim-vs-dmz-02", "uid-perim-vs-dmz-02", 32, False),
+        ("reg-vsx-hub-01", "Regional", "reg-vs-campus-01", "uid-reg-vs-campus-01", 1, False),
+        ("reg-vsx-hub-01", "Regional", "reg-vs-campus-02", "uid-reg-vs-campus-02", 2, False),
+        ("reg-vsx-hub-01", "Branch", "br-vs-hub-01", "uid-br-vs-hub-01", 11, False),
+        ("reg-vsx-hub-01", "Branch", "br-vs-hub-02", "uid-br-vs-hub-02", 12, False),
+        ("reg-vsx-hub-01", "Branch", "br-vs-hub-03", "uid-br-vs-hub-03", 13, False),
+        ("reg-vsx-hub-01", "WAN_Core", "wan-vs-peering-01", "uid-wan-vs-peering-01", 21, False),
+        ("br-vsx-campus-01", "Branch", "br-vs-guest-01", "uid-br-vs-guest-01", 1, False),
+        ("br-vsx-campus-01", "Branch", "br-vs-iot-02", "uid-br-vs-iot-02", 2, False),
+        ("br-vsx-campus-01", "Regional", "reg-vs-branch-agg-03", "uid-reg-vs-branch-agg-03", 11, False),
+        ("perim-vsx-chassis-01", "Perimeter", "perim-vs-waf-01", "uid-perim-vs-waf-01", 1, False),
+        ("perim-vsx-chassis-01", "Perimeter", "perim-vs-b2c-02", "uid-perim-vs-b2c-02", 2, False),
+        ("perim-vsx-chassis-01", "Partner_DMZ", "partner-vs-b2b-02", "uid-partner-vs-b2b-02", 11, False),
+        ("perim-vsx-chassis-01", "Partner_DMZ", "partner-vs-api-03", "uid-partner-vs-api-03", 12, False),
+        ("perim-vsx-chassis-01", "Transit", "transit-vs-peering-03", "uid-transit-vs-peering-03", 21, False),
+        ("dc-pod-vsx-local-01", "DC_Pod", "dc-pod-local-vs01", "uid-dc-pod-local-vs01", 1, False),
+        ("dc-pod-vsx-local-01", "DC_Pod", "dc-pod-local-vs02", "uid-dc-pod-local-vs02", 2, False),
+        ("dc-pod-vsx-local-01", "DB_Seg", "db-seg-vs-pod-03", "uid-db-seg-vs-pod-03", 11, True),
+    )
+    for host_name, vs_dom, vs_name, vs_uid, vs_id, internal_only in extra_virtual_systems:
+        meta = vsx_host_meta[host_name]
+        meta["vs_list"].append(vs_uid)
+        vs_dom_idx = domain_idx_map[vs_dom]
+        sub_octet = 30 + vs_id
+        int_ip = f"10.{180 + vs_dom_idx}.{sub_octet}.1"
+        if internal_only:
+            sec_ip = f"10.198.{sub_octet}.1"
+            vs_ifs = [_internal_if(f"eth1.{vs_id}", int_ip), _internal_if(f"eth2.{vs_id}", sec_ip)]
+            vs_routes = [
+                f"10.{180 + vs_dom_idx}.{sub_octet}.0/24 dev eth1.{vs_id} proto kernel scope link src {int_ip}",
+                f"10.198.{sub_octet}.0/24 dev eth2.{vs_id} proto kernel scope link src {sec_ip}",
+            ]
+        else:
+            wrp_net = f"192.168.{240 + meta['wrp_idx']}"
+            wrp_ip = f"{wrp_net}.{10 + vs_id}"
+            vs_ifs = [
+                {"name": "wrp0", "ipv4-address": wrp_ip, "ipv4-mask-length": 24, "topology": "external"},
+                _internal_if(f"eth1.{vs_id}", int_ip),
+            ]
+            vs_routes = [
+                f"default via {wrp_net}.1 dev wrp0 proto static",
+                f"10.{180 + vs_dom_idx}.{sub_octet}.0/24 dev eth1.{vs_id} proto kernel scope link src {int_ip}",
+            ]
+        vs_obj = {
+            "uid": vs_uid,
+            "name": vs_name,
+            "type": "CpmiVsNetobj",
+            "vsid": vs_id,
+            "parent-uid": meta["uid"],
+            "vsx-gateway": {"uid": meta["uid"], "name": host_name},
+            "ipv4-address": int_ip,
+            "policy": {"access-policy-installed": True, "access-policy-name": domain_pkg_names[vs_dom]},
+            "interfaces": vs_ifs,
+        }
+        _add_gw(vs_dom, vs_obj)
+        _add_generic(vs_dom, "com.checkpoint.objects.classes.dummy.CpmiVsNetobj", vs_obj)
+        _add_generic(
+            meta["domain"],
+            "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+            {
+                "uid": f"uid-slot-{vs_uid}",
+                "name": f"{host_name}_{vs_name}",
+                "class-name": "com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj",
+                "vsid": vs_id,
+                "vsxGateway": meta["slot0_uid"],
+                "targetCustomer": {"name": vs_dom, "uid": f"uid-dom-{vs_dom.lower()}"},
+            },
+        )
+        cli_outputs[(host_name, vs_id)] = _make_cli_output(vs_routes)
+        vsx_stat_extra_lines[host_name].extend(
+            ["", f"VSID:            {vs_id}", f"Name:            {vs_name}", "Type:            Virtual System"]
+        )
+
+    vsx_stat_outputs["dc-vsx-chassis-01"] = (
+        vsx_stat_outputs["dc-vsx-chassis-01"].rstrip("\n")
+        + "\n"
+        + "\n".join(vsx_stat_extra_lines["dc-vsx-chassis-01"])
+        + "\n"
+    )
+    for host_name, lines in vsx_stat_extra_lines.items():
+        if host_name != "dc-vsx-chassis-01":
+            vsx_stat_outputs[host_name] = "\n".join(lines) + "\n"
+
+    # ------------------------------------------------------------------
     # 12. Bulk Enterprise Objects (2,500+ total objects across all domains)
     # ------------------------------------------------------------------
     for d_idx, dom in enumerate(USER_DOMAINS, start=1):
@@ -2063,19 +2437,6 @@ def generate_enterprise_raw_dataset(
     # ------------------------------------------------------------------
     # 13. Policy Packages, Access Rulebases (1,000+ rules), and NAT Rulebases
     # ------------------------------------------------------------------
-    domain_pkg_names: dict[str, str] = {
-        "Global": "Global_Standard_Pkg",
-        "Branch": "Branch_Standard_Pkg",
-        "Regional": "Regional_Hub_Pkg",
-        "WAN_Core": "WAN_Core_Transit_Pkg",
-        "Perimeter": "Perimeter_Edge_Pkg",
-        "Transit": "Transit_Interconnect_Pkg",
-        "DC_Spine": "DC_Spine_VS_Pkg",
-        "DC_Pod": "DC_Pod_Tier_Pkg",
-        "DB_Seg": "DB_Vault_Seg_Pkg",
-        "Partner_DMZ": "Partner_DMZ_Pkg",
-    }
-
     total_access_rules = 0
     total_nat_rules = 0
 

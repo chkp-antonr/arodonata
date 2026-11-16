@@ -81,6 +81,21 @@
           "uid": "uid-wan-rtr-12",
           "name": "wan-core-rtr-12",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-core-edge-cluster",
+          "name": "wan-core-edge-cluster",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-wan-vs-backbone-02",
+          "name": "wan-vs-backbone-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-wan-vs-peering-01",
+          "name": "wan-vs-peering-01",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [
@@ -175,6 +190,21 @@
           "uid": "uid-wan-rtr-12",
           "name": "wan-core-rtr-12",
           "type": "simple-gateway"
+        },
+        {
+          "uid": "uid-wan-core-edge-cluster",
+          "name": "wan-core-edge-cluster",
+          "type": "CpmiGatewayCluster"
+        },
+        {
+          "uid": "uid-wan-vs-backbone-02",
+          "name": "wan-vs-backbone-02",
+          "type": "CpmiVsNetobj"
+        },
+        {
+          "uid": "uid-wan-vs-peering-01",
+          "name": "wan-vs-peering-01",
+          "type": "CpmiVsNetobj"
         }
       ],
       "access-layers": [
