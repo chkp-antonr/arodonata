@@ -97,7 +97,7 @@ Each persisted `GatewayTopologyEntry` in `arodonata_gateway_topology` SHALL carr
 
 ### Requirement: Live Gateway Route Collection via SSH Dependency Injection and CPRID Fallback
 
-`TopologyService.collect_gateway_routes()` SHALL collect live IPv4 routing tables (`connected_route`, `gaia_static_route`, `clish_route`, `bgp_route`, `ospf_route`, and `0.0.0.0/0` default routes) by invoking an injected `GatewayCliPort` (or async SSH callback in bash) first, and falling back to Check Point Management API `run-script` (`cprid` via `TaskWaiter`) when no SSH executor is provided or when SSH execution fails and `fallback_to_cprid=True`.
+`TopologyService.collect_gateway_routes()` SHALL collect live IPv4 routing tables (`connected_route`, `gaia_static_route`, `clish_route`, `bgp_route`, `ospf_route`, and `0.0.0.0/0` default routes) by invoking an injected `GatewayCliPort` (or async SSH callback in bash) first, and falling back to Check Point Management API `run-script` (`cprid` via `TaskWaiter`) when no SSH executor is provided or when SSH execution fails and `fallback_to_cprid=True`, honoring `cprid_script_mode` (`"inline" | "repository" | "auto"`), `repository_script_name`, and `repository_script_args_fn` overrides (also forwarded from `refresh_topology`, `stream_refresh_topology`, and `reconcile_gateway_topology`).
 
 #### Scenario: Cluster and VSX Virtual System route collection via SSH DI and vsenv context switching
 
@@ -118,6 +118,21 @@ Each persisted `GatewayTopologyEntry` in `arodonata_gateway_topology` SHALL carr
 
 - **WHEN** `collect_gateway_routes()` runs on a gateway whose routing table exceeds `max_routes_per_gateway` (or `10000` kernel routes for `clish`)
 - **THEN** the collection script SHALL skip `clish -c "show route"` when kernel routes exceed `10000` lines, truncate collected routes at `max_routes_per_gateway`, and record a truncation warning in `GatewayRouteCollectionStatus.warnings`
+
+#### Scenario: Repository mode executes canonical pre-approved script across standalone, cluster, and VSX gateways
+
+- **WHEN** `collect_gateway_routes(..., cprid_script_mode="repository")` runs against a standalone gateway, a `CpmiGatewayCluster`, and VSX Virtual Systems (`vsid=3` and `vs_name="VS_DMZ"`) using a restricted account holding `run-repository-script` without `run-one-time-script`
+- **THEN** `TopologyService` SHALL invoke `run-script` with `script-type="repository"`, `script-name=settings.cprid_repository_script_name`, positional `args` (`"<max_routes> <vsid> <vs_name>"`), and zero `"script"`/`"script-base64"` fields, parse all Gaia/Clish/VSX route markers identically to inline mode, and reject/fail closed if the script is missing (`error_code="repository_script_not_found"`) or unauthorized (`error_code="repository_script_permission_denied"`)
+
+#### Scenario: Host application overrides repository script name and positional arguments builder
+
+- **WHEN** a host application invokes `collect_gateway_routes(..., cprid_script_mode="repository", repository_script_name="corp-routes-v2", repository_script_args_fn=custom_fn)`
+- **THEN** `TopologyService` SHALL invoke `"corp-routes-v2"` with `"script-type": "repository"` and forward the string returned by `custom_fn(target, max_routes)` as `"args"`
+
+#### Scenario: Auto mode falls back per domain on missing repository script while preserving strict repository errors
+
+- **WHEN** `collect_gateway_routes(..., cprid_script_mode="auto")` runs across `"DomainA"` (where `arodonata-collect-routes-v1` exists) and `"DomainB"` (where the repository script is absent)
+- **THEN** `"DomainA"` SHALL succeed via `"script-type": "repository"` and `"DomainB"` SHALL fall back automatically to inline `"one time"` execution (caching the per-flight fallback decision for `"DomainB"`), whereas `cprid_script_mode="repository"` SHALL fail `"DomainB"` targets with `error_code="repository_script_not_found"` without sending any inline script
 
 ### Requirement: Targeted Per-Gateway Topology and Route Refresh
 
@@ -201,3 +216,12 @@ During topology extraction, the system SHALL extract each policy-enforcing gatew
 
 - **WHEN** the raw API/CLI fixture for a single gateway is modified to add a new routed subnet and `refresh_topology(gateways=[target_gateway], collect_routes=True)` is invoked
 - **THEN** the replay call counters SHALL confirm that only `target_gateway` was queried via Management API and SSH CLI, and `find_affected_gateways()` SHALL immediately reflect the updated routing graph
+
+### Requirement: Stateful Script Repository and Repository-Mode Run-Script Emulation in FileReplayApiMock
+
+`FileReplayApiMock` SHALL support per-domain `add-repository-script`, `show-repository-script`, `show-repository-scripts`, `set-repository-script`, and `delete-repository-script` (isolated in uncommitted `WorkSession` until `publish`), enforce non-read-only sessions and configurable `run-repository-script` vs `run-one-time-script` permissions on `run-script`, and execute `script-type="repository"` targets using positional `args`.
+
+#### Scenario: End-to-end provisioning and restricted-permission repository execution in FileReplayApiMock
+
+- **WHEN** a test provisions `arodonata-collect-routes-v1` via `ensure_route_collection_script` (verified invisible to other sessions until `publish`) and then configures `FileReplayApiMock` with `allow_one_time_script=False, allow_repository_script=True`
+- **THEN** `collect_gateway_routes(cprid_script_mode="repository")` SHALL succeed across cluster and VSX replay fixtures using `script-type="repository"`, whereas `collect_gateway_routes(cprid_script_mode="inline")` SHALL fail with `error_code="repository_script_permission_denied"`

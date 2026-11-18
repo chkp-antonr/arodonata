@@ -19,6 +19,7 @@ from typing import Any
 import arlogi
 
 from arodonata.core.config import ArodonataSettings
+from arodonata.core.context import SYSTEM_DOMAIN_KEY
 from arodonata.core.errors import (
     ConfigurationError,
     DomainNotFoundError,
@@ -31,8 +32,6 @@ from arodonata.core.ports import ApiPort, CachePort, LockPort
 from arodonata.core.telemetry import span_attrs, traced
 
 logger = arlogi.get_logger(__name__)
-
-SYSTEM_DOMAIN_KEY = "System Data"
 
 _SINGLE_DOMAIN_UNSUPPORTED_TOKENS: tuple[str, ...] = (
     "command_not_found",

@@ -98,6 +98,10 @@ NON_OVERLAY_MUTATION_TARGETS: frozenset[str] = frozenset(
         "administrator",
         "session",
         "trust",
+        "repository-script",
+        "api-key",
+        "md-permissions-profile",
+        "domain-permissions-profile",
     }
 )
 

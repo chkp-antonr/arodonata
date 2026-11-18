@@ -55,3 +55,5 @@ Arodonata v2 uses `ArodonataSettings` (`src/arodonata/core/config.py`) built on 
 | `tls_fingerprints` | `ARODONATA_TLS_FINGERPRINTS` | `str` | `""` | Comma-separated pinned SHA-256 certificate fingerprints (`host:port=SHA256:...` or bare hex) |
 | `cpcrud_schema_path` | `ARODONATA_CPCRUD_SCHEMA_PATH` | `str \| None` | `None` | Optional path override for `checkpoint_ops_schema.json` |
 | `trace_modules` | `ARODONATA_TRACE_MODULES` | `str` | `""` | OpenTelemetry module span gating rules (e.g. `"+arodonata.core,-arodonata.adapters.storage"`) |
+| `cprid_script_mode` | `ARODONATA_CPRID_SCRIPT_MODE` | `"inline" \| "repository" \| "auto"` | `"inline"` | Execution mode for Management API `cprid` `run-script` route collection |
+| `cprid_repository_script_name` | `ARODONATA_CPRID_REPOSITORY_SCRIPT_NAME` | `str` | `"arodonata-collect-routes-v1"` | Default Check Point Script Repository entry used in `"repository"` and `"auto"` modes |

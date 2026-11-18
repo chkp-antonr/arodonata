@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import base64
+import asyncio
 import contextlib
 import ipaddress
 import re
@@ -10,11 +10,23 @@ import shlex
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from arodonata.core.errors import SessionStateError
+from arodonata.core.context import normalize_domain_key
+from arodonata.core.errors import (
+    AuthenticationError,
+    RepositoryScriptError,
+    RepositoryScriptNotFoundError,
+    RepositoryScriptPermissionError,
+    SessionError,
+    SessionStateError,
+    ValidationError,
+    is_script_permission_error,
+    is_unsupported_script_command_error,
+)
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import utc_now
+from arodonata.core.models.scripts import CpridScriptMode, decode_base64_task_message
 from arodonata.core.models.topology import (
     GatewayCliResult,
     GatewayCliTarget,
@@ -23,11 +35,71 @@ from arodonata.core.models.topology import (
     TopologyZone,
 )
 from arodonata.core.ports import ApiPort, GatewayCliCallable, GatewayCliPort
+from arodonata.core.services.script_service import ScriptRepositoryService
 
 MAX_IPV4_INT = 4294967295
 ROUTE_LIMIT_MARKER = "===ARODONATA_ROUTE_LIMIT_REACHED==="
 CLISH_SKIPPED_LARGE_TABLE_MARKER = "===ARODONATA_CLISH_SKIPPED_LARGE_TABLE==="
 DEFAULT_CLISH_SKIP_THRESHOLD = 10000
+DEFAULT_ROUTE_COLLECT_REPOSITORY_SCRIPT_NAME = "arodonata-collect-routes-v1"
+
+RepositoryScriptArgsCallable = Callable[[GatewayCliTarget, int | None], Sequence[str] | str | None]
+
+_UNSAFE_VS_NAME_RE = re.compile(r"[\s\x00-\x1f\x7f'\"\\$`;&|<>()\[\]{}*?!~]")
+
+
+class AutoScriptModeResolver:
+    """Single-flight per-domain resolver for `cprid_script_mode='auto'`."""
+
+    def __init__(self) -> None:
+        self._resolved: dict[tuple[str, str], Literal["repository", "inline"]] = {}
+        self._flights: dict[tuple[str, str], asyncio.Future[Literal["repository", "inline"]]] = {}
+
+    def get_resolved(self, mgmt_name: str, domain_name: str | None) -> Literal["repository", "inline"] | None:
+        """Return the cached script mode decision for `(mgmt_name, domain_name)` if already resolved."""
+        return self._resolved.get((mgmt_name, normalize_domain_key(domain_name)))
+
+    async def acquire_probe_turn(self, mgmt_name: str, domain_name: str | None) -> bool:
+        """Acquire a single per-domain probe slot or await the in-flight probe without holding `mgmt_sem`."""
+        key = (mgmt_name, normalize_domain_key(domain_name))
+        while key not in self._resolved:
+            fut = self._flights.get(key)
+            if fut is None:
+                self._flights[key] = asyncio.get_running_loop().create_future()
+                return True
+            try:
+                await asyncio.shield(fut)
+            except asyncio.CancelledError:
+                cur_task = asyncio.current_task()
+                if not fut.done() or (cur_task is not None and cur_task.cancelling() > 0):
+                    raise
+            except Exception:
+                pass
+        return False
+
+    def resolve_probe(
+        self,
+        mgmt_name: str,
+        domain_name: str | None,
+        mode: Literal["repository", "inline"],
+    ) -> None:
+        """Record the domain's script mode decision and wake waiting targets."""
+        key = (mgmt_name, normalize_domain_key(domain_name))
+        self._resolved[key] = mode
+        fut = self._flights.pop(key, None)
+        if fut is not None and not fut.done():
+            fut.set_result(mode)
+
+    def abort_probe_if_unresolved(self, mgmt_name: str, domain_name: str | None) -> None:
+        """Release the in-flight probe slot if the prober exited before resolving."""
+        key = (mgmt_name, normalize_domain_key(domain_name))
+        if key in self._resolved:
+            return
+        fut = self._flights.pop(key, None)
+        if fut is not None and not fut.done():
+            fut.set_exception(RuntimeError("auto script probe aborted"))
+            fut.exception()
+
 
 _CLISH_PROTOCOL_MAP: dict[str, TopologySourceType] = {
     "C": "connected_route",
@@ -168,6 +240,120 @@ def build_route_collection_script(
     )
 
 
+def build_route_collection_repository_script() -> str:
+    """Build the canonical parameterized bash script (`arodonata-collect-routes-v1`) for Check Point Script Repository.
+
+    Positional arguments (`run-script` `args`):
+    - `$1`: `max_routes` (digits-only; `0` or empty = unlimited)
+    - `$2`: `vsid` (digits-only; `0` or empty = host / non-VSX)
+    - `$3`: `vs_name` (optional Virtual System name resolved dynamically via `vsx stat -l` when `vsid=0`)
+    """
+    return (
+        'max_routes="${1:-0}"\n'
+        'vsid="${2:-0}"\n'
+        'vs_name="${3:-}"\n'
+        'case "$max_routes" in\n'
+        '  ""|*[!0-9]*) echo "_vs_error=invalid max_routes argument"; exit 1 ;;\n'
+        "esac\n"
+        'case "$vsid" in\n'
+        '  ""|*[!0-9]*) echo "_vs_error=invalid vsid argument"; exit 1 ;;\n'
+        "esac\n"
+        'if [ "$vsid" -gt 0 ]; then\n'
+        '  ctx=$(printf "CTX%05d" "$vsid")\n'
+        '  if ! vsenv "$vsid" >/dev/null 2>&1 </dev/null; then\n'
+        '    echo "_vs_error=vsenv $vsid failed"\n'
+        "    exit 1\n"
+        "  fi\n"
+        '  case "$FWDIR" in\n'
+        '    *"$ctx"*) ;;\n'
+        '    *) echo "_vs_error=context not switched (FWDIR=$FWDIR)"; exit 1 ;;\n'
+        "  esac\n"
+        '  echo "===ARODONATA_IP_ROUTE_START==="\n'
+        '  if [ "$max_routes" -gt 0 ]; then\n'
+        '    ip -4 route show 2>/dev/null </dev/null | awk -v lim="$max_routes" '
+        f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
+        "  else\n"
+        "    ip -4 route show 2>/dev/null </dev/null || true\n"
+        "  fi\n"
+        '  echo "===ARODONATA_IP_ROUTE_END==="\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [ -n "$vs_name" ]; then\n'
+        '  vsid=$(vsx stat -l 2>/dev/null </dev/null | awk -v target="$vs_name" '
+        "'/^VSID:/ {id=$2} /^Name:/ && $2 == target {print id; exit}')\n"
+        '  case "$vsid" in\n'
+        '    ""|0|*[!0-9]*) echo "_vs_error=unable to resolve vsid for $vs_name"; exit 1 ;;\n'
+        "  esac\n"
+        '  ctx=$(printf "CTX%05d" "$vsid")\n'
+        '  if ! vsenv "$vsid" >/dev/null 2>&1 </dev/null; then\n'
+        '    echo "_vs_error=vsenv $vsid failed"\n'
+        "    exit 1\n"
+        "  fi\n"
+        '  case "$FWDIR" in\n'
+        '    *"$ctx"*) ;;\n'
+        '    *) echo "_vs_error=context not switched (FWDIR=$FWDIR)"; exit 1 ;;\n'
+        "  esac\n"
+        '  echo "===ARODONATA_VSID_RESOLVED=${vsid}==="\n'
+        '  echo "===ARODONATA_IP_ROUTE_START==="\n'
+        '  if [ "$max_routes" -gt 0 ]; then\n'
+        '    ip -4 route show 2>/dev/null </dev/null | awk -v lim="$max_routes" '
+        f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
+        "  else\n"
+        "    ip -4 route show 2>/dev/null </dev/null || true\n"
+        "  fi\n"
+        '  echo "===ARODONATA_IP_ROUTE_END==="\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$max_routes" -gt 0 ]; then\n'
+        f"  skip_thr={DEFAULT_CLISH_SKIP_THRESHOLD}\n"
+        '  if [ "$max_routes" -lt "$skip_thr" ]; then\n'
+        '    skip_thr="$max_routes"\n'
+        "  fi\n"
+        '  echo "===ARODONATA_IP_ROUTE_START==="\n'
+        "  _ip_rc=0\n"
+        '  ip -4 route show 2>/dev/null </dev/null | awk -v lim="$max_routes" -v thr="$skip_thr" '
+        f'\'NR<=lim {{print}} NR==lim+1 {{print "{ROUTE_LIMIT_MARKER}"; exit 42}} '
+        "END {if (NR>thr) exit 42}' || _ip_rc=$?\n"
+        '  echo "===ARODONATA_IP_ROUTE_END==="\n'
+        '  if [ "$_ip_rc" -eq 42 ]; then\n'
+        f'    echo "{CLISH_SKIPPED_LARGE_TABLE_MARKER}"\n'
+        "  else\n"
+        '    echo "===ARODONATA_CLISH_ROUTE_START==="\n'
+        '    clish -c "show route" 2>/dev/null </dev/null | awk -v lim="$max_routes" '
+        f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
+        '    echo "===ARODONATA_CLISH_ROUTE_END==="\n'
+        "  fi\n"
+        "else\n"
+        '  echo "===ARODONATA_IP_ROUTE_START==="\n'
+        "  ip -4 route show 2>/dev/null </dev/null || true\n"
+        '  echo "===ARODONATA_IP_ROUTE_END==="\n'
+        '  echo "===ARODONATA_CLISH_ROUTE_START==="\n'
+        '  clish -c "show route" 2>/dev/null </dev/null || true\n'
+        '  echo "===ARODONATA_CLISH_ROUTE_END==="\n'
+        "fi\n"
+    )
+
+
+def format_route_collection_repository_args(
+    target: GatewayCliTarget,
+    *,
+    max_routes: int | None = None,
+) -> str:
+    """Format safe positional `args` (`<max_routes> <vsid> [<vs_name>]`) for `arodonata-collect-routes-v1`."""
+    eff_max = int(max_routes) if max_routes is not None and int(max_routes) > 0 else 0
+    eff_vsid = int(target.vsid) if target.vsid is not None and int(target.vsid) > 0 else 0
+    if eff_vsid > 0:
+        return f"{eff_max} {eff_vsid}"
+    if target.vs_name is not None and target.vs_name.strip():
+        clean_vs = target.vs_name.strip()
+        if _UNSAFE_VS_NAME_RE.search(clean_vs):
+            raise ValidationError(
+                f"Unsafe Virtual System name {target.vs_name!r} for repository script positional args."
+            )
+        return f"{eff_max} 0 {clean_vs}"
+    return f"{eff_max} 0"
+
+
 def decode_cprid_task_output(data: dict[str, Any]) -> tuple[bool, str, str]:
     """Extract and Base64-decode `responseMessage` / `responseError` from Check Point `run-script` / `show-task`."""
     if not isinstance(data, dict):
@@ -183,31 +369,6 @@ def decode_cprid_task_output(data: dict[str, Any]) -> tuple[bool, str, str]:
     stderr_parts: list[str] = []
     any_failed = False
 
-    def _maybe_b64_decode(raw_val: str) -> str:
-        cleaned = raw_val.strip()
-        if not cleaned:
-            return ""
-        # If the string already looks like multi-line route output or contains our markers, return as-is
-        if (
-            "===ARODONATA_" in cleaned
-            or "_vs_error=" in cleaned
-            or " dev " in cleaned
-            or " via " in cleaned
-            or "\n" in cleaned
-        ):
-            return raw_val
-        try:
-            padded = cleaned + "=" * ((4 - len(cleaned) % 4) % 4)
-            decoded_bytes = base64.b64decode(padded, validate=False)
-            decoded_str = decoded_bytes.decode("utf-8", errors="replace")
-            if decoded_str and all(
-                ch.isprintable() or ch in ("\n", "\r", "\t") for ch in decoded_str[: min(120, len(decoded_str))]
-            ):
-                return decoded_str
-        except Exception:
-            pass
-        return raw_val
-
     for task in tasks:
         st = str(task.get("status") or "").strip().lower()
         if st and st not in ("succeeded", "ok"):
@@ -219,7 +380,7 @@ def decode_cprid_task_output(data: dict[str, Any]) -> tuple[bool, str, str]:
                     continue
                 resp_msg = detail.get("responseMessage") or detail.get("response-message")
                 if isinstance(resp_msg, str) and resp_msg.strip():
-                    stdout_parts.append(_maybe_b64_decode(resp_msg))
+                    stdout_parts.append(decode_base64_task_message(resp_msg))
                 resp_err = (
                     detail.get("responseError")
                     or detail.get("response-error")
@@ -227,7 +388,7 @@ def decode_cprid_task_output(data: dict[str, Any]) -> tuple[bool, str, str]:
                     or detail.get("error-message")
                 )
                 if isinstance(resp_err, str) and resp_err.strip():
-                    stderr_parts.append(_maybe_b64_decode(resp_err))
+                    stderr_parts.append(decode_base64_task_message(resp_err))
                 status_desc = detail.get("statusDescription")
                 if isinstance(status_desc, str) and status_desc.strip() and not resp_msg:
                     if st and st not in ("succeeded", "ok"):
@@ -238,7 +399,7 @@ def decode_cprid_task_output(data: dict[str, Any]) -> tuple[bool, str, str]:
     # Direct `responseMessage` at top level (some mocks/versions)
     top_msg = data.get("responseMessage") or data.get("response-message") or data.get("output")
     if isinstance(top_msg, str) and top_msg.strip() and not stdout_parts:
-        stdout_parts.append(_maybe_b64_decode(top_msg))
+        stdout_parts.append(decode_base64_task_message(top_msg))
 
     stdout_str = "\n".join(stdout_parts).strip()
     stderr_str = "\n".join(stderr_parts).strip()
@@ -256,6 +417,14 @@ async def execute_gateway_cli(
     fallback_to_cprid: bool = True,
     timeout: float = 30.0,
     cprid_session_getter: Callable[[str, str], Awaitable[tuple[str, str]]] | None = None,
+    cprid_script_mode: CpridScriptMode = "inline",
+    repository_script_name: str = DEFAULT_ROUTE_COLLECT_REPOSITORY_SCRIPT_NAME,
+    repository_script_args_fn: RepositoryScriptArgsCallable | None = None,
+    max_routes: int | None = None,
+    script_service: ScriptRepositoryService | None = None,
+    domain_fallback_inline: dict[tuple[str, str], bool] | None = None,
+    auto_mode_resolver: AutoScriptModeResolver | None = None,
+    preclaimed_auto_probe: bool = False,
 ) -> GatewayCliResult:
     """Execute `script` on `target` via injected `gateway_cli` (SSH) with optional `cprid` `run-script` fallback."""
     ssh_error: str | None = None
@@ -335,42 +504,25 @@ async def execute_gateway_cli(
             error_message=ssh_error or "SSH execution failed",
         )
 
-    # Execute via Check Point Management API `run-script` (`cprid`)
-    payload = {
-        "script-name": f"arodonata-route-collect-{target.gateway_name}",
-        "script": script,
-        "targets": [target.node_uid or target.node_name],
-    }
-    try:
+    async def _run_inline_cprid() -> GatewayCliResult:
+        payload = {
+            "script-name": f"arodonata-route-collect-{target.gateway_name}",
+            "script": script,
+            "targets": [target.node_uid or target.node_name],
+        }
         try:
-            res = await api.api_call(
-                target.mgmt_name,
-                "run-script",
-                payload,
-                domain=target.domain_name,
-                wait_for_task=True,
-                timeout=timeout,
-            )
-        except SessionStateError:
-            if cprid_session_getter is not None:
-                ded_sid, ded_ip = await cprid_session_getter(target.mgmt_name, target.domain_name)
+            try:
                 res = await api.api_call(
                     target.mgmt_name,
                     "run-script",
                     payload,
                     domain=target.domain_name,
-                    sid=ded_sid,
-                    server_ip=ded_ip,
                     wait_for_task=True,
                     timeout=timeout,
                 )
-            else:
-                ded_sid, ded_ip = await api.create_dedicated_session(
-                    target.mgmt_name,
-                    domain=target.domain_name,
-                    session_name="arodonata-route-collect",
-                )
-                try:
+            except SessionStateError:
+                if cprid_session_getter is not None:
+                    ded_sid, ded_ip = await cprid_session_getter(target.mgmt_name, target.domain_name)
                     res = await api.api_call(
                         target.mgmt_name,
                         "run-script",
@@ -381,47 +533,254 @@ async def execute_gateway_cli(
                         wait_for_task=True,
                         timeout=timeout,
                     )
-                finally:
-                    with contextlib.suppress(Exception):
-                        await api.logout_sid(target.mgmt_name, ded_sid, server_ip=ded_ip)
-    except Exception as exc:
-        err_msg = f"run-script failed: {exc}"
-        if ssh_error:
-            err_msg = f"SSH failed ({ssh_error}); cprid fallback failed ({exc})"
-        return GatewayCliResult(
-            success=False,
-            stdout="",
-            stderr=err_msg,
-            exit_code=1,
-            executor="cprid",
-            error_message=err_msg,
-        )
-
-    ok_decode, stdout_str, stderr_str = decode_cprid_task_output(res.data)
-    missing_vsid_res = bool(target.vs_name and target.vsid is None and "===ARODONATA_VSID_RESOLVED=" not in stdout_str)
-    overall_ok = res.success and ok_decode and not missing_vsid_res
-    err_out: str | None = None
-    if not overall_ok:
-        err_out = (
-            stderr_str
-            or res.error_message
-            or (
-                f"Unable to resolve VSID for Virtual System {target.vs_name!r}"
-                if missing_vsid_res
-                else "run-script task did not succeed"
+                else:
+                    ded_sid, ded_ip = await api.create_dedicated_session(
+                        target.mgmt_name,
+                        domain=target.domain_name,
+                        session_name="arodonata-route-collect",
+                    )
+                    try:
+                        res = await api.api_call(
+                            target.mgmt_name,
+                            "run-script",
+                            payload,
+                            domain=target.domain_name,
+                            sid=ded_sid,
+                            server_ip=ded_ip,
+                            wait_for_task=True,
+                            timeout=timeout,
+                        )
+                    finally:
+                        with contextlib.suppress(Exception):
+                            await api.logout_sid(target.mgmt_name, ded_sid, server_ip=ded_ip)
+        except (SessionError, AuthenticationError) as exc:
+            session_err_code = (
+                "repository_script_permission_denied" if is_script_permission_error(None, str(exc)) else None
             )
-        )
-        if ssh_error:
-            err_out = f"SSH failed ({ssh_error}); cprid fallback failed ({err_out})"
+            err_msg = f"run-script failed: {exc}"
+            if ssh_error:
+                err_msg = f"SSH failed ({ssh_error}); cprid fallback failed ({exc})"
+            return GatewayCliResult(
+                success=False,
+                stdout="",
+                stderr=err_msg,
+                exit_code=1,
+                executor="cprid",
+                error_code=session_err_code,
+                error_message=err_msg,
+            )
+        except Exception as exc:
+            err_msg = f"run-script failed: {exc}"
+            if ssh_error:
+                err_msg = f"SSH failed ({ssh_error}); cprid fallback failed ({exc})"
+            return GatewayCliResult(
+                success=False,
+                stdout="",
+                stderr=err_msg,
+                exit_code=1,
+                executor="cprid",
+                error_message=err_msg,
+            )
 
-    return GatewayCliResult(
-        success=overall_ok,
-        stdout=stdout_str,
-        stderr=stderr_str,
-        exit_code=0 if overall_ok else 1,
-        executor="cprid",
-        error_message=err_out,
-    )
+        ok_decode, stdout_str, stderr_str = decode_cprid_task_output(res.data)
+        missing_vsid_res = bool(
+            target.vs_name and target.vsid is None and "===ARODONATA_VSID_RESOLVED=" not in stdout_str
+        )
+        overall_ok = res.success and ok_decode and not missing_vsid_res
+        err_out: str | None = None
+        err_code: str | None = None
+        if not overall_ok:
+            if not res.success and is_script_permission_error(res.error_code, res.error_message):
+                err_code = "repository_script_permission_denied"
+            err_out = (
+                stderr_str
+                or res.error_message
+                or (
+                    f"Unable to resolve VSID for Virtual System {target.vs_name!r}"
+                    if missing_vsid_res
+                    else "run-script task did not succeed"
+                )
+            )
+            if ssh_error:
+                err_out = f"SSH failed ({ssh_error}); cprid fallback failed ({err_out})"
+
+        return GatewayCliResult(
+            success=overall_ok,
+            stdout=stdout_str,
+            stderr=stderr_str,
+            exit_code=0 if overall_ok else 1,
+            executor="cprid",
+            error_code=err_code,
+            error_message=err_out,
+        )
+
+    async def _run_repository_cprid() -> GatewayCliResult:
+        eff_service = script_service or ScriptRepositoryService(api=api)
+        try:
+            args_val = (
+                repository_script_args_fn(target, max_routes)
+                if repository_script_args_fn is not None
+                else format_route_collection_repository_args(target, max_routes=max_routes)
+            )
+        except Exception as exc:
+            err_msg = f"SSH failed ({ssh_error}); cprid fallback failed ({exc})" if ssh_error else str(exc)
+            return GatewayCliResult(
+                success=False,
+                stdout="",
+                stderr=err_msg,
+                exit_code=1,
+                executor="cprid",
+                error_message=err_msg,
+            )
+
+        session_getter_wrapped: Callable[[str, str | None], Awaitable[tuple[str, str]]] | None = None
+        if cprid_session_getter is not None:
+
+            async def _wrapped_getter(m_name: str, d_name: str | None) -> tuple[str, str]:
+                return await cprid_session_getter(m_name, d_name or target.domain_name)
+
+            session_getter_wrapped = _wrapped_getter
+
+        try:
+            outcome = await eff_service.run_repository_script(
+                target.mgmt_name,
+                repository_script_name,
+                [target.node_uid or target.node_name],
+                domain=target.domain_name,
+                args=args_val,
+                timeout=timeout,
+                session_getter=session_getter_wrapped,
+            )
+        except RepositoryScriptNotFoundError as exc:
+            err_msg = f"SSH failed ({ssh_error}); cprid fallback failed ({exc})" if ssh_error else str(exc)
+            return GatewayCliResult(
+                success=False,
+                stdout="",
+                stderr=str(exc),
+                exit_code=1,
+                executor="cprid",
+                error_code="repository_script_not_found",
+                error_message=err_msg,
+            )
+        except RepositoryScriptPermissionError as exc:
+            err_msg = f"SSH failed ({ssh_error}); cprid fallback failed ({exc})" if ssh_error else str(exc)
+            return GatewayCliResult(
+                success=False,
+                stdout="",
+                stderr=str(exc),
+                exit_code=1,
+                executor="cprid",
+                error_code="repository_script_permission_denied",
+                error_message=err_msg,
+            )
+        except RepositoryScriptError as exc:
+            err_msg = f"SSH failed ({ssh_error}); cprid fallback failed ({exc})" if ssh_error else str(exc)
+            err_code = "repository_script_unsupported" if is_unsupported_script_command_error(None, str(exc)) else None
+            return GatewayCliResult(
+                success=False,
+                stdout="",
+                stderr=str(exc),
+                exit_code=1,
+                executor="cprid",
+                error_code=err_code,
+                error_message=err_msg,
+            )
+        except Exception as exc:
+            err_msg = (
+                f"SSH failed ({ssh_error}); cprid fallback failed ({exc})" if ssh_error else f"run-script failed: {exc}"
+            )
+            return GatewayCliResult(
+                success=False,
+                stdout="",
+                stderr=err_msg,
+                exit_code=1,
+                executor="cprid",
+                error_message=err_msg,
+            )
+
+        stdout_str = outcome.stdout
+        stderr_str = outcome.stderr
+        has_vs_err = "_vs_error=" in stdout_str
+        missing_vsid_res = bool(
+            target.vs_name and target.vsid is None and "===ARODONATA_VSID_RESOLVED=" not in stdout_str
+        )
+        overall_ok = outcome.success and not has_vs_err and not missing_vsid_res
+        err_out: str | None = None
+        if not overall_ok:
+            err_out = (
+                (stdout_str.strip() if has_vs_err else None)
+                or stderr_str
+                or outcome.error_message
+                or (
+                    f"Unable to resolve VSID for Virtual System {target.vs_name!r}"
+                    if missing_vsid_res
+                    else "run-script task did not succeed"
+                )
+            )
+            if ssh_error:
+                err_out = f"SSH failed ({ssh_error}); cprid fallback failed ({err_out})"
+
+        return GatewayCliResult(
+            success=overall_ok,
+            stdout=stdout_str,
+            stderr=stderr_str,
+            exit_code=0 if overall_ok else 1,
+            executor="cprid",
+            error_code=None if overall_ok else outcome.error_code,
+            error_message=err_out,
+        )
+
+    if cprid_script_mode == "repository":
+        return await _run_repository_cprid()
+
+    if cprid_script_mode == "auto":
+        if auto_mode_resolver is not None:
+            resolved = auto_mode_resolver.get_resolved(target.mgmt_name, target.domain_name)
+            if resolved == "inline":
+                return await _run_inline_cprid()
+            if resolved == "repository":
+                return await _run_repository_cprid()
+
+            is_prober = preclaimed_auto_probe or await auto_mode_resolver.acquire_probe_turn(
+                target.mgmt_name,
+                target.domain_name,
+            )
+            if not is_prober:
+                resolved = auto_mode_resolver.get_resolved(target.mgmt_name, target.domain_name)
+                if resolved == "inline":
+                    return await _run_inline_cprid()
+                return await _run_repository_cprid()
+
+            try:
+                repo_res = await _run_repository_cprid()
+                should_fallback = repo_res.error_code in (
+                    "repository_script_not_found",
+                    "repository_script_unsupported",
+                )
+                auto_mode_resolver.resolve_probe(
+                    target.mgmt_name,
+                    target.domain_name,
+                    "inline" if should_fallback else "repository",
+                )
+                if should_fallback:
+                    if domain_fallback_inline is not None:
+                        domain_fallback_inline[(target.mgmt_name, target.domain_name)] = True
+                    return await _run_inline_cprid()
+                return repo_res
+            finally:
+                auto_mode_resolver.abort_probe_if_unresolved(target.mgmt_name, target.domain_name)
+
+        dom_key = (target.mgmt_name, target.domain_name)
+        if domain_fallback_inline is not None and domain_fallback_inline.get(dom_key):
+            return await _run_inline_cprid()
+        repo_res = await _run_repository_cprid()
+        if repo_res.error_code in ("repository_script_not_found", "repository_script_unsupported"):
+            if domain_fallback_inline is not None:
+                domain_fallback_inline[dom_key] = True
+            return await _run_inline_cprid()
+        return repo_res
+
+    return await _run_inline_cprid()
 
 
 def parse_ip_route_show(output: str) -> list[ParsedCliRoute]:

@@ -250,6 +250,7 @@ class GatewayCliResult(BaseModel):
     stderr: str = ""
     exit_code: int = 0
     executor: Literal["ssh", "cprid"] = "ssh"
+    error_code: str | None = None
     error_message: str | None = None
 
 
@@ -270,6 +271,7 @@ class GatewayRouteCollectionStatus(BaseModel):
     routes_collected: int = 0
     member_drift_detected: bool = False
     warnings: list[str] = Field(default_factory=list)
+    error_code: str | None = None
     error: str | None = None
 
     def model_post_init(self, __context: Any) -> None:

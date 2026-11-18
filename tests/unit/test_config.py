@@ -289,3 +289,45 @@ def test_cpcrud_naming_prefixes_secondary_cpcrud_fallback_and_constructor_overri
     monkeypatch.setenv("ARODONATA_CPCRUD_RANGE_COMPRESS_OCTETS", "maybe")
     with pytest.raises(ConfigurationError, match="Invalid boolean"):
         ArodonataSettings()
+
+
+def test_cprid_repository_script_settings_precedence_and_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify cprid_script_mode and cprid_repository_script_name defaults, precedence, no-.env, and validation."""
+    from pydantic import ValidationError as PydanticValidationError
+
+    # Create a .env file in cwd that must NOT be loaded implicitly
+    (tmp_path / ".env").write_text(
+        'ARODONATA_CPRID_SCRIPT_MODE="repository"\nARODONATA_CPRID_REPOSITORY_SCRIPT_NAME="dotenv-ignored"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    defaults = ArodonataSettings()
+    assert defaults.cprid_script_mode == "inline"
+    assert defaults.cprid_repository_script_name == "arodonata-collect-routes-v1"
+
+    monkeypatch.setenv("ARODONATA_CPRID_SCRIPT_MODE", "repository")
+    monkeypatch.setenv("ARODONATA_CPRID_REPOSITORY_SCRIPT_NAME", "custom-routes-script")
+    from_env = ArodonataSettings()
+    assert from_env.cprid_script_mode == "repository"
+    assert from_env.cprid_repository_script_name == "custom-routes-script"
+
+    from_kwargs = ArodonataSettings(cprid_script_mode="auto", cprid_repository_script_name="  corp-routes  ")
+    assert from_kwargs.cprid_script_mode == "auto"
+    assert from_kwargs.cprid_repository_script_name == "corp-routes"
+
+    with pytest.raises(PydanticValidationError):
+        ArodonataSettings(cprid_script_mode="ssh-only")  # type: ignore[arg-type]
+
+    with pytest.raises(PydanticValidationError):
+        ArodonataSettings(cprid_repository_script_name="")
+
+    with pytest.raises(PydanticValidationError):
+        ArodonataSettings(cprid_repository_script_name="   ")
+
+    monkeypatch.setenv("ARODONATA_CPRID_REPOSITORY_SCRIPT_NAME", "   ")
+    with pytest.raises(PydanticValidationError):
+        ArodonataSettings()

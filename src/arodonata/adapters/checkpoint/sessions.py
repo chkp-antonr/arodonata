@@ -32,10 +32,12 @@ from arodonata.adapters.checkpoint.rate_limiter import LoginGate, RateLimiter
 from arodonata.adapters.checkpoint.transport import ApiTransport, derive_session_pool_scope
 from arodonata.core.config import ArodonataSettings, ServerEndpointConfig
 from arodonata.core.context import (
+    SYSTEM_DOMAIN_KEY,
     AuthContext,
     UserContext,
     get_auth_context,
     get_user_context,
+    normalize_domain_key,
 )
 from arodonata.core.errors import (
     ApiTimeoutError,
@@ -54,7 +56,7 @@ from arodonata.core.telemetry import span_attrs, traced
 
 logger = arlogi.get_logger(__name__)
 
-SYSTEM_DOMAIN_SENTINEL = "System Data"
+SYSTEM_DOMAIN_SENTINEL = SYSTEM_DOMAIN_KEY
 
 
 def _canonicalize_host(host: str) -> str:
@@ -93,13 +95,6 @@ async def _resolve_hostname_ips(host: str) -> set[str]:
             if isinstance(sockaddr, tuple) and sockaddr and isinstance(sockaddr[0], str):
                 resolved.add(_canonicalize_host(sockaddr[0]))
     return resolved
-
-
-def normalize_domain_key(domain: str | None) -> str:
-    """Normalize `domain=None` or `""` to `'System Data'` for `sid_cache` keys."""
-    if not domain or not domain.strip():
-        return SYSTEM_DOMAIN_SENTINEL
-    return domain.strip()
 
 
 def is_session_expired_result(result: ApiCallResult, *, command: str | None = None) -> bool:

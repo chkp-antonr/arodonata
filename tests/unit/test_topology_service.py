@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -3743,3 +3744,709 @@ async def test_smart_refresh_topology_revalidates_cached_group_after_publish_and
             if e.interface_name == "eth2"
         }
         assert eth2_after == {"10.220.1.0/24", "10.220.2.0/24"}
+
+
+def test_repository_route_collection_script_bash_parity_and_injection_safety(tmp_path: Path) -> None:
+    """Verify build_route_collection_repository_script() bash execution parity, >10000 clish skip, and injection guards."""
+    import os
+    import stat
+    import subprocess
+
+    from arodonata.core.errors import ValidationError
+    from arodonata.core.models.topology import GatewayCliTarget
+    from arodonata.core.services.route_collector import (
+        CLISH_SKIPPED_LARGE_TABLE_MARKER,
+        DEFAULT_ROUTE_COLLECT_REPOSITORY_SCRIPT_NAME,
+        build_route_collection_repository_script,
+        build_route_collection_script,
+        format_route_collection_repository_args,
+        parse_combined_cli_routes_with_status,
+    )
+
+    assert DEFAULT_ROUTE_COLLECT_REPOSITORY_SCRIPT_NAME == "arodonata-collect-routes-v1"
+
+    # 1. Positional arg formatting & strict vs_name validation
+    gw_target = GatewayCliTarget(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        gateway_uid="u-gw",
+        gateway_name="gw-01",
+        gateway_type="simple-gateway",
+        node_uid="u-gw",
+        node_name="gw-01",
+    )
+    assert format_route_collection_repository_args(gw_target, max_routes=50000) == "50000 0"
+    assert format_route_collection_repository_args(gw_target, max_routes=None) == "0 0"
+
+    vs_id_target = gw_target.model_copy(update={"vsid": 3, "vs_name": "VS_3"})
+    assert format_route_collection_repository_args(vs_id_target, max_routes=1000) == "1000 3"
+
+    vs_name_target = gw_target.model_copy(update={"vsid": None, "vs_name": "VS_DMZ"})
+    assert format_route_collection_repository_args(vs_name_target, max_routes=1000) == "1000 0 VS_DMZ"
+
+    for bad_vs in ("VS; id", "VS$(whoami)", "VS name", "VS`id`", "VS\\n1", "VS|cat"):
+        bad_target = gw_target.model_copy(update={"vsid": None, "vs_name": bad_vs})
+        with pytest.raises(ValidationError):
+            format_route_collection_repository_args(bad_target, max_routes=100)
+
+    # 2. Stub binaries in tmp_path/bin to run real bash against both inline and repository scripts
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    clish_called_flag = tmp_path / "clish_called"
+    pwn_marker = tmp_path / "pwned"
+
+    def _write_exec(name: str, body: str) -> None:
+        path = bin_dir / name
+        path.write_text("#!/bin/bash\n" + body, encoding="utf-8")
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+    _write_exec(
+        "ip",
+        """
+if [ "${FAKE_LARGE_TABLE:-0}" = "1" ]; then
+  awk 'BEGIN { for (i=0; i<10005; i++) printf "10.%d.%d.0/24 dev eth1 proto kernel\\n", int(i/256), i%256 }'
+elif [ "${FWDIR:-}" = "/opt/CTX00003" ]; then
+  echo "172.16.3.0/24 dev eth1.3 proto kernel scope link src 172.16.3.1"
+  echo "default via 172.16.3.254 dev eth1.3 proto static"
+elif [ "${FWDIR:-}" = "/opt/CTX00012" ]; then
+  echo "172.16.12.0/24 dev eth2.12 proto kernel scope link src 172.16.12.1"
+else
+  echo "default via 203.0.113.1 dev eth0 proto static"
+  echo "10.10.1.0/24 dev eth1 proto kernel scope link src 10.10.1.1"
+  echo "10.88.0.0/16 via 10.10.1.254 dev eth1 proto bgp metric 20"
+fi
+""",
+    )
+    _write_exec(
+        "clish",
+        f"""
+touch "{clish_called_flag}"
+echo "C 10.10.1.0/24 is directly connected, eth1"
+echo "B 10.88.0.0/16 via 10.10.1.254, eth1, cost 20, age 50"
+echo "O 10.90.0.0/16 via 10.10.1.252, eth1, cost 10, age 30"
+""",
+    )
+    _write_exec(
+        "vsx",
+        """
+cat <<'EOF'
+VSID: 3
+Name: VS_BLUE
+VSID: 12
+Name: VS_DMZ
+EOF
+""",
+    )
+    # Provide vsenv helper sourced or invoked: since vsenv modifies $FWDIR in real Check Point shell,
+    # wrap repo script with a bash function vsenv() just like Gaia's /etc/profile.d/vsx.sh!
+    vsenv_preamble = (
+        'vsenv() { local v="$1"; if [ "$v" = "3" ]; then export FWDIR="/opt/CTX00003"; return 0; fi; '
+        'if [ "$v" = "12" ]; then export FWDIR="/opt/CTX00012"; return 0; fi; return 1; }\n'
+    )
+
+    repo_script_file = tmp_path / "repo_collect.sh"
+    repo_script_file.write_text(vsenv_preamble + build_route_collection_repository_script(), encoding="utf-8")
+
+    env_base = dict(os.environ)
+    env_base["PATH"] = f"{bin_dir}:{env_base.get('PATH', '')}"
+
+    def _run_bash(script_path: Path, *args: str, large: bool = False) -> subprocess.CompletedProcess[str]:
+        run_env = dict(env_base)
+        run_env["FAKE_LARGE_TABLE"] = "1" if large else "0"
+        return subprocess.run(
+            ["/bin/bash", str(script_path), *args],
+            capture_output=True,
+            text=True,
+            env=run_env,
+            check=False,
+        )
+
+    # Parity check 1: Gaia standalone / cluster member
+    inline_gw_file = tmp_path / "inline_gw.sh"
+    inline_gw_file.write_text(build_route_collection_script(max_routes=50000), encoding="utf-8")
+    res_inline = _run_bash(inline_gw_file)
+    res_repo = _run_bash(repo_script_file, "50000", "0")
+    assert res_inline.returncode == 0
+    assert res_repo.returncode == 0
+    routes_inline, trunc_inline = parse_combined_cli_routes_with_status(res_inline.stdout, max_routes=50000)
+    routes_repo, trunc_repo = parse_combined_cli_routes_with_status(res_repo.stdout, max_routes=50000)
+    assert trunc_inline is False and trunc_repo is False
+    assert [(r.interface_name, str(r.destination), r.source_type) for r in routes_repo] == [
+        (r.interface_name, str(r.destination), r.source_type) for r in routes_inline
+    ]
+
+    # Parity check 2: VSX explicit vsid=3
+    res_vs3 = _run_bash(repo_script_file, "50000", "3")
+    assert res_vs3.returncode == 0
+    routes_vs3, _ = parse_combined_cli_routes_with_status(res_vs3.stdout, max_routes=50000)
+    assert {(r.interface_name, str(r.destination)) for r in routes_vs3} == {
+        ("eth1.3", "172.16.3.0/24"),
+        ("eth1.3", "0.0.0.0/0"),
+    }
+
+    # Parity check 3: VSX dynamic vs_name="VS_DMZ"
+    res_vs_name = _run_bash(repo_script_file, "50000", "0", "VS_DMZ")
+    assert res_vs_name.returncode == 0
+    assert "===ARODONATA_VSID_RESOLVED=12===" in res_vs_name.stdout
+    routes_vs12, _ = parse_combined_cli_routes_with_status(res_vs_name.stdout, max_routes=50000)
+    assert [(r.interface_name, str(r.destination)) for r in routes_vs12] == [("eth2.12", "172.16.12.0/24")]
+
+    # Parity check 4: >10000 kernel routes skips clish cleanly
+    clish_called_flag.unlink(missing_ok=True)
+    res_large = _run_bash(repo_script_file, "50000", "0", large=True)
+    assert res_large.returncode == 0
+    assert CLISH_SKIPPED_LARGE_TABLE_MARKER in res_large.stdout
+    assert not clish_called_flag.exists()
+
+    # Injection / validation guards inside bash
+    res_bad_max = _run_bash(repo_script_file, f"10; touch {pwn_marker}", "0")
+    assert res_bad_max.returncode != 0
+    assert "_vs_error=invalid max_routes argument" in res_bad_max.stdout
+    assert not pwn_marker.exists()
+
+    res_bad_vsid = _run_bash(repo_script_file, "100", f"3; touch {pwn_marker}")
+    assert res_bad_vsid.returncode != 0
+    assert "_vs_error=invalid vsid argument" in res_bad_vsid.stdout
+    assert not pwn_marker.exists()
+
+    res_inj_vsname = _run_bash(repo_script_file, "100", "0", f"VS_DMZ; touch {pwn_marker}")
+    assert res_inj_vsname.returncode != 0
+    assert "_vs_error=unable to resolve vsid" in res_inj_vsname.stdout
+    assert not pwn_marker.exists()
+
+    res_subshell_vsname = _run_bash(repo_script_file, "100", "0", f"$(touch {pwn_marker})")
+    assert res_subshell_vsname.returncode != 0
+    assert not pwn_marker.exists()
+
+
+@pytest.mark.asyncio
+async def test_execute_gateway_cli_repository_and_auto_modes() -> None:
+    """Verify execute_gateway_cli handles inline, repository, auto fallback, and custom args hook."""
+    from arodonata.core.models.topology import GatewayCliTarget
+    from arodonata.core.services.route_collector import (
+        build_route_collection_repository_script,
+        build_route_collection_script,
+        execute_gateway_cli,
+    )
+    from arodonata.testing import FileReplayApiMock
+
+    api_mock = FileReplayApiMock()
+    target = GatewayCliTarget(
+        mgmt_name="mds",
+        domain_name="Branch",
+        gateway_uid="uid-branch-gw-001",
+        gateway_name="br-spb-gw-01",
+        gateway_type="simple-gateway",
+        node_uid="uid-branch-gw-001",
+        node_name="br-spb-gw-01",
+    )
+    inline_script = build_route_collection_script(max_routes=50000)
+
+    # 1. Repository mode fails closed with repository_script_not_found when script missing
+    missing_res = await execute_gateway_cli(
+        target,
+        inline_script,
+        api=api_mock,
+        cprid_script_mode="repository",
+        max_routes=50000,
+    )
+    assert missing_res.success is False
+    assert missing_res.error_code == "repository_script_not_found"
+    assert api_mock.command_counts["run-script"] == 1
+
+    # 2. Auto mode falls back to inline when script missing and caches per-domain decision
+    fallback_cache: dict[tuple[str, str], bool] = {}
+    auto_fallback = await execute_gateway_cli(
+        target,
+        inline_script,
+        api=api_mock,
+        cprid_script_mode="auto",
+        max_routes=50000,
+        domain_fallback_inline=fallback_cache,
+    )
+    assert auto_fallback.success is True
+    assert fallback_cache[("mds", "Branch")] is True
+    assert "===ARODONATA_IP_ROUTE_START===" in auto_fallback.stdout
+
+    # Subsequent auto call in same domain skips repository attempt directly to inline
+    api_mock.reset_counters()
+    auto_cached = await execute_gateway_cli(
+        target,
+        inline_script,
+        api=api_mock,
+        cprid_script_mode="auto",
+        max_routes=50000,
+        domain_fallback_inline=fallback_cache,
+    )
+    assert auto_cached.success is True
+    assert api_mock.command_counts["run-script"] == 1
+
+    # 3. Provision custom script and test repository_script_args_fn hook
+    from arodonata import ArodonataClient, ArodonataSettings
+
+    settings = ArodonataSettings(mgmt_name="mds", mgmt_ip="127.0.0.1", api_key="mock-key")
+    async with ArodonataClient(settings=settings, api=api_mock) as client:
+        await client.ensure_repository_script(
+            "mds",
+            "corp-routes-v2",
+            build_route_collection_repository_script(),
+            domain="Branch",
+        )
+
+    api_mock.allow_one_time_script = False
+    api_mock.reset_counters()
+    custom_res = await execute_gateway_cli(
+        target,
+        inline_script,
+        api=api_mock,
+        cprid_script_mode="repository",
+        repository_script_name="corp-routes-v2",
+        repository_script_args_fn=lambda t, mr: f"{mr or 0} 0",
+        max_routes=25000,
+    )
+    assert custom_res.success is True
+    repo_calls = api_mock.get_calls(domain="Branch", command="run-script")
+    assert len(repo_calls) == 1
+    assert repo_calls[0]["payload"]["script-name"] == "corp-routes-v2"
+    assert repo_calls[0]["payload"]["script-type"] == "repository"
+    assert repo_calls[0]["payload"]["args"] == "25000 0"
+    assert "script" not in repo_calls[0]["payload"]
+
+
+@pytest.mark.asyncio
+async def test_topology_service_repository_mode_auto_fallback_and_custom_overrides() -> None:
+    """Verify TopologyService & ArodonataClient repository collection, restricted permissions, auto fallback, and custom overrides."""
+    from arodonata import ArodonataClient, ArodonataSettings
+    from arodonata.core.services.route_collector import build_route_collection_repository_script
+    from arodonata.testing import FileReplayApiMock
+
+    api_mock = FileReplayApiMock()
+    settings = ArodonataSettings(
+        mgmt_name="mds",
+        mgmt_ip="127.0.0.1",
+        api_key="mock-key",
+        database_url="sqlite+aiosqlite:///:memory:",
+    )
+
+    async with ArodonataClient(settings=settings, api=api_mock) as client:
+        # Warm assets for Branch (standalone), Regional (cluster + gateways), and DC_Spine (VSX)
+        await client.refresh_assets(mgmt_name="mds", domains=["Branch", "Regional", "DC_Spine"], mode="force")
+
+        # 1. Convenience helpers: check -> ensure -> check unchanged
+        pre_check = await client.check_route_collection_script("mds", "Branch")
+        assert pre_check.exists is False
+        assert pre_check.error_code == "repository_script_not_found"
+
+        for dom in ("Branch", "DC_Spine"):
+            ensured = await client.ensure_route_collection_script("mds", dom)
+            assert ensured.action == "created"
+            assert ensured.published is True
+
+        post_check = await client.check_route_collection_script("mds", "Branch")
+        assert post_check.exists is True
+        assert post_check.matches_expected is True
+
+        # 2. Restrict permissions: allow_one_time_script=False, allow_repository_script=True, manage_repository_scripts="read"
+        api_mock.allow_one_time_script = False
+        api_mock.allow_repository_script = True
+        api_mock.manage_repository_scripts = "read"
+        api_mock.reset_counters()
+
+        # Repository mode succeeds across standalone (`Branch`) and VSX (`DC_Spine`)
+        repo_out = await client.collect_gateway_routes(
+            mgmt_name="mds",
+            domains=["Branch", "DC_Spine"],
+            gateways=["br-spb-gw-01", "dc-vsx-spine-vs01"],
+            cprid_script_mode="repository",
+        )
+        assert repo_out.total_gateways == 2
+        assert repo_out.succeeded_gateways == 2
+        assert repo_out.failed_gateways == 0
+        assert repo_out.total_routes > 0
+
+        for call in api_mock.get_calls(command="run-script"):
+            assert call["payload"]["script-type"] == "repository"
+            assert "script" not in call["payload"]
+            assert "script-base64" not in call["payload"]
+
+        # Inline mode fails closed with repository_script_permission_denied
+        inline_fail = await client.collect_gateway_routes(
+            mgmt_name="mds",
+            domain="Branch",
+            gateways=["br-spb-gw-01"],
+            cprid_script_mode="inline",
+        )
+        assert inline_fail.failed_gateways == 1
+        assert inline_fail.gateways[0].error_code == "repository_script_permission_denied"
+
+        # Repository mode on unprovisioned domain (`Regional`) fails closed with repository_script_not_found
+        api_mock.reset_counters()
+        missing_out = await client.collect_gateway_routes(
+            mgmt_name="mds",
+            domain="Regional",
+            gateways=["reg-nw-cluster"],
+            cprid_script_mode="repository",
+        )
+        assert missing_out.failed_gateways == 1
+        assert missing_out.gateways[0].error_code == "repository_script_not_found"
+        # Strictly zero inline fallback calls
+        assert all(
+            c["payload"].get("script-type") == "repository"
+            for c in api_mock.get_calls(domain="Regional", command="run-script")
+        )
+
+        # 3. Auto mode: allow both, Branch provisioned, Regional unprovisioned -> Branch uses repository, Regional caches fallback to inline
+        api_mock.allow_one_time_script = True
+        api_mock.allow_repository_script = True
+        api_mock.manage_repository_scripts = "write"
+        api_mock.reset_counters()
+
+        auto_out = await client.collect_gateway_routes(
+            mgmt_name="mds",
+            domains=["Branch", "Regional"],
+            gateways=["br-spb-gw-01", "reg-hub-gw-02", "reg-hub-gw-03"],
+            cprid_script_mode="auto",
+        )
+        assert auto_out.succeeded_gateways == 3
+        assert auto_out.failed_gateways == 0
+
+        branch_runs = api_mock.get_calls(domain="Branch", command="run-script")
+        assert len(branch_runs) == 1
+        assert branch_runs[0]["payload"]["script-type"] == "repository"
+
+        regional_runs = api_mock.get_calls(domain="Regional", command="run-script")
+        # Exactly 1 failed repository probe + 2 inline runs (per-domain fallback cached after 1st probe!)
+        failed_reg_repo = [c for c in regional_runs if c["payload"].get("script-type") == "repository"]
+        inline_reg = [c for c in regional_runs if c["payload"].get("script-type") != "repository"]
+        assert len(failed_reg_repo) == 1
+        assert len(inline_reg) == 2
+
+        # 4. Custom repository script name + custom args hook wired through refresh_topology and reconcile_gateway_topology
+        await client.ensure_repository_script(
+            "mds",
+            "corp-routes-v2",
+            build_route_collection_repository_script(),
+            domain="Regional",
+        )
+        api_mock.allow_one_time_script = False
+        api_mock.reset_counters()
+
+        refresh_out = await client.refresh_topology(
+            mgmt_name="mds",
+            domains=["Regional"],
+            gateways=["reg-nw-cluster"],
+            collect_routes=True,
+            mode="force",
+            cprid_script_mode="repository",
+            repository_script_name="corp-routes-v2",
+            repository_script_args_fn=lambda target, mr: f"{mr or 0} 0",
+        )
+        assert "mds:Regional" in refresh_out.refreshed_domains
+        reg_custom_calls = api_mock.get_calls(domain="Regional", command="run-script")
+        assert len(reg_custom_calls) == 2  # 2 cluster members: reg-nw-node-1 & reg-nw-node-2
+        assert all(c["payload"]["script-name"] == "corp-routes-v2" for c in reg_custom_calls)
+
+        reconcile_report = await client.reconcile_gateway_topology(
+            mgmt_name="mds",
+            domain="Regional",
+            gateways=["reg-nw-cluster"],
+            collect_routes=True,
+            cache_mode="cache",
+            cprid_script_mode="repository",
+            repository_script_name="corp-routes-v2",
+            repository_script_args_fn=lambda target, mr: f"{mr or 0} 0",
+        )
+        assert reconcile_report.gateway_count == 1
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_single_flight_concurrency_stale_target_and_permission_mapping() -> None:
+    """Verify AutoScriptModeResolver avoids semaphore starvation/serialization, ignores stale target not-found fallback, and propagates session/DMS permission codes."""
+    import asyncio
+    import base64
+
+    from arodonata.core.errors import SessionError
+    from arodonata.core.models.common import utc_now
+
+    settings = ArodonataSettings(
+        mgmt_name="mds",
+        mgmt_ip="127.0.0.1",
+        api_key="mock-key",
+        database_url="sqlite+aiosqlite:///:memory:",
+    )
+    db = DatabaseManager(engine=None)
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    locks = SqlLockAdapter(db)
+
+    now_dt = utc_now()
+    sample_stdout = (
+        "===ARODONATA_IP_ROUTE_START===\n"
+        "10.10.0.0/24 dev eth0 proto kernel scope link src 10.10.0.1\n"
+        "===ARODONATA_IP_ROUTE_END===\n"
+    )
+    b64_ok = base64.b64encode(sample_stdout.encode()).decode("ascii")
+
+    assets = [
+        Asset(
+            mgmt_name="mds",
+            domain_name="Branch",
+            id="mds:Branch:uid-br-1",
+            asset_id="asset-br-1",
+            uid="uid-br-1",
+            name="br-gw-1",
+            type="simple-gateway",
+            ipv4_address="10.0.1.1",
+            firewall_blade=True,
+            updated_at=now_dt,
+        ),
+        Asset(
+            mgmt_name="mds",
+            domain_name="Branch",
+            id="mds:Branch:uid-br-2",
+            asset_id="asset-br-2",
+            uid="uid-br-2",
+            name="br-gw-2",
+            type="simple-gateway",
+            ipv4_address="10.0.1.2",
+            firewall_blade=True,
+            updated_at=now_dt,
+        ),
+        Asset(
+            mgmt_name="mds",
+            domain_name="Branch",
+            id="mds:Branch:uid-br-3",
+            asset_id="asset-br-3",
+            uid="uid-br-3",
+            name="br-gw-3",
+            type="simple-gateway",
+            ipv4_address="10.0.1.3",
+            firewall_blade=True,
+            updated_at=now_dt,
+        ),
+        Asset(
+            mgmt_name="mds",
+            domain_name="Regional",
+            id="mds:Regional:uid-reg-1",
+            asset_id="asset-reg-1",
+            uid="uid-reg-1",
+            name="reg-gw-1",
+            type="simple-gateway",
+            ipv4_address="10.0.2.1",
+            firewall_blade=True,
+            updated_at=now_dt,
+        ),
+    ]
+    await cache.replace_domain_assets("mds", "Branch", [a for a in assets if a.domain_name == "Branch"])
+    await cache.replace_domain_assets("mds", "Regional", [a for a in assets if a.domain_name == "Regional"])
+
+    branch_probe_entered = asyncio.Event()
+    release_branch_probe = asyncio.Event()
+    regional_finished = asyncio.Event()
+
+    branch_post_probe_inflight = 0
+    branch_post_probe_max = 0
+    branch_probed_target: str | None = None
+
+    class _ConcurrentAutoApi:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+            self.stale_targets: set[str] = set()
+            self.deny_session_domains: set[str] = set()
+            self.dms_inline_permission_error: bool = False
+            self._sid_seq = 0
+
+        async def api_query(
+            self,
+            mgmt_name: str,
+            command: str,
+            *,
+            domain: str | None = None,
+            details_level: str = "standard",
+            payload: dict[str, Any] | None = None,
+            sid: str | None = None,
+            server_ip: str | None = None,
+            limit: int = 300,
+        ) -> ApiQueryResult:
+            return ApiQueryResult(success=True, objects=[], total=0)
+
+        async def create_dedicated_session(
+            self,
+            mgmt_name: str,
+            domain: str | None = None,
+            *,
+            auth: Any = None,
+            session_name: str | None = None,
+            session_description: str | None = None,
+        ) -> tuple[str, str]:
+            if (domain or "") in self.deny_session_domains:
+                raise SessionError("Permission denied: administrator lacks permission profile")
+            self._sid_seq += 1
+            return f"ded-{self._sid_seq}", "127.0.0.1"
+
+        async def api_call(
+            self,
+            mgmt_name: str,
+            command: str,
+            payload: dict[str, Any] | None = None,
+            *,
+            domain: str | None = None,
+            sid: str | None = None,
+            server_ip: str | None = None,
+            wait_for_task: bool = True,
+            timeout: float | None = None,
+        ) -> ApiCallResult:
+            nonlocal branch_post_probe_inflight, branch_post_probe_max, branch_probed_target
+            req = dict(payload or {})
+            self.calls.append({"command": command, "domain": domain, "payload": req})
+
+            if command != "run-script":
+                return ApiCallResult(success=True, status_code=200, data={})
+
+            targets = list(req.get("targets") or [])
+            tgt = str(targets[0]) if targets else ""
+
+            if tgt in self.stale_targets:
+                return ApiCallResult(
+                    success=False,
+                    status_code=404,
+                    error_code="generic_err_object_not_found",
+                    error_message=f"Requested object [{tgt}] not found",
+                    data={"code": "generic_err_object_not_found", "message": f"Requested object [{tgt}] not found"},
+                )
+
+            if self.dms_inline_permission_error and req.get("script-type") != "repository":
+                msg = (
+                    "To run a script on Domain Management Server, you must have a Permission Profile "
+                    "with Multi-Domain provisioning permissions"
+                )
+                return ApiCallResult(
+                    success=False,
+                    status_code=400,
+                    error_code="err_validation_failed",
+                    error_message=msg,
+                    data={"code": "err_validation_failed", "message": msg},
+                )
+
+            if domain == "Branch":
+                if branch_probed_target is None and not release_branch_probe.is_set():
+                    branch_probed_target = tgt
+                    branch_probe_entered.set()
+                    await release_branch_probe.wait()
+                elif branch_probed_target is not None:
+                    branch_post_probe_inflight += 1
+                    branch_post_probe_max = max(branch_post_probe_max, branch_post_probe_inflight)
+                    try:
+                        await asyncio.sleep(0.03)
+                    finally:
+                        branch_post_probe_inflight -= 1
+
+            if domain == "Regional":
+                regional_finished.set()
+
+            return ApiCallResult(
+                success=True,
+                status_code=200,
+                data={
+                    "tasks": [
+                        {
+                            "task-id": f"task-{tgt}",
+                            "status": "succeeded",
+                            "task-details": [
+                                {
+                                    "gatewayName": tgt,
+                                    "statusCode": "succeeded",
+                                    "responseMessage": b64_ok,
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+
+        async def logout_sid(self, mgmt_name: str, sid: str, *, server_ip: str | None = None) -> bool:
+            return True
+
+        async def close(self, *, logout: bool | None = None) -> None:
+            return None
+
+    api = _ConcurrentAutoApi()
+    domain_svc = DomainService(settings=settings, api=api, cache=cache, lock_port=locks)
+    coordinator = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=locks,
+        domain_service=domain_svc,
+    )
+    asset_svc = AssetRefreshService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+    object_svc = ObjectService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+    topo_svc = TopologyService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+        asset_service=asset_svc,
+        object_service=object_svc,
+    )
+
+    try:
+        # 1. With concurrency=2 and 3 targets in Branch + 1 in Regional:
+        #    Branch followers wait outside mgmt_sem so Regional completes BEFORE Branch probe releases,
+        #    and after release the remaining Branch targets run concurrently (branch_post_probe_max == 2).
+        collect_task = asyncio.create_task(
+            topo_svc.collect_gateway_routes(
+                mgmt_name="mds",
+                domains=["Branch", "Regional"],
+                concurrency=2,
+                cprid_script_mode="auto",
+            )
+        )
+        await asyncio.wait_for(branch_probe_entered.wait(), timeout=2.0)
+        await asyncio.wait_for(regional_finished.wait(), timeout=2.0)
+        release_branch_probe.set()
+        auto_out = await asyncio.wait_for(collect_task, timeout=3.0)
+        assert auto_out.succeeded_gateways == 4
+        assert branch_post_probe_max == 2
+
+        # 2. Stale target gateway UID in auto mode fails ONLY that gateway without falling back remaining targets to inline
+        branch_probed_target = "already-set"
+        api.calls.clear()
+        api.stale_targets.add("uid-br-1")
+        stale_out = await topo_svc.collect_gateway_routes(
+            mgmt_name="mds",
+            domain="Branch",
+            concurrency=2,
+            cprid_script_mode="auto",
+        )
+        assert stale_out.succeeded_gateways == 2
+        assert stale_out.failed_gateways == 1
+        br1_status = next(g for g in stale_out.gateways if g.gateway_uid == "uid-br-1")
+        assert br1_status.error_code is None
+        assert all(c["payload"].get("script-type") == "repository" for c in api.calls if c["command"] == "run-script")
+
+        # 3. session_getter (create_dedicated_session) permission error maps to repository_script_permission_denied
+        api.stale_targets.clear()
+        api.deny_session_domains.add("Regional")
+        sess_denied = await topo_svc.collect_gateway_routes(
+            mgmt_name="mds",
+            domain="Regional",
+            gateways=["reg-gw-1"],
+            cprid_script_mode="repository",
+        )
+        assert sess_denied.failed_gateways == 1
+        assert sess_denied.gateways[0].error_code == "repository_script_permission_denied"
+
+        # 4. Inline mode maps DMS Permission Profile requirement to repository_script_permission_denied consistently
+        api.deny_session_domains.clear()
+        api.dms_inline_permission_error = True
+        dms_denied = await topo_svc.collect_gateway_routes(
+            mgmt_name="mds",
+            domain="Regional",
+            gateways=["reg-gw-1"],
+            cprid_script_mode="inline",
+        )
+        assert dms_denied.failed_gateways == 1
+        assert dms_denied.gateways[0].error_code == "repository_script_permission_denied"
+    finally:
+        await db.close()

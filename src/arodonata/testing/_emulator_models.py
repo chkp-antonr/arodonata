@@ -363,6 +363,9 @@ class ReplayStateSnapshot:
     fail_ssh_nodes: set[str]
     call_log: list[dict[str, Any]]
     domain_generations: dict[str, int] = field(default_factory=dict)
+    allow_one_time_script: bool = True
+    allow_repository_script: bool = True
+    manage_repository_scripts: str = "write"
 
 
 def sanitize_call_payload(

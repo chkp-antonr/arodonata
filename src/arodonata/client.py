@@ -22,7 +22,6 @@ from arodonata.adapters.checkpoint import AMgmtClient
 from arodonata.adapters.checkpoint.client import SERVICE_COMMAND_TYPES, _update_overlay_from_command
 from arodonata.adapters.checkpoint.pager import DEFAULT_PAGE_LIMIT
 from arodonata.adapters.checkpoint.rate_limiter import LoginGate, RateLimiter
-from arodonata.adapters.checkpoint.sessions import normalize_domain_key
 from arodonata.adapters.checkpoint.task_waiter import TaskWaiter
 from arodonata.adapters.checkpoint.tls import TrustPolicy
 from arodonata.adapters.checkpoint.transport import ApiTransport, VerifiedConnectionPool
@@ -36,12 +35,11 @@ from arodonata.api_reference import (
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import (
     AuthContext,
-    SessionOverlay,
     UserContext,
     WriteSession,
-    get_user_context,
     get_write_session,
-    write_session_context,
+    normalize_domain_key,
+    open_api_write_session,
 )
 from arodonata.core.context import (
     auth_context as _ctx_auth_context,
@@ -49,7 +47,7 @@ from arodonata.core.context import (
 from arodonata.core.context import (
     user_context as _ctx_user_context,
 )
-from arodonata.core.errors import AmbiguousObjectError, SessionError, ValidationError, redact_sid
+from arodonata.core.errors import AmbiguousObjectError, ValidationError, redact_sid
 from arodonata.core.events import CPCRUDEvent, SyncProgressEvent
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
@@ -70,6 +68,13 @@ from arodonata.core.models.rulebase import (
     NatRuleEntry,
     RulebaseType,
     ThreatRuleEntry,
+)
+from arodonata.core.models.scripts import (
+    CpridScriptMode,
+    EnsureRepositoryScriptResult,
+    RepositoryScript,
+    RepositoryScriptExecutionOutcome,
+    RepositoryScriptStatus,
 )
 from arodonata.core.models.services import CPService
 from arodonata.core.models.topology import (
@@ -92,6 +97,8 @@ from arodonata.core.services import (
     DomainService,
     DomainSyncCoordinator,
     ObjectService,
+    RepositoryScriptArgsCallable,
+    ScriptRepositoryService,
     SearchService,
     ServiceCacheService,
     TopologyService,
@@ -257,6 +264,12 @@ class ArodonataClient:
             coordinator=self._sync_coordinator,
             now_fn=now_fn,
         )
+        self._script_service = ScriptRepositoryService(
+            api=self._api,
+            settings=self._settings,
+            write_session_factory=self.write_session,
+            on_domain_invalidated=self.invalidate_domain,
+        )
         self._topology_service = TopologyService(
             settings=self._settings,
             api=self._api,
@@ -266,6 +279,7 @@ class ArodonataClient:
             object_service=self._object_service,
             rulebase_refresh=self._rulebase_refresh,
             gateway_cli=gateway_cli,
+            script_service=self._script_service,
             now_fn=now_fn,
         )
         self._rulebase_source = CachedRulebaseSource(
@@ -365,6 +379,11 @@ class ArodonataClient:
     def topology_service(self) -> TopologyService:
         """Core `TopologyService`."""
         return self._topology_service
+
+    @property
+    def script_service(self) -> ScriptRepositoryService:
+        """Core `ScriptRepositoryService`."""
+        return self._script_service
 
     def set_gateway_cli(self, gateway_cli: GatewayCliPort | GatewayCliCallable | None) -> None:
         """Register or replace the optional SSH/CLI callback or `GatewayCliPort` adapter."""
@@ -808,84 +827,18 @@ class ArodonataClient:
             return
 
         # Fallback for custom ApiPort implementations injected in tests
-        dom_key = normalize_domain_key(domain)
-        resolved_user = user or get_user_context()
-        eff_name = session_name or (resolved_user.session_name if resolved_user else None)
-        eff_desc = session_description or (resolved_user.session_description if resolved_user else None)
-
-        sid, server_ip = await self._api.create_dedicated_session(
+        async with open_api_write_session(
+            self,
             mgmt_name,
             domain,
             auth=auth,
-            session_name=eff_name,
-            session_description=eff_desc,
-        )
-        ws = WriteSession(
-            mgmt_name=mgmt_name,
-            domain_name=dom_key,
-            sid=sid,
-            server_ip=server_ip,
-            session_name=eff_name,
-            auth=auth,
-            user=resolved_user,
-            overlay=SessionOverlay(mgmt_name, dom_key),
-        )
-        try:
-            with write_session_context(ws):
-                try:
-                    yield ws
-                except BaseException:
-                    if not ws.discarded and not ws.published:
-                        with suppress(BaseException):
-                            await asyncio.shield(
-                                self.api_call(
-                                    mgmt_name,
-                                    "discard",
-                                    {},
-                                    domain=domain,
-                                    sid=ws.sid,
-                                    server_ip=ws.server_ip,
-                                )
-                            )
-                        ws.discarded = True
-                        ws.overlay.clear()
-                    raise
-
-                if publish_on_exit and not ws.published and not ws.discarded:
-                    pub_res = await self.api_call(
-                        mgmt_name,
-                        "publish",
-                        {},
-                        domain=domain,
-                        sid=ws.sid,
-                        server_ip=ws.server_ip,
-                        wait_for_task=True,
-                    )
-                    if not pub_res.success:
-                        with suppress(BaseException):
-                            await asyncio.shield(
-                                self.api_call(
-                                    mgmt_name,
-                                    "discard",
-                                    {},
-                                    domain=domain,
-                                    sid=ws.sid,
-                                    server_ip=ws.server_ip,
-                                )
-                            )
-                        ws.discarded = True
-                        ws.overlay.clear()
-                        raise SessionError(
-                            f"Failed to publish WriteSession on {mgmt_name!r} ({dom_key!r}): "
-                            f"{pub_res.error_message or 'publish failed'}"
-                        )
-                    ws.published = True
-                    ws.overlay.clear()
-                    self.invalidate_domain(mgmt_name, domain)
-        finally:
-            ws.overlay.clear()
-            with suppress(BaseException):
-                await asyncio.shield(self.logout_sid(mgmt_name, ws.sid, server_ip=ws.server_ip))
+            user=user,
+            session_name=session_name,
+            session_description=session_description,
+            publish_on_exit=publish_on_exit,
+            on_domain_invalidated=self.invalidate_domain,
+        ) as ws:
+            yield ws
 
     # ------------------------------------------------------------------
     # Paired Refresh & Streaming Methods
@@ -1156,6 +1109,9 @@ class ArodonataClient:
         include_global: bool = False,
         mode: CacheMode = "smart",
         cache_ttl: float | None = None,
+        cprid_script_mode: CpridScriptMode | None = None,
+        repository_script_name: str | None = None,
+        repository_script_args_fn: RepositoryScriptArgsCallable | None = None,
     ) -> RefreshOutcome:
         """Synchronize gateway interface topology across target domains (or specific `gateways`) and return `RefreshOutcome`."""
         if not self._db.is_initialized:
@@ -1168,6 +1124,9 @@ class ArodonataClient:
             include_global=include_global,
             mode=mode,
             cache_ttl=cache_ttl,
+            cprid_script_mode=cprid_script_mode,
+            repository_script_name=repository_script_name,
+            repository_script_args_fn=repository_script_args_fn,
         )
 
     async def stream_refresh_topology(
@@ -1180,6 +1139,9 @@ class ArodonataClient:
         include_global: bool = False,
         mode: CacheMode = "smart",
         cache_ttl: float | None = None,
+        cprid_script_mode: CpridScriptMode | None = None,
+        repository_script_name: str | None = None,
+        repository_script_args_fn: RepositoryScriptArgsCallable | None = None,
     ) -> AsyncIterator[SyncProgressEvent]:
         """Stream `SyncProgressEvent` items while synchronizing gateway interface topology."""
         if not self._db.is_initialized:
@@ -1192,6 +1154,9 @@ class ArodonataClient:
             include_global=include_global,
             mode=mode,
             cache_ttl=cache_ttl,
+            cprid_script_mode=cprid_script_mode,
+            repository_script_name=repository_script_name,
+            repository_script_args_fn=repository_script_args_fn,
         ):
             yield ev
 
@@ -1315,6 +1280,9 @@ class ArodonataClient:
         fallback_to_cprid: bool = True,
         timeout: float = 45.0,
         concurrency: int | None = None,
+        cprid_script_mode: CpridScriptMode | None = None,
+        repository_script_name: str | None = None,
+        repository_script_args_fn: RepositoryScriptArgsCallable | None = None,
     ) -> RouteCollectionOutcome:
         """Collect live OS/Clish routing tables from gateways via SSH (`GatewayCliPort`) or `cprid` `run-script` fallback."""
         if not self._db.is_initialized:
@@ -1329,6 +1297,43 @@ class ArodonataClient:
             fallback_to_cprid=fallback_to_cprid,
             timeout=timeout,
             concurrency=concurrency,
+            cprid_script_mode=cprid_script_mode,
+            repository_script_name=repository_script_name,
+            repository_script_args_fn=repository_script_args_fn,
+        )
+
+    @traced
+    async def check_route_collection_script(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        script_name: str | None = None,
+    ) -> RepositoryScriptStatus:
+        """Check read-only whether the canonical route-collection repository script exists and matches in `domain`."""
+        await self._ensure_db_initialized()
+        return await self._topology_service.check_route_collection_script(
+            mgmt_name,
+            domain,
+            script_name=script_name,
+        )
+
+    @traced
+    async def ensure_route_collection_script(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        script_name: str | None = None,
+        comments: str | None = None,
+    ) -> EnsureRepositoryScriptResult:
+        """Idempotently provision or update the canonical route-collection script in `domain`."""
+        await self._ensure_db_initialized()
+        return await self._topology_service.ensure_route_collection_script(
+            mgmt_name,
+            domain,
+            script_name=script_name,
+            comments=comments,
         )
 
     @traced
@@ -1370,6 +1375,9 @@ class ArodonataClient:
         fallback_to_cprid: bool = True,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
+        cprid_script_mode: CpridScriptMode | None = None,
+        repository_script_name: str | None = None,
+        repository_script_args_fn: RepositoryScriptArgsCallable | None = None,
     ) -> TopologyReconciliationReport:
         """Reconcile SmartConsole static topology against cached/collected live routes, gateway-targeted policy rules, and administrator annotations."""
         if not self._db.is_initialized:
@@ -1385,6 +1393,9 @@ class ArodonataClient:
             fallback_to_cprid=fallback_to_cprid,
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
+            cprid_script_mode=cprid_script_mode,
+            repository_script_name=repository_script_name,
+            repository_script_args_fn=repository_script_args_fn,
         )
 
     @traced
@@ -2689,6 +2700,130 @@ class ArodonataClient:
             command,
             payload,
             version=eff_version,
+        )
+
+    # ------------------------------------------------------------------
+    # Universal Script Repository Management & Execution
+    # ------------------------------------------------------------------
+
+    @traced
+    async def get_repository_script(
+        self,
+        mgmt_name: str,
+        script_name_or_uid: str,
+        *,
+        domain: str | None = None,
+        details_level: str = "full",
+    ) -> RepositoryScript:
+        """Fetch a single Check Point Script Repository entry by name or UID (`show-repository-script`)."""
+        await self._ensure_db_initialized()
+        return await self._script_service.get_repository_script(
+            mgmt_name,
+            script_name_or_uid,
+            domain=domain,
+            details_level=details_level,
+        )
+
+    @traced
+    async def list_repository_scripts(
+        self,
+        mgmt_name: str,
+        *,
+        domain: str | None = None,
+        details_level: str = "full",
+        limit: int = 300,
+    ) -> list[RepositoryScript]:
+        """List Check Point Script Repository entries in `domain` (`show-repository-scripts`)."""
+        await self._ensure_db_initialized()
+        return await self._script_service.list_repository_scripts(
+            mgmt_name,
+            domain=domain,
+            details_level=details_level,
+            limit=limit,
+        )
+
+    @traced
+    async def check_repository_script(
+        self,
+        mgmt_name: str,
+        script_name_or_uid: str,
+        *,
+        domain: str | None = None,
+        expected_body: str | None = None,
+    ) -> RepositoryScriptStatus:
+        """Inspect a repository script strictly read-only over `sid_cache` and compare against `expected_body`."""
+        await self._ensure_db_initialized()
+        return await self._script_service.check_repository_script(
+            mgmt_name,
+            script_name_or_uid,
+            domain=domain,
+            expected_body=expected_body,
+        )
+
+    @traced
+    async def ensure_repository_script(
+        self,
+        mgmt_name: str,
+        script_name: str,
+        script_body: str,
+        *,
+        domain: str | None = None,
+        comments: str | None = None,
+        color: str | None = None,
+        tags: Sequence[str] | None = None,
+    ) -> EnsureRepositoryScriptResult:
+        """Idempotently ensure `script_name` exists with `script_body`, avoiding writes when already matching."""
+        await self._ensure_db_initialized()
+        return await self._script_service.ensure_repository_script(
+            mgmt_name,
+            script_name,
+            script_body,
+            domain=domain,
+            comments=comments,
+            color=color,
+            tags=tags,
+        )
+
+    @traced
+    async def delete_repository_script(
+        self,
+        mgmt_name: str,
+        script_name_or_uid: str,
+        *,
+        domain: str | None = None,
+    ) -> bool:
+        """Delete a Check Point Script Repository entry from `domain` (`delete-repository-script`)."""
+        await self._ensure_db_initialized()
+        return await self._script_service.delete_repository_script(
+            mgmt_name,
+            script_name_or_uid,
+            domain=domain,
+        )
+
+    @traced
+    async def run_repository_script(
+        self,
+        mgmt_name: str,
+        script_name_or_uid: str,
+        targets: Sequence[str] | str,
+        *,
+        domain: str | None = None,
+        args: Sequence[str] | str | None = None,
+        comments: str | None = None,
+        timeout: float | None = None,
+        script_timeout: int | None = None,
+    ) -> RepositoryScriptExecutionOutcome:
+        """Execute any approved Check Point Script Repository entry via `run-script` (`script-type="repository"`)."""
+        await self._ensure_db_initialized()
+        return await self._script_service.run_repository_script(
+            mgmt_name,
+            script_name_or_uid,
+            targets,
+            domain=domain,
+            args=args,
+            comments=comments,
+            timeout=timeout,
+            script_timeout=script_timeout,
         )
 
 
