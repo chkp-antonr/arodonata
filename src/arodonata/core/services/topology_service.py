@@ -52,6 +52,11 @@ from arodonata.core.models.common import CacheMode, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainInfo, DomainSyncState, RefreshOutcome
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import DomainRulebaseSnapshot
+from arodonata.core.models.scripts import (
+    CpridScriptMode,
+    EnsureRepositoryScriptResult,
+    RepositoryScriptStatus,
+)
 from arodonata.core.models.topology import (
     LIVE_ROUTE_SOURCES,
     STATIC_TOPOLOGY_SOURCES,
@@ -83,13 +88,18 @@ from arodonata.core.services.asset_service import (
 from arodonata.core.services.object_service import ObjectService
 from arodonata.core.services.route_collector import (
     CLISH_SKIPPED_LARGE_TABLE_MARKER,
+    DEFAULT_ROUTE_COLLECT_REPOSITORY_SCRIPT_NAME,
+    AutoScriptModeResolver,
     ParsedCliRoute,
+    RepositoryScriptArgsCallable,
+    build_route_collection_repository_script,
     build_route_collection_script,
     execute_gateway_cli,
     parse_combined_cli_routes_with_status,
     resolve_gateway_cli_targets,
     routes_to_topology_entries,
 )
+from arodonata.core.services.script_service import ScriptRepositoryService
 from arodonata.core.services.search_service import classify_search_term
 from arodonata.core.services.sync_coordinator import (
     DomainProbeResult,
@@ -944,6 +954,7 @@ class TopologyService:
         object_service: ObjectService,
         rulebase_refresh: RulebaseRefreshService | None = None,
         gateway_cli: GatewayCliPort | GatewayCliCallable | None = None,
+        script_service: ScriptRepositoryService | None = None,
         now_fn: Callable[[], datetime] = utc_now,
     ) -> None:
         self._settings = settings
@@ -960,6 +971,7 @@ class TopologyService:
             now_fn=now_fn,
         )
         self._gateway_cli = gateway_cli
+        self._script_service = script_service or ScriptRepositoryService(api=api, settings=settings)
         self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
         self._fallback_registry = _ProcessTopologyRegistry()
 
@@ -1081,9 +1093,51 @@ class TopologyService:
         """Configured `GatewayCliPort` or async callable for executing CLI commands on gateways."""
         return self._gateway_cli
 
+    @property
+    def script_service(self) -> ScriptRepositoryService:
+        """Associated `ScriptRepositoryService` used for repository-mode route collection."""
+        return self._script_service
+
     def set_gateway_cli(self, gateway_cli: GatewayCliPort | GatewayCliCallable | None) -> None:
         """Set or replace the runtime `GatewayCliPort` or async callable."""
         self._gateway_cli = gateway_cli
+
+    @traced
+    async def check_route_collection_script(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        script_name: str | None = None,
+    ) -> RepositoryScriptStatus:
+        """Check read-only whether the canonical route-collection repository script exists and matches."""
+        eff_name = (script_name or self._settings.cprid_repository_script_name).strip()
+        return await self._script_service.check_repository_script(
+            mgmt_name,
+            eff_name,
+            domain=domain,
+            expected_body=build_route_collection_repository_script(),
+        )
+
+    @traced
+    async def ensure_route_collection_script(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        script_name: str | None = None,
+        comments: str | None = None,
+    ) -> EnsureRepositoryScriptResult:
+        """Idempotently provision or update the canonical route-collection script in `domain`."""
+        eff_name = (script_name or self._settings.cprid_repository_script_name).strip()
+        eff_comments = comments if comments is not None else "Arodonata live route collection script (managed)"
+        return await self._script_service.ensure_repository_script(
+            mgmt_name,
+            eff_name,
+            build_route_collection_repository_script(),
+            domain=domain,
+            comments=eff_comments,
+        )
 
     @staticmethod
     def _normalize_gateway_filter_tokens(gateways: Sequence[str] | str | None) -> list[str]:
@@ -1118,6 +1172,9 @@ class TopologyService:
         include_global: bool = False,
         mode: CacheMode = "smart",
         cache_ttl: float | None = None,
+        cprid_script_mode: CpridScriptMode | None = None,
+        repository_script_name: str | None = None,
+        repository_script_args_fn: RepositoryScriptArgsCallable | None = None,
     ) -> AsyncIterator[SyncProgressEvent]:
         """Stream `SyncProgressEvent` items while refreshing gateway topology across domains (or targeted `gateways`)."""
         gw_tokens = self._normalize_gateway_filter_tokens(gateways)
@@ -1130,6 +1187,9 @@ class TopologyService:
                 include_global=include_global,
                 mode=mode,
                 cache_ttl=cache_ttl,
+                cprid_script_mode=cprid_script_mode,
+                repository_script_name=repository_script_name,
+                repository_script_args_fn=repository_script_args_fn,
             ):
                 yield event
             return
@@ -1178,6 +1238,9 @@ class TopologyService:
                 mode=mode,
                 refreshed_domain_labels=refreshed_labels,
                 cache_ttl=cache_ttl,
+                cprid_script_mode=cprid_script_mode,
+                repository_script_name=repository_script_name,
+                repository_script_args_fn=repository_script_args_fn,
             )
 
     @traced
@@ -1191,8 +1254,13 @@ class TopologyService:
         include_global: bool = False,
         mode: CacheMode = "smart",
         cache_ttl: float | None = None,
+        cprid_script_mode: CpridScriptMode | None = None,
+        repository_script_name: str | None = None,
+        repository_script_args_fn: RepositoryScriptArgsCallable | None = None,
     ) -> RefreshOutcome:
         """Refresh gateway topology across domains (or targeted `gateways`) and return `RefreshOutcome`."""
+        eff_script_mode = cprid_script_mode if cprid_script_mode is not None else self._settings.cprid_script_mode
+        eff_script_name = (repository_script_name or self._settings.cprid_repository_script_name).strip()
         span_attrs(mgmt_name=mgmt_name, mode=mode, include_global=include_global, collect_routes=collect_routes)
         gw_tokens = self._normalize_gateway_filter_tokens(gateways)
 
@@ -1212,6 +1280,9 @@ class TopologyService:
             bool(collect_routes),
             bool(include_global),
             mode,
+            eff_script_mode,
+            eff_script_name,
+            id(repository_script_args_fn) if repository_script_args_fn is not None else None,
         )
 
         return await _run_single_flight(
@@ -1228,6 +1299,9 @@ class TopologyService:
                 include_global=include_global,
                 mode=mode,
                 cache_ttl=cache_ttl,
+                cprid_script_mode=cprid_script_mode,
+                repository_script_name=repository_script_name,
+                repository_script_args_fn=repository_script_args_fn,
             ),
         )
 
@@ -1241,6 +1315,9 @@ class TopologyService:
         include_global: bool,
         mode: CacheMode,
         cache_ttl: float | None,
+        cprid_script_mode: CpridScriptMode | None = None,
+        repository_script_name: str | None = None,
+        repository_script_args_fn: RepositoryScriptArgsCallable | None = None,
     ) -> RefreshOutcome:
         if gw_tokens:
             refreshed_domains: list[str] = []
@@ -1255,6 +1332,9 @@ class TopologyService:
                 include_global=include_global,
                 mode=mode,
                 cache_ttl=cache_ttl,
+                cprid_script_mode=cprid_script_mode,
+                repository_script_name=repository_script_name,
+                repository_script_args_fn=repository_script_args_fn,
             ):
                 if isinstance(event, SyncCompletedEvent):
                     refreshed_domains = list(event.details.get("refreshed_domains") or [])
@@ -1307,6 +1387,9 @@ class TopologyService:
                 mode=mode,
                 refreshed_domain_labels=outcome.refreshed_domains,
                 cache_ttl=cache_ttl,
+                cprid_script_mode=cprid_script_mode,
+                repository_script_name=repository_script_name,
+                repository_script_args_fn=repository_script_args_fn,
             )
         return outcome
 
@@ -1319,6 +1402,9 @@ class TopologyService:
         mode: CacheMode,
         refreshed_domain_labels: Sequence[str],
         cache_ttl: float | None = None,
+        cprid_script_mode: CpridScriptMode | None = None,
+        repository_script_name: str | None = None,
+        repository_script_args_fn: RepositoryScriptArgsCallable | None = None,
     ) -> None:
         """Collect live gateway routes during `refresh_topology`, skipping domains whose routes are already fresh in `smart` mode."""
         if mode == "cache":
@@ -1328,6 +1414,9 @@ class TopologyService:
                 mgmt_name=mgmt_name,
                 domains=domains,
                 include_global=include_global,
+                cprid_script_mode=cprid_script_mode,
+                repository_script_name=repository_script_name,
+                repository_script_args_fn=repository_script_args_fn,
             )
             return
 
@@ -1372,6 +1461,9 @@ class TopologyService:
                 mgmt_name=m_name,
                 domains=dom_names,
                 include_global=include_global or ("Global" in dom_names),
+                cprid_script_mode=cprid_script_mode,
+                repository_script_name=repository_script_name,
+                repository_script_args_fn=repository_script_args_fn,
             )
 
     async def _stream_targeted_gateway_refresh(
@@ -1384,6 +1476,9 @@ class TopologyService:
         include_global: bool,
         mode: CacheMode,
         cache_ttl: float | None,
+        cprid_script_mode: CpridScriptMode | None = None,
+        repository_script_name: str | None = None,
+        repository_script_args_fn: RepositoryScriptArgsCallable | None = None,
     ) -> AsyncIterator[SyncProgressEvent]:
         """Refresh static topology (and optionally live routes) ONLY for the specified `gw_tokens` without rewriting other gateways."""
         target_domains = await self._coordinator.resolve_target_domains(
@@ -1498,6 +1593,9 @@ class TopologyService:
                         mgmt_name=dom.mgmt_name,
                         domain=dom.name,
                         gateways=target_gw_uids,
+                        cprid_script_mode=cprid_script_mode,
+                        repository_script_name=repository_script_name,
+                        repository_script_args_fn=repository_script_args_fn,
                     )
                     count += route_outcome.total_routes
 
@@ -3139,6 +3237,9 @@ class TopologyService:
         fallback_to_cprid: bool = True,
         timeout: float = 30.0,
         concurrency: int | None = None,
+        cprid_script_mode: CpridScriptMode | None = None,
+        repository_script_name: str | None = None,
+        repository_script_args_fn: RepositoryScriptArgsCallable | None = None,
     ) -> RouteCollectionOutcome:
         """Collect live IPv4 routing tables (`ip -4 route show` and `clish -c "show route"`) from gateways via SSH DI or `cprid` `run-script`."""
         eff_concurrency = (
@@ -3146,11 +3247,18 @@ class TopologyService:
             if concurrency is not None
             else max(1, int(self._settings.route_collect_concurrency))
         )
+        eff_script_mode: CpridScriptMode = (
+            cprid_script_mode if cprid_script_mode is not None else self._settings.cprid_script_mode
+        )
+        eff_script_name = (
+            repository_script_name or self._settings.cprid_repository_script_name
+        ).strip() or DEFAULT_ROUTE_COLLECT_REPOSITORY_SCRIPT_NAME
         span_attrs(
             mgmt_name=mgmt_name,
             domain=domain,
             fallback_to_cprid=fallback_to_cprid,
             concurrency=eff_concurrency,
+            cprid_script_mode=eff_script_mode,
         )
 
         domain_set: set[str] | None = None
@@ -3173,6 +3281,9 @@ class TopologyService:
             bool(include_global),
             bool(fallback_to_cprid),
             id(eff_cli) if eff_cli is not None else None,
+            eff_script_mode,
+            eff_script_name,
+            id(repository_script_args_fn) if repository_script_args_fn is not None else None,
         )
 
         return await _run_single_flight(
@@ -3191,6 +3302,9 @@ class TopologyService:
                 fallback_to_cprid=fallback_to_cprid,
                 timeout=timeout,
                 eff_concurrency=eff_concurrency,
+                eff_script_mode=eff_script_mode,
+                eff_script_name=eff_script_name,
+                repository_script_args_fn=repository_script_args_fn,
             ),
         )
 
@@ -3206,6 +3320,9 @@ class TopologyService:
         fallback_to_cprid: bool,
         timeout: float,
         eff_concurrency: int,
+        eff_script_mode: CpridScriptMode,
+        eff_script_name: str,
+        repository_script_args_fn: RepositoryScriptArgsCallable | None,
     ) -> RouteCollectionOutcome:
         eff_cli = gateway_cli if gateway_cli is not None else self._gateway_cli
         max_routes = int(self._settings.max_routes_per_gateway)
@@ -3261,28 +3378,45 @@ class TopologyService:
                     )
                 return cprid_sessions[key]
 
+        auto_mode_resolver = AutoScriptModeResolver()
+
         async def _run_target(target: Any) -> tuple[Any, Any]:
-            node_key = str(target.node_uid or target.node_ipv4 or target.node_name or target.gateway_uid)
-            node_lock = self._get_route_node_lock(target.mgmt_name, node_key)
-            mgmt_sem = self._get_route_collect_semaphore(target.mgmt_name, eff_concurrency)
-            # Acquire per-node lock BEFORE management concurrency slot so multiple VSX Virtual Systems
-            # hosted on the same physical VSX chassis serialize cleanly without starving other gateways.
-            async with node_lock, mgmt_sem:
-                script = build_route_collection_script(
-                    vsid=target.vsid,
-                    vs_name=target.vs_name,
-                    max_routes=max_routes,
-                )
-                res = await execute_gateway_cli(
-                    target,
-                    script,
-                    api=self._api,
-                    gateway_cli=eff_cli,
-                    fallback_to_cprid=fallback_to_cprid,
-                    timeout=timeout,
-                    cprid_session_getter=_get_cprid_session,
-                )
-                return target, res
+            preclaimed = False
+            if eff_script_mode == "auto" and eff_cli is None:
+                preclaimed = await auto_mode_resolver.acquire_probe_turn(target.mgmt_name, target.domain_name)
+
+            try:
+                node_key = str(target.node_uid or target.node_ipv4 or target.node_name or target.gateway_uid)
+                node_lock = self._get_route_node_lock(target.mgmt_name, node_key)
+                mgmt_sem = self._get_route_collect_semaphore(target.mgmt_name, eff_concurrency)
+                # Acquire per-node lock BEFORE management concurrency slot so multiple VSX Virtual Systems
+                # hosted on the same physical VSX chassis serialize cleanly without starving other gateways.
+                async with node_lock, mgmt_sem:
+                    script = build_route_collection_script(
+                        vsid=target.vsid,
+                        vs_name=target.vs_name,
+                        max_routes=max_routes,
+                    )
+                    res = await execute_gateway_cli(
+                        target,
+                        script,
+                        api=self._api,
+                        gateway_cli=eff_cli,
+                        fallback_to_cprid=fallback_to_cprid,
+                        timeout=timeout,
+                        cprid_session_getter=_get_cprid_session,
+                        cprid_script_mode=eff_script_mode,
+                        repository_script_name=eff_script_name,
+                        repository_script_args_fn=repository_script_args_fn,
+                        max_routes=max_routes,
+                        script_service=self._script_service,
+                        auto_mode_resolver=auto_mode_resolver,
+                        preclaimed_auto_probe=preclaimed,
+                    )
+                    return target, res
+            finally:
+                if preclaimed:
+                    auto_mode_resolver.abort_probe_if_unresolved(target.mgmt_name, target.domain_name)
 
         async def _collect_for_gateway(gw_asset: Asset) -> tuple[GatewayRouteCollectionStatus, int]:
             cli_targets = resolve_gateway_cli_targets(gw_asset, all_mgmt_assets)
@@ -3290,6 +3424,7 @@ class TopologyService:
 
             parsed_by_node: dict[str, list[ParsedCliRoute]] = {}
             node_errors: list[str] = []
+            node_error_codes: list[str] = []
             truncation_warnings: list[str] = []
             executors_used: list[str] = []
 
@@ -3297,6 +3432,8 @@ class TopologyService:
                 if cli_res.executor and cli_res.executor not in executors_used:
                     executors_used.append(cli_res.executor)
                 if not cli_res.success:
+                    if cli_res.error_code:
+                        node_error_codes.append(cli_res.error_code)
                     node_errors.append(
                         f"{target.node_name}: {cli_res.error_message or cli_res.stderr or 'CLI command failed'}"
                     )
@@ -3330,6 +3467,7 @@ class TopologyService:
                         success=False,
                         executor=",".join(executors_used) if executors_used else "cprid",
                         routes_collected=0,
+                        error_code=node_error_codes[0] if node_error_codes else None,
                         error="; ".join(node_errors) if node_errors else "No routes returned",
                     ),
                     0,
@@ -3581,6 +3719,9 @@ class TopologyService:
         fallback_to_cprid: bool = True,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
+        cprid_script_mode: CpridScriptMode | None = None,
+        repository_script_name: str | None = None,
+        repository_script_args_fn: RepositoryScriptArgsCallable | None = None,
     ) -> TopologyReconciliationReport:
         """Compare SmartConsole static topology against live gateway routing tables (and optionally gateway-targeted policy rules) and return `TopologyReconciliationReport`."""
         eff_collect = collect_routes or collect_live_routes
@@ -3609,6 +3750,9 @@ class TopologyService:
                 gateways=gateways,
                 gateway_cli=gateway_cli,
                 fallback_to_cprid=fallback_to_cprid,
+                cprid_script_mode=cprid_script_mode,
+                repository_script_name=repository_script_name,
+                repository_script_args_fn=repository_script_args_fn,
             )
 
         diagnostics = await self.get_topology_diagnostics(

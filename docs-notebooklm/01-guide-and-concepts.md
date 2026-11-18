@@ -446,6 +446,15 @@ await client.publish_staged_session(mgmt, "Domain4", session_uid=staged_uid)
 # await client.discard_staged_session(mgmt, "Domain4", session_uid=staged_uid)
 ```
 
+### 3.5 Universal Check Point Script Repository Facade
+
+`ArodonataClient` exposes application-agnostic Script Repository management and execution via `ScriptRepositoryService` (`client.script_service`):
+
+- **Read-only inspection (`sid_cache`)**: `get_repository_script`, `list_repository_scripts`, and `check_repository_script(..., expected_body=...)` inspect scripts without opening write sessions or calling `publish`.
+- **Idempotent provisioning (`WriteSession`)**: `ensure_repository_script` normalizes line endings (`\r\n` -> `\n`), short-circuits with `action="unchanged"` and zero publishes when the script body (and any explicitly supplied `comments`/`color`/`tags`) already matches, and otherwise creates/updates inside an isolated `WriteSession` (or reuses an active matching `WriteSession`) without polluting `SessionOverlay`.
+- **Execution (`script-type="repository"`)**: `run_repository_script(mgmt_name, script_name_or_uid, targets, *, domain=None, args=None, ...)` forwards caller `args` verbatim (`str`) or space-joined (`Sequence[str]`) over a dedicated non-read-only session (without `publish` or `discard`) and Base64-decodes per-target `show-task` results into `RepositoryScriptExecutionOutcome`, mapping missing scripts or insufficient permissions to `RepositoryScriptNotFoundError` / `RepositoryScriptPermissionError`.
+- **Route collection consumer**: `TopologyService.collect_gateway_routes()` consumes this layer when `cprid_script_mode` is `"repository"` or `"auto"`, defaulting to `"inline"` for backward compatibility and providing `check_route_collection_script` / `ensure_route_collection_script`.
+
 
 ---
 
@@ -1599,6 +1608,8 @@ Arodonata v2 uses `ArodonataSettings` (`src/arodonata/core/config.py`) built on 
 | `tls_fingerprints` | `ARODONATA_TLS_FINGERPRINTS` | `str` | `""` | Comma-separated pinned SHA-256 certificate fingerprints (`host:port=SHA256:...` or bare hex) |
 | `cpcrud_schema_path` | `ARODONATA_CPCRUD_SCHEMA_PATH` | `str \| None` | `None` | Optional path override for `checkpoint_ops_schema.json` |
 | `trace_modules` | `ARODONATA_TRACE_MODULES` | `str` | `""` | OpenTelemetry module span gating rules (e.g. `"+arodonata.core,-arodonata.adapters.storage"`) |
+| `cprid_script_mode` | `ARODONATA_CPRID_SCRIPT_MODE` | `"inline" \| "repository" \| "auto"` | `"inline"` | Execution mode for Management API `cprid` `run-script` route collection |
+| `cprid_repository_script_name` | `ARODONATA_CPRID_REPOSITORY_SCRIPT_NAME` | `str` | `"arodonata-collect-routes-v1"` | Default Check Point Script Repository entry used in `"repository"` and `"auto"` modes |
 
 
 ---
@@ -1772,6 +1783,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- **config,cpcrud**: Extended `NamingPrefixes` (`src/arodonata/core/config.py`, re-exported in `arodonata.cpcrud.models`) with `range_separator`, `compress_range_same_subnet`, `group_suffix`, `app_site`, `app_site_wildcard_marker`, `format_group()`, and `format_app_site()`, and wired `ArodonataSettings.cpcrud_naming_prefixes` (`ARODONATA_CPCRUD_*` and fallback `CPCRUD_*` environment variables without implicit `.env` loading) as the default profile in `CPCRUDService` and `Planner`.
+- **cpcrud**: Added `arodonata.cpcrud.expressions` (`parse_object_expression`, `parse_range_token`, `parse_app_site_expression`, `parse_service_expression`, `parse_group_expression`, `expand_group_expression`, `normalize_wildcard_domain`, `wildcard_domain_to_cp_regex_urls`) for pure shorthand parsing of hosts, CIDRs, compressed same-`/24` ranges, `.domain` DNS objects, `*domain`/`*.domain` Check Point regex `application-site` specs, services, and recursive nested inline groups.
+- **cpcrud,testing**: Added `{"add": [...], "remove": [...]}` incremental patch support in `checkpoint_ops_schema.json`, `FieldChange` (`added_items`, `removed_items`), `differ.py` (`application-site.url-list` and Access/HTTPS/Threat/NAT rule cells `source`, `destination`, `service`, `protected-scope`, `site-category`, `install-on`), `Planner` (`depends_on` ordering, UID dereferencing in `_build_prior_rule_state`, case-folded non-regex `url-list` value reuse via `normalize_app_site_url_key`), `inverse.py` rule rename rollback, and `FileReplayApiMock` (`_emulator_crud.py`, `_emulator_changes.py`).
+- **reports,client**: Added offline Dry-Run `ChangeReport` synthesis via `build_change_report_from_plan()` (`src/arodonata/reports/plan_report.py`, re-exported via `arodonata.reports`, `arodonata`, and `ArodonataClient.build_change_report_from_plan`) for pre-session HTML, Markdown, and JSON previews via `render_change_report()`.
+
+### Fixed
+
+- **cpcrud**: Enforced fail-closed `Outcome.ERROR` / `DiffSafetyError` invariants preventing unsafe `"Any"` widening (blocking removals that empty rule cells or `application-site.url-list` without `application-signature`, requiring explicit `"Any"` removal when narrowing `"Any"` cells while stripping `"Any"` from Check Point wire `remove`, blocking incremental `{"add": ["Any"]}`, rejecting `set`/`update` targeting missing entities, rejecting unmatched rules carrying `{add, remove}` cell deltas under any verb, and preserving `rule_number` positional renames under `strict_name`).
 
 ## v2.6.4 (2026-11-16)
 

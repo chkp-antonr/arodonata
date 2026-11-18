@@ -280,3 +280,103 @@ class ChangeReportInputError(ArodonataError):
 
 class UnsupportedFormat(ArodonataError):
     """Raised when an unsupported report rendering format (e.g. 'pdf') is requested."""
+
+
+class RepositoryScriptError(ArodonataError):
+    """Base exception for Check Point Script Repository operations."""
+
+
+class RepositoryScriptNotFoundError(RepositoryScriptError):
+    """Raised when a Check Point Script Repository entry does not exist in the target domain."""
+
+    def __init__(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        script_ref: str,
+        message: str | None = None,
+        *,
+        known_sids: Iterable[str] | None = None,
+    ) -> None:
+        eff_msg = message or (f"Repository script {script_ref!r} not found on {mgmt_name!r} (domain {domain_name!r}).")
+        super().__init__(eff_msg, known_sids=known_sids)
+        self.mgmt_name = mgmt_name
+        self.domain_name = domain_name
+        self.script_ref = script_ref
+
+
+class RepositoryScriptPermissionError(RepositoryScriptError):
+    """Raised when Check Point denies permission to inspect, manage, or run a repository script."""
+
+    def __init__(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        script_ref: str,
+        operation: str = "execute",
+        message: str | None = None,
+        *,
+        known_sids: Iterable[str] | None = None,
+    ) -> None:
+        eff_msg = message or (
+            f"Permission denied for repository script {operation!r} on {script_ref!r} "
+            f"({mgmt_name!r}, domain {domain_name!r})."
+        )
+        super().__init__(eff_msg, known_sids=known_sids)
+        self.mgmt_name = mgmt_name
+        self.domain_name = domain_name
+        self.script_ref = script_ref
+        self.operation = operation
+
+
+_SCRIPT_PERMISSION_CODES: frozenset[str] = frozenset(
+    {
+        "generic_err_no_permissions",
+        "generic_err_object_read_only",
+    }
+)
+_SCRIPT_PERMISSION_TOKENS: tuple[str, ...] = (
+    "no permission",
+    "permission denied",
+    "lacks permission",
+    "insufficient permission",
+    "must have a permission profile",
+    "read only",
+    "read-only",
+    "not allowed in read only",
+    "not allowed to run",
+    "unauthorized",
+    "forbidden",
+)
+_UNSUPPORTED_SCRIPT_COMMAND_CODES: frozenset[str] = frozenset(
+    {
+        "generic_err_command_not_found",
+        "generic_err_command_not_recognized",
+    }
+)
+_UNSUPPORTED_SCRIPT_COMMAND_TOKENS: tuple[str, ...] = (
+    "command not found",
+    "command not recognized",
+    "unrecognized parameter [script-type]",
+    "unrecognized parameter: [script-type]",
+)
+
+
+def is_script_permission_error(error_code: str | None, error_message: str | None) -> bool:
+    """Return True if a Check Point API code or message indicates script or read-only permission denial."""
+    low_code = (error_code or "").strip().lower()
+    low_msg = (error_message or "").strip().lower()
+    if low_code in _SCRIPT_PERMISSION_CODES:
+        return True
+    return any(tok in low_msg for tok in _SCRIPT_PERMISSION_TOKENS)
+
+
+def is_unsupported_script_command_error(error_code: str | None, error_message: str | None) -> bool:
+    """Return True if a Check Point API error indicates Script Repository commands are unsupported (< v1.9)."""
+    low_code = (error_code or "").strip().lower()
+    low_msg = (error_message or "").strip().lower()
+    if low_code in _UNSUPPORTED_SCRIPT_COMMAND_CODES:
+        return True
+    if any(tok in low_msg for tok in _UNSUPPORTED_SCRIPT_COMMAND_TOKENS):
+        return True
+    return "api command" in low_msg and "not found" in low_msg

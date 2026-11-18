@@ -5,7 +5,7 @@ Complete, auto-generated reference of every public class, SQLModel table, functi
 ## Package Map
 
 - **Top-Level Package & ArodonataClient Facade (`arodonata`, `arodonata.client`)** — 2 module(s)
-- **core — Configuration, Contexts, Models, Hexagonal Ports, Sync & Search Services** — 24 module(s)
+- **core — Configuration, Contexts, Models, Hexagonal Ports, Sync & Search Services** — 26 module(s)
 - **adapters — Check Point Transport (`AMgmtClient`), SQL Storage (15 Tables) & SSE** — 15 module(s)
 - **rulebase — Cached Rulebase Source, SmartConsole Numbering & Local Filtering** — 7 module(s)
 - **cpcrud — Declarative Policy-as-Code Engine (Validator, Planner, Executor, Inverse)** — 12 module(s)
@@ -141,6 +141,13 @@ Core `SearchService`.
 @property
 ```
 Core `TopologyService`.
+
+###### `def script_service(self) -> ScriptRepositoryService`
+
+```python
+@property
+```
+Core `ScriptRepositoryService`.
 
 ###### `def set_gateway_cli(self, gateway_cli: GatewayCliPort | GatewayCliCallable | None) -> None`
 
@@ -309,14 +316,14 @@ Stream `SyncProgressEvent` items while synchronizing lightweight policy package 
 ```
 Synchronize only the layers belonging to `(package, rulebase_type)` without pulling other packages or rulebase types.
 
-###### `async def refresh_topology(self, *, mgmt_name: str | None = None, domains: Sequence[str] | str | None = None, gateways: Sequence[str] | str | None = None, collect_routes: bool = False, include_global: bool = False, mode: CacheMode = 'smart', cache_ttl: float | None = None) -> RefreshOutcome`
+###### `async def refresh_topology(self, *, mgmt_name: str | None = None, domains: Sequence[str] | str | None = None, gateways: Sequence[str] | str | None = None, collect_routes: bool = False, include_global: bool = False, mode: CacheMode = 'smart', cache_ttl: float | None = None, cprid_script_mode: CpridScriptMode | None = None, repository_script_name: str | None = None, repository_script_args_fn: RepositoryScriptArgsCallable | None = None) -> RefreshOutcome`
 
 ```python
 @traced
 ```
 Synchronize gateway interface topology across target domains (or specific `gateways`) and return `RefreshOutcome`.
 
-###### `async def stream_refresh_topology(self, *, mgmt_name: str | None = None, domains: Sequence[str] | str | None = None, gateways: Sequence[str] | str | None = None, collect_routes: bool = False, include_global: bool = False, mode: CacheMode = 'smart', cache_ttl: float | None = None) -> AsyncIterator[SyncProgressEvent]`
+###### `async def stream_refresh_topology(self, *, mgmt_name: str | None = None, domains: Sequence[str] | str | None = None, gateways: Sequence[str] | str | None = None, collect_routes: bool = False, include_global: bool = False, mode: CacheMode = 'smart', cache_ttl: float | None = None, cprid_script_mode: CpridScriptMode | None = None, repository_script_name: str | None = None, repository_script_args_fn: RepositoryScriptArgsCallable | None = None) -> AsyncIterator[SyncProgressEvent]`
 
 Stream `SyncProgressEvent` items while synchronizing gateway interface topology.
 
@@ -350,12 +357,26 @@ Return cached `GatewayTopologyEntry` rows for policy-enforcing gateways.
 ```
 Locate policy-enforcing gateways where `sources` and `destinations` resolve to distinct interfaces or via explicit installed policy rules.
 
-###### `async def collect_gateway_routes(self, *, mgmt_name: str | None = None, domain: str | None = None, domains: Sequence[str] | str | None = None, include_global: bool = False, gateways: Sequence[str] | str | None = None, gateway_cli: GatewayCliPort | GatewayCliCallable | None = None, fallback_to_cprid: bool = True, timeout: float = 45.0, concurrency: int | None = None) -> RouteCollectionOutcome`
+###### `async def collect_gateway_routes(self, *, mgmt_name: str | None = None, domain: str | None = None, domains: Sequence[str] | str | None = None, include_global: bool = False, gateways: Sequence[str] | str | None = None, gateway_cli: GatewayCliPort | GatewayCliCallable | None = None, fallback_to_cprid: bool = True, timeout: float = 45.0, concurrency: int | None = None, cprid_script_mode: CpridScriptMode | None = None, repository_script_name: str | None = None, repository_script_args_fn: RepositoryScriptArgsCallable | None = None) -> RouteCollectionOutcome`
 
 ```python
 @traced
 ```
 Collect live OS/Clish routing tables from gateways via SSH (`GatewayCliPort`) or `cprid` `run-script` fallback.
+
+###### `async def check_route_collection_script(self, mgmt_name: str, domain: str | None = None, *, script_name: str | None = None) -> RepositoryScriptStatus`
+
+```python
+@traced
+```
+Check read-only whether the canonical route-collection repository script exists and matches in `domain`.
+
+###### `async def ensure_route_collection_script(self, mgmt_name: str, domain: str | None = None, *, script_name: str | None = None, comments: str | None = None) -> EnsureRepositoryScriptResult`
+
+```python
+@traced
+```
+Idempotently provision or update the canonical route-collection script in `domain`.
 
 ###### `async def get_topology_diagnostics(self, mgmt_name: str | None = None, domain: str | None = None, *, gateways: Sequence[str] | str | None = None, gateway: str | None = None, min_severity: TopologyDiagnosticSeverity = 'info', cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> list[TopologyDiagnostic]`
 
@@ -364,7 +385,7 @@ Collect live OS/Clish routing tables from gateways via SSH (`GatewayCliPort`) or
 ```
 Return static topology health diagnostics (`TopologyDiagnostic`) across policy-enforcing gateways.
 
-###### `async def reconcile_gateway_topology(self, *, mgmt_name: str | None = None, domain: str | None = None, gateways: Sequence[str] | str | None = None, collect_routes: bool = False, collect_live_routes: bool = False, check_policy: bool = False, gateway_cli: GatewayCliPort | GatewayCliCallable | None = None, fallback_to_cprid: bool = True, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> TopologyReconciliationReport`
+###### `async def reconcile_gateway_topology(self, *, mgmt_name: str | None = None, domain: str | None = None, gateways: Sequence[str] | str | None = None, collect_routes: bool = False, collect_live_routes: bool = False, check_policy: bool = False, gateway_cli: GatewayCliPort | GatewayCliCallable | None = None, fallback_to_cprid: bool = True, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None, cprid_script_mode: CpridScriptMode | None = None, repository_script_name: str | None = None, repository_script_args_fn: RepositoryScriptArgsCallable | None = None) -> TopologyReconciliationReport`
 
 ```python
 @traced
@@ -643,6 +664,48 @@ Step 2: Describe one or more Check Point API commands offline, inferring `versio
 
 Step 3: Validate a candidate request payload offline against the command's schema for `version` / `mgmt_name`.
 
+###### `async def get_repository_script(self, mgmt_name: str, script_name_or_uid: str, *, domain: str | None = None, details_level: str = 'full') -> RepositoryScript`
+
+```python
+@traced
+```
+Fetch a single Check Point Script Repository entry by name or UID (`show-repository-script`).
+
+###### `async def list_repository_scripts(self, mgmt_name: str, *, domain: str | None = None, details_level: str = 'full', limit: int = 300) -> list[RepositoryScript]`
+
+```python
+@traced
+```
+List Check Point Script Repository entries in `domain` (`show-repository-scripts`).
+
+###### `async def check_repository_script(self, mgmt_name: str, script_name_or_uid: str, *, domain: str | None = None, expected_body: str | None = None) -> RepositoryScriptStatus`
+
+```python
+@traced
+```
+Inspect a repository script strictly read-only over `sid_cache` and compare against `expected_body`.
+
+###### `async def ensure_repository_script(self, mgmt_name: str, script_name: str, script_body: str, *, domain: str | None = None, comments: str | None = None, color: str | None = None, tags: Sequence[str] | None = None) -> EnsureRepositoryScriptResult`
+
+```python
+@traced
+```
+Idempotently ensure `script_name` exists with `script_body`, avoiding writes when already matching.
+
+###### `async def delete_repository_script(self, mgmt_name: str, script_name_or_uid: str, *, domain: str | None = None) -> bool`
+
+```python
+@traced
+```
+Delete a Check Point Script Repository entry from `domain` (`delete-repository-script`).
+
+###### `async def run_repository_script(self, mgmt_name: str, script_name_or_uid: str, targets: Sequence[str] | str, *, domain: str | None = None, args: Sequence[str] | str | None = None, comments: str | None = None, timeout: float | None = None, script_timeout: int | None = None) -> RepositoryScriptExecutionOutcome`
+
+```python
+@traced
+```
+Execute any approved Check Point Script Repository entry via `run-script` (`script-type="repository"`).
+
 
 ---
 
@@ -820,6 +883,8 @@ cpcrud_schema_path: str | None = Field(default=None, validation_alias=AliasChoic
 cpcrud_naming_prefixes: NamingPrefixes = Field(default_factory=NamingPrefixes, validation_alias=AliasChoices('ARODONATA_CPCRUD_NAMING_PREFIXES', 'CPCRUD_NAMING_PREFIXES'))
 trace_modules: str = Field(default='', validation_alias=AliasChoices('ARODONATA_TRACE_MODULES'))
 topology_confidence_weights: TopologyConfidenceWeights = Field(default_factory=TopologyConfidenceWeights, validation_alias=AliasChoices('ARODONATA_TOPOLOGY_CONFIDENCE_WEIGHTS'))
+cprid_script_mode: CpridScriptMode = Field(default='inline', validation_alias=AliasChoices('ARODONATA_CPRID_SCRIPT_MODE'))
+cprid_repository_script_name: str = Field(default='arodonata-collect-routes-v1', validation_alias=AliasChoices('ARODONATA_CPRID_REPOSITORY_SCRIPT_NAME'))
 ```
 ##### Methods
 
@@ -863,6 +928,10 @@ Contextvars propagation for authentication, operator metadata, and WriteSession 
 
 #### Module-Level Functions
 
+##### `def normalize_domain_key(domain: str | None) -> str`
+
+Normalize `domain=None` or whitespace-only domain strings to `'System Data'`.
+
 ##### `def get_auth_context() -> AuthContext | None`
 
 Return the active `AuthContext` bound in the current execution context, if any.
@@ -895,6 +964,13 @@ Return the active `WriteSession` if one is bound and matches `(mgmt_name, domain
 @contextmanager
 ```
 Bind a `WriteSession` to the current `contextvars` scope.
+
+##### `async def open_api_write_session(api: ApiPort, mgmt_name: str, domain: str | None = None, *, auth: AuthContext | None = None, user: UserContext | None = None, session_name: str | None = None, session_description: str | None = None, publish_on_exit: bool = True, on_domain_invalidated: Callable[[str, str | None], None] | None = None) -> AsyncIterator[WriteSession]`
+
+```python
+@asynccontextmanager
+```
+Open an isolated `WriteSession` directly against an `ApiPort` with discard/publish/logout lifecycle.
 
 #### class `AuthContext(BaseModel)`
 
@@ -1061,6 +1137,14 @@ Mask Check Point session identifiers and credentials in arbitrary text.
 
 Recursively redact sensitive keys and SID strings from a dictionary.
 
+##### `def is_script_permission_error(error_code: str | None, error_message: str | None) -> bool`
+
+Return True if a Check Point API code or message indicates script or read-only permission denial.
+
+##### `def is_unsupported_script_command_error(error_code: str | None, error_message: str | None) -> bool`
+
+Return True if a Check Point API error indicates Script Repository commands are unsupported (< v1.9).
+
 #### class `ArodonataError(Exception)`
 
 Base exception for all Arodonata errors with automatic SID/secret redaction.
@@ -1198,6 +1282,30 @@ Raised when ChangeReport scope bounds or options are invalid.
 #### class `UnsupportedFormat(ArodonataError)`
 
 Raised when an unsupported report rendering format (e.g. 'pdf') is requested.
+
+#### class `RepositoryScriptError(ArodonataError)`
+
+Base exception for Check Point Script Repository operations.
+
+#### class `RepositoryScriptNotFoundError(RepositoryScriptError)`
+
+Raised when a Check Point Script Repository entry does not exist in the target domain.
+
+##### Methods
+
+###### `def __init__(self, mgmt_name: str, domain_name: str, script_ref: str, message: str | None = None, *, known_sids: Iterable[str] | None = None) -> None`
+
+_No docstring._
+
+#### class `RepositoryScriptPermissionError(RepositoryScriptError)`
+
+Raised when Check Point denies permission to inspect, manage, or run a repository script.
+
+##### Methods
+
+###### `def __init__(self, mgmt_name: str, domain_name: str, script_ref: str, operation: str = 'execute', message: str | None = None, *, known_sids: Iterable[str] | None = None) -> None`
+
+_No docstring._
 
 ### `arodonata/core/events.py`
 
@@ -1992,6 +2100,113 @@ nat_rules: list[NatRuleEntry] = Field(default_factory=list)
 https_rules: list[HttpsRuleEntry] = Field(default_factory=list)
 threat_rules: list[ThreatRuleEntry] = Field(default_factory=list)
 ```
+### `arodonata/core/models/scripts.py`
+
+Check Point Script Repository models and script-body normalization helpers.
+
+#### Module-Level Functions
+
+##### `def normalize_script_body(body: str) -> str`
+
+Normalize line endings (`\r\n` / `\r` -> `\n`) and strip trailing line whitespace.
+
+##### `def decode_base64_task_message(raw_val: str) -> str`
+
+Decode a Base64-encoded Check Point task message when plausible UTF-8 text, else return `raw_val`.
+
+#### class `RepositoryScript(BaseModel)`
+
+Check Point Management Script Repository entry (`add/show/set-repository-script`).
+
+##### Fields / Class Variables
+
+```python
+uid: str = ''
+name: str
+mgmt_name: str = ''
+domain_name: str = ''
+script_body: str = ''
+args: str = ''
+comments: str = ''
+color: str = 'black'
+tags: list[str] = Field(default_factory=list)
+raw_data: dict[str, Any] = Field(default_factory=dict)
+```
+##### Methods
+
+###### `def from_cp_dict(cls, mgmt_name: str, domain_name: str, data: Mapping[str, Any], *, fallback_body: str | None = None) -> RepositoryScript`
+
+```python
+@classmethod
+```
+Build a `RepositoryScript` from a Check Point Management API response payload.
+
+#### class `RepositoryScriptStatus(BaseModel)`
+
+Read-only inspection status of a Check Point Script Repository entry.
+
+##### Fields / Class Variables
+
+```python
+mgmt_name: str
+domain_name: str
+script_ref: str = ''
+exists: bool
+script: RepositoryScript | None = None
+matches_expected: bool | None = None
+error_code: str | None = None
+error: str | None = None
+```
+#### class `EnsureRepositoryScriptResult(BaseModel)`
+
+Result of idempotently ensuring a repository script matches the desired body.
+
+##### Fields / Class Variables
+
+```python
+mgmt_name: str
+domain_name: str
+action: RepositoryScriptEnsureAction
+script: RepositoryScript
+published: bool = False
+```
+#### class `ScriptTargetExecutionResult(BaseModel)`
+
+Per-target execution output decoded from Check Point `run-script` / `show-task`.
+
+##### Fields / Class Variables
+
+```python
+target: str
+target_name: str = ''
+target_uid: str = ''
+task_id: str = ''
+status: str = ''
+success: bool
+stdout: str = ''
+stderr: str = ''
+status_description: str = ''
+revision: str | None = None
+```
+#### class `RepositoryScriptExecutionOutcome(BaseModel)`
+
+Aggregated outcome of executing a Check Point Script Repository entry via `run-script`.
+
+##### Fields / Class Variables
+
+```python
+mgmt_name: str
+domain_name: str
+script_ref: str
+args: str = ''
+success: bool
+task_ids: list[str] = Field(default_factory=list)
+targets: list[ScriptTargetExecutionResult] = Field(default_factory=list)
+stdout: str = ''
+stderr: str = ''
+error_code: str | None = None
+error_message: str | None = None
+```
 ### `arodonata/core/models/services.py`
 
 Service object domain models (`CPService`).
@@ -2208,6 +2423,7 @@ stdout: str = ''
 stderr: str = ''
 exit_code: int = 0
 executor: Literal['ssh', 'cprid'] = 'ssh'
+error_code: str | None = None
 error_message: str | None = None
 ```
 #### class `GatewayRouteCollectionStatus(BaseModel)`
@@ -2229,6 +2445,7 @@ executor: str = ''
 routes_collected: int = 0
 member_drift_detected: bool = False
 warnings: list[str] = Field(default_factory=list)
+error_code: str | None = None
 error: str | None = None
 ```
 ##### Methods
@@ -2906,11 +3123,24 @@ but `vs_name` is set, dynamically resolves `vsid` via `vsx stat -l` on `VS0` and
 if the VSID cannot be resolved. When `max_routes` (`> 0`) is specified, caps CLI output lines via
 `awk` and skips `clish -c "show route"` on BGP full-view / large tables (`> 10000` kernel routes).
 
+##### `def build_route_collection_repository_script() -> str`
+
+Build the canonical parameterized bash script (`arodonata-collect-routes-v1`) for Check Point Script Repository.
+
+Positional arguments (`run-script` `args`):
+- `$1`: `max_routes` (digits-only; `0` or empty = unlimited)
+- `$2`: `vsid` (digits-only; `0` or empty = host / non-VSX)
+- `$3`: `vs_name` (optional Virtual System name resolved dynamically via `vsx stat -l` when `vsid=0`)
+
+##### `def format_route_collection_repository_args(target: GatewayCliTarget, *, max_routes: int | None = None) -> str`
+
+Format safe positional `args` (`<max_routes> <vsid> [<vs_name>]`) for `arodonata-collect-routes-v1`.
+
 ##### `def decode_cprid_task_output(data: dict[str, Any]) -> tuple[bool, str, str]`
 
 Extract and Base64-decode `responseMessage` / `responseError` from Check Point `run-script` / `show-task`.
 
-##### `async def execute_gateway_cli(target: GatewayCliTarget, script: str, *, api: ApiPort, gateway_cli: GatewayCliPort | GatewayCliCallable | None = None, fallback_to_cprid: bool = True, timeout: float = 30.0, cprid_session_getter: Callable[[str, str], Awaitable[tuple[str, str]]] | None = None) -> GatewayCliResult`
+##### `async def execute_gateway_cli(target: GatewayCliTarget, script: str, *, api: ApiPort, gateway_cli: GatewayCliPort | GatewayCliCallable | None = None, fallback_to_cprid: bool = True, timeout: float = 30.0, cprid_session_getter: Callable[[str, str], Awaitable[tuple[str, str]]] | None = None, cprid_script_mode: CpridScriptMode = 'inline', repository_script_name: str = DEFAULT_ROUTE_COLLECT_REPOSITORY_SCRIPT_NAME, repository_script_args_fn: RepositoryScriptArgsCallable | None = None, max_routes: int | None = None, script_service: ScriptRepositoryService | None = None, domain_fallback_inline: dict[tuple[str, str], bool] | None = None, auto_mode_resolver: AutoScriptModeResolver | None = None, preclaimed_auto_probe: bool = False) -> GatewayCliResult`
 
 Execute `script` on `target` via injected `gateway_cli` (SSH) with optional `cprid` `run-script` fallback.
 
@@ -2945,6 +3175,32 @@ Convert per-node `ParsedCliRoute` lists into `GatewayTopologyEntry` rows and det
 Returns `(entries, member_drift_detected, drift_map)` where `drift_map` maps `(interface_name, cidr_or_range)`
 to the subset of cluster node names that reported the route whenever not all nodes reported it.
 
+#### class `AutoScriptModeResolver`
+
+Single-flight per-domain resolver for `cprid_script_mode='auto'`.
+
+##### Methods
+
+###### `def __init__(self) -> None`
+
+_No docstring._
+
+###### `def get_resolved(self, mgmt_name: str, domain_name: str | None) -> Literal['repository', 'inline'] | None`
+
+Return the cached script mode decision for `(mgmt_name, domain_name)` if already resolved.
+
+###### `async def acquire_probe_turn(self, mgmt_name: str, domain_name: str | None) -> bool`
+
+Acquire a single per-domain probe slot or await the in-flight probe without holding `mgmt_sem`.
+
+###### `def resolve_probe(self, mgmt_name: str, domain_name: str | None, mode: Literal['repository', 'inline']) -> None`
+
+Record the domain's script mode decision and wake waiting targets.
+
+###### `def abort_probe_if_unresolved(self, mgmt_name: str, domain_name: str | None) -> None`
+
+Release the in-flight probe slot if the prober exited before resolving.
+
 #### class `ParsedCliRoute`
 
 ```python
@@ -2961,6 +3217,70 @@ nexthop: ipaddress.IPv4Address | None
 source_type: TopologySourceType
 protocol_label: str
 ```
+### `arodonata/core/services/script_service.py`
+
+Application-agnostic Check Point Script Repository management and execution service.
+
+#### class `ScriptRepositoryService`
+
+Universal Check Point Script Repository CRUD, status, and execution service.
+
+##### Methods
+
+###### `def __init__(self, *, api: ApiPort, settings: ArodonataSettings | None = None, write_session_factory: Callable[..., AbstractAsyncContextManager[WriteSession]] | None = None, on_domain_invalidated: Callable[[str, str | None], None] | None = None) -> None`
+
+_No docstring._
+
+###### `async def get_repository_script(self, mgmt_name: str, script_name_or_uid: str, *, domain: str | None = None, details_level: str = 'full') -> RepositoryScript`
+
+```python
+@traced
+```
+Fetch a single repository script by name or UID (`show-repository-script`).
+
+###### `async def list_repository_scripts(self, mgmt_name: str, *, domain: str | None = None, details_level: str = 'full', limit: int = 300) -> list[RepositoryScript]`
+
+```python
+@traced
+```
+List repository scripts in `domain` (`show-repository-scripts`).
+
+###### `async def check_repository_script(self, mgmt_name: str, script_name_or_uid: str, *, domain: str | None = None, expected_body: str | None = None) -> RepositoryScriptStatus`
+
+```python
+@traced
+```
+Check whether a repository script exists and matches `expected_body` strictly read-only.
+
+Note: `exists=False` is also returned when permission is denied (`error_code='repository_script_permission_denied'`)
+or when the Management API does not support Script Repository commands (`error_code='repository_script_unsupported'`).
+Callers MUST inspect `error_code` before treating `exists=False` as absence of the script.
+
+###### `async def ensure_repository_script(self, mgmt_name: str, script_name: str, script_body: str, *, domain: str | None = None, comments: str | None = None, color: str | None = None, tags: Sequence[str] | None = None) -> EnsureRepositoryScriptResult`
+
+```python
+@traced
+```
+Idempotently ensure `script_name` exists with `script_body`, avoiding writes when already matching.
+
+###### `async def delete_repository_script(self, mgmt_name: str, script_name_or_uid: str, *, domain: str | None = None) -> bool`
+
+```python
+@traced
+```
+Delete a repository script from `domain` (`delete-repository-script`).
+
+###### `async def run_repository_script(self, mgmt_name: str, script_name_or_uid: str, targets: Sequence[str] | str, *, domain: str | None = None, args: Sequence[str] | str | None = None, comments: str | None = None, timeout: float | None = None, script_timeout: int | None = None, sid: str | None = None, server_ip: str | None = None, session_getter: Callable[[str, str | None], Awaitable[tuple[str, str]]] | None = None) -> RepositoryScriptExecutionOutcome`
+
+```python
+@traced
+```
+Execute a pre-approved repository script via Check Point `run-script` (`script-type="repository"`).
+
+Forwards `targets` and `args` (`str` verbatim or space-joined sequence) without route-collection
+or VSX assumptions, running in a dedicated non-read-only session (without `publish` or `discard`)
+unless an explicit `sid` or matching active `WriteSession` is already bound.
+
 ### `arodonata/core/services/search_service.py`
 
 Cache-first object search, recursive group resolution, and structured aggregation (`SearchService`).
@@ -3252,7 +3572,7 @@ Extracts, caches, reconciles, and matches gateway interface topology and live ro
 
 ##### Methods
 
-###### `def __init__(self, *, settings: ArodonataSettings, api: ApiPort, cache: CachePort, coordinator: DomainSyncCoordinator, asset_service: AssetRefreshService, object_service: ObjectService, rulebase_refresh: RulebaseRefreshService | None = None, gateway_cli: GatewayCliPort | GatewayCliCallable | None = None, now_fn: Callable[[], datetime] = utc_now) -> None`
+###### `def __init__(self, *, settings: ArodonataSettings, api: ApiPort, cache: CachePort, coordinator: DomainSyncCoordinator, asset_service: AssetRefreshService, object_service: ObjectService, rulebase_refresh: RulebaseRefreshService | None = None, gateway_cli: GatewayCliPort | GatewayCliCallable | None = None, script_service: ScriptRepositoryService | None = None, now_fn: Callable[[], datetime] = utc_now) -> None`
 
 _No docstring._
 
@@ -3263,15 +3583,36 @@ _No docstring._
 ```
 Configured `GatewayCliPort` or async callable for executing CLI commands on gateways.
 
+###### `def script_service(self) -> ScriptRepositoryService`
+
+```python
+@property
+```
+Associated `ScriptRepositoryService` used for repository-mode route collection.
+
 ###### `def set_gateway_cli(self, gateway_cli: GatewayCliPort | GatewayCliCallable | None) -> None`
 
 Set or replace the runtime `GatewayCliPort` or async callable.
 
-###### `async def stream_refresh_topology(self, *, mgmt_name: str | None = None, domains: Sequence[str] | str | None = None, gateways: Sequence[str] | str | None = None, collect_routes: bool = False, include_global: bool = False, mode: CacheMode = 'smart', cache_ttl: float | None = None) -> AsyncIterator[SyncProgressEvent]`
+###### `async def check_route_collection_script(self, mgmt_name: str, domain: str | None = None, *, script_name: str | None = None) -> RepositoryScriptStatus`
+
+```python
+@traced
+```
+Check read-only whether the canonical route-collection repository script exists and matches.
+
+###### `async def ensure_route_collection_script(self, mgmt_name: str, domain: str | None = None, *, script_name: str | None = None, comments: str | None = None) -> EnsureRepositoryScriptResult`
+
+```python
+@traced
+```
+Idempotently provision or update the canonical route-collection script in `domain`.
+
+###### `async def stream_refresh_topology(self, *, mgmt_name: str | None = None, domains: Sequence[str] | str | None = None, gateways: Sequence[str] | str | None = None, collect_routes: bool = False, include_global: bool = False, mode: CacheMode = 'smart', cache_ttl: float | None = None, cprid_script_mode: CpridScriptMode | None = None, repository_script_name: str | None = None, repository_script_args_fn: RepositoryScriptArgsCallable | None = None) -> AsyncIterator[SyncProgressEvent]`
 
 Stream `SyncProgressEvent` items while refreshing gateway topology across domains (or targeted `gateways`).
 
-###### `async def refresh_topology(self, *, mgmt_name: str | None = None, domains: Sequence[str] | str | None = None, gateways: Sequence[str] | str | None = None, collect_routes: bool = False, include_global: bool = False, mode: CacheMode = 'smart', cache_ttl: float | None = None) -> RefreshOutcome`
+###### `async def refresh_topology(self, *, mgmt_name: str | None = None, domains: Sequence[str] | str | None = None, gateways: Sequence[str] | str | None = None, collect_routes: bool = False, include_global: bool = False, mode: CacheMode = 'smart', cache_ttl: float | None = None, cprid_script_mode: CpridScriptMode | None = None, repository_script_name: str | None = None, repository_script_args_fn: RepositoryScriptArgsCallable | None = None) -> RefreshOutcome`
 
 ```python
 @traced
@@ -3299,7 +3640,7 @@ Aggregate flat `GatewayTopologyEntry` rows into per-interface `GatewayInterfaceS
 ```
 Inspect gateway and interface definitions and return `TopologyDiagnostic` items.
 
-###### `async def collect_gateway_routes(self, mgmt_name: str | None = None, domain: str | None = None, *, domains: Sequence[str] | str | None = None, gateways: Sequence[str] | str | None = None, include_global: bool = True, gateway_cli: GatewayCliPort | GatewayCliCallable | None = None, fallback_to_cprid: bool = True, timeout: float = 30.0, concurrency: int | None = None) -> RouteCollectionOutcome`
+###### `async def collect_gateway_routes(self, mgmt_name: str | None = None, domain: str | None = None, *, domains: Sequence[str] | str | None = None, gateways: Sequence[str] | str | None = None, include_global: bool = True, gateway_cli: GatewayCliPort | GatewayCliCallable | None = None, fallback_to_cprid: bool = True, timeout: float = 30.0, concurrency: int | None = None, cprid_script_mode: CpridScriptMode | None = None, repository_script_name: str | None = None, repository_script_args_fn: RepositoryScriptArgsCallable | None = None) -> RouteCollectionOutcome`
 
 ```python
 @traced
@@ -3327,7 +3668,7 @@ Insert or update persistent `TopologyAnnotation` records and return the normaliz
 ```
 Delete persistent `TopologyAnnotation` records by ID or filter.
 
-###### `async def reconcile_gateway_topology(self, mgmt_name: str | None = None, domain: str | None = None, *, gateways: Sequence[str] | str | None = None, collect_routes: bool = False, collect_live_routes: bool = False, check_policy: bool = False, gateway_cli: GatewayCliPort | GatewayCliCallable | None = None, fallback_to_cprid: bool = True, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> TopologyReconciliationReport`
+###### `async def reconcile_gateway_topology(self, mgmt_name: str | None = None, domain: str | None = None, *, gateways: Sequence[str] | str | None = None, collect_routes: bool = False, collect_live_routes: bool = False, check_policy: bool = False, gateway_cli: GatewayCliPort | GatewayCliCallable | None = None, fallback_to_cprid: bool = True, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None, cprid_script_mode: CpridScriptMode | None = None, repository_script_name: str | None = None, repository_script_args_fn: RepositoryScriptArgsCallable | None = None) -> TopologyReconciliationReport`
 
 ```python
 @traced
@@ -3720,10 +4061,6 @@ Implements `LoginCoordinator` and `SessionCleaner`:
 - Cleans up stale sessions via `SessionCleaner` and seeds the system domain SID on startup.
 
 #### Module-Level Functions
-
-##### `def normalize_domain_key(domain: str | None) -> str`
-
-Normalize `domain=None` or `""` to `'System Data'` for `sid_cache` keys.
 
 ##### `def is_session_expired_result(result: ApiCallResult, *, command: str | None = None) -> bool`
 
@@ -7581,6 +7918,9 @@ cli_overrides: dict[tuple[str, int], str]
 fail_ssh_nodes: set[str]
 call_log: list[dict[str, Any]]
 domain_generations: dict[str, int] = field(default_factory=dict)
+allow_one_time_script: bool = True
+allow_repository_script: bool = True
+manage_repository_scripts: str = 'write'
 ```
 ### `arodonata/testing/dataset_generator.py`
 
@@ -7752,7 +8092,7 @@ File-backed `ApiPort` replay adapter emulating Check Point MDSM and CMA domains 
 
 ##### Methods
 
-###### `def __init__(self, dataset_dir: Path | str = DEFAULT_DATASET_DIR, *, cli_mock: FileReplayCliMock | None = None) -> None`
+###### `def __init__(self, dataset_dir: Path | str = DEFAULT_DATASET_DIR, *, cli_mock: FileReplayCliMock | None = None, allow_one_time_script: bool = True, allow_repository_script: bool = True, manage_repository_scripts: str = 'write') -> None`
 
 _No docstring._
 

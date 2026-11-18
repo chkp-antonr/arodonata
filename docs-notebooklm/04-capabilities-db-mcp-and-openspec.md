@@ -118,6 +118,15 @@ await client.publish_staged_session(mgmt, "Domain4", session_uid=staged_uid)
 # await client.discard_staged_session(mgmt, "Domain4", session_uid=staged_uid)
 ```
 
+### 3.5 Universal Check Point Script Repository Facade
+
+`ArodonataClient` exposes application-agnostic Script Repository management and execution via `ScriptRepositoryService` (`client.script_service`):
+
+- **Read-only inspection (`sid_cache`)**: `get_repository_script`, `list_repository_scripts`, and `check_repository_script(..., expected_body=...)` inspect scripts without opening write sessions or calling `publish`.
+- **Idempotent provisioning (`WriteSession`)**: `ensure_repository_script` normalizes line endings (`\r\n` -> `\n`), short-circuits with `action="unchanged"` and zero publishes when the script body (and any explicitly supplied `comments`/`color`/`tags`) already matches, and otherwise creates/updates inside an isolated `WriteSession` (or reuses an active matching `WriteSession`) without polluting `SessionOverlay`.
+- **Execution (`script-type="repository"`)**: `run_repository_script(mgmt_name, script_name_or_uid, targets, *, domain=None, args=None, ...)` forwards caller `args` verbatim (`str`) or space-joined (`Sequence[str]`) over a dedicated non-read-only session (without `publish` or `discard`) and Base64-decodes per-target `show-task` results into `RepositoryScriptExecutionOutcome`, mapping missing scripts or insufficient permissions to `RepositoryScriptNotFoundError` / `RepositoryScriptPermissionError`.
+- **Route collection consumer**: `TopologyService.collect_gateway_routes()` consumes this layer when `cprid_script_mode` is `"repository"` or `"auto"`, defaulting to `"inline"` for backward compatibility and providing `check_route_collection_script` / `ensure_route_collection_script`.
+
 
 ---
 
@@ -1804,7 +1813,7 @@ All major client, transport, login, lock, cache, and CPCRUD entry points SHALL b
 
 ### Requirement: Gateway Topology and Candidate Discovery Facade Methods
 
-`ArodonataClient` SHALL accept an optional `gateway_cli` (`GatewayCliPort` or async command callback) for SSH command execution on gateways, expose `topology_service` (`TopologyService`), and provide traced async facade methods `refresh_topology(..., gateways=..., collect_routes=...)`, `stream_refresh_topology(..., gateways=..., collect_routes=...)`, `collect_gateway_routes(...)`, `get_gateway_topology(...)`, `get_topology_diagnostics(...)`, `reconcile_gateway_topology(..., check_policy=...)`, `upsert_topology_annotations(...)`, `get_topology_annotations(...)`, `delete_topology_annotations(...)`, `export_topology_prefixes(...)`, and `find_affected_gateways(sources, destinations, ..., min_confidence=..., include_standby=..., include_policy_inferred=...)` returning typed Pydantic models.
+`ArodonataClient` SHALL accept an optional `gateway_cli` (`GatewayCliPort` or async command callback) for SSH command execution on gateways, expose `topology_service` (`TopologyService`), and provide traced async facade methods `refresh_topology(..., gateways=..., collect_routes=...)`, `stream_refresh_topology(..., gateways=..., collect_routes=...)`, `collect_gateway_routes(..., cprid_script_mode=..., repository_script_name=..., repository_script_args_fn=...)`, `check_route_collection_script(...)`, `ensure_route_collection_script(...)`, `get_gateway_topology(...)`, `get_topology_diagnostics(...)`, `reconcile_gateway_topology(..., check_policy=...)`, `upsert_topology_annotations(...)`, `get_topology_annotations(...)`, `delete_topology_annotations(...)`, `export_topology_prefixes(...)`, and `find_affected_gateways(sources, destinations, ..., min_confidence=..., include_standby=..., include_policy_inferred=...)` returning typed Pydantic models.
 
 #### Scenario: Consumer resolves affected gateways and policy packages via ArodonataClient
 
@@ -1815,6 +1824,11 @@ All major client, transport, login, lock, cache, and CPCRUD entry points SHALL b
 
 - **WHEN** a host application initializes `ArodonataClient(settings, gateway_cli=ssh_exec_fn)` and calls `await client.collect_gateway_routes(mgmt_name="mds1", domain="Corp", gateways=["gw-01"])` followed by `await client.reconcile_gateway_topology(mgmt_name="mds1", domain="Corp", gateways=["gw-01"], check_policy=True)`
 - **THEN** `ArodonataClient` SHALL invoke `ssh_exec_fn` for `"gw-01"`, persist the parsed route intervals into `arodonata_gateway_topology`, and return a `TopologyReconciliationReport` detailing any discrepancies between SmartConsole topology, live routes, and gateway-targeted policy rules
+
+#### Scenario: Pipelined collection in one domain runs concurrently with script provisioning in another domain
+
+- **WHEN** a host application runs `collect_gateway_routes(mgmt_name="mds1", domain="DomainA", cprid_script_mode="repository")` concurrently with `ensure_route_collection_script("mds1", "DomainB")`
+- **THEN** both operations SHALL maintain isolated session contexts without `WriteSession` `contextvars` bleed or cross-domain lock blocking, allowing route collection in `"DomainA"` to complete while `"DomainB"` provisions and publishes its repository script
 
 ### Requirement: Single-Flight Background Object and Service Cache Warm-Up
 
@@ -1838,6 +1852,53 @@ All major client, transport, login, lock, cache, and CPCRUD entry points SHALL b
 
 - **WHEN** a consumer calls `await client.get_policy_packages("mds1", "Corp", cache_mode="smart")`, `await client.get_package_rulebase("mds1", "Corp", "Corp_Pkg", rulebase_type="access", cache_mode="smart")`, and `await client.find_affected_gateways(sources, destinations, mgmt_name="mds1", source_types=STATIC_TOPOLOGY_SOURCES, include_annotations=False)`
 - **THEN** `ArodonataClient` SHALL return the domain's `PolicyPackageInfo` catalog, the numbered `PackageRulebase` for `"Corp_Pkg"`, and the static-only `AffectedGatewayCandidate` list without triggering full-domain NAT/HTTPS/Threat rulebase syncs or full-domain `show-hosts` downloads
+
+### Requirement: Script Repository Read, Check, Ensure, and Delete Facade
+
+`ArodonataClient` SHALL expose traced async methods `get_repository_script`, `list_repository_scripts`, `check_repository_script`, `ensure_repository_script`, and `delete_repository_script` using shared read-only sessions for reads/checks and isolated write sessions (omitting `"repository-script"` from `SessionOverlay`) only when creation, modification, or deletion is required.
+
+#### Scenario: Read-only script check and zero-write fast path in ensure_repository_script
+
+- **WHEN** `check_repository_script` or `ensure_repository_script(mgmt_name, "arodonata-collect-routes-v1", expected_body, domain="Corp")` runs while `"arodonata-collect-routes-v1"` already exists in `"Corp"` with matching normalized line endings (`\r\n` -> `\n`, stripped trailing whitespace) and matching any explicitly supplied metadata (`comments`, `color`, `tags`)
+- **THEN** the inspection SHALL run strictly read-only over `sid_cache` (without opening a `WriteSession` or calling `publish`) and `ensure_repository_script` SHALL return `EnsureRepositoryScriptResult(action="unchanged")`
+
+#### Scenario: Missing or outdated script created or updated without SessionOverlay pollution
+
+- **WHEN** `ensure_repository_script(mgmt_name, script_name, script_body, domain="Corp")` runs while the script is absent, differs from `script_body`, or has mismatched explicit `comments`/`color`/`tags` (either standalone or inside an existing `WriteSession`)
+- **THEN** standalone calls SHALL open an isolated `WriteSession`, execute `add-repository-script` or `set-repository-script`, publish and invalidate `"Corp"`, and return `action="created"` or `"updated"`, while active `WriteSession` calls SHALL reuse the caller's session without auto-publishing or polluting `SessionOverlay` object caches
+
+#### Scenario: Permission error during script check or provisioning raises RepositoryScriptPermissionError
+
+- **WHEN** a read-only or restricted administrator invokes `ensure_repository_script` or `delete_repository_script` in a domain lacking `manage-repository-scripts: write` or `publish-sessions` privileges
+- **THEN** `ArodonataClient` SHALL discard any uncommitted session cleanly and raise `RepositoryScriptPermissionError` carrying `mgmt_name`, `domain_name`, `script_ref`, and `operation` without exposing `sid` or credentials
+
+### Requirement: Universal Application-Agnostic Repository Script Execution Facade
+
+`ArodonataClient` SHALL expose traced async `run_repository_script(mgmt_name, script_name_or_uid, targets, *, domain=None, args=None, comments=None, timeout=None, script_timeout=None)` sending `run-script` with `script-type="repository"` and caller-supplied `args` verbatim (`str`) or space-joined (`Sequence[str]`) over a dedicated non-read-only session (or active `WriteSession`) without `publish` or `discard`.
+
+#### Scenario: Universal execution forwards application script name, targets, and args verbatim
+
+- **WHEN** an external application invokes `await client.run_repository_script("mds1", "app-custom-diag", ["gw-01", "gw-02"], domain="Corp", args=["--mode", "fast"])` (or with `args="--mode fast"`)
+- **THEN** `ArodonataClient` SHALL invoke `run-script` with `{"script-name": "app-custom-diag", "script-type": "repository", "targets": ["gw-01", "gw-02"], "args": "--mode fast"}` (omitting `"script"` and `"script-base64"`, or passing `"uid"` for UUID targets), poll `show-task`, Base64-decode per-target outputs into `RepositoryScriptExecutionOutcome`, and never inject route-collection or VSX logic
+
+#### Scenario: Execution outside WriteSession uses a non-read-only session without publish or discard
+
+- **WHEN** `run_repository_script` runs outside an active `WriteSession`
+- **THEN** it SHALL authenticate a dedicated non-read-only session (`read_only=False`), execute `run-script` and `show-task`, log out cleanly without calling `publish` or `discard`, and never reuse `sid_cache`
+
+#### Scenario: Missing script or read-only session denial maps to typed script exceptions
+
+- **WHEN** Check Point rejects `run-script` because the named repository script does not exist in the domain or because the caller lacks `run-repository-script` (or authenticated with `read-only: true`)
+- **THEN** `run_repository_script` SHALL raise `RepositoryScriptNotFoundError` or `RepositoryScriptPermissionError` respectively without falling back to inline `"one time"` script execution
+
+### Requirement: Route-Collection Repository Script Convenience Helpers
+
+`ArodonataClient` SHALL expose `check_route_collection_script` and `ensure_route_collection_script` helpers wrapping `check_repository_script` and `ensure_repository_script` with `settings.cprid_repository_script_name` (or an explicit `script_name` override) and the canonical route-collection repository script body.
+
+#### Scenario: Host application checks and provisions the canonical route-collection script
+
+- **WHEN** a host application calls `await client.check_route_collection_script("mds1", "Corp")` followed by `await client.ensure_route_collection_script("mds1", "Corp")`
+- **THEN** `ArodonataClient` SHALL check and provision the canonical `arodonata-collect-routes-v1` script body in `"Corp"` using `settings.cprid_repository_script_name` (default `"arodonata-collect-routes-v1"`)
 
 
 ---
@@ -1955,6 +2016,25 @@ The system SHALL support hierarchical dotted-prefix span gating via `ARODONATA_T
 
 - **WHEN** a caller invokes `client.cpcrud.plan(template)` without supplying an explicit `naming_prefixes` argument or template `naming_prefixes` block
 - **THEN** the planner SHALL apply `settings.cpcrud_naming_prefixes` when auto-naming newly created objects and services
+
+### Requirement: CPRID Repository Script Execution Configuration
+
+`ArodonataSettings` SHALL resolve `cprid_script_mode` (`"inline" | "repository" | "auto"`, default `"inline"`, env alias `ARODONATA_CPRID_SCRIPT_MODE`) and `cprid_repository_script_name` (default `"arodonata-collect-routes-v1"`, env alias `ARODONATA_CPRID_REPOSITORY_SCRIPT_NAME`, rejecting blank strings) from constructor arguments and `os.environ` without implicitly loading `.env` files.
+
+#### Scenario: Default mode preserves backward-compatible inline execution
+
+- **WHEN** `ArodonataSettings()` is instantiated without `cprid_script_mode` or `cprid_repository_script_name` overrides
+- **THEN** `cprid_script_mode` SHALL equal `"inline"` and `cprid_repository_script_name` SHALL equal `"arodonata-collect-routes-v1"`
+
+#### Scenario: Constructor and environment overrides resolve repository mode settings
+
+- **WHEN** `ARODONATA_CPRID_SCRIPT_MODE="repository"` and `ARODONATA_CPRID_REPOSITORY_SCRIPT_NAME="custom-routes-script"` are present in `os.environ`, or overridden via `ArodonataSettings(cprid_script_mode="auto", cprid_repository_script_name="corp-routes")`
+- **THEN** `ArodonataSettings` SHALL prioritize explicit constructor arguments over `os.environ` without reading `.env` files from disk
+
+#### Scenario: Invalid mode or blank repository script name rejected on settings initialization
+
+- **WHEN** `ArodonataSettings` receives an unsupported `cprid_script_mode` (e.g., `"ssh-only"`) or a blank/whitespace-only `cprid_repository_script_name`
+- **THEN** settings validation SHALL fail immediately with a `ValidationError`
 
 
 ---
@@ -2313,7 +2393,7 @@ Each persisted `GatewayTopologyEntry` in `arodonata_gateway_topology` SHALL carr
 
 ### Requirement: Live Gateway Route Collection via SSH Dependency Injection and CPRID Fallback
 
-`TopologyService.collect_gateway_routes()` SHALL collect live IPv4 routing tables (`connected_route`, `gaia_static_route`, `clish_route`, `bgp_route`, `ospf_route`, and `0.0.0.0/0` default routes) by invoking an injected `GatewayCliPort` (or async SSH callback in bash) first, and falling back to Check Point Management API `run-script` (`cprid` via `TaskWaiter`) when no SSH executor is provided or when SSH execution fails and `fallback_to_cprid=True`.
+`TopologyService.collect_gateway_routes()` SHALL collect live IPv4 routing tables (`connected_route`, `gaia_static_route`, `clish_route`, `bgp_route`, `ospf_route`, and `0.0.0.0/0` default routes) by invoking an injected `GatewayCliPort` (or async SSH callback in bash) first, and falling back to Check Point Management API `run-script` (`cprid` via `TaskWaiter`) when no SSH executor is provided or when SSH execution fails and `fallback_to_cprid=True`, honoring `cprid_script_mode` (`"inline" | "repository" | "auto"`), `repository_script_name`, and `repository_script_args_fn` overrides (also forwarded from `refresh_topology`, `stream_refresh_topology`, and `reconcile_gateway_topology`).
 
 #### Scenario: Cluster and VSX Virtual System route collection via SSH DI and vsenv context switching
 
@@ -2334,6 +2414,21 @@ Each persisted `GatewayTopologyEntry` in `arodonata_gateway_topology` SHALL carr
 
 - **WHEN** `collect_gateway_routes()` runs on a gateway whose routing table exceeds `max_routes_per_gateway` (or `10000` kernel routes for `clish`)
 - **THEN** the collection script SHALL skip `clish -c "show route"` when kernel routes exceed `10000` lines, truncate collected routes at `max_routes_per_gateway`, and record a truncation warning in `GatewayRouteCollectionStatus.warnings`
+
+#### Scenario: Repository mode executes canonical pre-approved script across standalone, cluster, and VSX gateways
+
+- **WHEN** `collect_gateway_routes(..., cprid_script_mode="repository")` runs against a standalone gateway, a `CpmiGatewayCluster`, and VSX Virtual Systems (`vsid=3` and `vs_name="VS_DMZ"`) using a restricted account holding `run-repository-script` without `run-one-time-script`
+- **THEN** `TopologyService` SHALL invoke `run-script` with `script-type="repository"`, `script-name=settings.cprid_repository_script_name`, positional `args` (`"<max_routes> <vsid> <vs_name>"`), and zero `"script"`/`"script-base64"` fields, parse all Gaia/Clish/VSX route markers identically to inline mode, and reject/fail closed if the script is missing (`error_code="repository_script_not_found"`) or unauthorized (`error_code="repository_script_permission_denied"`)
+
+#### Scenario: Host application overrides repository script name and positional arguments builder
+
+- **WHEN** a host application invokes `collect_gateway_routes(..., cprid_script_mode="repository", repository_script_name="corp-routes-v2", repository_script_args_fn=custom_fn)`
+- **THEN** `TopologyService` SHALL invoke `"corp-routes-v2"` with `"script-type": "repository"` and forward the string returned by `custom_fn(target, max_routes)` as `"args"`
+
+#### Scenario: Auto mode falls back per domain on missing repository script while preserving strict repository errors
+
+- **WHEN** `collect_gateway_routes(..., cprid_script_mode="auto")` runs across `"DomainA"` (where `arodonata-collect-routes-v1` exists) and `"DomainB"` (where the repository script is absent)
+- **THEN** `"DomainA"` SHALL succeed via `"script-type": "repository"` and `"DomainB"` SHALL fall back automatically to inline `"one time"` execution (caching the per-flight fallback decision for `"DomainB"`), whereas `cprid_script_mode="repository"` SHALL fail `"DomainB"` targets with `error_code="repository_script_not_found"` without sending any inline script
 
 ### Requirement: Targeted Per-Gateway Topology and Route Refresh
 
@@ -2417,6 +2512,15 @@ During topology extraction, the system SHALL extract each policy-enforcing gatew
 
 - **WHEN** the raw API/CLI fixture for a single gateway is modified to add a new routed subnet and `refresh_topology(gateways=[target_gateway], collect_routes=True)` is invoked
 - **THEN** the replay call counters SHALL confirm that only `target_gateway` was queried via Management API and SSH CLI, and `find_affected_gateways()` SHALL immediately reflect the updated routing graph
+
+### Requirement: Stateful Script Repository and Repository-Mode Run-Script Emulation in FileReplayApiMock
+
+`FileReplayApiMock` SHALL support per-domain `add-repository-script`, `show-repository-script`, `show-repository-scripts`, `set-repository-script`, and `delete-repository-script` (isolated in uncommitted `WorkSession` until `publish`), enforce non-read-only sessions and configurable `run-repository-script` vs `run-one-time-script` permissions on `run-script`, and execute `script-type="repository"` targets using positional `args`.
+
+#### Scenario: End-to-end provisioning and restricted-permission repository execution in FileReplayApiMock
+
+- **WHEN** a test provisions `arodonata-collect-routes-v1` via `ensure_route_collection_script` (verified invisible to other sessions until `publish`) and then configures `FileReplayApiMock` with `allow_one_time_script=False, allow_repository_script=True`
+- **THEN** `collect_gateway_routes(cprid_script_mode="repository")` SHALL succeed across cluster and VSX replay fixtures using `script-type="repository"`, whereas `collect_gateway_routes(cprid_script_mode="inline")` SHALL fail with `error_code="repository_script_permission_denied"`
 
 
 ---

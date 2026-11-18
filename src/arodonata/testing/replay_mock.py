@@ -30,6 +30,7 @@ from arodonata.adapters.checkpoint.pager import DEFAULT_PAGE_LIMIT, paginate_obj
 from arodonata.core.context import AuthContext
 from arodonata.core.errors import REDACTED_PLACEHOLDER, SessionError
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
+from arodonata.core.models.scripts import decode_base64_task_message
 from arodonata.core.models.topology import GatewayCliResult, GatewayCliTarget
 from arodonata.core.ports import ApiPort, GatewayCliPort
 from arodonata.core.telemetry import span_attrs, traced
@@ -187,6 +188,30 @@ def _project_details_level(item: dict[str, Any], details_level: str) -> dict[str
         }
         return {k: copy.deepcopy(v) for k, v in item.items() if k in summary_keys}
     return copy.deepcopy(item)
+
+
+def _project_repository_script(item: dict[str, Any], details_level: str) -> dict[str, Any]:
+    """Project a repository script object according to Check Point `details-level`."""
+    lvl = (details_level or "standard").strip().lower()
+    if lvl == "uid":
+        uid = item.get("uid")
+        return {"uid": uid} if uid is not None else copy.deepcopy(item)
+    return copy.deepcopy(item)
+
+
+def _extract_repo_script_body(req: Mapping[str, Any], *, fallback: str | None = None) -> str | None:
+    """Extract `script-body` or Base64-decoded `script-body-base64` from a request payload."""
+    raw_body = req.get("script-body")
+    if isinstance(raw_body, str):
+        return raw_body
+    raw_b64 = req.get("script-body-base64")
+    if isinstance(raw_b64, str) and raw_b64.strip():
+        try:
+            padded = raw_b64.strip() + "=" * ((4 - len(raw_b64.strip()) % 4) % 4)
+            return base64.b64decode(padded, validate=True).decode("utf-8", errors="replace")
+        except Exception:
+            return decode_base64_task_message(raw_b64)
+    return fallback
 
 
 _INLINE_LIST_RULE_FIELDS: tuple[str, ...] = (
@@ -857,9 +882,15 @@ class FileReplayApiMock(ApiPort):
         dataset_dir: Path | str = DEFAULT_DATASET_DIR,
         *,
         cli_mock: FileReplayCliMock | None = None,
+        allow_one_time_script: bool = True,
+        allow_repository_script: bool = True,
+        manage_repository_scripts: str = "write",
     ) -> None:
         self._dataset_dir = ensure_enterprise_raw_dataset(dataset_dir)
         self._cli_mock = cli_mock or FileReplayCliMock(self._dataset_dir)
+        self.allow_one_time_script: bool = bool(allow_one_time_script)
+        self.allow_repository_script: bool = bool(allow_repository_script)
+        self.manage_repository_scripts: str = str(manage_repository_scripts)
 
         self._manifest: dict[str, Any] = json.loads((self._dataset_dir / "manifest.json").read_text(encoding="utf-8"))
         self._show_domains: dict[str, Any] = json.loads(
@@ -1012,6 +1043,9 @@ class FileReplayApiMock(ApiPort):
             fail_ssh_nodes=set(self._cli_mock.fail_ssh_nodes),
             call_log=copy.deepcopy(self.call_log),
             domain_generations=dict(self._domain_generation),
+            allow_one_time_script=self.allow_one_time_script,
+            allow_repository_script=self.allow_repository_script,
+            manage_repository_scripts=self.manage_repository_scripts,
         )
 
     def restore_state(self, snapshot: ReplayStateSnapshot) -> None:
@@ -1030,6 +1064,9 @@ class FileReplayApiMock(ApiPort):
         self._published_deltas = copy.deepcopy(snapshot.published_deltas)
         self._tasks = copy.deepcopy(snapshot.tasks)
         self._show_global_assignments = copy.deepcopy(snapshot.show_global_assignments)
+        self.allow_one_time_script = bool(snapshot.allow_one_time_script)
+        self.allow_repository_script = bool(snapshot.allow_repository_script)
+        self.manage_repository_scripts = str(snapshot.manage_repository_scripts)
 
         self._sid_seq = snapshot.counters.get("sid_seq", self._sid_seq)
         self._task_seq = snapshot.counters.get("task_seq", self._task_seq)
@@ -1077,6 +1114,9 @@ class FileReplayApiMock(ApiPort):
         self._ts_seq = 1794300000000
         self._cli_mock._cli_overrides.clear()
         self._cli_mock.fail_ssh_nodes.clear()
+        self.allow_one_time_script = True
+        self.allow_repository_script = True
+        self.manage_repository_scripts = "write"
         self.reset_counters()
 
     def get_calls(
@@ -1260,6 +1300,22 @@ class FileReplayApiMock(ApiPort):
         dom_name: str,
     ) -> set[str]:
         targets: set[str] = set()
+        if command in ("set-repository-script", "delete-repository-script") or (
+            command == "add-repository-script" and bool(req.get("set-if-exists", False))
+        ):
+            lookup = (
+                str(req.get("name") or "")
+                if command == "add-repository-script"
+                else str(req.get("uid") or req.get("name") or "")
+            )
+            if lookup:
+                for item in dom_files.get("show-repository-scripts", {}).get("objects", []):
+                    if isinstance(item, Mapping) and (item.get("uid") == lookup or item.get("name") == lookup):
+                        if item.get("uid"):
+                            targets.add(str(item["uid"]))
+                        break
+            return targets
+
         entity_map = CMD_TO_ENTITY_ACTION.get(command)
         if entity_map is not None:
             spec, action = entity_map
@@ -1495,155 +1551,296 @@ class FileReplayApiMock(ApiPort):
         dom_name: str,
         payload: dict[str, Any],
         *,
+        binding: SidBinding | None = None,
+        active_ws: WorkSession | None = None,
         wait_for_task: bool,
     ) -> ApiCallResult:
-        targets = payload.get("targets") or []
-        if isinstance(targets, str):
-            targets = [targets]
-        target_ref = str(targets[0]) if targets else "unknown-target"
-        node_name = self._node_uid_to_name.get(target_ref, target_ref)
-        script = str(payload.get("script") or "")
+        if (binding is not None and binding.read_only) or (active_ws is not None and active_ws.read_only):
+            return cp_error(
+                "err_validation_failed",
+                "Operation is not allowed in read only mode",
+                status_code=400,
+            )
 
-        vsid = 0
-        m_vsid = _VSID_SCRIPT_RE.search(script)
-        m_vs_name = _VS_NAME_SCRIPT_RE.search(script)
-        prepend_resolved = False
-        script_error: str | None = None
-        if m_vsid is not None:
-            vsid = int(m_vsid.group(1))
-            if 'vsenv "$vsid"' not in script or "CTX%05d" not in script:
-                script_error = f"_vs_error=vsenv_{vsid}_missing_guard"
-        elif m_vs_name is not None:
-            vs_name_val = m_vs_name.group(1)
-            if "vsx stat -l" not in script or 'vsenv "$vsid"' not in script or "CTX%05d" not in script:
-                script_error = f"_vs_error=vsx_stat_missing_guard:{vs_name_val}"
+        script_type = str(payload.get("script-type") or "one time").strip().lower()
+        if script_type not in ("one time", "repository"):
+            return cp_error(
+                "err_validation_failed",
+                f"Invalid script-type {script_type!r}; expected 'one time' or 'repository'",
+                status_code=400,
+            )
+
+        inline_script = ""
+        repo_script: dict[str, Any] | None = None
+        if script_type == "one time":
+            if not self.allow_one_time_script:
+                return cp_error(
+                    "generic_err_no_permissions",
+                    "No permission to run action",
+                    status_code=400,
+                )
+            raw_inline = payload.get("script")
+            if isinstance(raw_inline, str) and raw_inline:
+                inline_script = raw_inline
+            elif isinstance(payload.get("script-base64"), str) and payload["script-base64"].strip():
+                inline_script = _extract_repo_script_body({"script-body-base64": payload["script-base64"]}) or ""
+            if not inline_script:
+                return cp_error(
+                    "err_validation_failed",
+                    "Missing parameter: [Didn't Provide script or script-base64 for one time script.]",
+                    status_code=400,
+                )
+        else:
+            if not self.allow_repository_script:
+                return cp_error(
+                    "generic_err_no_permissions",
+                    "No permission to run action",
+                    status_code=400,
+                )
+            if payload.get("script") or payload.get("script-base64"):
+                return cp_error(
+                    "err_validation_failed",
+                    "Cannot provide inline 'script' or 'script-base64' when script-type is 'repository'",
+                    status_code=400,
+                )
+            lookup_ref = str(payload.get("uid") or payload.get("script-name") or "").strip()
+            if not lookup_ref:
+                return cp_error(
+                    "err_validation_failed",
+                    "Missing parameter: 'script-name' or 'uid' is required for repository script",
+                    status_code=400,
+                )
+            published_scripts = (
+                self._domain_data.get(dom_name, {}).get("show-repository-scripts", {}).get("objects", [])
+            )
+            repo_script = next(
+                (
+                    s
+                    for s in published_scripts
+                    if isinstance(s, dict) and (s.get("uid") == lookup_ref or s.get("name") == lookup_ref)
+                ),
+                None,
+            )
+            if repo_script is None:
+                return cp_error(
+                    "generic_err_object_not_found",
+                    f"Requested repository script [{lookup_ref}] not found in domain [{dom_name}]",
+                    status_code=404,
+                )
+
+        raw_targets = payload.get("targets") or []
+        if isinstance(raw_targets, str):
+            targets = [raw_targets] if raw_targets.strip() else ["unknown-target"]
+        else:
+            targets = [str(t) for t in raw_targets if str(t).strip()] or ["unknown-target"]
+
+        built_tasks: list[dict[str, Any]] = []
+        async_task_refs: list[dict[str, Any]] = []
+        first_script_error: str | None = None
+
+        for target_ref in targets:
+            node_name = self._node_uid_to_name.get(target_ref, target_ref)
+            vsid = 0
+            prepend_resolved = False
+            script_error: str | None = None
+            custom_stdout: str | None = None
+
+            if script_type == "one time":
+                m_vsid = _VSID_SCRIPT_RE.search(inline_script)
+                m_vs_name = _VS_NAME_SCRIPT_RE.search(inline_script)
+                if m_vsid is not None:
+                    vsid = int(m_vsid.group(1))
+                    if 'vsenv "$vsid"' not in inline_script or "CTX%05d" not in inline_script:
+                        script_error = f"_vs_error=vsenv_{vsid}_missing_guard"
+                elif m_vs_name is not None:
+                    vs_name_val = m_vs_name.group(1)
+                    if (
+                        "vsx stat -l" not in inline_script
+                        or 'vsenv "$vsid"' not in inline_script
+                        or "CTX%05d" not in inline_script
+                    ):
+                        script_error = f"_vs_error=vsx_stat_missing_guard:{vs_name_val}"
+                    else:
+                        resolved = self._cli_mock.resolve_vsid_from_stat(node_name, vs_name_val)
+                        if resolved is None:
+                            script_error = f"_vs_error=vs_not_found:{vs_name_val}"
+                        else:
+                            vsid = resolved
+                            prepend_resolved = True
             else:
-                resolved = self._cli_mock.resolve_vsid_from_stat(node_name, vs_name_val)
-                if resolved is None:
-                    script_error = f"_vs_error=vs_not_found:{vs_name_val}"
+                assert repo_script is not None
+                repo_body = str(repo_script.get("script-body") or "")
+                raw_args = str(payload.get("args") or "").strip()
+                if "===ARODONATA_IP_ROUTE_START===" in repo_body:
+                    tokens = raw_args.split()
+                    max_tok = tokens[0] if len(tokens) >= 1 else "0"
+                    vsid_tok = tokens[1] if len(tokens) >= 2 else "0"
+                    vs_name_val = " ".join(tokens[2:]) if len(tokens) >= 3 else ""
+                    if not max_tok.isdigit():
+                        script_error = f"_vs_error=invalid max_routes argument: {max_tok}"
+                    elif not vsid_tok.isdigit():
+                        script_error = f"_vs_error=invalid vsid argument: {vsid_tok}"
+                    else:
+                        vsid = int(vsid_tok)
+                        if vsid == 0 and vs_name_val:
+                            resolved = self._cli_mock.resolve_vsid_from_stat(node_name, vs_name_val)
+                            if resolved is None:
+                                script_error = f"_vs_error=vs_not_found:{vs_name_val}"
+                            else:
+                                vsid = resolved
+                                prepend_resolved = True
                 else:
-                    vsid = resolved
-                    prepend_resolved = True
+                    if (node_name, 0) in self._cli_mock._cli_overrides:
+                        custom_stdout = self._cli_mock.get_raw_cli_stdout(node_name, 0) or ""
+                    else:
+                        custom_stdout = f"target={node_name} script={repo_script.get('name')} args={raw_args}\n"
 
-        self._task_seq += 1
-        task_id = f"12345678-8888-4888-8888-{self._task_seq:012d}"
+            self._task_seq += 1
+            task_id = f"12345678-8888-4888-8888-{self._task_seq:012d}"
+            default_task_name = (
+                str(repo_script.get("name"))
+                if repo_script is not None
+                else str(payload.get("script-name") or f"arodonata-route-collect-{node_name}")
+            )
 
-        if script_error is not None:
-            b64_err = base64.b64encode((script_error + "\n").encode("utf-8")).decode("ascii")
-            task_obj = {
-                "uid": task_id,
-                "task-id": task_id,
-                "task-name": str(payload.get("script-name") or f"arodonata-route-collect-{node_name}"),
-                "status": "failed",
-                "progress-percentage": 100,
-                "suppressed": False,
-                "task-details": [
-                    {
-                        "uid": f"td-{task_id}",
-                        "gatewayId": target_ref,
-                        "gatewayName": node_name,
-                        "statusCode": "failed",
-                        "statusDescription": "Failed",
-                        "responseMessage": b64_err,
-                        "responseError": b64_err,
+            if script_error is not None:
+                if first_script_error is None:
+                    first_script_error = script_error
+                b64_err = base64.b64encode((script_error + "\n").encode("utf-8")).decode("ascii")
+                task_obj = {
+                    "uid": task_id,
+                    "task-id": task_id,
+                    "task-name": default_task_name,
+                    "status": "failed",
+                    "progress-percentage": 100,
+                    "suppressed": False,
+                    "task-details": [
+                        {
+                            "uid": f"td-{task_id}",
+                            "gatewayId": target_ref,
+                            "gatewayName": node_name,
+                            "statusCode": "failed",
+                            "statusDescription": "Failed",
+                            "responseMessage": b64_err,
+                            "responseError": b64_err,
+                        }
+                    ],
+                }
+            elif custom_stdout is not None:
+                b64_msg = base64.b64encode(custom_stdout.encode("utf-8")).decode("ascii")
+                task_obj = {
+                    "uid": task_id,
+                    "task-id": task_id,
+                    "task-name": default_task_name,
+                    "status": "succeeded",
+                    "progress-percentage": 100,
+                    "suppressed": False,
+                    "task-details": [
+                        {
+                            "uid": f"td-{task_id}",
+                            "gatewayId": target_ref,
+                            "gatewayName": node_name,
+                            "statusCode": "succeeded",
+                            "statusDescription": "Succeeded",
+                            "responseMessage": b64_msg,
+                            "responseError": "",
+                        }
+                    ],
+                }
+            else:
+                # Load pre-generated task file if present and not overridden in memory
+                task_file = self._dataset_dir / "tasks" / f"{node_name}__vs_{vsid}.json"
+                if not task_file.is_file() and vsid == 0:
+                    alt_task_file = self._dataset_dir / "tasks" / f"{node_name}__vs_none.json"
+                    if alt_task_file.is_file():
+                        task_file = alt_task_file
+                override_stdout = self._cli_mock.get_raw_cli_stdout(node_name, vsid)
+
+                if (
+                    task_file.is_file()
+                    and (node_name, vsid) not in self._cli_mock._cli_overrides
+                    and not prepend_resolved
+                ):
+                    task_payload = json.loads(task_file.read_text(encoding="utf-8"))
+                    tasks_list = task_payload.get("tasks", [])
+                    if tasks_list:
+                        task_obj = copy.deepcopy(tasks_list[0])
+                        task_obj["task-id"] = task_id
+                    else:
+                        task_obj = {"task-id": task_id, "status": "succeeded", "task-details": []}
+                else:
+                    stdout_str = override_stdout or ""
+                    if prepend_resolved and stdout_str and f"===ARODONATA_VSID_RESOLVED={vsid}===" not in stdout_str:
+                        stdout_str = f"===ARODONATA_VSID_RESOLVED={vsid}===\n{stdout_str}"
+                    b64_msg = base64.b64encode(stdout_str.encode("utf-8")).decode("ascii")
+                    task_obj = {
+                        "uid": task_id,
+                        "task-id": task_id,
+                        "task-name": default_task_name,
+                        "status": "succeeded" if stdout_str else "failed",
+                        "progress-percentage": 100,
+                        "suppressed": False,
+                        "task-details": [
+                            {
+                                "uid": f"td-{task_id}",
+                                "gatewayId": target_ref,
+                                "gatewayName": node_name,
+                                "statusCode": "succeeded" if stdout_str else "failed",
+                                "statusDescription": "Succeeded" if stdout_str else "Failed",
+                                "responseMessage": b64_msg,
+                                "responseError": "",
+                            }
+                        ],
                     }
-                ],
-            }
+
             self._tasks[task_id] = task_obj
-            if wait_for_task:
+            built_tasks.append(task_obj)
+            async_task_refs.append(
+                {
+                    "target": target_ref,
+                    "task-id": task_id,
+                    "task-name": task_obj.get("task-name", "run-script"),
+                }
+            )
+
+        if wait_for_task:
+            if first_script_error is not None:
                 return ApiCallResult(
                     success=False,
                     status_code=200,
                     error_code="generic_err_task_failed",
-                    error_message=script_error,
-                    data={"tasks": [copy.deepcopy(task_obj)]},
+                    error_message=first_script_error,
+                    data={"tasks": [copy.deepcopy(t) for t in built_tasks]},
+                )
+            for t_obj in built_tasks:
+                tid_str = str(t_obj.get("task-id") or "")
+                self.api_call_counts[(dom_name, "show-task")] += 1
+                self.command_counts["show-task"] += 1
+                show_task_payload = {"task-id": tid_str, "details-level": "full"}
+                self.call_log.append(
+                    {
+                        "mgmt_name": "mds",
+                        "domain": dom_name,
+                        "command": "show-task",
+                        "payload": show_task_payload,
+                        "payload_summary": summarize_payload("show-task", show_task_payload),
+                        "sid_ref": None,
+                        "session_uid": None,
+                        "mutating": False,
+                        "success": True,
+                        "error_code": None,
+                    }
                 )
             return ApiCallResult(
                 success=True,
                 status_code=200,
-                data={"tasks": [{"target": target_ref, "task-id": task_id}]},
-            )
-
-        # Load pre-generated task file if present and not overridden in memory
-        task_file = self._dataset_dir / "tasks" / f"{node_name}__vs_{vsid}.json"
-        if not task_file.is_file() and vsid == 0:
-            alt_task_file = self._dataset_dir / "tasks" / f"{node_name}__vs_none.json"
-            if alt_task_file.is_file():
-                task_file = alt_task_file
-        override_stdout = self._cli_mock.get_raw_cli_stdout(node_name, vsid)
-
-        if task_file.is_file() and (node_name, vsid) not in self._cli_mock._cli_overrides and not prepend_resolved:
-            task_payload = json.loads(task_file.read_text(encoding="utf-8"))
-            tasks_list = task_payload.get("tasks", [])
-            if tasks_list:
-                task_obj = copy.deepcopy(tasks_list[0])
-                task_obj["task-id"] = task_id
-            else:
-                task_obj = {"task-id": task_id, "status": "succeeded", "task-details": []}
-        else:
-            stdout_str = override_stdout or ""
-            if prepend_resolved and stdout_str and f"===ARODONATA_VSID_RESOLVED={vsid}===" not in stdout_str:
-                stdout_str = f"===ARODONATA_VSID_RESOLVED={vsid}===\n{stdout_str}"
-            b64_msg = base64.b64encode(stdout_str.encode("utf-8")).decode("ascii")
-            task_obj = {
-                "uid": task_id,
-                "task-id": task_id,
-                "task-name": str(payload.get("script-name") or f"arodonata-route-collect-{node_name}"),
-                "status": "succeeded" if stdout_str else "failed",
-                "progress-percentage": 100,
-                "suppressed": False,
-                "task-details": [
-                    {
-                        "uid": f"td-{task_id}",
-                        "gatewayId": target_ref,
-                        "gatewayName": node_name,
-                        "statusCode": "succeeded" if stdout_str else "failed",
-                        "statusDescription": "Succeeded" if stdout_str else "Failed",
-                        "responseMessage": b64_msg,
-                        "responseError": "",
-                    }
-                ],
-            }
-
-        self._tasks[task_id] = task_obj
-
-        if wait_for_task:
-            # Also record the show-task poll so tests can verify run-script + show-task interaction
-            self.api_call_counts[(dom_name, "show-task")] += 1
-            self.command_counts["show-task"] += 1
-            show_task_payload = {"task-id": task_id, "details-level": "full"}
-            self.call_log.append(
-                {
-                    "mgmt_name": "mds",
-                    "domain": dom_name,
-                    "command": "show-task",
-                    "payload": show_task_payload,
-                    "payload_summary": summarize_payload("show-task", show_task_payload),
-                    "sid_ref": None,
-                    "session_uid": None,
-                    "mutating": False,
-                    "success": True,
-                    "error_code": None,
-                }
-            )
-            return ApiCallResult(
-                success=True,
-                status_code=200,
-                data={"tasks": [copy.deepcopy(task_obj)]},
+                data={"tasks": [copy.deepcopy(t) for t in built_tasks]},
             )
 
         return ApiCallResult(
             success=True,
             status_code=200,
-            data={
-                "tasks": [
-                    {
-                        "target": target_ref,
-                        "task-id": task_id,
-                        "task-name": task_obj.get("task-name", "run-script"),
-                    }
-                ]
-            },
+            data={"tasks": async_task_refs},
         )
 
     # ------------------------------------------------------------------
@@ -1653,6 +1850,199 @@ class FileReplayApiMock(ApiPort):
     def _next_task_id(self) -> str:
         self._task_seq += 1
         return f"12345678-9999-4999-8999-{self._task_seq:012d}"
+
+    def _allocate_repo_script_uid(self) -> str:
+        self._uid_seq += 1
+        return f"00000000-7777-4777-8777-{self._uid_seq:012d}"
+
+    def _handle_repository_script_mutation(
+        self,
+        clean_cmd: str,
+        req: Mapping[str, Any],
+        *,
+        dom_name: str,
+        target_files: dict[str, Any],
+        now_ms: int,
+        user_name: str,
+        locked_uids_out: set[str],
+    ) -> tuple[ApiCallResult, str | None] | None:
+        if clean_cmd not in ("add-repository-script", "set-repository-script", "delete-repository-script"):
+            return None
+        if self.manage_repository_scripts != "write":
+            return (
+                cp_error(
+                    "generic_err_no_permissions",
+                    "Permission denied: administrator lacks write permission for repository scripts",
+                    status_code=400,
+                ),
+                None,
+            )
+
+        details_level = str(req.get("details-level") or "standard")
+        bucket = target_files.setdefault("show-repository-scripts", {"objects": [], "from": 0, "to": 0, "total": 0})
+        scripts_list: list[dict[str, Any]] = bucket.setdefault("objects", [])
+
+        def _refresh_counts() -> None:
+            bucket["total"] = len(scripts_list)
+            bucket["from"] = 1 if scripts_list else 0
+            bucket["to"] = len(scripts_list)
+
+        def _find_idx(lookup: str) -> int | None:
+            for idx, item in enumerate(scripts_list):
+                if isinstance(item, dict) and (item.get("uid") == lookup or item.get("name") == lookup):
+                    return idx
+            return None
+
+        if clean_cmd == "add-repository-script":
+            name = str(req.get("name") or "").strip()
+            if not name:
+                return cp_error(
+                    "err_validation_failed", "add-repository-script: 'name' is required", status_code=400
+                ), None
+            body = _extract_repo_script_body(req)
+            if body is None:
+                return (
+                    cp_error(
+                        "err_validation_failed",
+                        "add-repository-script: 'script-body' or 'script-body-base64' is required",
+                        status_code=400,
+                    ),
+                    None,
+                )
+            existing_idx = _find_idx(name)
+            if existing_idx is not None:
+                if bool(req.get("set-if-exists", False)):
+                    set_req = dict(req)
+                    set_req["uid"] = scripts_list[existing_idx]["uid"]
+                    return self._handle_repository_script_mutation(
+                        "set-repository-script",
+                        set_req,
+                        dom_name=dom_name,
+                        target_files=target_files,
+                        now_ms=now_ms,
+                        user_name=user_name,
+                        locked_uids_out=locked_uids_out,
+                    )
+                return (
+                    cp_error(
+                        "err_validation_failed",
+                        f"More than one object named [{name}] exists",
+                        status_code=400,
+                    ),
+                    None,
+                )
+            assigned_uid = str(req.get("uid") or "").strip() or self._allocate_repo_script_uid()
+            ts = format_timestamp(now_ms)
+            raw_tags = req.get("tags")
+            if isinstance(raw_tags, list):
+                tags_list = [str(t) for t in raw_tags if str(t).strip()]
+            elif isinstance(raw_tags, str) and raw_tags.strip():
+                tags_list = [raw_tags.strip()]
+            else:
+                tags_list = []
+            new_obj: dict[str, Any] = {
+                "uid": assigned_uid,
+                "name": name,
+                "type": "script",
+                "domain": format_domain_meta(dom_name),
+                "script-body": body,
+                "args": str(req.get("args") or ""),
+                "color": str(req.get("color") or "black"),
+                "comments": str(req.get("comments") or ""),
+                "tags": tags_list,
+                "meta-info": {
+                    "lock": "unlocked",
+                    "validation-state": "ok",
+                    "creator": user_name,
+                    "creation-time": dict(ts),
+                    "last-modifier": user_name,
+                    "last-modify-time": dict(ts),
+                },
+            }
+            scripts_list.append(new_obj)
+            _refresh_counts()
+            locked_uids_out.add(assigned_uid)
+            return cp_ok(_project_repository_script(new_obj, details_level)), assigned_uid
+
+        if clean_cmd == "set-repository-script":
+            lookup = str(req.get("uid") or req.get("name") or "").strip()
+            idx = _find_idx(lookup)
+            if idx is None:
+                return (
+                    cp_error(
+                        "generic_err_object_not_found",
+                        f"Requested repository script [{lookup}] not found",
+                        status_code=404,
+                    ),
+                    None,
+                )
+            target_obj = scripts_list[idx]
+            new_name = str(req.get("new-name") or "").strip()
+            if new_name and new_name != target_obj.get("name"):
+                dup_idx = _find_idx(new_name)
+                if dup_idx is not None and dup_idx != idx:
+                    return (
+                        cp_error(
+                            "err_validation_failed",
+                            f"More than one object named [{new_name}] exists",
+                            status_code=400,
+                        ),
+                        None,
+                    )
+                target_obj["name"] = new_name
+            new_body = _extract_repo_script_body(req)
+            if new_body is not None:
+                target_obj["script-body"] = new_body
+            if "args" in req:
+                target_obj["args"] = str(req.get("args") or "")
+            if "color" in req and req.get("color") is not None:
+                target_obj["color"] = str(req["color"])
+            if "comments" in req and req.get("comments") is not None:
+                target_obj["comments"] = str(req["comments"])
+            if "tags" in req and req.get("tags") is not None:
+                raw_tags = req["tags"]
+                if isinstance(raw_tags, list):
+                    target_obj["tags"] = [str(t) for t in raw_tags if str(t).strip()]
+                elif isinstance(raw_tags, str):
+                    target_obj["tags"] = [raw_tags.strip()] if raw_tags.strip() else []
+                elif isinstance(raw_tags, Mapping):
+                    cur_tags = list(target_obj.get("tags") or [])
+                    if "add" in raw_tags:
+                        adds = raw_tags["add"] if isinstance(raw_tags["add"], list) else [raw_tags["add"]]
+                        for t in adds:
+                            if str(t).strip() and str(t) not in cur_tags:
+                                cur_tags.append(str(t))
+                    if "remove" in raw_tags:
+                        rems = raw_tags["remove"] if isinstance(raw_tags["remove"], list) else [raw_tags["remove"]]
+                        rem_set = {str(t) for t in rems}
+                        cur_tags = [t for t in cur_tags if t not in rem_set]
+                    target_obj["tags"] = cur_tags
+            ts = format_timestamp(now_ms)
+            meta = target_obj.setdefault("meta-info", {})
+            if isinstance(meta, dict):
+                meta["last-modifier"] = user_name
+                meta["last-modify-time"] = dict(ts)
+            uid_str = str(target_obj["uid"])
+            locked_uids_out.add(uid_str)
+            return cp_ok(_project_repository_script(target_obj, details_level)), uid_str
+
+        # delete-repository-script
+        lookup = str(req.get("uid") or req.get("name") or "").strip()
+        idx = _find_idx(lookup)
+        if idx is None:
+            return (
+                cp_error(
+                    "generic_err_object_not_found",
+                    f"Requested repository script [{lookup}] not found",
+                    status_code=404,
+                ),
+                None,
+            )
+        removed = scripts_list.pop(idx)
+        _refresh_counts()
+        uid_str = str(removed["uid"])
+        locked_uids_out.add(uid_str)
+        return cp_ok({"message": "OK", "uid": uid_str}), uid_str
 
     def _apply_domain_mutation(
         self,
@@ -1696,6 +2086,18 @@ class FileReplayApiMock(ApiPort):
         )
         if rb_hit is not None:
             return rb_hit
+
+        repo_hit = self._handle_repository_script_mutation(
+            clean_cmd,
+            req,
+            dom_name=dom_name,
+            target_files=target_files,
+            now_ms=now_ms,
+            user_name=user_name,
+            locked_uids_out=locked_uids_out,
+        )
+        if repo_hit is not None:
+            return repo_hit
 
         if clean_cmd == "delete-unused-objects":
             removed = delete_unused_objects(
@@ -2419,7 +2821,13 @@ class FileReplayApiMock(ApiPort):
 
         # 3. Task polling & cprid `run-script`
         if clean_cmd == "run-script":
-            return self._handle_run_script(dom_name, req, wait_for_task=wait_for_task)
+            return self._handle_run_script(
+                dom_name,
+                req,
+                binding=binding,
+                active_ws=active_ws,
+                wait_for_task=wait_for_task,
+            )
 
         if clean_cmd == "show-task":
             raw_tid = req.get("task-id")
@@ -2645,6 +3053,51 @@ class FileReplayApiMock(ApiPort):
                 all_domains_effective=self._effective_all_domains(binding),
             )
             return cp_ok(paginate_items(unused, req, collection_key="objects"))
+
+        if clean_cmd in ("show-repository-script", "show-repository-scripts"):
+            if self.manage_repository_scripts == "none":
+                return cp_error(
+                    "generic_err_no_permissions",
+                    "Permission denied: administrator lacks read permission for repository scripts",
+                    status_code=400,
+                )
+            scripts_list = [
+                item
+                for item in dom_files.get("show-repository-scripts", {}).get("objects", [])
+                if isinstance(item, dict)
+            ]
+            details_level = str(req.get("details-level") or "standard")
+            if clean_cmd == "show-repository-script":
+                lookup = str(req.get("uid") or req.get("name") or "").strip()
+                matched_script = next(
+                    (s for s in scripts_list if s.get("uid") == lookup or s.get("name") == lookup),
+                    None,
+                )
+                if matched_script is None:
+                    return cp_error(
+                        "generic_err_object_not_found",
+                        f"Requested repository script [{lookup}] not found",
+                        status_code=404,
+                    )
+                return cp_ok(_project_repository_script(matched_script, details_level))
+
+            order_desc = False
+            raw_order = req.get("order")
+            if isinstance(raw_order, list) and raw_order and isinstance(raw_order[0], Mapping):
+                order_desc = "DESC" in raw_order[0]
+            sorted_scripts = sorted(scripts_list, key=lambda s: str(s.get("name") or ""), reverse=order_desc)
+            limit = int(req.get("limit", DEFAULT_PAGE_LIMIT))
+            offset = int(req.get("offset", 0))
+            sliced = sorted_scripts[offset : offset + limit]
+            projected = [_project_repository_script(s, details_level) for s in sliced]
+            return cp_ok(
+                {
+                    "objects": projected,
+                    "from": (offset + 1) if projected else 0,
+                    "to": (offset + len(projected)) if projected else 0,
+                    "total": len(sorted_scripts),
+                }
+            )
 
         if clean_cmd in ("show-last-published-session", "show-session"):
             sess_data = dom_files.get(clean_cmd) or dom_files.get("show-last-published-session") or {}

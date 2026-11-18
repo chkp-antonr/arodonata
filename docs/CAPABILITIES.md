@@ -108,3 +108,12 @@ await client.publish_staged_session(mgmt, "Domain4", session_uid=staged_uid)
 # Or on rejection:
 # await client.discard_staged_session(mgmt, "Domain4", session_uid=staged_uid)
 ```
+
+### 3.5 Universal Check Point Script Repository Facade
+
+`ArodonataClient` exposes application-agnostic Script Repository management and execution via `ScriptRepositoryService` (`client.script_service`):
+
+- **Read-only inspection (`sid_cache`)**: `get_repository_script`, `list_repository_scripts`, and `check_repository_script(..., expected_body=...)` inspect scripts without opening write sessions or calling `publish`.
+- **Idempotent provisioning (`WriteSession`)**: `ensure_repository_script` normalizes line endings (`\r\n` -> `\n`), short-circuits with `action="unchanged"` and zero publishes when the script body (and any explicitly supplied `comments`/`color`/`tags`) already matches, and otherwise creates/updates inside an isolated `WriteSession` (or reuses an active matching `WriteSession`) without polluting `SessionOverlay`.
+- **Execution (`script-type="repository"`)**: `run_repository_script(mgmt_name, script_name_or_uid, targets, *, domain=None, args=None, ...)` forwards caller `args` verbatim (`str`) or space-joined (`Sequence[str]`) over a dedicated non-read-only session (without `publish` or `discard`) and Base64-decodes per-target `show-task` results into `RepositoryScriptExecutionOutcome`, mapping missing scripts or insufficient permissions to `RepositoryScriptNotFoundError` / `RepositoryScriptPermissionError`.
+- **Route collection consumer**: `TopologyService.collect_gateway_routes()` consumes this layer when `cprid_script_mode` is `"repository"` or `"auto"`, defaulting to `"inline"` for backward compatibility and providing `check_route_collection_script` / `ensure_route_collection_script`.

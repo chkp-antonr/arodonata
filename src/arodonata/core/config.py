@@ -18,6 +18,7 @@ from arodonata.core.errors import (
     ConfigurationError,
     MissingConfigurationError,
 )
+from arodonata.core.models.scripts import CpridScriptMode
 from arodonata.core.telemetry import apply_trace_modules, parse_trace_modules
 
 AuthMode = Literal["api_key", "credential", "dynamic"]
@@ -597,6 +598,16 @@ class ArodonataSettings(BaseSettings):
         validation_alias=AliasChoices("ARODONATA_TOPOLOGY_CONFIDENCE_WEIGHTS"),
     )
 
+    # CPRID script execution mode & canonical repository script name
+    cprid_script_mode: CpridScriptMode = Field(
+        default="inline",
+        validation_alias=AliasChoices("ARODONATA_CPRID_SCRIPT_MODE"),
+    )
+    cprid_repository_script_name: str = Field(
+        default="arodonata-collect-routes-v1",
+        validation_alias=AliasChoices("ARODONATA_CPRID_REPOSITORY_SCRIPT_NAME"),
+    )
+
     def __init__(self, **data: Any) -> None:
         model_fields = type(self).model_fields
         remapped: dict[str, Any] = {}
@@ -618,6 +629,14 @@ class ArodonataSettings(BaseSettings):
     @classmethod
     def _parse_csv_list(cls, value: Any) -> list[str]:
         return _split_csv(value)
+
+    @field_validator("cprid_repository_script_name", mode="after")
+    @classmethod
+    def _validate_cprid_repository_script_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("cprid_repository_script_name must not be blank.")
+        return cleaned
 
     @model_validator(mode="before")
     @classmethod

@@ -2,18 +2,32 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arodonata.core.errors import REDACTED_PLACEHOLDER, MissingConfigurationError
+from arodonata.core.errors import REDACTED_PLACEHOLDER, MissingConfigurationError, SessionError
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.services import CPService
+
+if TYPE_CHECKING:
+    from arodonata.core.ports import ApiPort
+
+SYSTEM_DOMAIN_KEY = "System Data"
+
+
+def normalize_domain_key(domain: str | None) -> str:
+    """Normalize `domain=None` or whitespace-only domain strings to `'System Data'`."""
+    if not domain or not domain.strip():
+        return SYSTEM_DOMAIN_KEY
+    return domain.strip()
+
 
 _AUTH_IDENTITY_HMAC_KEY = b"arodonata-v2-auth-identity-hmac-key"
 
@@ -454,3 +468,115 @@ def write_session_context(session: WriteSession) -> Iterator[WriteSession]:
         yield session
     finally:
         _current_write_session.reset(token)
+
+
+@asynccontextmanager
+async def open_api_write_session(
+    api: ApiPort,
+    mgmt_name: str,
+    domain: str | None = None,
+    *,
+    auth: AuthContext | None = None,
+    user: UserContext | None = None,
+    session_name: str | None = None,
+    session_description: str | None = None,
+    publish_on_exit: bool = True,
+    on_domain_invalidated: Callable[[str, str | None], None] | None = None,
+) -> AsyncIterator[WriteSession]:
+    """Open an isolated `WriteSession` directly against an `ApiPort` with discard/publish/logout lifecycle."""
+    dom_key = normalize_domain_key(domain)
+    resolved_user = user or get_user_context()
+    eff_name = session_name or (resolved_user.session_name if resolved_user else None)
+    eff_desc = session_description or (resolved_user.session_description if resolved_user else None)
+
+    sid, server_ip = await api.create_dedicated_session(
+        mgmt_name,
+        domain,
+        auth=auth,
+        session_name=eff_name,
+        session_description=eff_desc,
+    )
+    ws = WriteSession(
+        mgmt_name=mgmt_name,
+        domain_name=dom_key,
+        sid=sid,
+        server_ip=server_ip,
+        session_name=eff_name,
+        auth=auth,
+        user=resolved_user,
+        overlay=SessionOverlay(mgmt_name, dom_key),
+    )
+    try:
+        with write_session_context(ws):
+            try:
+                yield ws
+            except BaseException:
+                if not ws.discarded and not ws.published:
+                    with suppress(BaseException):
+                        await asyncio.shield(
+                            api.api_call(
+                                mgmt_name,
+                                "discard",
+                                {},
+                                domain=domain,
+                                sid=ws.sid,
+                                server_ip=ws.server_ip,
+                            )
+                        )
+                    ws.discarded = True
+                    ws.overlay.clear()
+                raise
+
+            if publish_on_exit and not ws.published and not ws.discarded:
+                pub_res = await api.api_call(
+                    mgmt_name,
+                    "publish",
+                    {},
+                    domain=domain,
+                    sid=ws.sid,
+                    server_ip=ws.server_ip,
+                    wait_for_task=True,
+                )
+                if not pub_res.success:
+                    with suppress(BaseException):
+                        await asyncio.shield(
+                            api.api_call(
+                                mgmt_name,
+                                "discard",
+                                {},
+                                domain=domain,
+                                sid=ws.sid,
+                                server_ip=ws.server_ip,
+                            )
+                        )
+                    ws.discarded = True
+                    ws.overlay.clear()
+                    raise SessionError(
+                        f"Failed to publish WriteSession on {mgmt_name!r} ({dom_key!r}): "
+                        f"{pub_res.error_message or 'publish failed'}"
+                    )
+                ws.published = True
+                ws.overlay.clear()
+                if on_domain_invalidated is not None:
+                    on_domain_invalidated(mgmt_name, domain)
+    finally:
+        ws.overlay.clear()
+        with suppress(BaseException):
+            await asyncio.shield(api.logout_sid(mgmt_name, ws.sid, server_ip=ws.server_ip))
+
+
+__all__ = [
+    "SYSTEM_DOMAIN_KEY",
+    "AuthContext",
+    "SessionOverlay",
+    "UserContext",
+    "WriteSession",
+    "auth_context",
+    "get_auth_context",
+    "get_user_context",
+    "get_write_session",
+    "normalize_domain_key",
+    "open_api_write_session",
+    "user_context",
+    "write_session_context",
+]
