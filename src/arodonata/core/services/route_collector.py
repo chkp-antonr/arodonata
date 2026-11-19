@@ -35,9 +35,9 @@ from arodonata.core.models.topology import (
     TopologyZone,
 )
 from arodonata.core.ports import ApiPort, GatewayCliCallable, GatewayCliPort
+from arodonata.core.primitives import MAX_IPV4_INT
 from arodonata.core.services.script_service import ScriptRepositoryService
 
-MAX_IPV4_INT = 4294967295
 ROUTE_LIMIT_MARKER = "===ARODONATA_ROUTE_LIMIT_REACHED==="
 CLISH_SKIPPED_LARGE_TABLE_MARKER = "===ARODONATA_CLISH_SKIPPED_LARGE_TABLE==="
 DEFAULT_CLISH_SKIP_THRESHOLD = 10000

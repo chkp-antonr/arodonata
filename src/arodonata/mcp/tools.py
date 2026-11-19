@@ -64,6 +64,7 @@ from arodonata.core.models.domains import DomainInfo
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import RulebaseLayerEntry, RulebaseType
 from arodonata.core.models.services import CPService
+from arodonata.core.primitives import is_uuid, normalize_str_sequence
 from arodonata.core.services.object_service import resolve_object_query_command
 from arodonata.core.services.search_service import classify_search_term, matches_classified_term
 from arodonata.core.services.service_cache import resolve_service_query_command
@@ -1194,7 +1195,7 @@ def register_mcp_tools(
             else "show-object"
         )
         payload: dict[str, Any] = {"details-level": details_level}
-        if "-" in query_str and len(query_str) == 36 and not clean_obj_type:
+        if is_uuid(query_str) and not clean_obj_type:
             payload["uid"] = query_str
         elif clean_obj_type and clean_obj_type not in CANONICAL_LAYER_AND_PACKAGE_TYPES:
             payload["name"] = query_str
@@ -1660,7 +1661,7 @@ def register_mcp_tools(
                 payload["package"] = eff_package or eff_layer
             else:
                 if eff_layer:
-                    if "-" in eff_layer and len(eff_layer) == 36:
+                    if is_uuid(eff_layer):
                         payload["uid"] = eff_layer
                     else:
                         payload["name"] = eff_layer
@@ -1857,16 +1858,8 @@ def register_mcp_tools(
                 entry_warn = f"[{c.gateway_name}] {w}"
                 if entry_warn not in topology_warnings:
                     topology_warnings.append(entry_warn)
-        src_list = (
-            [s.strip() for s in sources.split(",") if s.strip()]
-            if isinstance(sources, str)
-            else [str(s).strip() for s in sources if str(s).strip()]
-        )
-        dst_list = (
-            [d.strip() for d in destinations.split(",") if d.strip()]
-            if isinstance(destinations, str)
-            else [str(d).strip() for d in destinations if str(d).strip()]
-        )
+        src_list = normalize_str_sequence(sources)
+        dst_list = normalize_str_sequence(destinations)
         return json_tool_result(
             {
                 "from": 1 if serialized else 0,

@@ -16,7 +16,6 @@ Implements `HybridStateReader`:
 
 from __future__ import annotations
 
-import ipaddress
 from typing import Any
 
 from arodonata.core.errors import ArodonataError, ServerIdentityError, ValidationError
@@ -26,6 +25,7 @@ from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import RulebaseType
 from arodonata.core.models.services import CPService
 from arodonata.core.ports import ApiPort, CachePort
+from arodonata.core.primitives import mask_to_prefix_len
 from arodonata.cpcrud.models import DomainStamp
 from arodonata.rulebase.pager import PagedRulebaseResult, fetch_paged_rulebase
 
@@ -112,21 +112,10 @@ def normalize_mask_length(
     subnet_mask: str | None = None,
 ) -> int | None:
     """Normalize a mask length or dotted-quad subnet mask into an integer prefix length (0..32)."""
-    if mask_length is not None:
-        try:
-            return int(mask_length)
-        except (TypeError, ValueError):
-            pass
-    if subnet_mask and isinstance(subnet_mask, str):
-        clean = subnet_mask.strip()
-        if clean.isdigit():
-            return int(clean)
-        try:
-            net = ipaddress.IPv4Network(f"0.0.0.0/{clean}", strict=False)
-            return net.prefixlen
-        except ValueError:
-            return None
-    return None
+    parsed = mask_to_prefix_len(mask_length)
+    if parsed is not None:
+        return parsed
+    return mask_to_prefix_len(subnet_mask)
 
 
 def _sync_state_matches_stamp(

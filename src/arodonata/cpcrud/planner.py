@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Any
 
 from arodonata.core.errors import ServerIdentityError, ValidationError, redact_sid
-from arodonata.core.models.common import utc_now
+from arodonata.core.models.common import parse_cp_publish_timestamp, utc_now
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import (
     AccessRuleEntry,
@@ -32,7 +32,6 @@ from arodonata.core.models.rulebase import (
 )
 from arodonata.core.models.services import CPService
 from arodonata.core.ports import ApiPort, CachePort
-from arodonata.core.services.sync_coordinator import parse_cp_publish_timestamp
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.cpcrud.differ import (
     DiffSafetyError,

@@ -41,12 +41,19 @@ from arodonata.adapters.checkpoint.transport import (
 from arodonata.adapters.storage import DatabaseManager, SqlCacheAdapter, SqlLockAdapter
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import (
+    NON_OVERLAY_MUTATION_TARGETS as NON_OVERLAY_MUTATION_TARGETS,
+)
+from arodonata.core.context import (
+    SERVICE_COMMAND_TYPES as SERVICE_COMMAND_TYPES,
+)
+from arodonata.core.context import (
     AuthContext,
     SessionOverlay,
     UserContext,
     WriteSession,
     get_user_context,
     get_write_session,
+    update_overlay_from_command,
     write_session_context,
 )
 from arodonata.core.errors import (
@@ -55,56 +62,10 @@ from arodonata.core.errors import (
     SessionError,
     SessionStateError,
     TransportError,
-    is_sensitive_key,
 )
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult, utc_now
-from arodonata.core.models.objects import CPObject
-from arodonata.core.models.services import CPService
 from arodonata.core.ports import AuthProvider, CachePort, LockPort
 from arodonata.core.telemetry import span_attrs, traced
-
-SERVICE_COMMAND_TYPES: frozenset[str] = frozenset(
-    {
-        "service-tcp",
-        "service-udp",
-        "service-icmp",
-        "service-icmp6",
-        "service-other",
-        "service-dce-rpc",
-        "service-rpc",
-        "service-sctp",
-        "service-gtp",
-        "service-citrix-tcp",
-        "service-compound-tcp",
-        "service-group",
-    }
-)
-
-NON_OVERLAY_MUTATION_TARGETS: frozenset[str] = frozenset(
-    {
-        "access-rule",
-        "access-section",
-        "access-layer",
-        "nat-rule",
-        "nat-section",
-        "https-rule",
-        "https-section",
-        "https-layer",
-        "threat-rule",
-        "threat-exception",
-        "threat-layer",
-        "package",
-        "domain",
-        "administrator",
-        "session",
-        "trust",
-        "repository-script",
-        "api-key",
-        "md-permissions-profile",
-        "domain-permissions-profile",
-    }
-)
-
 
 READONLY_EXACT_COMMANDS: frozenset[str] = frozenset(
     {
@@ -121,59 +82,8 @@ def is_readonly_command(command: str) -> bool:
     return clean.startswith("show-") or clean in READONLY_EXACT_COMMANDS
 
 
-def _update_overlay_from_command(
-    overlay: SessionOverlay,
-    command: str,
-    payload: dict[str, Any] | None,
-    result: ApiCallResult,
-) -> None:
-    """Update `SessionOverlay` when `add-*`, `set-*`, or `delete-*` succeeds inside a `WriteSession`."""
-    if not result.success:
-        return
-    clean = command.strip().lower().lstrip("/")
-    if not clean.startswith(("add-", "set-", "delete-")):
-        return
-
-    verb, _, target_type = clean.partition("-")
-    if not target_type or target_type in NON_OVERLAY_MUTATION_TARGETS:
-        return
-
-    is_service = target_type in SERVICE_COMMAND_TYPES or target_type.startswith("service-")
-    req_data = payload or {}
-    resp_data = result.data if isinstance(result.data, dict) else {}
-
-    if verb in ("add", "set"):
-        merged_raw = {k: v for k, v in req_data.items() if not is_sensitive_key(k)}
-        for k, v in resp_data.items():
-            if not is_sensitive_key(k):
-                merged_raw[k] = v
-        if "type" not in merged_raw or not merged_raw.get("type"):
-            merged_raw["type"] = target_type
-        uid = str(merged_raw.get("uid") or "")
-        name = str(merged_raw.get("name") or req_data.get("new-name") or "")
-        if not uid and not name:
-            return
-        if not uid:
-            uid = f"overlay:{target_type}:{name}"
-            merged_raw["uid"] = uid
-
-        if is_service:
-            svc = CPService.from_cp_dict(overlay.mgmt_name, overlay.domain_name, merged_raw)
-            overlay.record_service_upsert(svc)
-        else:
-            obj = CPObject.from_cp_dict(overlay.mgmt_name, overlay.domain_name, merged_raw)
-            overlay.record_object_upsert(obj)
-        return
-
-    if verb == "delete":
-        uid_val = req_data.get("uid") or resp_data.get("uid")
-        name_val = req_data.get("name") or resp_data.get("name")
-        uid_str = str(uid_val) if isinstance(uid_val, str) and uid_val else None
-        name_str = str(name_val) if isinstance(name_val, str) and name_val else None
-        if is_service:
-            overlay.record_service_delete(uid=uid_str, name=name_str, svc_type=target_type)
-        else:
-            overlay.record_object_delete(uid=uid_str, name=name_str, obj_type=target_type)
+# Backward-compatible private alias (canonical implementation lives in `arodonata.core.context`).
+_update_overlay_from_command = update_overlay_from_command
 
 
 class AMgmtClient:
@@ -562,7 +472,7 @@ class AMgmtClient:
 
         # Update WriteSession overlay on mutation commands
         if active_ws is not None and (sid is None or sid == active_ws.sid):
-            _update_overlay_from_command(active_ws.overlay, clean_cmd, payload, res)
+            update_overlay_from_command(active_ws.overlay, clean_cmd, payload, res)
 
         # Invalidate domain freshness memo on successful publish
         if clean_cmd == "publish" and res.success:

@@ -1,4 +1,4 @@
-"""Hexagonal architectural ports (`ApiPort`, `CachePort`, `LockPort`, `AuthProvider`, `GatewayCliPort`).
+"""Hexagonal architectural ports (`ApiPort`, `CachePort`, `LockPort`, `AuthProvider`, `GatewayCliPort`, `RulebaseRefreshPort`).
 
 Pure typing protocols with zero transport or ORM dependencies.
 """
@@ -11,8 +11,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from arodonata.core.context import AuthContext, UserContext
 from arodonata.core.models.assets import Asset
-from arodonata.core.models.common import ApiCallResult, ApiQueryResult, SyncScope
-from arodonata.core.models.domains import DomainInfo, DomainSyncState, SIDCacheEntry
+from arodonata.core.models.common import ApiCallResult, ApiQueryResult, CacheMode, SyncScope
+from arodonata.core.models.domains import DomainInfo, DomainSyncState, RefreshOutcome, SIDCacheEntry
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import (
     AccessRuleEntry,
@@ -124,8 +124,8 @@ class LockPort(Protocol):
 
 
 @runtime_checkable
-class CachePort(Protocol):
-    """Protocol for persistent cache operations across domains, sessions, objects, services, assets, and rulebases."""
+class DomainCachePort(Protocol):
+    """Protocol for persistent domain metadata cache operations."""
 
     async def get_domains(
         self,
@@ -147,6 +147,11 @@ class CachePort(Protocol):
     async def upsert_domains(self, domains: Sequence[DomainInfo]) -> None:
         """Insert or update domain rows in `arodonata_domains`."""
         ...
+
+
+@runtime_checkable
+class SidCachePort(Protocol):
+    """Protocol for persistent shared read-only session identifier (`sid`) cache operations."""
 
     async def get_sid(
         self,
@@ -176,6 +181,11 @@ class CachePort(Protocol):
         """List cached shared read-only SIDs, optionally filtered by `mgmt_name`."""
         ...
 
+
+@runtime_checkable
+class SyncStatePort(Protocol):
+    """Protocol for persistent domain synchronization state tracking."""
+
     async def get_sync_state(
         self,
         mgmt_name: str,
@@ -198,6 +208,11 @@ class CachePort(Protocol):
     async def upsert_sync_state(self, state: DomainSyncState) -> None:
         """Insert or update a `DomainSyncState` row in `arodonata_domain_sync_state`."""
         ...
+
+
+@runtime_checkable
+class ObjectCachePort(Protocol):
+    """Protocol for persistent network object cache operations."""
 
     async def get_objects(
         self,
@@ -250,6 +265,11 @@ class CachePort(Protocol):
         """Delete `CPObject` rows matching `uids` in `(mgmt_name, domain_name)`."""
         ...
 
+
+@runtime_checkable
+class ServiceCachePort(Protocol):
+    """Protocol for persistent service object cache operations."""
+
     async def get_services(
         self,
         mgmt_name: str | None = None,
@@ -301,6 +321,11 @@ class CachePort(Protocol):
         """Delete `CPService` rows matching `uids` in `(mgmt_name, domain_name)`."""
         ...
 
+
+@runtime_checkable
+class AssetCachePort(Protocol):
+    """Protocol for persistent gateway, cluster, VSX, and server asset cache operations."""
+
     async def get_assets(
         self,
         mgmt_name: str | None = None,
@@ -328,6 +353,11 @@ class CachePort(Protocol):
     ) -> int:
         """Insert or update `Asset` rows in `arodonata_assets`."""
         ...
+
+
+@runtime_checkable
+class TopologyCachePort(Protocol):
+    """Protocol for persistent gateway topology intervals and administrator annotations."""
 
     async def get_gateway_topology(
         self,
@@ -390,6 +420,11 @@ class CachePort(Protocol):
         """Delete `TopologyAnnotation` rows matching `annotation_ids`."""
         ...
 
+
+@runtime_checkable
+class RulebaseCachePort(Protocol):
+    """Protocol for persistent rulebase snapshot and package catalog cache operations."""
+
     async def replace_domain_rulebase(
         self,
         snapshot: DomainRulebaseSnapshot,
@@ -443,6 +478,38 @@ class CachePort(Protocol):
         domain_name: str,
     ) -> DomainRulebaseSnapshot:
         """Load lightweight `package_layers` and NAT package metadata for `(mgmt_name, domain_name)` without loading rule rows."""
+        ...
+
+
+@runtime_checkable
+class CachePort(
+    DomainCachePort,
+    SidCachePort,
+    SyncStatePort,
+    ObjectCachePort,
+    ServiceCachePort,
+    AssetCachePort,
+    TopologyCachePort,
+    RulebaseCachePort,
+    Protocol,
+):
+    """Composite protocol for persistent cache operations across domains, sessions, objects, services, assets, topology, and rulebases."""
+
+
+@runtime_checkable
+class RulebaseRefreshPort(Protocol):
+    """Protocol for refreshing lightweight policy package catalogs without full rulebases."""
+
+    async def refresh_policy_packages(
+        self,
+        *,
+        mgmt_name: str | None = None,
+        domains: Sequence[str] | str | None = None,
+        include_global: bool = False,
+        mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> RefreshOutcome:
+        """Synchronize lightweight policy package catalogs (`item_type='packages'`)."""
         ...
 
 
@@ -509,9 +576,18 @@ class ApiPort(Protocol):
 
 __all__ = [
     "ApiPort",
+    "AssetCachePort",
     "AuthProvider",
     "CachePort",
+    "DomainCachePort",
     "GatewayCliCallable",
     "GatewayCliPort",
     "LockPort",
+    "ObjectCachePort",
+    "RulebaseCachePort",
+    "RulebaseRefreshPort",
+    "ServiceCachePort",
+    "SidCachePort",
+    "SyncStatePort",
+    "TopologyCachePort",
 ]

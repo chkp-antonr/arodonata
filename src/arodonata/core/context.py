@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arodonata.core.errors import REDACTED_PLACEHOLDER, MissingConfigurationError, SessionError
+from arodonata.core.errors import REDACTED_PLACEHOLDER, MissingConfigurationError, SessionError, is_sensitive_key
+from arodonata.core.models.common import ApiCallResult
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.services import CPService
 
@@ -20,6 +21,48 @@ if TYPE_CHECKING:
     from arodonata.core.ports import ApiPort
 
 SYSTEM_DOMAIN_KEY = "System Data"
+
+SERVICE_COMMAND_TYPES: frozenset[str] = frozenset(
+    {
+        "service-tcp",
+        "service-udp",
+        "service-icmp",
+        "service-icmp6",
+        "service-other",
+        "service-dce-rpc",
+        "service-rpc",
+        "service-sctp",
+        "service-gtp",
+        "service-citrix-tcp",
+        "service-compound-tcp",
+        "service-group",
+    }
+)
+
+NON_OVERLAY_MUTATION_TARGETS: frozenset[str] = frozenset(
+    {
+        "access-rule",
+        "access-section",
+        "access-layer",
+        "nat-rule",
+        "nat-section",
+        "https-rule",
+        "https-section",
+        "https-layer",
+        "threat-rule",
+        "threat-exception",
+        "threat-layer",
+        "package",
+        "domain",
+        "administrator",
+        "session",
+        "trust",
+        "repository-script",
+        "api-key",
+        "md-permissions-profile",
+        "domain-permissions-profile",
+    }
+)
 
 
 def normalize_domain_key(domain: str | None) -> str:
@@ -565,7 +608,64 @@ async def open_api_write_session(
             await asyncio.shield(api.logout_sid(mgmt_name, ws.sid, server_ip=ws.server_ip))
 
 
+def update_overlay_from_command(
+    overlay: SessionOverlay,
+    command: str,
+    payload: dict[str, Any] | None,
+    result: ApiCallResult,
+) -> None:
+    """Update `SessionOverlay` when `add-*`, `set-*`, or `delete-*` succeeds inside a `WriteSession`."""
+    if not result.success:
+        return
+    clean = command.strip().lower().lstrip("/")
+    if not clean.startswith(("add-", "set-", "delete-")):
+        return
+
+    verb, _, target_type = clean.partition("-")
+    if not target_type or target_type in NON_OVERLAY_MUTATION_TARGETS:
+        return
+
+    is_service = target_type in SERVICE_COMMAND_TYPES or target_type.startswith("service-")
+    req_data = payload or {}
+    resp_data = result.data if isinstance(result.data, dict) else {}
+
+    if verb in ("add", "set"):
+        merged_raw = {k: v for k, v in req_data.items() if not is_sensitive_key(k)}
+        for k, v in resp_data.items():
+            if not is_sensitive_key(k):
+                merged_raw[k] = v
+        if "type" not in merged_raw or not merged_raw.get("type"):
+            merged_raw["type"] = target_type
+        uid = str(merged_raw.get("uid") or "")
+        name = str(merged_raw.get("name") or req_data.get("new-name") or "")
+        if not uid and not name:
+            return
+        if not uid:
+            uid = f"overlay:{target_type}:{name}"
+            merged_raw["uid"] = uid
+
+        if is_service:
+            svc = CPService.from_cp_dict(overlay.mgmt_name, overlay.domain_name, merged_raw)
+            overlay.record_service_upsert(svc)
+        else:
+            obj = CPObject.from_cp_dict(overlay.mgmt_name, overlay.domain_name, merged_raw)
+            overlay.record_object_upsert(obj)
+        return
+
+    if verb == "delete":
+        uid_val = req_data.get("uid") or resp_data.get("uid")
+        name_val = req_data.get("name") or resp_data.get("name")
+        uid_str = str(uid_val) if isinstance(uid_val, str) and uid_val else None
+        name_str = str(name_val) if isinstance(name_val, str) and name_val else None
+        if is_service:
+            overlay.record_service_delete(uid=uid_str, name=name_str, svc_type=target_type)
+        else:
+            overlay.record_object_delete(uid=uid_str, name=name_str, obj_type=target_type)
+
+
 __all__ = [
+    "NON_OVERLAY_MUTATION_TARGETS",
+    "SERVICE_COMMAND_TYPES",
     "SYSTEM_DOMAIN_KEY",
     "AuthContext",
     "SessionOverlay",
@@ -577,6 +677,7 @@ __all__ = [
     "get_write_session",
     "normalize_domain_key",
     "open_api_write_session",
+    "update_overlay_from_command",
     "user_context",
     "write_session_context",
 ]

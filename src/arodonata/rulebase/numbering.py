@@ -19,6 +19,7 @@ from arodonata.core.models.rulebase import (
     RulebasePackageLayerEntry,
     RulebaseSectionEntry,
     RulebaseType,
+    extract_policy_packages,
 )
 from arodonata.rulebase.models import (
     LayerPrefixLocation,
@@ -26,60 +27,9 @@ from arodonata.rulebase.models import (
     NumberedRule,
     NumberedSection,
     PackageRulebase,
-    PolicyPackageInfo,
     RuleLocation,
     RuleLocations,
 )
-
-
-def extract_policy_packages(snapshot: DomainRulebaseSnapshot) -> list[PolicyPackageInfo]:
-    """Build `PolicyPackageInfo` models from `snapshot.package_layers`."""
-    pkgs_by_uid: dict[str, PolicyPackageInfo] = {}
-    ordered_uids: list[str] = []
-
-    sorted_entries = sorted(
-        snapshot.package_layers,
-        key=lambda e: (e.package_name, e.package_uid, e.rulebase_type, e.position),
-    )
-
-    for entry in sorted_entries:
-        if entry.package_uid not in pkgs_by_uid:
-            pkgs_by_uid[entry.package_uid] = PolicyPackageInfo(
-                mgmt_name=snapshot.mgmt_name,
-                domain_name=snapshot.domain_name,
-                uid=entry.package_uid,
-                name=entry.package_name,
-                raw_data=dict(entry.raw_data),
-                updated_at=entry.updated_at,
-            )
-            ordered_uids.append(entry.package_uid)
-
-        pkg = pkgs_by_uid[entry.package_uid]
-        if entry.rulebase_type == "nat":
-            pkg.has_nat_policy = True
-        elif entry.rulebase_type == "access":
-            pkg.access_layers.append(entry)
-        elif entry.rulebase_type == "https":
-            pkg.https_layers.append(entry)
-        elif entry.rulebase_type == "threat":
-            pkg.threat_layers.append(entry)
-
-    # Also detect packages that have NAT rules even if package_layers had no explicit nat entry
-    for nr in snapshot.nat_rules:
-        if nr.package_uid not in pkgs_by_uid:
-            pkgs_by_uid[nr.package_uid] = PolicyPackageInfo(
-                mgmt_name=snapshot.mgmt_name,
-                domain_name=snapshot.domain_name,
-                uid=nr.package_uid,
-                name=nr.package_name,
-                has_nat_policy=True,
-                updated_at=nr.updated_at,
-            )
-            ordered_uids.append(nr.package_uid)
-        else:
-            pkgs_by_uid[nr.package_uid].has_nat_policy = True
-
-    return [pkgs_by_uid[u] for u in ordered_uids]
 
 
 def _find_layer_entry(

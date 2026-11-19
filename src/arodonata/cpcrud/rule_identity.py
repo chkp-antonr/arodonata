@@ -18,25 +18,11 @@ from arodonata.core.models.rulebase import (
     RulebaseType,
     ThreatRuleEntry,
 )
-
-# Check Point built-in sentinel object UIDs
-NAT_ORIGINAL_OBJECT_UID = "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c"
-NAT_ANY_OBJECT_UID = "97aeb369-9aea-11d5-bd16-0090272ccb30"
-
-_ORIGINAL_ALIASES: frozenset[str] = frozenset(
-    {
-        "",
-        "original",
-        NAT_ORIGINAL_OBJECT_UID.lower(),
-    }
-)
-
-_ANY_ALIASES: frozenset[str] = frozenset(
-    {
-        "",
-        "any",
-        NAT_ANY_OBJECT_UID.lower(),
-    }
+from arodonata.core.models.sentinels import (
+    NAT_ANY_OBJECT_UID,
+    NAT_ORIGINAL_OBJECT_UID,
+    normalize_any_sentinel,
+    normalize_nat_original_sentinel,
 )
 
 RULE_DELTA_CELL_KEYS: tuple[str, ...] = (
@@ -73,82 +59,6 @@ def build_effective_obj_dict(
         for k, v in obj_dict.items():
             eff_obj_dict[str(k)] = v
     return eff_obj_dict
-
-
-def normalize_nat_original_sentinel(
-    value: Any,
-    obj_dict: Mapping[str, Mapping[str, Any]] | None = None,
-) -> str:
-    """Normalize a NAT `translated-*` field (`None`, `""`, `"Original"`, `NAT_ORIGINAL_OBJECT_UID`, or dict) to `"Original"`."""
-    if value is None:
-        return "Original"
-    if isinstance(value, dict):
-        uid = str(value.get("uid") or "").strip()
-        name = str(value.get("name") or "").strip()
-        if uid.lower() == NAT_ORIGINAL_OBJECT_UID.lower() or name.lower() == "original":
-            return "Original"
-        if name:
-            return name
-        if uid and obj_dict and uid in obj_dict:
-            resolved_name = str(obj_dict[uid].get("name") or "").strip()
-            if resolved_name.lower() == "original":
-                return "Original"
-            if resolved_name:
-                return resolved_name
-        return uid or "Original"
-    if isinstance(value, str):
-        clean = value.strip()
-        if clean.lower() in _ORIGINAL_ALIASES:
-            return "Original"
-        if obj_dict and clean in obj_dict:
-            resolved_name = str(obj_dict[clean].get("name") or "").strip()
-            if resolved_name.lower() == "original":
-                return "Original"
-            if resolved_name:
-                return resolved_name
-        return clean
-    return str(value)
-
-
-def normalize_any_sentinel(
-    value: Any,
-    obj_dict: Mapping[str, Mapping[str, Any]] | None = None,
-) -> str:
-    """Normalize a traffic reference (`None`, `""`, `"Any"`, `NAT_ANY_OBJECT_UID`, or dict) to `"Any"` or object name."""
-    if value is None:
-        return "Any"
-    if isinstance(value, dict):
-        uid = str(value.get("uid") or "").strip()
-        name = str(value.get("name") or "").strip()
-        if uid.lower() == NAT_ANY_OBJECT_UID.lower() or name.lower() == "any":
-            return "Any"
-        if uid.lower() == NAT_ORIGINAL_OBJECT_UID.lower() or name.lower() == "original":
-            return "Original"
-        if name:
-            return name
-        if uid and obj_dict and uid in obj_dict:
-            resolved_name = str(obj_dict[uid].get("name") or "").strip()
-            if resolved_name.lower() == "any":
-                return "Any"
-            if resolved_name:
-                return resolved_name
-        return uid or "Any"
-    if isinstance(value, str):
-        clean = value.strip()
-        if clean.lower() in _ANY_ALIASES:
-            return "Any"
-        if clean.lower() in _ORIGINAL_ALIASES:
-            return "Original"
-        if obj_dict and clean in obj_dict:
-            resolved_name = str(obj_dict[clean].get("name") or "").strip()
-            if resolved_name.lower() == "any":
-                return "Any"
-            if resolved_name.lower() == "original":
-                return "Original"
-            if resolved_name:
-                return resolved_name
-        return clean
-    return str(value)
 
 
 def normalize_traffic_list(

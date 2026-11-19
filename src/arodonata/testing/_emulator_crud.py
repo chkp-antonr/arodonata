@@ -7,9 +7,11 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from arodonata.core.models.common import ApiCallResult
+from arodonata.core.primitives import mask_to_prefix_len, prefix_len_to_mask
 
 from ._emulator_models import (
     ACTION_NAME_TO_UID,
+    ACTION_UID_TO_NAME,
     ANY_UID,
     BUILTIN_SENTINELS,
     CMD_TO_ENTITY_ACTION,
@@ -20,6 +22,7 @@ from ._emulator_models import (
     ORIGINAL_UID,
     SENTINEL_NAME_TO_UID,
     TRACK_NAME_TO_UID,
+    TRACK_UID_TO_NAME,
     EntitySpec,
     cp_error,
     cp_ok,
@@ -779,26 +782,6 @@ def collect_blocking_references(
     return refs
 
 
-def _mask_to_length(subnet_mask: str) -> int | None:
-    parts = subnet_mask.strip().split(".")
-    if len(parts) != 4:
-        return None
-    try:
-        bits = "".join(f"{int(p):08b}" for p in parts)
-    except ValueError:
-        return None
-    if "01" in bits:
-        return None
-    return bits.count("1")
-
-
-def _length_to_mask(prefix_len: int) -> str | None:
-    if prefix_len < 0 or prefix_len > 32:
-        return None
-    mask_int = (0xFFFFFFFF << (32 - prefix_len)) & 0xFFFFFFFF if prefix_len else 0
-    return ".".join(str((mask_int >> shift) & 0xFF) for shift in (24, 16, 8, 0))
-
-
 def _ensure_entity_bucket(dom_files: dict[str, Any], spec: EntitySpec) -> list[dict[str, Any]]:
     bucket = dom_files.setdefault(spec.plural_show, {"objects": [], "from": 0, "to": 0, "total": 0})
     objs = bucket.setdefault("objects", [])
@@ -1022,13 +1005,13 @@ def _normalize_subnet_fields(target: dict[str, Any], updates: Mapping[str, Any])
     if "subnet-mask" in updates and updates["subnet-mask"]:
         mask_str = str(updates["subnet-mask"])
         target["subnet-mask"] = mask_str
-        prefix = _mask_to_length(mask_str)
+        prefix = mask_to_prefix_len(mask_str)
         if prefix is not None:
             target["mask-length4"] = prefix
     if "mask-length4" in updates and updates["mask-length4"] is not None:
         plen = int(updates["mask-length4"])
         target["mask-length4"] = plen
-        computed_mask = _length_to_mask(plen)
+        computed_mask = prefix_len_to_mask(plen)
         if computed_mask is not None and "subnet-mask" not in updates:
             target["subnet-mask"] = computed_mask
 
@@ -2017,7 +2000,7 @@ def _normalize_action(val: Any, *, rule_kind: str = "access") -> str | ApiCallRe
         lookup = str(val if val is not None else default_action).strip() or default_action
 
     if rule_kind == "access":
-        if lookup in BUILTIN_SENTINELS:
+        if lookup in ACTION_UID_TO_NAME:
             return lookup
         lowered = lookup.lower()
         if lowered in ACTION_NAME_TO_UID:
@@ -2048,7 +2031,7 @@ def _normalize_track(val: Any) -> dict[str, Any]:
     else:
         raw_t = str(val or LOG_TRACK_UID).strip()
     lowered = raw_t.lower()
-    t_uid = TRACK_NAME_TO_UID.get(lowered, raw_t if raw_t in BUILTIN_SENTINELS else LOG_TRACK_UID)
+    t_uid = TRACK_NAME_TO_UID.get(lowered, raw_t if raw_t in TRACK_UID_TO_NAME else LOG_TRACK_UID)
     return {"type": t_uid}
 
 

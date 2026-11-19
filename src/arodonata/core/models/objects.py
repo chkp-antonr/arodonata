@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from arodonata.core.models.common import to_naive_utc, utc_now
+from arodonata.core.primitives import format_composite_id
 
 
 def _extract_member_uids(raw_members: Any) -> list[str]:
@@ -97,9 +98,9 @@ class CPObject(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
-            self.id = f"{self.mgmt_name}:{self.domain_name}:{self.uid}"
+            self.id = format_composite_id(self.mgmt_name, self.domain_name, self.uid)
         if not self.object_id:
-            self.object_id = f"{self.mgmt_name}:{self.domain_name}:{self.name}"
+            self.object_id = format_composite_id(self.mgmt_name, self.domain_name, self.name)
         if self.original_domain is None:
             self.original_domain = self.domain_name
         self.updated_at = to_naive_utc(self.updated_at) or utc_now()
@@ -123,8 +124,8 @@ class CPObject(BaseModel):
         )
 
         return cls(
-            id=f"{mgmt_name}:{domain_name}:{uid}",
-            object_id=f"{mgmt_name}:{domain_name}:{name}",
+            id=format_composite_id(mgmt_name, domain_name, uid),
+            object_id=format_composite_id(mgmt_name, domain_name, name),
             uid=uid,
             name=name,
             type=obj_type,
@@ -170,9 +171,9 @@ class GroupMembershipNode(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
-            self.id = f"{self.mgmt_name}:{self.domain_name}:{self.uid}"
+            self.id = format_composite_id(self.mgmt_name, self.domain_name, self.uid)
         if not self.object_id:
-            self.object_id = f"{self.mgmt_name}:{self.domain_name}:{self.name}"
+            self.object_id = format_composite_id(self.mgmt_name, self.domain_name, self.name)
 
 
 class SearchResult(BaseModel):

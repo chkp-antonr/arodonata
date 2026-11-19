@@ -19,7 +19,6 @@ import arlogi
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from arodonata.adapters.checkpoint import AMgmtClient
-from arodonata.adapters.checkpoint.client import SERVICE_COMMAND_TYPES, _update_overlay_from_command
 from arodonata.adapters.checkpoint.pager import DEFAULT_PAGE_LIMIT
 from arodonata.adapters.checkpoint.rate_limiter import LoginGate, RateLimiter
 from arodonata.adapters.checkpoint.task_waiter import TaskWaiter
@@ -34,12 +33,14 @@ from arodonata.api_reference import (
 )
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import (
+    SERVICE_COMMAND_TYPES,
     AuthContext,
     UserContext,
     WriteSession,
     get_write_session,
     normalize_domain_key,
     open_api_write_session,
+    update_overlay_from_command,
 )
 from arodonata.core.context import (
     auth_context as _ctx_auth_context,
@@ -681,7 +682,7 @@ class ArodonataClient:
         # If using a custom ApiPort implementation (not AMgmtClient), ensure overlay & invalidation still run
         if self._amgmt is None:
             if active_ws is not None and (sid is None or sid == active_ws.sid):
-                _update_overlay_from_command(active_ws.overlay, clean_cmd, payload, res)
+                update_overlay_from_command(active_ws.overlay, clean_cmd, payload, res)
             if clean_cmd == "publish" and res.success:
                 eff_domain = domain or (active_ws.domain_name if active_ws is not None else None)
                 self.invalidate_domain(mgmt_name, eff_domain)
