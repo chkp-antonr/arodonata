@@ -6,6 +6,8 @@ import ipaddress
 import json
 from pathlib import Path
 
+import pytest
+
 from arodonata.testing.dataset_generator import (
     ALL_DOMAINS,
     DATASET_VERSION,
@@ -15,6 +17,7 @@ from arodonata.testing.dataset_generator import (
 )
 
 
+@pytest.mark.spec("SCN-ITEST-006-1", "SCN-ITEST-006-2", "SCN-ITEST-014-1")
 def test_dataset_v120_global_refs_and_assignments() -> None:
     """Dataset v1.2.0 includes `show-global-assignments.json`, Global refs, and heterogeneous domain mix."""
     root = ensure_enterprise_raw_dataset()

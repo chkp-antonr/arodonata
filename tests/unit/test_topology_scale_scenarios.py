@@ -754,6 +754,7 @@ class EnterpriseScaleFakeApi:
         return None
 
 
+@pytest.mark.spec("SCN-CLIENT-008-3", "SCN-TOPO-009-1", "SCN-TOPO-010-1", "SCN-TOPO-014-2")
 @pytest.mark.asyncio
 async def test_enterprise_scale_260_gateways_multi_hop_transit_reconciliation_and_overrides() -> None:
     """Verify 260+ gateway topology sync, live route collection, 5-hop transit discovery, overrides, targeted single-gateway refresh, and fast query performance."""

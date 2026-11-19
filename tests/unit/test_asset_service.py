@@ -157,6 +157,7 @@ class AssetFakeApi:
         return None
 
 
+@pytest.mark.spec("SCN-CACHE-008-1", "SCN-CACHE-009-1")
 @pytest.mark.asyncio
 async def test_asset_refresh_cluster_and_vsx_relationships_and_streaming() -> None:
     """`AssetRefreshService` resolves cluster members and VSX virtual systems across domains concurrently and emits SSE-convertible events."""
@@ -241,6 +242,7 @@ async def test_asset_refresh_cluster_and_vsx_relationships_and_streaming() -> No
     await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-009-1", "SCN-CACHE-009-2")
 @pytest.mark.asyncio
 async def test_cross_domain_vsx_reconciliation() -> None:
     """Virtual Systems in a tenant domain resolve `parent_id` and `parent_asset_id` using the parent VSX asset's infrastructure domain."""
@@ -318,6 +320,7 @@ async def test_cross_domain_vsx_reconciliation() -> None:
     await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-010-1")
 @pytest.mark.asyncio
 async def test_vsx_slot_objects_cross_domain_reconciliation_and_route_merge() -> None:
     """`CpmiVsxSlotObj` (`vsid == 0`) and `CpmiVsSlotObj` (`vsid > 0`) in a VSX domain link a `CpmiVsNetobj` in a `targetCustomer` domain and merge slot `interfaces` and `routes`."""

@@ -462,6 +462,7 @@ async def test_rulebase_refresh_refuses_dirty_session_and_preserves_existing_sna
     await db.close()
 
 
+@pytest.mark.spec("SCN-RULE-001-2")
 @pytest.mark.asyncio
 async def test_rulebase_refresh_traverses_packages_nat_inline_layers_and_global_placeholders() -> None:
     """`refresh_rulebases` traverses `show-packages`, NAT rulebases, ordered layers, inline layers, and Global `place-holder` in `package` context, replacing the snapshot atomically."""
@@ -523,6 +524,7 @@ async def test_rulebase_refresh_traverses_packages_nat_inline_layers_and_global_
     await db.close()
 
 
+@pytest.mark.spec("SCN-RULE-001-2")
 @pytest.mark.asyncio
 async def test_rulebase_refresh_atomic_transaction_rollback_on_sync_state_failure() -> None:
     """Adversarial test for W19:
@@ -598,6 +600,7 @@ async def test_rulebase_refresh_atomic_transaction_rollback_on_sync_state_failur
     await db.close()
 
 
+@pytest.mark.spec("SCN-RULE-002-1", "SCN-RULE-002-2", "SCN-RULE-003-1")
 @pytest.mark.asyncio
 async def test_refresh_policy_packages_and_targeted_package_rulebase_slices() -> None:
     """`refresh_policy_packages` and `refresh_package_rulebase` honor `verify_session_clean`, skip unrelated rulebases/sibling packages, and never stamp `item_type='*'`."""

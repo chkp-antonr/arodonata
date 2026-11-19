@@ -112,6 +112,7 @@ class CoordinatorFakeApi:
         return None
 
 
+@pytest.mark.spec("SCN-CACHE-004-1")
 @pytest.mark.asyncio
 async def test_coordinator_concurrency_per_mds_member() -> None:
     """`DomainSyncCoordinator` runs up to `max(1, concurrent_limit - 1)` domains per MDS member in parallel across members."""
@@ -294,6 +295,7 @@ async def test_coordinator_timestamp_and_session_uid_staleness_check() -> None:
     await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-004-2")
 @pytest.mark.asyncio
 async def test_coordinator_dirty_session_and_invalid_credentials_preserve_cache() -> None:
     """Dirty session or `InvalidCredentialsError` during probe records `failed_domains` and emits `DomainSyncFailedEvent` while preserving cached rows."""
@@ -412,6 +414,7 @@ async def test_coordinator_dirty_session_and_invalid_credentials_preserve_cache(
     await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-003-2", "SCN-CACHE-004-1", "SCN-CACHE-004-2")
 @pytest.mark.asyncio
 async def test_coordinator_lock_heartbeat_contention_skip_taskgroup_cancel_and_sid_redaction() -> None:
     """Adversarial test for W13, W14, W15, W20, W22:
@@ -592,6 +595,7 @@ async def test_coordinator_lock_heartbeat_contention_skip_taskgroup_cancel_and_s
     await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-004-1")
 @pytest.mark.asyncio
 async def test_coordinator_shared_mds_semaphore_and_single_flight_coalescing() -> None:
     """Multiple coordinators sharing a `DatabaseManager` coalesce same-domain syncs and cap total MDS concurrency."""
@@ -675,6 +679,7 @@ async def test_coordinator_shared_mds_semaphore_and_single_flight_coalescing() -
     await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-004-1")
 @pytest.mark.asyncio
 async def test_coordinator_reentrant_nested_ensure_does_not_deadlock_or_leak_closed_loops() -> None:
     """Nested `coordinator.ensure()` inside a domain handler reuses the active MDS permit without deadlocking, and closed loops are pruned."""
@@ -775,6 +780,7 @@ async def test_coordinator_reentrant_nested_ensure_does_not_deadlock_or_leak_clo
     await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-004-2")
 @pytest.mark.asyncio
 async def test_coordinator_partial_refresh_when_one_server_unreachable_cold_cache() -> None:
     """When one configured server fails `show-domains` with `AuthenticationError` on cold cache, `stream_ensure` and `ensure` emit `DomainSyncFailedEvent` for that server and still refresh all reachable servers."""

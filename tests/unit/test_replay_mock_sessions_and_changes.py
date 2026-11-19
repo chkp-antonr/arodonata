@@ -11,6 +11,7 @@ from arodonata.reports.models import OwnedSession, RangeScope, SessionScope
 from arodonata.testing.replay_mock import FileReplayApiMock
 
 
+@pytest.mark.spec("SCN-ITEST-007-2", "SCN-ITEST-009-1", "SCN-ITEST-009-2")
 @pytest.mark.asyncio
 async def test_session_overlay_isolation_and_read_only_enforcement() -> None:
     """Uncommitted edits stay isolated to the owning `sid`; read-only sessions reject writes."""
@@ -91,6 +92,7 @@ async def test_session_overlay_isolation_and_read_only_enforcement() -> None:
         assert seen.data["ipv4-address"] == "10.200.1.10"
 
 
+@pytest.mark.spec("SCN-ITEST-009-2")
 @pytest.mark.asyncio
 async def test_cross_session_uid_locks_and_release_paths() -> None:
     """Modifying an entity, rule, or section locks its UID against other open sessions until publish/discard/logout."""
@@ -381,6 +383,7 @@ async def test_session_lifecycle_takeover_switch_and_continue_session() -> None:
     assert disc_res.data["number-of-discarded-changes"] == 1
 
 
+@pytest.mark.spec("SCN-ITEST-010-1")
 @pytest.mark.asyncio
 async def test_concurrent_publish_rebase_and_atomic_conflict_failure() -> None:
     """Disjoint concurrent sessions rebase cleanly on publish; conflicting concurrent edits fail atomically."""
@@ -454,6 +457,7 @@ async def test_concurrent_publish_rebase_and_atomic_conflict_failure() -> None:
     assert published_dup.data["ipv4-address"] == "10.201.2.3"
 
 
+@pytest.mark.spec("SCN-ITEST-010-1", "SCN-REPORT-003-3")
 @pytest.mark.asyncio
 async def test_post_publish_rotation_show_changes_and_collect_change_report() -> None:
     """Verify post-publish rotation, async/sync `show-changes`, and `collect_change_report` with `OwnedSession`."""
@@ -669,6 +673,7 @@ async def test_fast_path_publish_does_not_clobber_concurrent_domain_generation_w
     assert gw["interfaces"][0]["name"] == "eth9"
 
 
+@pytest.mark.spec("SCN-ITEST-010-1")
 @pytest.mark.asyncio
 async def test_publish_by_explicit_uid_async_revision_and_system_data_guard() -> None:
     """Explicit `publish {"uid": ...}` targets the named session; `System Data` rejects domain mutations."""

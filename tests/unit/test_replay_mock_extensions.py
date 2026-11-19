@@ -366,6 +366,7 @@ async def test_inline_layer_roundtrip_and_crud(tmp_path: Path) -> None:
     assert "inline-layer" not in clear_res.data
 
 
+@pytest.mark.spec("SCN-ITEST-013-2")
 @pytest.mark.asyncio
 async def test_https_and_threat_layers_rulebases_crud_and_where_used(tmp_path: Path) -> None:
     """Confirm HTTPS and Threat layers, rulebases, show/set rule handlers, unused checks, and where-used."""
@@ -467,6 +468,7 @@ async def test_https_and_threat_layers_rulebases_crud_and_where_used(tmp_path: P
     assert {"srv-unused-99", "net-threat-scope", "net-https-dst"} <= unused_after_names
 
 
+@pytest.mark.spec("SCN-ITEST-013-2", "SCN-ITEST-015-1")
 @pytest.mark.asyncio
 async def test_verify_install_policy_checkpoint_host_and_snapshot_rollback(tmp_path: Path) -> None:
     """Confirm verify-policy, install-policy + show-task, show-checkpoint-host, and full snapshot rollback."""

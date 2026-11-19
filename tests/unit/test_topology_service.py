@@ -453,6 +453,16 @@ class TopologyFakeApi:
         return None
 
 
+@pytest.mark.spec(
+    "SCN-CACHE-011-1",
+    "SCN-TOPO-002-1",
+    "SCN-TOPO-003-1",
+    "SCN-TOPO-003-2",
+    "SCN-TOPO-003-3",
+    "SCN-TOPO-006-1",
+    "SCN-TOPO-011-1",
+    "SCN-TOPO-011-2",
+)
 @pytest.mark.asyncio
 async def test_topology_extraction_group_expansion_vs_routes_and_candidate_matching(
     monkeypatch: pytest.MonkeyPatch,
@@ -910,6 +920,7 @@ async def test_topology_cache_only_mode_never_calls_live_api_and_host_ckp_firewa
     await db.close()
 
 
+@pytest.mark.spec("SCN-TOPO-012-1")
 @pytest.mark.asyncio
 async def test_four_gateway_transit_topology_filters_matched_sources_and_destinations_in_input_order() -> None:
     """Verify 4-gateway topology (`GW1`, `GW2`, transit `GW3` + local networks, and `GW4` behind `GW3`) filters `matched_sources` and `matched_destinations` per gateway in strict input order."""
@@ -1604,6 +1615,7 @@ def test_normalize_interface_leads_to_specific_network_and_cpmi_routes() -> None
     assert explicit_if == "eth0"
 
 
+@pytest.mark.spec("SCN-TOPO-007-1")
 def test_topology_confidence_weights_and_cli_route_parsers() -> None:
     """Verify `TopologyConfidenceWeights` overrides, `vsenv` bash script generation, Base64 `cprid` decoding, and `ip route` / `clish` parsers."""
     import base64
@@ -1676,6 +1688,7 @@ def test_topology_confidence_weights_and_cli_route_parsers() -> None:
     assert by_cidr[("eth1", "10.90.0.0/16")] == "ospf_route"
 
 
+@pytest.mark.spec("SCN-TOPO-015-1")
 @pytest.mark.asyncio
 async def test_topology_diagnostics_internal_only_and_one_arm_and_targeted_gateway_refresh() -> None:
     """Verify `get_topology_diagnostics` (internal-only = 0 warnings, one-arm = info, detect/not_defined/routing/unresolved/empty/missing_ip_mask = warning) and targeted per-gateway refresh."""
@@ -1890,6 +1903,16 @@ async def test_topology_diagnostics_internal_only_and_one_arm_and_targeted_gatew
     await db.close()
 
 
+@pytest.mark.spec(
+    "SCN-CLIENT-008-1",
+    "SCN-CLIENT-008-3",
+    "SCN-CLIENT-009-1",
+    "SCN-MCP-005-1",
+    "SCN-TOPO-001-1",
+    "SCN-TOPO-007-1",
+    "SCN-TOPO-007-2",
+    "SCN-TOPO-010-1",
+)
 @pytest.mark.asyncio
 async def test_live_route_collection_reconciliation_annotations_and_confidence_scoring() -> None:
     """Verify SSH DI + `cprid` fallback route collection, cluster drift, reconciliation, annotations, IPAM export, and delta confidence scoring via `ArodonataClient`."""
@@ -2552,6 +2575,9 @@ async def test_claude_review_regression_fixes() -> None:
     await client.close()
 
 
+@pytest.mark.spec(
+    "SCN-CLIENT-008-1", "SCN-CLIENT-009-1", "SCN-TOPO-005-1", "SCN-TOPO-014-1", "SCN-TOPO-014-2", "SCN-TOPO-016-2"
+)
 @pytest.mark.asyncio
 async def test_stage2_vpn_domain_policy_rule_evidence_one_arm_aci_inference_and_policy_reconciliation() -> None:
     """Verify Stage 2 capabilities:
@@ -3064,6 +3090,7 @@ async def test_stage2_vpn_domain_policy_rule_evidence_one_arm_aci_inference_and_
     await client.close()
 
 
+@pytest.mark.spec("SCN-TOPO-007-1", "SCN-TOPO-007-3", "SCN-TOPO-007-4")
 @pytest.mark.asyncio
 async def test_route_collection_vsx_node_serialization_coalescing_route_cap_and_package_snapshot() -> None:
     """Verify `collect_gateway_routes` serializes CLI per physical VSX node while parallelizing independent gateways, coalesces duplicate calls, enforces `max_routes_per_gateway`, and avoids full `get_domain_rulebase` loads."""
@@ -3356,6 +3383,7 @@ async def test_route_collection_vsx_node_serialization_coalescing_route_cap_and_
     await db.close()
 
 
+@pytest.mark.spec("SCN-TOPO-001-1", "SCN-TOPO-003-1", "SCN-TOPO-004-1", "SCN-TOPO-012-3")
 @pytest.mark.asyncio
 async def test_cold_refresh_topology_via_file_replay_mock_zero_show_hosts_and_nested_group_expansion(
     tmp_path: Any,
@@ -3746,6 +3774,7 @@ async def test_smart_refresh_topology_revalidates_cached_group_after_publish_and
         assert eth2_after == {"10.220.1.0/24", "10.220.2.0/24"}
 
 
+@pytest.mark.spec("SCN-TOPO-007-4", "SCN-TOPO-008-1")
 def test_repository_route_collection_script_bash_parity_and_injection_safety(tmp_path: Path) -> None:
     """Verify build_route_collection_repository_script() bash execution parity, >10000 clish skip, and injection guards."""
     import os
@@ -3919,6 +3948,7 @@ EOF
     assert not pwn_marker.exists()
 
 
+@pytest.mark.spec("SCN-TOPO-008-2")
 @pytest.mark.asyncio
 async def test_execute_gateway_cli_repository_and_auto_modes() -> None:
     """Verify execute_gateway_cli handles inline, repository, auto fallback, and custom args hook."""
@@ -4013,6 +4043,9 @@ async def test_execute_gateway_cli_repository_and_auto_modes() -> None:
     assert "script" not in repo_calls[0]["payload"]
 
 
+@pytest.mark.spec(
+    "SCN-CLIENT-008-3", "SCN-CLIENT-011-1", "SCN-TOPO-008-1", "SCN-TOPO-008-2", "SCN-TOPO-008-3", "SCN-TOPO-018-1"
+)
 @pytest.mark.asyncio
 async def test_topology_service_repository_mode_auto_fallback_and_custom_overrides() -> None:
     """Verify TopologyService & ArodonataClient repository collection, restricted permissions, auto fallback, and custom overrides."""

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from arodonata.core.models import Asset, CPObject, CPService, GroupMembershipNode, normalize_object_type
 
 
+@pytest.mark.spec("SCN-CACHE-002-3")
 def test_cp_object_and_group_membership_node_composite_ids() -> None:
     """Verify CPObject and GroupMembershipNode auto-populate id and object_id."""
     obj = CPObject(uid="u-1", name="hWebHost", type="host", mgmt_name="mds", domain_name="General")
@@ -50,6 +53,7 @@ def test_cp_service_and_asset_composite_ids() -> None:
     assert member.parent_asset_id == "mds:General:gw-cluster"
 
 
+@pytest.mark.spec("SCN-CACHE-006-1")
 def test_cp_object_application_site_hydration_and_aliases() -> None:
     """Verify application-site type aliases and CPObject.from_cp_dict hydration."""
     assert normalize_object_type("app-site") == "application-site"

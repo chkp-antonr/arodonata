@@ -18,6 +18,7 @@ from arodonata.testing.mock_server import CheckPointReplayHttpServer, build_arg_
 from arodonata.testing.replay_mock import FileReplayApiMock
 
 
+@pytest.mark.spec("SCN-ITEST-008-2", "SCN-ITEST-015-1", "SCN-ITEST-016-1")
 @pytest.mark.asyncio
 async def test_https_server_auth_sid_enforcement_and_testing_control_endpoints() -> None:
     """Verify HTTPS 401 checks, logout invalidation, and opt-in `/__testing__/*` endpoints."""
@@ -221,6 +222,7 @@ async def test_https_server_auth_sid_enforcement_and_testing_control_endpoints()
                     assert resp.status == 404
 
 
+@pytest.mark.spec("SCN-ITEST-015-1", "SCN-ITEST-016-1")
 @pytest.mark.asyncio
 async def test_snapshot_restore_reset_and_call_log_assertion_helpers() -> None:
     """Verify sub-second snapshot/restore/reset (including CLI overrides) and call_log assertion helpers."""
@@ -311,6 +313,7 @@ async def test_snapshot_restore_reset_and_call_log_assertion_helpers() -> None:
     assert not api._work_sessions
 
 
+@pytest.mark.spec("SCN-ITEST-016-2")
 @pytest.mark.asyncio
 async def test_otel_spans_and_zero_sid_or_secret_leakage(request: pytest.FixtureRequest) -> None:
     """Verify OTEL spans record `arodonata.*` attributes/error status with zero raw SID or secret leaks."""

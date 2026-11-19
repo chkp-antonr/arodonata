@@ -143,6 +143,7 @@ def test_repository_script_exceptions_redact_sids_and_secrets() -> None:
     assert REDACTED_PLACEHOLDER in str(perm_err)
 
 
+@pytest.mark.spec("SCN-CLIENT-010-2")
 def test_non_overlay_mutation_targets_skip_session_overlay() -> None:
     """Verify repository-script and permission-profile mutations never pollute SessionOverlay."""
     from arodonata.adapters.checkpoint.client import NON_OVERLAY_MUTATION_TARGETS, _update_overlay_from_command
@@ -477,6 +478,7 @@ class _ScriptApiStub:
         self.invalidated.append((mgmt_name, domain))
 
 
+@pytest.mark.spec("SCN-CLIENT-010-1", "SCN-CLIENT-010-2", "SCN-CLIENT-012-1")
 async def test_script_repository_service_crud_fast_path_and_execution() -> None:
     """Verify ScriptRepositoryService read-only checks, zero-publish fast path, WriteSession isolation, and run_repository_script."""
     from arodonata.core.context import SessionOverlay, WriteSession, write_session_context
@@ -595,6 +597,7 @@ async def test_script_repository_service_crud_fast_path_and_execution() -> None:
     assert await svc.list_repository_scripts("mds1", domain="Corp") == []
 
 
+@pytest.mark.spec("SCN-CLIENT-012-3")
 async def test_script_repository_service_error_mappings() -> None:
     """Verify missing script, permission denial, and read-only session rejections map cleanly."""
     from arodonata.core.services import ScriptRepositoryService
@@ -629,6 +632,7 @@ async def test_script_repository_service_error_mappings() -> None:
         await svc.ensure_repository_script("mds1", "new-script", "echo 1\n", domain="Corp")
 
 
+@pytest.mark.spec("SCN-CLIENT-010-2", "SCN-CLIENT-012-1")
 async def test_client_facade_script_repository_traced_and_custom_api_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -755,6 +759,7 @@ async def test_client_facade_script_repository_traced_and_custom_api_port(
         set_trace_modules(None)
 
 
+@pytest.mark.spec("SCN-CLIENT-008-2")
 async def test_concurrent_cross_domain_route_collection_and_script_provisioning() -> None:
     """Verify collect_gateway_routes(domain='Branch') runs concurrently with ensure_route_collection_script('Regional') without session bleed."""
     import asyncio
@@ -852,6 +857,7 @@ async def test_system_data_write_session_matching_and_cross_domain_isolation() -
     assert list(stub2.session_domains.values()) == ["System Data"]
 
 
+@pytest.mark.spec("SCN-CLIENT-010-1", "SCN-CLIENT-010-2")
 async def test_audit_regression_fixes_decoding_targets_metadata_and_permissions() -> None:
     """Verify lenient Base64 decoding, target-vs-script not-found split, unsupported command handling, session_getter errors, and metadata fast-path."""
     from arodonata.core.errors import RepositoryScriptError, SessionError

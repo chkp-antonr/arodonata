@@ -24,6 +24,7 @@ from arodonata.mcp import (
 )
 
 
+@pytest.mark.spec("SCN-MCP-001-2")
 @pytest.mark.asyncio
 async def test_static_token_verifier_maps_env_var_name_to_client_id_without_logging_secret(
     monkeypatch: pytest.MonkeyPatch,
@@ -69,6 +70,7 @@ async def test_static_token_verifier_maps_env_var_name_to_client_id_without_logg
     assert "super-secret-team-b-token-value-222" not in serialized_logs
 
 
+@pytest.mark.spec("SCN-MCP-001-4")
 def test_host_auth_mode_disables_internal_token_verifier() -> None:
     """Scenario: Host authentication mode in embedded ASGI applications disables internal token verifier."""
     srv = create_mcp_server(auth_mode="host")
@@ -80,6 +82,7 @@ def test_host_auth_mode_disables_internal_token_verifier() -> None:
     assert asgi_app.mcp_settings.auth_mode == "host"
 
 
+@pytest.mark.spec("SCN-MCP-001-5")
 def test_dns_rebinding_host_421_and_origin_403_protection() -> None:
     """Scenario: Unlisted `Host` header is rejected with HTTP `421` and unlisted `Origin` with HTTP `403`."""
 
@@ -136,6 +139,7 @@ def test_dns_rebinding_host_421_and_origin_403_protection() -> None:
         assert res_ok.json() == {"ok": True, "client_id": "TEAM_A_TOKEN"}
 
 
+@pytest.mark.spec("SCN-MCP-001-5")
 def test_create_asgi_app_enforces_host_421_and_origin_403() -> None:
     """`create_asgi_app` rejects unlisted `Host` with `421` and unlisted `Origin` with `403`."""
     asgi_app = create_asgi_app(
@@ -154,6 +158,7 @@ def test_create_asgi_app_enforces_host_421_and_origin_403() -> None:
         assert r_origin.status_code == 403
 
 
+@pytest.mark.spec("SCN-MCP-001-2", "SCN-MCP-001-3", "SCN-MCP-001-5")
 @pytest.mark.asyncio
 async def test_base64_padded_tokens_jwt_fail_closed_and_wildcard_port_validation() -> None:
     """Adversarial test for C3 and W26:

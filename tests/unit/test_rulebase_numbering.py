@@ -180,6 +180,7 @@ def _build_hierarchical_snapshot(mgmt_name: str = "mds1", domain_name: str = "Co
     )
 
 
+@pytest.mark.spec("SCN-RULE-004-1", "SCN-RULE-004-2")
 @pytest.mark.asyncio
 async def test_package_and_layer_numbering_and_locate_rules() -> None:
     """`get_package_rulebase` expands Global placeholders (`2.1`, `2.2`) and inline layers (`2.2.1`), `get_layer_rulebase` numbers standalone layers (`1`, `2`, `2.1`), and `locate_rules` returns positions and prefixes."""
@@ -485,6 +486,7 @@ async def test_rule_to_cpcrud_operation_and_filter_rulebase_cpcrud_format() -> N
     await db.close()
 
 
+@pytest.mark.spec("SCN-RULE-002-1", "SCN-RULE-002-2", "SCN-RULE-003-1", "SCN-RULE-003-2")
 @pytest.mark.asyncio
 async def test_cached_rulebase_source_cold_package_catalog_targeted_package_and_locate_rules_gate() -> None:
     """`get_policy_packages` and `get_package_rulebase` perform lightweight/targeted syncs without NAT/HTTPS/Threat/sibling queries, while `locate_rules` still gates on `item_type='*'`."""

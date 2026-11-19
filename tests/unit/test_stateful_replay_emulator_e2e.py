@@ -30,6 +30,7 @@ def _parse_mcp_json(result: Any) -> dict[str, Any]:
     return dict(json.loads(result.content[0].text))
 
 
+@pytest.mark.spec("SCN-ITEST-012-2")
 @pytest.mark.asyncio
 async def test_e2e_in_process_mmp_decommission_cpcrud_reports_and_mcp(tmp_path: Path) -> None:
     """Exercise Decommission, CPCRUD staged/publish/inverse, Change Reports, MCP, and snapshot rollback."""
@@ -345,6 +346,7 @@ async def test_e2e_in_process_mmp_decommission_cpcrud_reports_and_mcp(tmp_path: 
     assert not (await api_mock.api_call("mds", "show-host", {"name": "H_MCP_E2E"}, domain="Branch")).success
 
 
+@pytest.mark.spec("SCN-ITEST-008-2", "SCN-ITEST-014-3", "SCN-ITEST-016-2")
 @pytest.mark.asyncio
 async def test_e2e_https_server_amgmt_cpcrud_reports_global_and_otel(
     tmp_path: Path,

@@ -79,6 +79,7 @@ async def test_fair_waiter_wakeup_on_slot_release_and_timeout() -> None:
     await db.close()
 
 
+@pytest.mark.spec("SCN-SESS-007-2")
 async def test_coalesced_background_keepalive_sweeps() -> None:
     """Scenario: Coalesced background keepalive sweeps so at most one sweep runs at a time."""
     limiter = RateLimiter(concurrent_limit=2)
@@ -108,6 +109,7 @@ async def test_coalesced_background_keepalive_sweeps() -> None:
     assert sweep_executions == 2
 
 
+@pytest.mark.spec("SCN-SESS-005-1")
 async def test_login_gate_serializes_concurrent_logins_per_mds_member() -> None:
     """Verify LoginGate serializes concurrent logins per active_mds_ip."""
     db = DatabaseManager(engine=None)
@@ -130,6 +132,7 @@ async def test_login_gate_serializes_concurrent_logins_per_mds_member() -> None:
     await db.close()
 
 
+@pytest.mark.spec("SCN-SESS-007-2")
 async def test_login_gate_min_interval_pacing_shared_cooldown_and_wait_timeout() -> None:
     """Adversarial test for C7, W4, W5, W6, I7:
     - LoginGate paces logins by min_login_interval and shared record_cooldown (W4, W5).

@@ -33,6 +33,7 @@ def _make_der(seed: str) -> tuple[bytes, str]:
     return der, formatted
 
 
+@pytest.mark.spec("SCN-TRANS-002-1")
 def test_untrusted_certificate_refused_in_pinned_mode(tmp_path: Path) -> None:
     """Scenario: Untrusted certificate refused in pinned mode."""
     known_hosts = tmp_path / "tls_known_hosts.json"
@@ -60,6 +61,7 @@ def test_untrusted_certificate_refused_in_pinned_mode(tmp_path: Path) -> None:
     assert "No request was sent." in str(mismatch_info.value)
 
 
+@pytest.mark.spec("SCN-TRANS-003-1")
 def test_first_contact_learned_in_tofu_mode_and_0600_mode(tmp_path: Path) -> None:
     """Scenario: First contact learned in TOFU mode with atomic 0600 persistence."""
     known_hosts = tmp_path / "tls_known_hosts.json"
@@ -85,6 +87,7 @@ def test_first_contact_learned_in_tofu_mode_and_0600_mode(tmp_path: Path) -> Non
     assert "No request was sent." in str(exc_info.value)
 
 
+@pytest.mark.spec("SCN-TRANS-002-2")
 def test_known_mds_member_fingerprint_accepted_on_new_domain_ip(tmp_path: Path) -> None:
     """Scenario: Known MDS member fingerprint accepted on a new domain IP."""
     known_hosts = tmp_path / "tls_known_hosts.json"
@@ -109,6 +112,7 @@ def test_known_mds_member_fingerprint_accepted_on_new_domain_ip(tmp_path: Path) 
     assert pinned_policy.verify_der("10.0.0.25", 443, mds_der) == mds_fp
 
 
+@pytest.mark.spec("SCN-TRANS-002-3")
 def test_lab_memory_mode_restricted_to_lab_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -150,6 +154,7 @@ def test_fingerprint_normalization_and_corrupt_store(tmp_path: Path) -> None:
     assert "No request was sent." in str(exc_info.value)
 
 
+@pytest.mark.spec("SCN-TRANS-003-1", "SCN-TRANS-003-2")
 def test_trust_store_concurrent_tofu_merge_permission_check_and_ipv6(tmp_path: Path) -> None:
     """Adversarial test for W3 and I9:
     - Two TrustStore instances pointing to the same file merge TOFU entries without losing sibling writes

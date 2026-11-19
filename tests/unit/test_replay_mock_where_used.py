@@ -7,6 +7,7 @@ import pytest
 from arodonata.testing.replay_mock import FileReplayApiMock
 
 
+@pytest.mark.spec("SCN-ITEST-007-1")
 @pytest.mark.asyncio
 async def test_file_replay_mock_where_used_direct_and_indirect() -> None:
     """`where-used` returns direct access/NAT rule refs and resolves upward indirect group memberships."""
@@ -80,6 +81,7 @@ async def test_file_replay_mock_where_used_direct_and_indirect() -> None:
     assert missing_res.status_code == 404
 
 
+@pytest.mark.spec("SCN-ITEST-007-1")
 @pytest.mark.asyncio
 async def test_file_replay_mock_rulebase_inlines_objects_when_use_object_dictionary_false() -> None:
     """`show-access-rulebase` and `show-nat-rulebase` inline object dicts when `use-object-dictionary=False`."""

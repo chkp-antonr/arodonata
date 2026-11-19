@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from arodonata.adapters.checkpoint.pager import TASK_QUERY_COMMANDS, paginate_objects
 from arodonata.core.models.common import ApiCallResult
 
 
+@pytest.mark.spec("SCN-TRANS-006-1")
 async def test_boundary_swap_duplicate_uid_recovery() -> None:
     """Scenario: Boundary swap duplicate UID recovery via ±10 window re-read without restarting full listing."""
     # Suppose 30 objects total, page size = 15.
@@ -56,6 +59,7 @@ async def test_boundary_swap_duplicate_uid_recovery() -> None:
     assert calls == [(0, 15), (15, 15), (5, 20)]
 
 
+@pytest.mark.spec("SCN-TRANS-006-2")
 async def test_total_count_change_or_continuity_break_triggers_single_restart() -> None:
     """Scenario: Total count change or continuity break triggers single restart, and second failure returns paging_inconsistent."""
     # Case A: First pass has a total count change on page 2, second pass succeeds cleanly.

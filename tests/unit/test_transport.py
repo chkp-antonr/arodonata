@@ -91,6 +91,7 @@ class FakeAsyncioTransport:
         self.closed = True
 
 
+@pytest.mark.spec("SCN-TRANS-002-1")
 async def test_pre_request_tls_verification_blocks_before_sending_bytes(tmp_path: Path) -> None:
     """Scenario: Untrusted certificate refused in pinned mode before any HTTP request bytes are sent."""
     _der_good, fp_good = _make_der("good")
@@ -132,6 +133,7 @@ async def test_pre_request_tls_verification_blocks_before_sending_bytes(tmp_path
     assert fake_transp.closed is True
 
 
+@pytest.mark.spec("SCN-TRANS-007-1", "SCN-TRANS-007-2")
 async def test_connect_and_read_timeouts_and_no_resend(tmp_path: Path) -> None:
     """Scenarios:
     - Socket connect or handshake timeout -> ApiTimeoutError(phase='connect')
@@ -214,6 +216,7 @@ async def test_connect_and_read_timeouts_and_no_resend(tmp_path: Path) -> None:
         assert REDACTED_PLACEHOLDER in str(reset_exc.value)
 
 
+@pytest.mark.spec("SCN-TRANS-004-1", "SCN-TRANS-004-2")
 async def test_verified_connection_pool_show_reuse_and_mutation_bypass(tmp_path: Path) -> None:
     """Scenarios:
     - Consecutive show commands reuse verified keep-alive connection within 10s
@@ -290,6 +293,7 @@ async def test_verified_connection_pool_show_reuse_and_mutation_bypass(tmp_path:
     assert pool.pooled_count() == 0
 
 
+@pytest.mark.spec("SCN-TRANS-001-1")
 async def test_command_name_regex_validation_blocks_traversal_and_injections(tmp_path: Path) -> None:
     """Adversarial test for C1: ApiTransport.execute strictly enforces ^[a-z0-9]+(-[a-z0-9]+)*$."""
     der, fp = _make_der("cmd-val")
@@ -409,6 +413,7 @@ def _generate_self_signed_cert(tmp_dir: Path, cn: str = "127.0.0.1") -> tuple[Pa
     return cert_pem, key_pem, der_bytes, fp
 
 
+@pytest.mark.spec("SCN-TRANS-002-1", "SCN-TRANS-004-1", "SCN-TRANS-007-4")
 async def test_real_loopback_tls_connector_pinning_pooling_and_redirects_blocked(tmp_path: Path) -> None:
     """Adversarial test for W1, W2, I10, I11:
     Exercises real FingerprintTCPConnector against a loopback TLS aiohttp.web server:
@@ -515,6 +520,7 @@ async def test_real_loopback_tls_connector_pinning_pooling_and_redirects_blocked
         await runner.cleanup()
 
 
+@pytest.mark.spec("SCN-TRANS-004-2")
 async def test_non_poolable_commands_close_idle_sockets_before_connecting(tmp_path: Path) -> None:
     """Idle pooled sockets are closed BEFORE peer handshake starts for boundary / un-scoped mutating commands."""
     der, fp = _make_der("preconnect-close")
@@ -575,6 +581,7 @@ async def test_non_poolable_commands_close_idle_sockets_before_connecting(tmp_pa
         await transport.close()
 
 
+@pytest.mark.spec("SCN-TRANS-004-2", "SCN-TRANS-004-3")
 async def test_dedicated_session_scope_pools_mutations_and_isolates_scopes(tmp_path: Path) -> None:
     """Dedicated session_scope reuses verified sockets across in-session mutations without exposing raw SID."""
     raw_sid_a = "top_secret_sid_alpha_999"
@@ -664,6 +671,7 @@ async def test_dedicated_session_scope_pools_mutations_and_isolates_scopes(tmp_p
         await transport.close()
 
 
+@pytest.mark.spec("SCN-TRANS-004-4")
 async def test_real_loopback_tls_dedicated_session_pooling_and_95_request_rotation(tmp_path: Path) -> None:
     """Exercise real FingerprintTCPConnector against loopback TLS server:
     - Verifies _DEFAULT_CHECKPOINT_SSL_CONTEXT enforces TLS 1.2+, CERT_NONE, NO_COMPRESSION, and HTTP/1.1 ALPN

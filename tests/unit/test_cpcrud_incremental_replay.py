@@ -190,6 +190,7 @@ def _build_incremental_replay_dataset(tmp_path: Path) -> tuple[Path, str]:
     return dataset_dir, layer_name
 
 
+@pytest.mark.spec("SCN-CPCRUD-009-7")
 @pytest.mark.asyncio
 async def test_cpcrud_incremental_plan_apply_show_changes_and_inverse_replay(
     tmp_path: Path,
@@ -346,6 +347,7 @@ async def test_cpcrud_incremental_plan_apply_show_changes_and_inverse_replay(
         assert not grp_reverted.success
 
 
+@pytest.mark.spec("SCN-CPCRUD-009-7")
 @pytest.mark.asyncio
 async def test_emulator_direct_incremental_set_application_site_and_empty_guard(tmp_path: Path) -> None:
     """Direct `set-application-site` calls with `{add, remove}` mutate `url-list` and reject empty removal."""

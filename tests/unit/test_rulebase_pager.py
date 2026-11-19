@@ -78,6 +78,7 @@ class PagerFakeApi:
         return None
 
 
+@pytest.mark.spec("SCN-RULE-001-3")
 @pytest.mark.asyncio
 async def test_rulebase_pager_merges_split_sections_and_recovers_empty_trailing_sections() -> None:
     """When Check Point repeats a `rulebase-section` header across two pages, `fetch_paged_rulebase` merges it into one section and preserves empty trailing sections."""
@@ -209,6 +210,7 @@ async def test_rulebase_pager_merges_split_sections_and_recovers_empty_trailing_
     assert res.access_rules[2].enabled is False
 
 
+@pytest.mark.spec("SCN-RULE-001-3")
 @pytest.mark.asyncio
 async def test_rulebase_pager_trailing_probe_recovers_empty_section_after_exact_page_boundary() -> None:
     """When `total` rules equals `limit` (e.g. 2 rules with `limit=2`), the pager performs a trailing probe and recovers an empty section at `offset=2`."""

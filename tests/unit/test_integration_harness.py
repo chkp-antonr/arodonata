@@ -35,6 +35,7 @@ from tests.integration.run_lock import IntegrationRunLock, IntegrationRunLocked
 class TestLabEnv:
     """Tests for ``tests.integration.lab_env``."""
 
+    @pytest.mark.spec("SCN-ITEST-003-2")
     def test_load_lab_env_precedence(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ARODONATA_LAB", raising=False)
         monkeypatch.delenv("API_MGMT", raising=False)
@@ -61,6 +62,7 @@ class TestLabEnv:
         assert os.environ["APIKEY"] == "secret-home-key"
         assert os.environ["TEST_DOMAIN_A"] == "DomA"
 
+    @pytest.mark.spec("SCN-ITEST-003-3")
     def test_load_lab_env_missing_profile_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ARODONATA_LAB", "nonexistent")
         (tmp_path / ".env.test").write_text("API_MGMT=10.0.0.1\n", encoding="utf-8")

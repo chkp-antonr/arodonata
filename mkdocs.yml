@@ -121,7 +121,7 @@ nav:
   - Architecture:
       - Overview: architecture/index.md
       - Hexagonal Ports & Adapters: architecture/ports-and-adapters.md
-      - Database Schema (15 Tables): architecture/database-schema.md
+      - Database Schema (17 Tables): architecture/database-schema.md
       - Caching, Sync & Search: architecture/caching-and-sync.md
       - Sessions, MDSM & Overlays: architecture/sessions-and-mdm.md
       - CPCRUD Engine: architecture/cpcrud.md

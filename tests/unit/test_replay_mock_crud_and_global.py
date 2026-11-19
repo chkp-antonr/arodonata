@@ -9,6 +9,7 @@ from arodonata.testing._emulator_models import ANY_UID, ORIGINAL_UID
 from arodonata.testing.replay_mock import FileReplayApiMock
 
 
+@pytest.mark.spec("SCN-ITEST-011-1")
 @pytest.mark.asyncio
 async def test_all_12_entity_types_crud_groups_rename_and_unused_cleanup() -> None:
     """Exercise add/show/set/delete across all 12 ENTITY_SPECS types, groups sync, renames, and unused pruning."""
@@ -238,6 +239,7 @@ async def test_all_12_entity_types_crud_groups_rename_and_unused_cleanup() -> No
         assert chk.status_code == 404
 
 
+@pytest.mark.spec("SCN-ITEST-012-2")
 @pytest.mark.asyncio
 async def test_referential_integrity_blocks_delete_until_unlinked() -> None:
     """Deleting objects referenced in groups, Access rules, NAT rules, or cross-domain rules fails until unlinked."""
@@ -333,6 +335,7 @@ async def test_referential_integrity_blocks_delete_until_unlinked() -> None:
     assert glob_blocked.error_code == "generic_err_object_cannot_be_deleted"
 
 
+@pytest.mark.spec("SCN-ITEST-013-2")
 @pytest.mark.asyncio
 async def test_access_and_nat_rule_section_positioning_cells_and_read_consistency() -> None:
     """Verify rule/section CRUD, positioning, cell Any/Original rules, empty-section paging, and live read views."""
@@ -599,6 +602,7 @@ async def test_access_and_nat_rule_section_positioning_cells_and_read_consistenc
     ).success
 
 
+@pytest.mark.spec("SCN-ITEST-014-1", "SCN-ITEST-014-3")
 @pytest.mark.asyncio
 async def test_mdsm_global_visibility_shadowing_write_protection_and_global_assignment() -> None:
     """Verify Global visibility + local shadowing, Global write rejection, and async/sync global assignment."""

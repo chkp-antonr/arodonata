@@ -226,6 +226,7 @@ async def test_scope_validation_and_timezone_conversion() -> None:
         await db.close()
 
 
+@pytest.mark.spec("SCN-REPORT-002-2")
 @pytest.mark.asyncio
 async def test_session_deduplication_range_filtering_and_partial_warnings() -> None:
     """Overlapping SessionScope and RangeScope deduplicate sessions, filter by exact UTC publish time, and emit warnings on partial errors."""
@@ -396,6 +397,7 @@ async def test_session_deduplication_range_filtering_and_partial_warnings() -> N
         await db.close()
 
 
+@pytest.mark.spec("SCN-REPORT-001-3")
 @pytest.mark.asyncio
 async def test_uid_resolution_cap_200_emits_warning() -> None:
     """When more than 200 bare UIDs require `show-object` lookup, lookup stops at 200 and emits `names_unresolved`."""
@@ -451,6 +453,7 @@ async def test_uid_resolution_cap_200_emits_warning() -> None:
         await db.close()
 
 
+@pytest.mark.spec("SCN-REPORT-003-2")
 @pytest.mark.asyncio
 async def test_live_owned_session_numbering_and_strict_sid_redaction() -> None:
     """Unpublished `OwnedSession` reads rulebase live without mutating/closing the session and completely redacts SID."""
@@ -550,6 +553,7 @@ async def test_live_owned_session_numbering_and_strict_sid_redaction() -> None:
         await db.close()
 
 
+@pytest.mark.spec("SCN-REPORT-003-1")
 @pytest.mark.asyncio
 async def test_object_only_session_skips_placement_and_omits_basis_banner() -> None:
     """When a session has zero `rule_changes`, placement is skipped (`not_applicable`) and no basis banner is rendered."""
@@ -615,6 +619,7 @@ async def test_object_only_session_skips_placement_and_omits_basis_banner() -> N
         await db.close()
 
 
+@pytest.mark.spec("SCN-REPORT-003-3")
 @pytest.mark.asyncio
 async def test_post_publish_clean_owned_session_numbers_live_and_warms_cache() -> None:
     """After `publish` (before `logout`), `OwnedSession` rotates to a clean working session (`changes == 0`, `locks == 0`) and numbers rules live in-memory without writing uncoordinated snapshots to CachePort (`C2`, `W6`)."""
@@ -720,6 +725,7 @@ async def test_post_publish_clean_owned_session_numbers_live_and_warms_cache() -
         await db.close()
 
 
+@pytest.mark.spec("SCN-REPORT-003-4")
 @pytest.mark.asyncio
 async def test_dirty_unrelated_owned_session_emits_warning_and_falls_back_to_cache() -> None:
     """When `OwnedSession` points to a different session with uncommitted edits (`changes > 0`), placement emits `owned_session_not_used` and falls back to cache."""
@@ -777,6 +783,7 @@ async def test_dirty_unrelated_owned_session_emits_warning_and_falls_back_to_cac
         await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-012-1", "SCN-REPORT-001-3")
 @pytest.mark.asyncio
 async def test_cold_cache_fetches_live_published_rulebase_and_warms_cache_plus_bare_layer_uid() -> None:
     """When cache is cold and no `OwnedSession` is supplied, rule changes trigger an on-demand live published rulebase read and bare `layer_uid` resolves via `show-object`."""
@@ -1007,6 +1014,7 @@ async def test_render_html_markdown_json_and_escaping() -> None:
         await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-012-1", "SCN-REPORT-001-4", "SCN-REPORT-003-4")
 @pytest.mark.asyncio
 async def test_case2_strict_cleanliness_cross_domain_and_concurrent_refresh_race_protection() -> None:
     """Verify C2 & W6:
@@ -1236,6 +1244,7 @@ async def test_case2_strict_cleanliness_cross_domain_and_concurrent_refresh_race
         await db.close()
 
 
+@pytest.mark.spec("SCN-REPORT-002-1", "SCN-REPORT-002-2")
 @pytest.mark.asyncio
 async def test_snapshot_field_diffs_rules_partial_removal_sole_member_any_nat_merge_and_no_false_positive_group_diff() -> (
     None
@@ -1463,6 +1472,7 @@ async def test_snapshot_field_diffs_rules_partial_removal_sole_member_any_nat_me
         await db.close()
 
 
+@pytest.mark.spec("SCN-REPORT-001-3", "SCN-REPORT-002-4")
 @pytest.mark.asyncio
 async def test_old_object_bare_uid_resolution_enriched_summaries_and_system_noise_filtering() -> None:
     """Verify Task 1.3:
@@ -1716,6 +1726,7 @@ async def test_old_object_bare_uid_resolution_enriched_summaries_and_system_nois
         await db.close()
 
 
+@pytest.mark.spec("SCN-REPORT-005-2")
 @pytest.mark.asyncio
 async def test_inline_cell_diffs_html_markdown_escaping_and_json_roundtrip() -> None:
     """Verify Tasks 2.1 and 2.2:
@@ -1905,6 +1916,7 @@ async def test_inline_cell_diffs_html_markdown_escaping_and_json_roundtrip() -> 
         await db.close()
 
 
+@pytest.mark.spec("SCN-REPORT-001-3", "SCN-REPORT-002-4", "SCN-REPORT-005-2")
 @pytest.mark.asyncio
 async def test_review_fixes_multi_layer_sort_system_delete_track_uid_composite_diffs_and_bool_parsing() -> None:
     """Verify code-review fixes (#1-#10):

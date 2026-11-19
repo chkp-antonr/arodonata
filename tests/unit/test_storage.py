@@ -42,6 +42,7 @@ from arodonata.core.models import (
 from arodonata.core.ports import CachePort, LockPort
 
 
+@pytest.mark.spec("SCN-CACHE-001-1")
 async def test_database_manager_default_memory_sqlite_and_busy_timeout() -> None:
     """Verify engine=None creates an auto-owned in-memory SQLite engine with 30s busy timeout."""
     db = DatabaseManager(engine=None)
@@ -71,6 +72,7 @@ async def test_database_manager_default_memory_sqlite_and_busy_timeout() -> None
         await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-001-2")
 async def test_database_manager_schema_evolution_adds_missing_columns(tmp_path: Path) -> None:
     """Verify schema evolution detects a new metadata hash, adds missing columns, and records the new hash."""
     db_file = tmp_path / "evolution.sqlite"
@@ -120,6 +122,7 @@ async def test_database_manager_schema_evolution_adds_missing_columns(tmp_path: 
         await db_v2.close()
 
 
+@pytest.mark.spec("SCN-CACHE-003-1")
 async def test_sql_lock_adapter_and_expired_lock_reclamation() -> None:
     """Verify DatabaseLockManager coordinates locks and atomically reclaims expired locks."""
     db = DatabaseManager(engine=None)
@@ -166,6 +169,7 @@ async def test_sql_lock_adapter_and_expired_lock_reclamation() -> None:
         await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-007-1")
 async def test_sql_cache_adapter_domains_sids_and_sync_state() -> None:
     """Verify domains (Global filtering), sid_cache (repr hygiene), and domain_sync_state operations."""
     db = DatabaseManager(engine=None)
@@ -406,6 +410,7 @@ async def test_sql_cache_adapter_selective_objects_services_assets_and_rulebase(
         await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-001-2", "SCN-CACHE-008-1")
 async def test_arodonata_assets_table_name_and_naive_utc_columns() -> None:
     """Verify every table in `ARODONATA_TABLE_NAMES` starts with `arodonata_` and all DateTime columns use `timezone=False` (`C5`, `I15`)."""
     from datetime import UTC as _UTC
@@ -437,6 +442,7 @@ async def test_arodonata_assets_table_name_and_naive_utc_columns() -> None:
                 assert col.type.timezone is False, f"{table_name}.{col.name} must have DateTime(timezone=False)"
 
 
+@pytest.mark.spec("SCN-CACHE-001-2", "SCN-CACHE-001-3")
 async def test_database_manager_ignores_foreign_tables_and_recovers_legacy_v1_tables(tmp_path: Path) -> None:
     """Verify foreign tables in `SQLModel.metadata` are ignored and legacy v1 `domains`/`sid_cache` tables are dropped while `arodonata_*` tables are created (`C5`)."""
     from sqlmodel import SQLModel
@@ -507,6 +513,7 @@ async def test_database_manager_ignores_foreign_tables_and_recovers_legacy_v1_ta
         SQLModel.metadata.remove(foreign_table)
 
 
+@pytest.mark.spec("SCN-CACHE-001-3")
 async def test_colliding_host_unprefixed_tables_are_never_dropped_or_altered(tmp_path: Path) -> None:
     """Verify host application tables named `domains`, `sid_cache`, `distributed_locks`, `domain_sync_state` without v1 fingerprints are NEVER dropped or altered (`C5`)."""
     db_file = tmp_path / "host_collision.sqlite"
@@ -544,6 +551,7 @@ async def test_colliding_host_unprefixed_tables_are_never_dropped_or_altered(tmp
         await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-001-1", "SCN-CACHE-001-2")
 async def test_concurrent_initialize_and_out_of_band_dropped_table_recovery(tmp_path: Path) -> None:
     """Verify concurrent `DatabaseManager.initialize()` calls serialize cleanly (`C6`), out-of-band dropped tables are recreated even when `schema_hash` matches (`I2`), and incompatible column types/NOT NULL changes trigger table recreation (`I1`)."""
     import asyncio
@@ -641,6 +649,7 @@ async def test_database_manager_tolerates_duplicate_column_and_index_errors_in_s
     assert not _is_benign_concurrent_ddl_error(OperationalError("ALTER TABLE", {}, Exception("syntax error near FROM")))
 
 
+@pytest.mark.spec("SCN-CACHE-002-1", "SCN-CACHE-006-1")
 async def test_duplicate_named_objects_and_services_with_distinct_uids_and_human_readable_ids() -> None:
     """Verify duplicate-named objects/services (`email`) with distinct UIDs coexist in DB and expose human-readable composite IDs."""
     db = DatabaseManager(engine=None)
@@ -756,6 +765,7 @@ async def test_duplicate_named_objects_and_services_with_distinct_uids_and_human
         await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-011-1")
 async def test_gateway_topology_persistence_and_64bit_ipv4_bounds() -> None:
     """Verify `arodonata_gateway_topology` schema auto-migration, `BigInteger` upper-half IPv4 bounds, `replace_domain_topology`, and `upsert_gateway_topology`."""
     from sqlalchemy import BigInteger
@@ -877,6 +887,7 @@ async def test_gateway_topology_persistence_and_64bit_ipv4_bounds() -> None:
         await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-004-1")
 async def test_batched_core_replace_and_duplicate_pk_upsert() -> None:
     """Verify multi-batch (>500 rows) `replace_domain_objects` and duplicate-PK `upsert_objects` persist cleanly."""
     db = DatabaseManager(engine=None)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from arodonata.cpcrud.inverse import build_inverse_template
 from arodonata.cpcrud.models import ActionResult, ApplyReport, Outcome, Plan, PlannedAction
 from arodonata.cpcrud.validator import validate_template
@@ -316,6 +318,7 @@ def test_build_inverse_template_refuses_planned_uid_delete_when_report_present_a
     assert host_op["set-if-exists"] is False
 
 
+@pytest.mark.spec("SCN-CPCRUD-006-5")
 def test_build_inverse_template_application_site_create_update_delete() -> None:
     """`build_inverse_template` generates compensating `delete`, `set`, and `add` operations for `application-site` objects ordered after dependent `access-rule` rollbacks."""
     plan = Plan(
@@ -438,6 +441,7 @@ def test_build_inverse_template_application_site_create_update_delete() -> None:
     }
 
 
+@pytest.mark.spec("SCN-CPCRUD-009-1")
 def test_build_inverse_template_rule_incremental_update_and_rename() -> None:
     """`build_inverse_template` restores dereferenced `prior_state` lists and prior rule name cleanly."""
     plan = Plan(

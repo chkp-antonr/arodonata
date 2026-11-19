@@ -19,6 +19,7 @@ from arodonata.cpcrud import (
 )
 
 
+@pytest.mark.spec("SCN-CPCRUD-002-1", "SCN-CPCRUD-002-4")
 def test_parse_object_expression_hosts_networks_ranges_and_domains() -> None:
     """Hosts, CIDRs, full/compressed ranges, and `.domain` expressions parse under default and customer profiles."""
     default_prefixes = NamingPrefixes()
@@ -96,6 +97,7 @@ def test_parse_object_expression_hosts_networks_ranges_and_domains() -> None:
     }
 
 
+@pytest.mark.spec("SCN-CPCRUD-002-3")
 def test_parse_app_site_expressions_wildcards_and_multi_domain() -> None:
     """Wildcard `*domain`, `*.domain`, and `SiteName(*d1, *.d2)` produce Check Point-safe names and regex URLs."""
     assert normalize_wildcard_domain("*chinacloudapi.cn") == "chinacloudapi.cn"

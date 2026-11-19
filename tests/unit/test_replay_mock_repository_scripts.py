@@ -12,6 +12,7 @@ from arodonata.core.services.route_collector import build_route_collection_repos
 from arodonata.testing import FileReplayApiMock
 
 
+@pytest.mark.spec("SCN-TOPO-018-1")
 async def test_replay_mock_repository_script_crud_session_isolation_and_snapshot() -> None:
     """Verify per-domain CRUD, WorkSession staging isolation until publish, discard, locks, and snapshots."""
     mock = FileReplayApiMock()
@@ -121,6 +122,7 @@ async def test_replay_mock_repository_script_crud_session_isolation_and_snapshot
     assert (await mock.api_call("mds", "show-repository-scripts", {}, domain="Branch")).data["total"] == 0
 
 
+@pytest.mark.spec("SCN-CLIENT-012-3", "SCN-TOPO-018-1")
 async def test_replay_mock_permissions_readonly_and_positional_args_execution() -> None:
     """Verify read_only session rejection, permission toggles, multi-target run-script, and VSX positional args."""
     mock = FileReplayApiMock()

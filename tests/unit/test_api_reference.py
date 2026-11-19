@@ -21,6 +21,7 @@ from arodonata import (
 )
 
 
+@pytest.mark.spec("SCN-APIREF-001-1")
 def test_default_bundled_index_lazy_singleton_and_meta() -> None:
     """Default bundled index loads lazily without network or DB and exposes expected metadata."""
     engine1 = get_api_reference()
@@ -46,6 +47,7 @@ def test_normalize_api_version() -> None:
     assert normalize_api_version("2.2") == "v2.2"
 
 
+@pytest.mark.spec("SCN-APIREF-002-1")
 def test_step_1_search_filters_by_version_crud_and_category() -> None:
     """Step 1 search filters commands by API version, CRUD type, and category."""
     # export-access-rulebase was added in v2.2
@@ -70,6 +72,7 @@ def test_step_1_search_filters_by_version_crud_and_category() -> None:
     assert all(item["api_family"] == "gaia" for item in gaia_hits)
 
 
+@pytest.mark.spec("SCN-APIREF-003-1")
 def test_step_2_describe_filters_fields_and_nested_objects_by_version() -> None:
     """Step 2 describe dynamically filters fields and nested objects by target version."""
     desc_v19 = describe_api_command("add-interface", version="v1.9")
@@ -97,6 +100,7 @@ def test_step_2_describe_filters_fields_and_nested_objects_by_version() -> None:
     assert "example" in desc_v22
 
 
+@pytest.mark.spec("SCN-APIREF-003-2")
 def test_step_2_batch_describe_accepts_list_of_commands() -> None:
     """Batch describe accepts multiple command names and reports unknown or unsupported commands."""
     batch = describe_api_command(["add-host", "set-host", "export-access-rulebase", "no-such-cmd"], version="v1.9")
@@ -109,6 +113,7 @@ def test_step_2_batch_describe_accepts_list_of_commands() -> None:
     assert "no-such-cmd" in batch["not_found"]
 
 
+@pytest.mark.spec("SCN-APIREF-004-1")
 def test_step_3_validate_payload_catches_errors_and_accepts_valid_payloads() -> None:
     """Offline payload validation checks required fields, alternatives, enums, types, and version support."""
     # Valid add-host payload
@@ -184,6 +189,7 @@ def test_from_path_loads_bundled_gzip() -> None:
     assert custom.meta["commands_count"] > 1000
 
 
+@pytest.mark.spec("SCN-CLIENT-014-1")
 def test_client_facade_infers_api_version_per_mgmt_name_and_fallbacks_to_latest() -> None:
     """ArodonataClient infers target API version from configured mgmt_name and falls back to v2.2."""
     client = ArodonataClient(
@@ -235,6 +241,7 @@ def _parse_mcp_result(res: Any) -> dict[str, Any]:
     return parsed
 
 
+@pytest.mark.spec("SCN-MCP-008-1")
 @pytest.mark.asyncio
 async def test_mcp_api_reference_tool_search_describe_validate_and_version_inference() -> None:
     """MCP api_reference tool supports search, single/batch describe, validate, and mgmt_name version inference."""
