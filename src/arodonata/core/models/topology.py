@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from arodonata.core.errors import redact_sid
 from arodonata.core.models.common import to_naive_utc, utc_now
 from arodonata.core.primitives import format_composite_id
 
@@ -258,6 +259,12 @@ class GatewayCliResult(BaseModel):
     error_code: str | None = None
     error_message: str | None = None
 
+    def model_post_init(self, __context: Any) -> None:
+        if self.stderr:
+            self.stderr = redact_sid(self.stderr)
+        if self.error_message:
+            self.error_message = redact_sid(self.error_message)
+
 
 class GatewayRouteCollectionStatus(BaseModel):
     """Per-gateway execution summary from `collect_gateway_routes`."""
@@ -284,6 +291,10 @@ class GatewayRouteCollectionStatus(BaseModel):
             self.gateway_id = format_composite_id(self.mgmt_name, self.domain_name, self.gateway_uid)
         if not self.gateway_asset_id:
             self.gateway_asset_id = format_composite_id(self.mgmt_name, self.domain_name, self.gateway_name)
+        if self.warnings:
+            self.warnings = [redact_sid(w) for w in self.warnings]
+        if self.error:
+            self.error = redact_sid(self.error)
 
 
 class RouteCollectionOutcome(BaseModel):

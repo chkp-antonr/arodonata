@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arodonata.core.errors import sanitize_mapping
+from arodonata.core.errors import redact_sid, sanitize_mapping
 
 CpridScriptMode = Literal["inline", "repository", "auto"]
 RepositoryScriptEnsureAction = Literal["unchanged", "created", "updated"]
@@ -173,6 +173,10 @@ class ScriptTargetExecutionResult(BaseModel):
     status_description: str = ""
     revision: str | None = None
 
+    def model_post_init(self, __context: Any) -> None:
+        if self.stderr:
+            self.stderr = redact_sid(self.stderr)
+
 
 class RepositoryScriptExecutionOutcome(BaseModel):
     """Aggregated outcome of executing a Check Point Script Repository entry via `run-script`."""
@@ -190,6 +194,12 @@ class RepositoryScriptExecutionOutcome(BaseModel):
     stderr: str = ""
     error_code: str | None = None
     error_message: str | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.stderr:
+            self.stderr = redact_sid(self.stderr)
+        if self.error_message:
+            self.error_message = redact_sid(self.error_message)
 
 
 __all__ = [
