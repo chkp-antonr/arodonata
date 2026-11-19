@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from arodonata.core.errors import ServerIdentityError, ValidationError, redact_sid
 from arodonata.core.models.common import parse_cp_publish_timestamp, utc_now
@@ -31,7 +31,7 @@ from arodonata.core.models.rulebase import (
     ThreatRuleEntry,
 )
 from arodonata.core.models.services import CPService
-from arodonata.core.ports import ApiPort, CachePort
+from arodonata.core.ports import ApiPort, ObjectCachePort, ServiceCachePort, SidCachePort, SyncStatePort
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.cpcrud.differ import (
     DiffSafetyError,
@@ -702,6 +702,10 @@ def _plan_existing_service_diff(
     )
 
 
+class _PlannerCachePort(ObjectCachePort, ServiceCachePort, SidCachePort, SyncStatePort, Protocol):
+    """Cache capabilities required by `Planner` and its internal `HybridStateReader`."""
+
+
 class Planner:
     """Declarative CPCRUD planner producing deterministic, idempotent `Plan` objects."""
 
@@ -709,7 +713,7 @@ class Planner:
         self,
         *,
         api: ApiPort,
-        cache: CachePort,
+        cache: _PlannerCachePort,
         default_mgmt_name: str | None = None,
         default_naming_prefixes: NamingPrefixes | None = None,
         now_fn: Callable[[], datetime] = utc_now,
@@ -1266,7 +1270,7 @@ class Planner:
                 sub_val = spec.get("subnet4") or spec.get("subnet")
                 mask_raw = spec.get("mask_length4") if "mask_length4" in spec else spec.get("mask-length4")
                 submask_raw = spec.get("subnet_mask") or spec.get("subnet-mask")
-                norm_mask = normalize_mask_length(mask_raw, submask_raw)
+                norm_mask = normalize_mask_length(mask_raw, submask_raw, strict=True)
                 if isinstance(sub_val, str) and sub_val.strip() and norm_mask is not None:
                     ip_matches = await reader.find_objects_by_value(
                         mgmt_name,
@@ -2340,6 +2344,7 @@ def _build_add_object_payload(
         mask = normalize_mask_length(
             spec.get("mask_length4") if "mask_length4" in spec else spec.get("mask-length4"),
             spec.get("subnet_mask") or spec.get("subnet-mask"),
+            strict=True,
         )
         if mask is not None:
             payload["mask-length4"] = mask

@@ -29,7 +29,7 @@ from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 from weakref import WeakKeyDictionary
 
 import arlogi
@@ -85,10 +85,15 @@ from arodonata.core.models.topology import (
 )
 from arodonata.core.ports import (
     ApiPort,
-    CachePort,
+    AssetCachePort,
+    DomainCachePort,
     GatewayCliCallable,
     GatewayCliPort,
+    ObjectCachePort,
+    RulebaseCachePort,
     RulebaseRefreshPort,
+    SyncStatePort,
+    TopologyCachePort,
 )
 from arodonata.core.primitives import (
     MAX_IPV4_INT,
@@ -221,11 +226,6 @@ class _InterfaceMatch:
     is_standby_path: bool = False
     confidence_factors: tuple[ConfidenceDelta, ...] = ()
     warnings: tuple[str, ...] = ()
-
-
-_ANY_RULE_TOKENS = ANY_RULE_TOKENS
-_ORIGINAL_NAT_TOKENS = ORIGINAL_NAT_TOKENS
-_POLICY_TARGETS_TOKENS = POLICY_TARGETS_TOKENS
 
 
 @dataclass(frozen=True)
@@ -903,6 +903,18 @@ async def _run_single_flight[T](
             flights.pop(flight_key, None)
 
 
+class _TopologyServiceCachePort(
+    DomainCachePort,
+    ObjectCachePort,
+    AssetCachePort,
+    TopologyCachePort,
+    RulebaseCachePort,
+    SyncStatePort,
+    Protocol,
+):
+    """Cache capabilities required by `TopologyService`."""
+
+
 class TopologyService:
     """Extracts, caches, reconciles, and matches gateway interface topology and live routes across domains."""
 
@@ -911,7 +923,7 @@ class TopologyService:
         *,
         settings: ArodonataSettings,
         api: ApiPort,
-        cache: CachePort,
+        cache: _TopologyServiceCachePort,
         coordinator: DomainSyncCoordinator,
         asset_service: AssetRefreshService,
         object_service: ObjectService,
@@ -920,6 +932,7 @@ class TopologyService:
         script_service: ScriptRepositoryService | None = None,
         now_fn: Callable[[], datetime] = utc_now,
     ) -> None:
+        """Initialize `TopologyService`; pass `rulebase_refresh` (`RulebaseRefreshPort`) to enable lazy `show-packages` catalog warming."""
         self._settings = settings
         self._api = api
         self._cache = cache
@@ -975,11 +988,19 @@ class TopologyService:
     ) -> DomainRulebaseSnapshot:
         """Load lightweight rulebase package metadata without reading rule tables, refreshing `show-packages` if cold."""
         snap = await self._cache.get_domain_rulebase_packages(mgmt_name, domain_name)
-        if snap.package_layers or not allow_refresh or self._rulebase_refresh is None:
+        if snap.package_layers or not allow_refresh:
             return snap
         full_st = await self._cache.get_sync_state(mgmt_name, domain_name, "rulebase", "*")
         pkg_st = await self._cache.get_sync_state(mgmt_name, domain_name, "rulebase", "packages")
         if (full_st is not None and full_st.status == "ok") or (pkg_st is not None and pkg_st.status == "ok"):
+            return snap
+        if self._rulebase_refresh is None:
+            logger.warning(
+                f"Skipping lazy show-packages refresh during topology extraction on {mgmt_name}:{domain_name}: "
+                "TopologyService was initialized without rulebase_refresh (RulebaseRefreshPort).",
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+            )
             return snap
         try:
             await self._rulebase_refresh.refresh_policy_packages(
@@ -1217,12 +1238,9 @@ class TopologyService:
         span_attrs(mgmt_name=mgmt_name, mode=mode, include_global=include_global, collect_routes=collect_routes)
         gw_tokens = self._normalize_gateway_filter_tokens(gateways)
 
-        if domains is None:
-            norm_domains: tuple[str, ...] | None = None
-        elif isinstance(domains, str):
-            norm_domains = tuple(sorted({d.strip() for d in domains.split(",") if d.strip()}))
-        else:
-            norm_domains = tuple(sorted({str(d).strip() for d in domains if str(d).strip()}))
+        norm_domains: tuple[str, ...] | None = (
+            tuple(sorted(set(normalize_str_sequence(domains)))) if domains is not None else None
+        )
 
         can_coalesce = get_write_session() is None
         flights = self._get_refresh_flights()
@@ -3197,10 +3215,7 @@ class TopologyService:
 
         domain_set: set[str] | None = None
         if domains is not None:
-            if isinstance(domains, str):
-                domain_set = {d.strip() for d in domains.split(",") if d.strip()}
-            else:
-                domain_set = {str(d).strip() for d in domains if str(d).strip()}
+            domain_set = set(normalize_str_sequence(domains))
         elif domain is not None and domain.strip():
             domain_set = {domain.strip()}
 
@@ -4970,7 +4985,7 @@ class TopologyService:
             val = str(t).strip()
             if not val:
                 continue
-            if val.lower() in _ANY_RULE_TOKENS:
+            if val.lower() in ANY_RULE_TOKENS:
                 return []
             cleaned.append(val)
         return cleaned
@@ -4992,7 +5007,7 @@ class TopologyService:
             if not clean:
                 continue
             lower_val = clean.lower()
-            if lower_val in _POLICY_TARGETS_TOKENS:
+            if lower_val in POLICY_TARGETS_TOKENS:
                 has_generic = True
                 continue
             tokens.add(lower_val)
@@ -5145,10 +5160,10 @@ class TopologyService:
             xlate_dst_raw = (nr.translated_destination or "").strip()
 
             eff_xlate_src = (
-                orig_src_raw if (not xlate_src_raw or xlate_src_raw.lower() in _ORIGINAL_NAT_TOKENS) else xlate_src_raw
+                orig_src_raw if (not xlate_src_raw or xlate_src_raw.lower() in ORIGINAL_NAT_TOKENS) else xlate_src_raw
             )
             eff_xlate_dst = (
-                orig_dst_raw if (not xlate_dst_raw or xlate_dst_raw.lower() in _ORIGINAL_NAT_TOKENS) else xlate_dst_raw
+                orig_dst_raw if (not xlate_dst_raw or xlate_dst_raw.lower() in ORIGINAL_NAT_TOKENS) else xlate_dst_raw
             )
 
             if for_reconciliation:
@@ -5372,16 +5387,8 @@ class TopologyService:
         cache_ttl: float | None = None,
     ) -> list[AffectedGatewayCandidate]:
         """Locate all policy-enforcing gateways where `sources` and `destinations` resolve to distinct interfaces (`src_interface != dst_interface`), or via explicit installed policy rules when `include_policy_inferred=True`."""
-        src_list = (
-            [s.strip() for s in sources.split(",") if s.strip()]
-            if isinstance(sources, str)
-            else [str(s).strip() for s in sources if str(s).strip()]
-        )
-        dst_list = (
-            [d.strip() for d in destinations.split(",") if d.strip()]
-            if isinstance(destinations, str)
-            else [str(d).strip() for d in destinations if str(d).strip()]
-        )
+        src_list = normalize_str_sequence(sources)
+        dst_list = normalize_str_sequence(destinations)
         if not src_list:
             raise ValidationError("sources must contain at least one IPv4 address, subnet, range, or object name")
         if not dst_list:

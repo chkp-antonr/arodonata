@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import ast
+import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from arodonata.adapters.checkpoint import client as checkpoint_client
-from arodonata.adapters.storage import DatabaseManager, SqlCacheAdapter
+from arodonata.adapters.storage import DatabaseManager, SqlCacheAdapter, SqlLockAdapter
 from arodonata.core import context as core_context
 from arodonata.core import ports as core_ports
 from arodonata.core.config import ArodonataSettings
+from arodonata.core.errors import ValidationError
 from arodonata.core.models import common as core_common
 from arodonata.core.models import rulebase as core_rulebase
 from arodonata.core.models import sentinels as core_sentinels
+from arodonata.core.models.assets import Asset
+from arodonata.core.models.domains import DomainSyncState
 from arodonata.core.models.objects import CPObject
 from arodonata.core.ports import (
     AssetCachePort,
@@ -41,13 +46,19 @@ from arodonata.core.primitives import (
     prefix_len_to_mask,
 )
 from arodonata.core.services import sync_coordinator
+from arodonata.core.services.asset_service import AssetRefreshService
 from arodonata.core.services.domain_service import DomainService
+from arodonata.core.services.object_service import ObjectService
 from arodonata.core.services.sync_coordinator import DomainSyncCoordinator
+from arodonata.core.services.topology_service import TopologyService
 from arodonata.cpcrud import rule_identity
+from arodonata.cpcrud.differ import compute_object_diff
+from arodonata.cpcrud.state_reader import normalize_mask_length
 from arodonata.rulebase import models as rulebase_models
 from arodonata.rulebase import numbering as rulebase_numbering
 from arodonata.rulebase.refresh import RulebaseRefreshService
 from arodonata.testing import _emulator_models
+from arodonata.testing._emulator_crud import _normalize_subnet_fields
 
 _SRC_ROOT = Path(__file__).resolve().parents[2] / "src"
 _ARODONATA_ROOT = _SRC_ROOT / "arodonata"
@@ -55,21 +66,33 @@ _ARODONATA_ROOT = _SRC_ROOT / "arodonata"
 _LAYER_FORBIDDEN_IMPORTS: dict[str, tuple[str, ...]] = {
     "core": (
         "arodonata.adapters",
+        "arodonata.client",
         "arodonata.mcp",
         "arodonata.cpcrud",
         "arodonata.reports",
         "arodonata.rulebase",
         "arodonata.testing",
+        "cpapi",
         "aiohttp",
         "sqlalchemy",
         "sqlmodel",
         "asyncpg",
         "aiosqlite",
     ),
-    "cpcrud": ("arodonata.adapters",),
+    "cpcrud": (
+        "arodonata.adapters",
+        "arodonata.client",
+    ),
     "rulebase": (
         "arodonata.cpcrud",
         "arodonata.adapters",
+        "arodonata.client",
+    ),
+    "reports": (
+        "arodonata.adapters",
+        "arodonata.client",
+        "arodonata.mcp",
+        "arodonata.testing",
     ),
 }
 
@@ -104,9 +127,10 @@ def _resolve_import_targets(file_path: Path, node: ast.Import | ast.ImportFrom) 
     return targets
 
 
-@pytest.mark.parametrize("layer", ["core", "cpcrud", "rulebase"])
+@pytest.mark.spec("SCN-CLIENT-018-1")
+@pytest.mark.parametrize("layer", ["core", "cpcrud", "rulebase", "reports"])
 def test_layer_ast_import_boundaries(layer: str) -> None:
-    """Enforce hexagonal layer import boundaries via AST traversal (including lazy and TYPE_CHECKING imports)."""
+    """SCN-CLIENT-018-1: Enforce hexagonal layer import boundaries via AST traversal (including lazy and TYPE_CHECKING imports)."""
     layer_dir = _ARODONATA_ROOT / layer
     py_files = sorted(layer_dir.rglob("*.py"))
     assert py_files, f"Expected Python source files under {layer_dir}"
@@ -128,8 +152,9 @@ def test_layer_ast_import_boundaries(layer: str) -> None:
     assert not violations, "Architectural layer boundary violations detected:\n" + "\n".join(violations)
 
 
+@pytest.mark.spec("SCN-CLIENT-018-3")
 def test_sentinel_uid_conflict_resolution_and_reexports() -> None:
-    """Verify `6c488338-8eec-4103-ad21-cd461ac2c476` is Policy Targets and re-exports stay intact."""
+    """SCN-CLIENT-018-3: Verify `6c488338-8eec-4103-ad21-cd461ac2c476` is Policy Targets and re-exports stay intact."""
     policy_targets_uid = "6c488338-8eec-4103-ad21-cd461ac2c476"
     drop_uid = "6c488338-8eec-4103-ad21-cd461ac2c473"
 
@@ -156,8 +181,9 @@ def test_sentinel_uid_conflict_resolution_and_reexports() -> None:
     assert not hasattr(_emulator_models, "DROP_UID_ALT")
 
 
-def test_core_primitives_behaviour() -> None:
-    """Verify shared UUID, composite ID, sequence, and IPv4 primitive utilities."""
+@pytest.mark.spec("SCN-CLIENT-018-3")
+def test_core_primitives_and_strict_cpcrud_mask_validation() -> None:
+    """SCN-CLIENT-018-3: Verify shared UUID, composite ID, sequence, IPv4, and strict CPCRUD mask validation."""
     valid_uid = "6c488338-8eec-4103-ad21-cd461ac2c476"
     assert is_uuid(f" {valid_uid} ")
     assert not is_uuid("not-a-uuid-with-length-thirty-six!!!")
@@ -177,8 +203,15 @@ def test_core_primitives_behaviour() -> None:
     assert normalize_str_sequence(None) == []
 
     assert mask_to_prefix_len(24) == 24
+    assert mask_to_prefix_len(24.0) == 24
+    assert mask_to_prefix_len(24.5) is None
     assert mask_to_prefix_len("255.255.255.0") == 24
+    assert mask_to_prefix_len("0.0.0.0") == 0
+    assert mask_to_prefix_len("255.255.255.255") == 32
+    assert mask_to_prefix_len("255.0.255.0") is None
     assert mask_to_prefix_len("0.0.0.255") is None
+    assert mask_to_prefix_len("0.0.0.255", allow_hostmask=True) == 24
+    assert mask_to_prefix_len("24", allow_prefix_int=False) is None
     assert mask_to_prefix_len(True) is None
     assert mask_to_prefix_len(33) is None
     assert prefix_len_to_mask(24) == "255.255.255.0"
@@ -186,6 +219,30 @@ def test_core_primitives_behaviour() -> None:
     assert prefix_len_to_mask(True) is None
     assert prefix_len_to_mask(33) is None
     assert effective_range_prefix_len(100, 100) == 32
+
+    # Emulator subnet-mask normalization must not interpret bare digits like "24" as a dotted-quad subnet mask
+    emu_target: dict[str, Any] = {}
+    _normalize_subnet_fields(emu_target, {"subnet4": "10.0.0.0", "subnet-mask": "24"})
+    assert "mask-length4" not in emu_target
+
+    # CPCRUD strict mask validation accepts integral floats and rejects out-of-range / hostmask values
+    assert normalize_mask_length(24.0, strict=True) == 24
+    with pytest.raises(ValidationError):
+        normalize_mask_length(33, strict=True)
+    with pytest.raises(ValidationError):
+        normalize_mask_length(None, "0.0.0.255", strict=True)
+
+    existing_net = CPObject(
+        uid="n-exist",
+        name="N1",
+        type="network",
+        mgmt_name="m",
+        domain_name="d",
+        subnet4="10.0.0.0",
+        mask_length4=24,
+    )
+    with pytest.raises(ValidationError):
+        compute_object_diff({"type": "network", "name": "N1", "subnet4": "10.0.0.0", "mask_length4": 33}, existing_net)
 
     host = CPObject(uid="h1", name="H1", type="host", mgmt_name="m", domain_name="d", ipv4_address="10.0.0.5")
     net = CPObject(
@@ -207,8 +264,9 @@ def test_core_primitives_behaviour() -> None:
     assert parse_cidr_or_range_bounds("10.0.0.1-10.0.0.4") == (167772161, 167772164, 30)
 
 
+@pytest.mark.spec("SCN-CLIENT-018-3")
 def test_wave1_backward_compatible_reexports() -> None:
-    """Verify moved core functions keep exact object identity across legacy module imports."""
+    """SCN-CLIENT-018-3: Verify moved core functions keep exact object identity across legacy module imports."""
     import arodonata.rulebase as rulebase_pkg
 
     assert sync_coordinator.parse_cp_publish_timestamp is core_common.parse_cp_publish_timestamp
@@ -219,8 +277,12 @@ def test_wave1_backward_compatible_reexports() -> None:
     assert rulebase_pkg.PolicyPackageInfo is core_rulebase.PolicyPackageInfo
 
 
-def test_cache_port_subprotocols_and_rulebase_refresh_port() -> None:
-    """Verify ISP sub-protocols of `CachePort` and `RulebaseRefreshPort` runtime checkability."""
+@pytest.mark.asyncio
+@pytest.mark.spec("SCN-CLIENT-018-2")
+async def test_cache_port_subprotocols_narrowed_consumers_and_rulebase_refresh_port(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCN-CLIENT-018-2: Verify ISP sub-protocols, RulebaseRefreshPort, minimal sub-port double, and TopologyService warning."""
     expected_ports = (
         DomainCachePort,
         SidCachePort,
@@ -236,29 +298,84 @@ def test_cache_port_subprotocols_and_rulebase_refresh_port() -> None:
     for port in expected_ports:
         assert port.__name__ in core_ports.__all__
 
-    db = DatabaseManager(engine="sqlite+aiosqlite:///:memory:")
-    adapter = SqlCacheAdapter(db)
-    for cache_proto in (
-        DomainCachePort,
-        SidCachePort,
-        SyncStatePort,
-        ObjectCachePort,
-        ServiceCachePort,
-        AssetCachePort,
-        TopologyCachePort,
-        RulebaseCachePort,
-        CachePort,
-    ):
-        assert isinstance(adapter, cache_proto)
+    class _MinimalAssetOnlyCache:
+        async def get_assets(
+            self,
+            mgmt_name: str | None = None,
+            domain_name: str | None = None,
+            *,
+            types: Any = None,
+        ) -> list[Asset]:
+            return []
 
-    settings = ArodonataSettings(servers={"m1": {"host": "127.0.0.1", "api_key": "dummy"}})
-    domain_svc = DomainService(settings=settings, api=None, cache=adapter, lock_port=None)  # type: ignore[arg-type]
-    coord = DomainSyncCoordinator(
-        settings=settings,
-        api=None,  # type: ignore[arg-type]
-        cache=adapter,
-        lock_port=None,  # type: ignore[arg-type]
-        domain_service=domain_svc,
-    )
-    refresh_svc = RulebaseRefreshService(settings=settings, api=None, cache=adapter, coordinator=coord)  # type: ignore[arg-type]
-    assert isinstance(refresh_svc, RulebaseRefreshPort)
+        async def replace_domain_assets(
+            self,
+            mgmt_name: str,
+            domain_name: str,
+            assets: Any,
+            *,
+            sync_states: list[DomainSyncState] | None = None,
+        ) -> int:
+            return len(assets)
+
+        async def upsert_assets(self, assets: Any) -> int:
+            return len(assets)
+
+    minimal_asset_cache = _MinimalAssetOnlyCache()
+    assert isinstance(minimal_asset_cache, AssetCachePort)
+    assert not isinstance(minimal_asset_cache, CachePort)
+
+    db = DatabaseManager(engine="sqlite+aiosqlite:///:memory:")
+    await db.initialize()
+    try:
+        adapter = SqlCacheAdapter(db)
+        lock_port = SqlLockAdapter(db)
+        for cache_proto in (
+            DomainCachePort,
+            SidCachePort,
+            SyncStatePort,
+            ObjectCachePort,
+            ServiceCachePort,
+            AssetCachePort,
+            TopologyCachePort,
+            RulebaseCachePort,
+            CachePort,
+        ):
+            assert isinstance(adapter, cache_proto)
+
+        settings = ArodonataSettings(servers={"m1": {"host": "127.0.0.1", "api_key": "dummy"}})
+        domain_svc = DomainService(settings=settings, api=None, cache=adapter, lock_port=lock_port)  # type: ignore[arg-type]
+        coord = DomainSyncCoordinator(
+            settings=settings,
+            api=None,  # type: ignore[arg-type]
+            cache=adapter,
+            lock_port=lock_port,
+            domain_service=domain_svc,
+        )
+        asset_svc = AssetRefreshService(
+            settings=settings,
+            api=None,  # type: ignore[arg-type]
+            cache=minimal_asset_cache,
+            coordinator=coord,
+        )
+        assert await asset_svc.get_assets(mgmt_name="m1", cache_mode="cache") == []
+
+        refresh_svc = RulebaseRefreshService(settings=settings, api=None, cache=adapter, coordinator=coord)  # type: ignore[arg-type]
+        assert isinstance(refresh_svc, RulebaseRefreshPort)
+
+        obj_svc = ObjectService(settings=settings, api=None, cache=adapter, coordinator=coord)  # type: ignore[arg-type]
+        topo_svc = TopologyService(
+            settings=settings,
+            api=None,  # type: ignore[arg-type]
+            cache=adapter,
+            coordinator=coord,
+            asset_service=asset_svc,
+            object_service=obj_svc,
+            rulebase_refresh=None,
+        )
+        with caplog.at_level(logging.WARNING):
+            cold_snap = await topo_svc._load_domain_package_snapshot("m1", "Corp", allow_refresh=True)
+        assert cold_snap.package_layers == []
+        assert any("without rulebase_refresh" in rec.message for rec in caplog.records)
+    finally:
+        await db.close()

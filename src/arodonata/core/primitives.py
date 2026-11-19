@@ -73,25 +73,45 @@ def normalize_str_sequence(
     return cleaned
 
 
-def mask_to_prefix_len(mask_val: str | int | None) -> int | None:
-    """Convert an IPv4 netmask string (`255.255.255.0`) or integer prefix length (`0..32`) to `0..32`."""
+def mask_to_prefix_len(
+    mask_val: str | int | float | None,
+    *,
+    allow_hostmask: bool = False,
+    allow_prefix_int: bool = True,
+) -> int | None:
+    """Convert a dotted-quad netmask or prefix length (`0..32`) into an integer prefix length.
+
+    By default only contiguous IPv4 netmasks (e.g. `'255.255.255.0'`) and prefix lengths `0..32`
+    are accepted; wildcard/hostmasks such as `'0.0.0.255'` return `None` unless `allow_hostmask=True`.
+    Integral floats (e.g. `24.0`) are accepted when `allow_prefix_int=True`.
+    """
     if mask_val is None or mask_val == "" or isinstance(mask_val, bool):
         return None
     if isinstance(mask_val, int):
-        return mask_val if 0 <= mask_val <= 32 else None
+        return mask_val if allow_prefix_int and 0 <= mask_val <= 32 else None
+    if isinstance(mask_val, float):
+        if not allow_prefix_int or not mask_val.is_integer():
+            return None
+        plen = int(mask_val)
+        return plen if 0 <= plen <= 32 else None
     clean = str(mask_val).strip()
     if not clean:
         return None
     if clean.isdigit():
+        if not allow_prefix_int:
+            return None
         plen = int(clean)
         return plen if 0 <= plen <= 32 else None
     try:
-        ip = ipaddress.IPv4Address(clean)
-        net = ipaddress.IPv4Network(f"0.0.0.0/{clean}", strict=False)
+        mask_int = int(ipaddress.IPv4Address(clean))
     except ValueError:
         return None
-    # Reject inverted hostmasks such as "0.0.0.255" which IPv4Network otherwise accepts
-    return net.prefixlen if net.netmask == ip else None
+    inv = MAX_IPV4_INT ^ mask_int
+    if (inv & (inv + 1)) == 0:
+        return 32 - inv.bit_length()
+    if allow_hostmask and (mask_int & (mask_int + 1)) == 0:
+        return 32 - mask_int.bit_length()
+    return None
 
 
 def prefix_len_to_mask(prefix_len: int | str | None) -> str | None:

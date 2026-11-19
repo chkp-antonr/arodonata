@@ -21,7 +21,7 @@ from collections import defaultdict, deque
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from fnmatch import fnmatchcase
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from arodonata.core.errors import AmbiguousObjectError, ValidationError
 from arodonata.core.models.assets import Asset
@@ -43,7 +43,13 @@ from arodonata.core.models.objects import (
     SearchResult,
 )
 from arodonata.core.models.services import CPService
-from arodonata.core.ports import CachePort
+from arodonata.core.ports import (
+    AssetCachePort,
+    DomainCachePort,
+    ObjectCachePort,
+    ServiceCachePort,
+    SyncStatePort,
+)
 from arodonata.core.primitives import (
     is_uuid,
     normalize_str_sequence,
@@ -54,6 +60,18 @@ from arodonata.core.services.asset_service import AssetRefreshService
 from arodonata.core.services.object_service import ObjectService
 from arodonata.core.services.service_cache import ServiceCacheService
 from arodonata.core.telemetry import span_attrs, traced
+
+
+class _SearchServiceCachePort(
+    DomainCachePort,
+    ObjectCachePort,
+    ServiceCachePort,
+    AssetCachePort,
+    SyncStatePort,
+    Protocol,
+):
+    """Cache capabilities required by `SearchService`."""
+
 
 SearchTermKind = Literal["ipv4", "cidr", "range", "wildcard", "uid", "name"]
 
@@ -206,7 +224,7 @@ class SearchService:
     def __init__(
         self,
         *,
-        cache: CachePort,
+        cache: _SearchServiceCachePort,
         object_service: ObjectService,
         service_cache: ServiceCacheService | None = None,
         asset_service: AssetRefreshService | None = None,

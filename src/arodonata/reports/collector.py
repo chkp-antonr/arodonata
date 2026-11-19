@@ -16,14 +16,14 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 import arlogi
 
 from arodonata.core.errors import ChangeReportInputError, ServerIdentityError, redact_sid, sanitize_mapping
 from arodonata.core.models.common import parse_cp_publish_timestamp, to_naive_utc, utc_now
 from arodonata.core.models.rulebase import RulebaseType
-from arodonata.core.ports import ApiPort, CachePort
+from arodonata.core.ports import ApiPort, ObjectCachePort, RulebaseCachePort, ServiceCachePort, SyncStatePort
 from arodonata.core.primitives import is_uuid
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.reports.models import (
@@ -936,10 +936,14 @@ def _replace_resolved_uids_in_session(
             fd.removed_items = _sub_list(fd.removed_items)
 
 
+class _ReportCachePort(ObjectCachePort, ServiceCachePort, RulebaseCachePort, SyncStatePort, Protocol):
+    """Cache capabilities required by change report collection and placement numbering."""
+
+
 @traced
 async def collect_change_report(
     api: ApiPort,
-    cache: CachePort,
+    cache: _ReportCachePort,
     scopes: Sequence[ReportScope | dict[str, Any]],
     *,
     options: RenderOptions | None = None,

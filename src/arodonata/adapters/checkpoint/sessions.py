@@ -24,7 +24,7 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 import arlogi
 
@@ -51,8 +51,13 @@ from arodonata.core.errors import (
 )
 from arodonata.core.models.common import ApiCallResult, utc_now
 from arodonata.core.models.domains import DomainInfo, SIDCacheEntry
-from arodonata.core.ports import AuthProvider, CachePort
+from arodonata.core.ports import AuthProvider, DomainCachePort, SidCachePort
 from arodonata.core.telemetry import span_attrs, traced
+
+
+class _LoginCachePort(DomainCachePort, SidCachePort, Protocol):
+    """Combined domain + SID cache port required by `LoginCoordinator`."""
+
 
 logger = arlogi.get_logger(__name__)
 
@@ -308,7 +313,7 @@ class LoginCoordinator:
         *,
         settings: ArodonataSettings,
         transport: ApiTransport,
-        cache: CachePort,
+        cache: _LoginCachePort,
         login_gate: LoginGate,
         rate_limiter: RateLimiter,
         auth_provider: AuthProvider | None = None,
@@ -1225,7 +1230,7 @@ class SessionCleaner:
         settings: ArodonataSettings,
         login_coordinator: LoginCoordinator,
         transport: ApiTransport,
-        cache: CachePort,
+        cache: SidCachePort,
         rate_limiter: RateLimiter,
     ) -> None:
         self._settings = settings

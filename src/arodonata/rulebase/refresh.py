@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.events import (
@@ -40,7 +40,7 @@ from arodonata.core.models.rulebase import (
     RulebaseType,
     ThreatRuleEntry,
 )
-from arodonata.core.ports import ApiPort, CachePort
+from arodonata.core.ports import ApiPort, RulebaseCachePort, SyncStatePort
 from arodonata.core.services.sync_coordinator import DomainProbeResult, DomainSyncCoordinator
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.rulebase.models import PolicyPackageInfo
@@ -842,6 +842,10 @@ async def collect_domain_rulebase_snapshot(
     )
 
 
+class _RulebaseRefreshCachePort(RulebaseCachePort, SyncStatePort, Protocol):
+    """Cache capabilities required by `RulebaseRefreshService`."""
+
+
 class RulebaseRefreshService:
     """Session-aware atomic rulebase snapshot refresh service (`refresh_rulebases`, `stream_refresh_rulebases`)."""
 
@@ -850,7 +854,7 @@ class RulebaseRefreshService:
         *,
         settings: ArodonataSettings,
         api: ApiPort,
-        cache: CachePort,
+        cache: _RulebaseRefreshCachePort,
         coordinator: DomainSyncCoordinator,
         now_fn: Callable[[], datetime] = utc_now,
     ) -> None:

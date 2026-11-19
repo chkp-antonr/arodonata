@@ -22,9 +22,9 @@ from typing import Any
 
 from arodonata.core.errors import UnsupportedFormat
 from arodonata.core.models.common import utc_now
-from arodonata.core.ports import ApiPort, CachePort
+from arodonata.core.ports import ApiPort
 from arodonata.core.telemetry import span_attrs, traced
-from arodonata.reports.collector import MAX_UID_LOOKUPS, collect_change_report
+from arodonata.reports.collector import MAX_UID_LOOKUPS, _ReportCachePort, collect_change_report
 from arodonata.reports.models import (
     ChangeReport,
     FieldDiff,
@@ -1137,7 +1137,7 @@ def render_change_report(
 @traced
 async def build_change_report(
     api: ApiPort,
-    cache: CachePort,
+    cache: _ReportCachePort,
     scopes: Sequence[ReportScope | dict[str, Any]],
     *,
     formats: Sequence[str] = ("html", "markdown", "json"),

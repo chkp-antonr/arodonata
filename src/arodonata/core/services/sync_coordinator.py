@@ -26,7 +26,7 @@ from contextlib import suppress as _suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 from weakref import WeakKeyDictionary
 
 import arlogi
@@ -50,9 +50,15 @@ from arodonata.core.events import (
 )
 from arodonata.core.models.common import CacheMode, SyncScope, parse_cp_publish_timestamp, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainInfo, DomainSyncState, RefreshOutcome
-from arodonata.core.ports import ApiPort, CachePort, LockPort
+from arodonata.core.ports import ApiPort, DomainCachePort, LockPort, SidCachePort, SyncStatePort
+from arodonata.core.primitives import normalize_str_sequence
 from arodonata.core.services.domain_service import SYSTEM_DOMAIN_KEY, DomainService
 from arodonata.core.telemetry import span_attrs, traced
+
+
+class _SyncCoordinatorCachePort(DomainCachePort, SidCachePort, SyncStatePort, Protocol):
+    """Cache capabilities required by `DomainSyncCoordinator`."""
+
 
 logger = arlogi.get_logger(__name__)
 
@@ -105,7 +111,7 @@ class _InFlightDomainSync:
 
 
 def resolve_engine_registry[T](
-    cache: CachePort,
+    cache: Any,
     registries: WeakKeyDictionary[Any, T],
     fallback: T,
     factory: Callable[[], T],
@@ -202,7 +208,7 @@ class DomainSyncCoordinator:
         *,
         settings: ArodonataSettings,
         api: ApiPort,
-        cache: CachePort,
+        cache: _SyncCoordinatorCachePort,
         lock_port: LockPort,
         domain_service: DomainService,
         now_fn: Callable[[], datetime] = utc_now,
@@ -274,11 +280,7 @@ class DomainSyncCoordinator:
         mode: CacheMode = "smart",
     ) -> list[DomainInfo]:
         """Resolve the list of `DomainInfo` targets for a synchronization run."""
-        domain_names: list[str] | None = None
-        if isinstance(domains, str):
-            domain_names = [d.strip() for d in domains.split(",") if d.strip()]
-        elif domains is not None:
-            domain_names = [str(d).strip() for d in domains if str(d).strip()]
+        domain_names: list[str] | None = normalize_str_sequence(domains) if domains is not None else None
 
         want_global = include_global or (domain_names is not None and "Global" in domain_names)
         dom_mode: CacheMode = "cache" if mode == "cache" else "smart"
@@ -622,13 +624,9 @@ class DomainSyncCoordinator:
 
         failed_domains: dict[str, str] = {}
         if mode != "cache":
-            explicit_dom_names: set[str] | None = None
-            if isinstance(domains, str):
-                parsed_doms = {d.strip() for d in domains.split(",") if d.strip()}
-                explicit_dom_names = parsed_doms or None
-            elif domains is not None:
-                parsed_doms = {str(d).strip() for d in domains if str(d).strip()}
-                explicit_dom_names = parsed_doms or None
+            explicit_dom_names: set[str] | None = (
+                (set(normalize_str_sequence(domains)) or None) if domains is not None else None
+            )
             matched_dom_names = {d.name for d in target_domains}
             all_explicit_resolved = (
                 mgmt_name is None and explicit_dom_names is not None and explicit_dom_names.issubset(matched_dom_names)

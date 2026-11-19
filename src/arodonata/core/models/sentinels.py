@@ -22,37 +22,13 @@ LOG_TRACK_UID = "598ead32-aa42-4615-90ed-f51a5928d41d"
 NONE_TRACK_UID = "29e53e3d-23bf-48fe-b6b1-d59bd88036f1"
 NONE_TRACK_UID_ALT = "29e53e3d-23bf-48fe-b6b1-d59bd88036f9"
 
-ANY_SENTINEL_TOKENS: frozenset[str] = frozenset(
-    {
-        "",
-        "any",
-        NAT_ANY_OBJECT_UID.lower(),
-    }
-)
+_ANY_BASE_TOKENS: frozenset[str] = frozenset({"any", NAT_ANY_OBJECT_UID.lower()})
+_ORIGINAL_BASE_TOKENS: frozenset[str] = frozenset({"original", NAT_ORIGINAL_OBJECT_UID.lower()})
 
-ORIGINAL_SENTINEL_TOKENS: frozenset[str] = frozenset(
-    {
-        "",
-        "original",
-        NAT_ORIGINAL_OBJECT_UID.lower(),
-    }
-)
-
-ANY_RULE_TOKENS: frozenset[str] = frozenset(
-    {
-        "any",
-        "cpmianyobject",
-        NAT_ANY_OBJECT_UID.lower(),
-        "0.0.0.0/0",
-    }
-)
-
-ORIGINAL_NAT_TOKENS: frozenset[str] = frozenset(
-    {
-        "original",
-        NAT_ORIGINAL_OBJECT_UID.lower(),
-    }
-)
+ANY_SENTINEL_TOKENS: frozenset[str] = _ANY_BASE_TOKENS | {""}
+ORIGINAL_SENTINEL_TOKENS: frozenset[str] = _ORIGINAL_BASE_TOKENS | {""}
+ANY_RULE_TOKENS: frozenset[str] = _ANY_BASE_TOKENS | {"cpmianyobject", "0.0.0.0/0"}
+ORIGINAL_NAT_TOKENS: frozenset[str] = _ORIGINAL_BASE_TOKENS
 
 POLICY_TARGETS_TOKENS: frozenset[str] = frozenset(
     {

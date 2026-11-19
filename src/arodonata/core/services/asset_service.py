@@ -26,7 +26,7 @@ from arodonata.core.events import DomainSyncProgressEvent, SyncProgressEvent
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import CacheMode, expand_asset_types, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainSyncState, RefreshOutcome
-from arodonata.core.ports import ApiPort, CachePort
+from arodonata.core.ports import ApiPort, AssetCachePort
 from arodonata.core.services.sync_coordinator import DomainProbeResult, DomainSyncCoordinator
 from arodonata.core.telemetry import span_attrs, traced
 
@@ -874,7 +874,7 @@ class AssetRefreshService:
         *,
         settings: ArodonataSettings,
         api: ApiPort,
-        cache: CachePort,
+        cache: AssetCachePort,
         coordinator: DomainSyncCoordinator,
         cluster_manager: ClusterRelationshipManager | None = None,
         vsx_manager: VSXRelationshipManager | None = None,

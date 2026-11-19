@@ -1005,7 +1005,7 @@ def _normalize_subnet_fields(target: dict[str, Any], updates: Mapping[str, Any])
     if "subnet-mask" in updates and updates["subnet-mask"]:
         mask_str = str(updates["subnet-mask"])
         target["subnet-mask"] = mask_str
-        prefix = mask_to_prefix_len(mask_str)
+        prefix = mask_to_prefix_len(mask_str, allow_prefix_int=False)
         if prefix is not None:
             target["mask-length4"] = prefix
     if "mask-length4" in updates and updates["mask-length4"] is not None:

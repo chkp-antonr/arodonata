@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **core,ports,specs**: Added `arodonata.core.models.sentinels` (canonical Check Point built-in UIDs, token sets, and sentinel normalizers), `arodonata.core.primitives` (`UUID_RE`, `is_uuid`, `format_composite_id`, `parse_composite_id`, `normalize_str_sequence`, `MAX_IPV4_INT`, `mask_to_prefix_len`, `prefix_len_to_mask`, `effective_range_prefix_len`, `object_ipv4_bounds`, `parse_cidr_or_range_bounds`), `RulebaseRefreshPort`, and AST architectural boundary tests in `tests/unit/test_architecture_boundaries.py` traced to `REQ-CLIENT-018` (`SCN-CLIENT-018-1`..`3`).
+- **ports**: Decomposed `CachePort` into eight `@runtime_checkable` Interface Segregation sub-protocols (`DomainCachePort`, `SidCachePort`, `SyncStatePort`, `ObjectCachePort`, `ServiceCachePort`, `AssetCachePort`, `TopologyCachePort`, `RulebaseCachePort`) and narrowed all core, checkpoint, CPCRUD, rulebase, and report cache consumers to the exact sub-protocols they use while preserving `CachePort` as the composite protocol.
+
+### Changed
+
+- **core,cpcrud,rulebase,mcp,testing**: Moved `parse_cp_publish_timestamp` to `core.models.common`, `SERVICE_COMMAND_TYPES` / `NON_OVERLAY_MUTATION_TARGETS` / `update_overlay_from_command` to `core.context`, and `PolicyPackageInfo` / `extract_policy_packages` to `core.models.rulebase` with 100% backward-compatible re-exports; eliminated hexagonal violations across `core`, `cpcrud`, and `rulebase`; decoupled `TopologyService` via `RulebaseRefreshPort` DI (logging a warning when omitted during cold package refresh); and migrated duplicate UUID/CSV/IPv4 helpers and `dataset_generator.py` sentinel literals to the unified core modules.
+
+### Fixed
+
+- **testing,sentinels**: Resolved UID `6c488338-8eec-4103-ad21-cd461ac2c476` misclassification in the replay emulator by removing `DROP_UID_ALT` and mapping it canonically to `Policy Targets` (`type="Global"`), matching Check Point Management API semantics (`6c488338-8eec-4103-ad21-cd461ac2c473` remains `Drop`), and switched `_normalize_action` / `_normalize_track` to validate strictly against `ACTION_UID_TO_NAME` / `TRACK_UID_TO_NAME`.
+- **cpcrud,primitives**: Implemented single-pass contiguous netmask validation in `mask_to_prefix_len` (supporting integral floats such as `24.0` and explicit `allow_hostmask` / `allow_prefix_int` flags) and added `strict=True` validation in `normalize_mask_length` for desired CPCRUD network specs so invalid `mask_length4` or `subnet_mask` values raise `ValidationError` instead of being silently dropped.
+
 ## v2.6.6 (2026-11-19)
 
 ### Fix

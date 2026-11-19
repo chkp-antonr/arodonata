@@ -16,7 +16,7 @@ Implements `HybridStateReader`:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 
 from arodonata.core.errors import ArodonataError, ServerIdentityError, ValidationError
 from arodonata.core.models.common import SyncScope, to_naive_utc
@@ -24,7 +24,7 @@ from arodonata.core.models.domains import DomainSyncState
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import RulebaseType
 from arodonata.core.models.services import CPService
-from arodonata.core.ports import ApiPort, CachePort
+from arodonata.core.ports import ApiPort, ObjectCachePort, ServiceCachePort, SyncStatePort
 from arodonata.core.primitives import mask_to_prefix_len
 from arodonata.cpcrud.models import DomainStamp
 from arodonata.rulebase.pager import PagedRulebaseResult, fetch_paged_rulebase
@@ -108,14 +108,33 @@ def is_not_found_error(
 
 
 def normalize_mask_length(
-    mask_length: int | str | None,
+    mask_length: int | float | str | None,
     subnet_mask: str | None = None,
+    *,
+    strict: bool = False,
 ) -> int | None:
-    """Normalize a mask length or dotted-quad subnet mask into an integer prefix length (0..32)."""
-    parsed = mask_to_prefix_len(mask_length)
-    if parsed is not None:
-        return parsed
-    return mask_to_prefix_len(subnet_mask)
+    """Normalize a mask length or dotted-quad subnet mask into an integer prefix length (0..32).
+
+    When `strict=True`, explicitly supplied invalid `mask_length` or `subnet_mask` values raise
+    `ValidationError` instead of silently returning `None`.
+    """
+    if mask_length is not None:
+        parsed = mask_to_prefix_len(mask_length)
+        if parsed is not None:
+            return parsed
+        if strict:
+            raise ValidationError(
+                f"Invalid IPv4 mask_length4 value {mask_length!r}: expected prefix length 0..32 or contiguous netmask."
+            )
+    if subnet_mask is not None and str(subnet_mask).strip():
+        parsed_sub = mask_to_prefix_len(subnet_mask, allow_prefix_int=False)
+        if parsed_sub is not None:
+            return parsed_sub
+        if strict:
+            raise ValidationError(
+                f"Invalid IPv4 subnet_mask value {subnet_mask!r}: expected contiguous dotted-quad netmask."
+            )
+    return None
 
 
 def _sync_state_matches_stamp(
@@ -151,6 +170,10 @@ def _is_command_not_recognized(code: str | None, error_message: str | None) -> b
     return "command_not_recognized" in haystack
 
 
+class _StateReaderCachePort(ObjectCachePort, ServiceCachePort, SyncStatePort, Protocol):
+    """Cache capabilities required by `HybridStateReader`."""
+
+
 class HybridStateReader:
     """Isolated per-plan state reader combining `DomainStamp`-gated cache lookups with live API fallback."""
 
@@ -158,7 +181,7 @@ class HybridStateReader:
         self,
         *,
         api: ApiPort,
-        cache: CachePort,
+        cache: _StateReaderCachePort,
         domain_stamps: dict[str, DomainStamp] | None = None,
     ) -> None:
         self._api = api

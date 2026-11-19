@@ -279,7 +279,7 @@ The emulator SHALL support Access, HTTPS, Threat-prevention, and NAT rulebase, r
 - **WHEN** a write session executes Access rule/section CRUD or `show-{access,https,threat}-layer(s)` (including `inline-layer` references), toggles `enabled`, or patches rule cells via list replacement or `{"add": ..., "remove": ...}`
 - **AND** rules are positioned via `position` / `new-position` (`"top"`, `"bottom"`, 1-based `rule-number`, `{"top": section}`, `{"bottom": section}`, `{"above": ref}`, `{"below": ref}`)
 - **THEN** the emulator SHALL strip `"Any"` (`97aeb369-9aea-11d5-bd16-0090272ccb30`) on member addition, revert emptied cells to `"Any"`, and recompute sequential 1-based `rule-number`, section `from`/`to`, and layer `total`
-- **AND** `show-access-rule`, `show-access-rulebase`, and `show-{access,https,threat}-layer(s)` SHALL reflect live `objects-dictionary` entries (or inline dicts for `use-object-dictionary=False`) and layer metadata
+- **AND** `show-access-rule`, `show-access-rulebase`, and `show-{access,https,threat}-layer(s)` SHALL reflect live `objects-dictionary` entries (or inline dicts for `use-object-dictionary=False`) and layer metadata, resolving built-in sentinels consistently with `arodonata.core.models.sentinels` (`6c488338-8eec-4103-ad21-cd461ac2c476` as `Policy Targets` / `Global` and `6c488338-8eec-4103-ad21-cd461ac2c473` as `Drop`)
 
 #### Scenario: SCN-ITEST-013-2 — HTTPS, Threat-prevention, and NAT rulebase CRUD and policy verification/install tasks
 
