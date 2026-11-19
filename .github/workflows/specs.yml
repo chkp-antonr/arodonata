@@ -1,0 +1,45 @@
+name: Validate OpenSpec Specifications
+
+on:
+  push:
+    branches: [master_v2]
+  pull_request:
+    branches: [master_v2]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: specs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-specs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install OpenSpec and Markdownlint CLIs
+        run: npm install -g @fission-ai/openspec@1.14.3 markdownlint-cli@0.50.0
+
+      - name: Install uv and Python 3.13
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Lint Markdown files
+        run: markdownlint "**/*.md" --ignore node_modules --ignore .venv
+
+      - name: Validate Arodonata OpenSpec schema
+        run: openspec schema validate arodonata
+
+      - name: Validate OpenSpec specifications strictly
+        run: openspec validate --all --strict --no-interactive
+
+      - name: Check spec IDs, cross-references, and pytest traceability
+        run: uv run --no-project python scripts/check_spec_traceability.py

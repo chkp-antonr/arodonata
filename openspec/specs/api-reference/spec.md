@@ -1,4 +1,4 @@
-# api-reference Specification
+# Check Point API Reference Engine Specification
 
 ## Purpose
 
@@ -8,37 +8,64 @@ Defines the bundled multi-version Check Point API schema index (`cp_api_index.js
 
 ### Requirement: Bundled Multi-Version API Schema Index and Lazy Loading
 
+**ID**: REQ-APIREF-001\
+**Intent**: Provide offline access to multi-version Check Point API schemas without startup overhead or network dependencies.\
+**Non-goals**: Inferring default management server versions from client topology (handled by `ArodonataClient`, `REQ-CLIENT-014`).
+
 `arodonata.api_reference` SHALL package the compressed multi-version Check Point API schema bundle (`cp_api_index.json.gz`, covering Management API `v1.9`, `v2`, `v2.1`, `v2.2` and Gaia API `v2.0.1`) inside the installed distribution, load and decompress it lazily in memory on first query (with optional custom `index_path` override), and perform zero network or database calls.
 
-#### Scenario: Default bundled index loads lazily without network or database access
+#### Scenario: SCN-APIREF-001-1 — Default bundled index loads lazily without network or database access
 
-- **WHEN** `get_api_reference()` or `ApiReferenceEngine.default()` is called in an offline process with no `ArodonataClient` or database configured
-- **THEN** it SHALL decompress the bundled `cp_api_index.json.gz` into memory once, cache the singleton instance for subsequent calls, and expose `meta` (`versions`, `latest`, `commands_count`, `shared_objects_count`, `enums_count`)
+- **GIVEN** an offline process with no `ArodonataClient` or database configured
+- **WHEN** `get_api_reference()` or `ApiReferenceEngine.default()` is called
+- **THEN** it SHALL decompress the bundled `cp_api_index.json.gz` into memory once and cache the singleton instance for subsequent calls
+- **AND** it SHALL expose `meta` (`versions`, `latest`, `commands_count`, `shared_objects_count`, `enums_count`)
+- **AND** it SHALL perform zero network or database calls
 
-### Requirement: Two-Step Version-Aware Command Discovery (Search and Describe)
+### Requirement: Version-Aware Command Search
 
-`ApiReferenceEngine` (and top-level helpers `search_api_commands` / `describe_api_command`) SHALL provide a two-step lookup contract: `search_commands` returning ranked lightweight command summaries filtered by version, category, `crud_type`, and `api_family`, and `describe_command` accepting one or more command names and returning resolved schemas (`fields`, `field_alternatives`, `nested_objects`, `enums`, `example`) dynamically filtered to the target API version.
+**ID**: REQ-APIREF-002\
+**Intent**: Allow callers and agents to discover relevant Check Point API commands quickly without loading full schemas.\
+**Non-goals**: Returning full per-command field definitions and nested object schemas (`REQ-APIREF-003`).
 
-#### Scenario: Step 1 search filters by API version, CRUD type, and category
+`ApiReferenceEngine.search_commands` (and top-level helper `search_api_commands`) SHALL provide ranked lightweight command summaries filtered by `version`, `category`, `crud_type`, and `api_family`.
+
+#### Scenario: SCN-APIREF-002-1 — Step 1 search filters by API version, CRUD type, and category
 
 - **WHEN** `search_commands("export-access-rulebase", version="v1.9")` and `search_commands("export-access-rulebase", version="v2.2")` are called
-- **THEN** the `v1.9` search SHALL exclude commands added after `v1.9`, while the `v2.2` search SHALL return the matching command summary with `added_in`, `supported_versions`, and `short_description`
+- **THEN** the `v1.9` search SHALL exclude commands introduced after `v1.9`
+- **AND** the `v2.2` search SHALL return the matching command summary with `added_in`, `supported_versions`, and `short_description`
 
-#### Scenario: Step 2 describe dynamically filters fields and nested objects by target version
+### Requirement: Version-Filtered Command Schema Inspection
+
+**ID**: REQ-APIREF-003\
+**Intent**: Expose accurate, version-scoped request schemas and examples on demand for one or more commands.\
+**Non-goals**: Ranking or searching commands by keyword (`REQ-APIREF-002`) or validating user payloads (`REQ-APIREF-004`).
+
+`ApiReferenceEngine.describe_command` (and top-level helper `describe_api_command`) SHALL accept one or more command names and return resolved schemas (`fields`, `field_alternatives`, `nested_objects`, `enums`, `example`) dynamically filtered to the target API version.
+
+#### Scenario: SCN-APIREF-003-1 — Step 2 describe dynamically filters fields and nested objects by target version
 
 - **WHEN** `describe_command("add-interface", version="v1.9")` and `describe_command("add-interface", version="v2.2")` are called
-- **THEN** the `v1.9` schema SHALL include `v1.9`-only fields (such as `gateway-owner` and `anti-spoofing-enabled`) and omit `v2+`-only fields, while the `v2.2` schema SHALL include only fields and nested objects valid in `v2.2`
+- **THEN** the `v1.9` schema SHALL include `v1.9`-only fields (such as `gateway-owner` and `anti-spoofing-enabled`) and omit `v2+`-only fields
+- **AND** the `v2.2` schema SHALL include only fields and nested objects valid in `v2.2`
 
-#### Scenario: Batch describe accepts multiple command names in a single call
+#### Scenario: SCN-APIREF-003-2 — Batch describe accepts multiple command names in a single call
 
 - **WHEN** `describe_command(["add-host", "set-host"], version="v2.2")` is called with a list of command names
-- **THEN** it SHALL return a mapping or list of resolved command descriptions for each requested command (and report any unknown or version-unsupported command names clearly)
+- **THEN** it SHALL return resolved command descriptions for each requested command
+- **AND** it SHALL report any unknown or version-unsupported command names clearly
 
 ### Requirement: Offline Request Payload Validation Against Versioned Schema
 
+**ID**: REQ-APIREF-004\
+**Intent**: Catch invalid commands, missing required parameters, and incompatible fields offline before sending requests.\
+**Non-goals**: CPCRUD declarative template schema validation (`REQ-CPCRUD-001`) or server-side semantic checks.
+
 `ApiReferenceEngine.validate_payload(command, payload, *, version="v2.2")` (and `validate_api_payload`) SHALL validate a candidate request `payload` dictionary offline against the command's schema for `version`, reporting structured validation errors for unknown or version-unsupported commands and fields, missing `required` fields, unsatisfied or conflicting `field_alternatives`, invalid types, and enum `valid_values` mismatches.
 
-#### Scenario: Payload validation catches missing required fields and version-unsupported parameters
+#### Scenario: SCN-APIREF-004-1 — Payload validation catches missing required fields and version-unsupported parameters
 
 - **WHEN** `validate_payload("add-host", {"color": "invalid-color"}, version="v2.2")` is called
-- **THEN** it SHALL return `valid=False` with actionable errors identifying missing required fields (`name` and `ip-address` / `ipv4-address` / `ipv6-address`) and the invalid enum value for `color`
+- **THEN** it SHALL return `valid=False` with zero network or database calls
+- **AND** the errors SHALL identify missing required fields (`name` and `ip-address` / `ipv4-address` / `ipv6-address`) and the invalid enum value for `color`

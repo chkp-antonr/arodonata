@@ -134,6 +134,7 @@ markers = [
     "bucket_6: Bucket 6 - soak / stability",
     "bucket_7: Bucket 7 - MCP server and tools",
     "cp_mutates: test mutates live Check Point state (relies on session revert)",
+    "spec(id): links a test to an OpenSpec scenario ID (e.g. SCN-CPCRUD-001-1)",
 ]
 addopts = ["-v", "-ra", "--strict-markers", "-m", "not integration"]
 

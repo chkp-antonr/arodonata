@@ -4,7 +4,8 @@
 
 This repository strictly adheres to **Spec-Driven Development** powered by **OpenSpec**.
 
-- **Single Source of Truth**: All capabilities, architecture decisions, requirements, and business rules are recorded in `openspec/` (`openspec/specs/`, `openspec/changes/`, `openspec/config.yaml`).
+- **Single Source of Truth**: All capabilities, architecture decisions, requirements, and business rules are recorded in `openspec/` (`openspec/specs/`, `openspec/changes/`, `openspec/schemas/arodonata/`, `openspec/config.yaml`).
+- **Traceability Standard (`arodonata` schema)**: Every requirement MUST carry `**ID**: REQ-<DOM>-<NNN>\`, `**Intent**: ...\`, and `**Non-goals**: ...`, and every scenario (`#### Scenario: SCN-<DOM>-<NNN>-<K> — <Title>`) MUST link to tests via `@pytest.mark.spec("SCN-...")` enforced by `scripts/check_spec_traceability.py`.
 - **No Parallel Specs**: Do NOT create ad-hoc spec folders (e.g. `docs/internal/features/`). When designing or modifying features, use OpenSpec commands (`openspec change new`, `openspec validate`).
 - **Language**: All specifications, code comments, documentation, and commit messages MUST be written in **English**.
 
@@ -15,8 +16,10 @@ This repository strictly adheres to **Spec-Driven Development** powered by **Ope
 ```text
 arodonata-v2/
 ├── openspec/                 # [TRACKED] Canonical specs, changes, and system invariants
-│   ├── config.yaml           # OpenSpec project configuration
+│   ├── config.yaml           # OpenSpec project configuration (schema: arodonata)
+│   ├── schemas/arodonata/    # Custom OpenSpec schema & spec template with REQ/SCN IDs
 │   └── specs/                # Deployed library capabilities
+├── scripts/                  # [TRACKED] Repository tooling (`check_spec_traceability.py`)
 ├── docs/
 │   ├── guides/               # [TRACKED] Architecture, usage, and integration guides
 │   ├── troubleshooting/      # [TRACKED] Post-mortems, Check Point API quirks, knowledge base
@@ -70,8 +73,10 @@ uv run mypy src
 # Tests
 uv run pytest
 
-# OpenSpec specification validation
-openspec validate --specs --no-interactive
+# OpenSpec schema, specification, and traceability validation
+openspec schema validate arodonata
+openspec validate --specs --strict --no-interactive
+uv run python scripts/check_spec_traceability.py
 ```
 
 ### Markdown Standards & Mandatory Linting on Save
