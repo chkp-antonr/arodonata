@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import aiohttp
-import arlogi
 
 from arodonata.adapters.checkpoint.connection_pool import (
     KEEPALIVE_IDLE_LIMIT_SECONDS,
@@ -31,9 +30,7 @@ from arodonata.adapters.checkpoint.connection_pool import (
     is_readonly_poolable_command,
 )
 from arodonata.adapters.checkpoint.connector import (
-    _DEFAULT_CHECKPOINT_SSL_CONTEXT,
     FingerprintTCPConnector,
-    _create_checkpoint_ssl_context,
     extract_peer_der_cert,
     verify_transport_peer_certificate,
 )
@@ -49,8 +46,6 @@ from arodonata.core.errors import (
 )
 from arodonata.core.models.common import ApiCallResult
 from arodonata.core.telemetry import span_attrs, traced
-
-logger = arlogi.get_logger("arodonata.adapters.checkpoint.transport")
 
 _COMMAND_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
@@ -551,19 +546,16 @@ __all__ = [
     "KEEPALIVE_IDLE_LIMIT_SECONDS",
     "MAX_KEEPALIVE_REQUESTS_PER_SOCKET",
     "NON_POOLABLE_SESSION_COMMANDS",
-    "_DEFAULT_CHECKPOINT_SSL_CONTEXT",
     "ApiTransport",
     "FingerprintTCPConnector",
     "PooledSocketEntry",
     "RawHttpResponse",
     "RequestSenderProtocol",
     "VerifiedConnectionPool",
-    "_create_checkpoint_ssl_context",
     "derive_session_pool_scope",
     "extract_peer_der_cert",
     "is_poolable_command",
     "is_readonly_poolable_command",
-    "logger",
     "validate_command_name",
     "verify_transport_peer_certificate",
 ]

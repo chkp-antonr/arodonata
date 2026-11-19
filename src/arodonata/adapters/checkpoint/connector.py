@@ -22,20 +22,9 @@ from arodonata.adapters.checkpoint.connection_pool import (
 )
 from arodonata.adapters.checkpoint.tls import (
     TrustPolicy,
-    _build_pinned_ssl_context,
     create_verified_ssl_context,
 )
-from arodonata.core.errors import ServerIdentityError, TransportError, TrustStoreError
-
-
-def _create_checkpoint_ssl_context(trust_policy: TrustPolicy | None = None) -> ssl.SSLContext:
-    """Create a TLS 1.2+ client context bound to `trust_policy` when supplied."""
-    if trust_policy is not None:
-        return create_verified_ssl_context(trust_policy)
-    return _build_pinned_ssl_context()
-
-
-_DEFAULT_CHECKPOINT_SSL_CONTEXT: ssl.SSLContext = _create_checkpoint_ssl_context()
+from arodonata.core.errors import ConfigurationError, ServerIdentityError, TransportError, TrustStoreError
 
 
 def extract_peer_der_cert(transport: asyncio.BaseTransport | None) -> bytes | None:
@@ -103,6 +92,8 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
         ssl_context: ssl.SSLContext | None = None,
         **kwargs: Any,
     ) -> None:
+        if not isinstance(trust_policy, TrustPolicy):
+            raise ConfigurationError("FingerprintTCPConnector requires a valid TrustPolicy instance.")
         if ssl_context is None:
             ssl_context = create_verified_ssl_context(trust_policy)
         super().__init__(ssl=ssl_context, keepalive_timeout=connection_pool.max_idle_seconds, **kwargs)
@@ -250,10 +241,8 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
 
 
 __all__ = [
-    "_DEFAULT_CHECKPOINT_SSL_CONTEXT",
     "FingerprintTCPConnector",
     "_ProtoTrackEntry",
-    "_create_checkpoint_ssl_context",
     "extract_peer_der_cert",
     "verify_transport_peer_certificate",
 ]

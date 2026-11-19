@@ -119,6 +119,7 @@ class LoginCoordinator:
         self._evicted_auth_identities: set[tuple[str, str]] = set()
         self._active_dedicated_sids: dict[tuple[str, str], str] = {}
         self._known_mds_ips: dict[str, set[str]] = defaultdict(set)
+        self._cleaning_max_sessions: set[str] = set()
 
     @property
     def active_dedicated_sids(self) -> dict[tuple[str, str], str]:
@@ -216,13 +217,25 @@ class LoginCoordinator:
             return bool(endpoint.api_key or (self._settings.username and self._settings.password))
         return self._settings.auth_mode in ("api_key", "credential")
 
-    def _is_sid_entry_fresh(self, entry: SIDCacheEntry) -> bool:
+    def now(self) -> datetime:
+        """Return the current UTC timestamp using the coordinator's injected clock."""
+        return self._now()
+
+    def has_dynamic_auth_provider(self) -> bool:
+        """Return `True` if a fallback `AuthProvider` callback is configured."""
+        return self._auth_provider is not None
+
+    def is_sid_entry_fresh(self, entry: SIDCacheEntry) -> bool:
         """Return `True` if `entry` is younger than `session_expire_seconds` and not past `expires_at`."""
         return is_sid_entry_fresh(
             entry,
             now=self._now(),
             session_expire_seconds=self._settings.session_expire_seconds,
         )
+
+    def adopt_dedicated_sid(self, mgmt_name: str, sid: str) -> None:
+        """Release `sid` from dedicated-session logout tracking after seeding it into `sid_cache`."""
+        self._active_dedicated_sids.pop((mgmt_name, sid), None)
 
     def _is_sid_entry_usable(self, entry: SIDCacheEntry, auth: AuthContext) -> bool:
         """Return `True` if `entry` is fresh and belongs to the exact same `auth.identity_key` (`C4`)."""
@@ -310,6 +323,7 @@ class LoginCoordinator:
         session_name: str | None = None,
         session_description: str | None = None,
         server_ip: str | None = None,
+        allow_max_sessions_cleanup: bool = True,
     ) -> tuple[str, str, str | None]:
         """Open an isolated dedicated session outside `sid_cache`, returning `(sid, server_ip, session_uid)`."""
         resolved_auth = await self.resolve_credentials(mgmt_name, domain, explicit_auth=auth)
@@ -325,6 +339,7 @@ class LoginCoordinator:
             session_name=eff_name,
             session_description=eff_desc,
             read_only=False,
+            allow_max_sessions_cleanup=allow_max_sessions_cleanup,
         )
         self._active_dedicated_sids[(mgmt_name, sid)] = resolved_ip
         return sid, resolved_ip, session_uid
@@ -339,6 +354,7 @@ class LoginCoordinator:
         session_name: str | None = None,
         session_description: str | None = None,
         read_only: bool = False,
+        allow_max_sessions_cleanup: bool = True,
     ) -> tuple[str, str, str | None]:
         """Authenticate against Check Point under `LoginGate` with throttle and transient retry handling."""
         dom_key = normalize_domain_key(domain)
@@ -494,16 +510,31 @@ class LoginCoordinator:
                     target_ip, mds_ip = switched
                     continue
 
-            # 4. Max sessions refusal -> trigger SessionCleaner once if available
-            if not cleaned_max_sessions and is_max_sessions_exceeded_result(res) and self._session_cleaner is not None:
+            # 4. Max sessions refusal -> trigger SessionCleaner once (guarded against recursion) if available
+            if (
+                allow_max_sessions_cleanup
+                and not cleaned_max_sessions
+                and mgmt_name not in self._cleaning_max_sessions
+                and is_max_sessions_exceeded_result(res)
+                and self._session_cleaner is not None
+            ):
                 cleaned_max_sessions = True
                 logger.debug(
                     f"Max open sessions reached on '{mgmt_name}:{dom_key}'; running session cleanup.",
                     mgmt_name=mgmt_name,
                     domain=dom_key,
                 )
-                await self._session_cleaner.cleanup_server_sessions(mgmt_name, domain=dom_key, auth=auth)
-                continue
+                self._cleaning_max_sessions.add(mgmt_name)
+                try:
+                    cleaned = await self._session_cleaner.cleanup_server_sessions(
+                        mgmt_name,
+                        domain=dom_key,
+                        auth=auth,
+                    )
+                finally:
+                    self._cleaning_max_sessions.discard(mgmt_name)
+                if cleaned:
+                    continue
 
             # 5. Transient database revision / lock condition -> retry with backoff within login_max_wait
             if is_transient_revision_lock_result(res):

@@ -88,7 +88,11 @@ def is_invalid_credentials_result(result: ApiCallResult) -> bool:
     """Return `True` if the server explicitly rejected login credentials (non-retryable)."""
     if result.success:
         return False
-    if is_transient_revision_lock_result(result) or is_login_throttled_result(result):
+    if (
+        is_transient_revision_lock_result(result)
+        or is_login_throttled_result(result)
+        or is_max_sessions_exceeded_result(result)
+    ):
         return False
     code = (result.error_code or "").lower()
     msg = (result.error_message or "").lower()

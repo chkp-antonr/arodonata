@@ -32,6 +32,7 @@ from arodonata.adapters.storage.cache import mappers as cache_mappers
 from arodonata.client import _base as client_base
 from arodonata.client import warmup as client_warmup
 from arodonata.core.context import SYSTEM_DOMAIN_KEY
+from arodonata.core.errors import AuthenticationError
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult, utc_now
 from arodonata.core.models.domains import SIDCacheEntry
 
@@ -124,6 +125,7 @@ async def test_session_cleaner_multi_identity_seeding_and_keyed_sid_eviction(tmp
     )
 
     calls: list[tuple[str, dict[str, Any]]] = []
+    logout_sids: list[str] = []
     login_seq = 0
     show_sessions_objects: list[dict[str, Any]] = []
 
@@ -142,6 +144,8 @@ async def test_session_cleaner_multi_identity_seeding_and_keyed_sid_eviction(tmp
         nonlocal login_seq
         payload = json.loads(body.decode("utf-8")) if body else {}
         calls.append((command, payload))
+        if command == "logout":
+            logout_sids.append(headers.get("X-chkp-sid", ""))
         if command == "login":
             login_seq += 1
             resp_data = {"sid": f"sid_clean_{login_seq}_tok", "uid": f"uid-clean-{login_seq}"}
@@ -215,9 +219,14 @@ async def test_session_cleaner_multi_identity_seeding_and_keyed_sid_eviction(tmp
         assert row_a is not None and row_a.sid == "sid_a_live"
         assert row_b is not None and row_b.sid == "sid_clean_1_tok"
 
-        # 2. When an expired cached session for Identity A is discarded during non-seeding cleanup,
-        # ONLY Identity A's SID row is evicted; Identity B's row stays intact.
+        # 2. When cleanup runs with seed_system_sid=False for Identity A:
+        # - Identity A's expired cached SID (uid-stale-A) is discarded, logged out, and evicted.
+        # - Identity B's live fresh cached SID (uid-clean-1) is PRESERVED (never discarded or evicted).
+        # - Identity C's expired cached SID (uid-stale-C) is ALSO preserved from Identity A's cleanup.
         calls.clear()
+        logout_sids.clear()
+        auth_c = AuthContext(api_key="key-gamma-secret", user_id="admin-c")
+        id_c = auth_c.identity_key
         await amgmt.cache.upsert_sid(
             SIDCacheEntry(
                 id=f"mds1:{SYSTEM_DOMAIN_KEY}:{id_a}",
@@ -232,6 +241,20 @@ async def test_session_cleaner_multi_identity_seeding_and_keyed_sid_eviction(tmp
                 expires_at=now - timedelta(seconds=10),
             )
         )
+        await amgmt.cache.upsert_sid(
+            SIDCacheEntry(
+                id=f"mds1:{SYSTEM_DOMAIN_KEY}:{id_c}",
+                mgmt_name="mds1",
+                domain_name=SYSTEM_DOMAIN_KEY,
+                sid="sid_c_stale",
+                server_ip="10.0.0.1",
+                session_uid="uid-stale-C",
+                auth_identity=id_c,
+                created_at=now - timedelta(seconds=900),
+                last_used_at=now - timedelta(seconds=900),
+                expires_at=now - timedelta(seconds=10),
+            )
+        )
         show_sessions_objects[:] = [
             {
                 "uid": "uid-stale-A",
@@ -239,14 +262,33 @@ async def test_session_cleaner_multi_identity_seeding_and_keyed_sid_eviction(tmp
                 "session-name": "arodonata-session-cleaner",
                 "changes": 0,
                 "locks": 0,
-            }
+            },
+            {
+                "uid": "uid-clean-1",
+                "application": "arodonata",
+                "session-name": "arodonata-session-cleaner",
+                "changes": 0,
+                "locks": 0,
+            },
+            {
+                "uid": "uid-stale-C",
+                "application": "arodonata",
+                "session-name": "arodonata-session-cleaner",
+                "changes": 0,
+                "locks": 0,
+            },
         ]
         ok_clean_a = await amgmt.session_cleaner.cleanup_server_sessions("mds1", auth=auth_a, seed_system_sid=False)
         assert ok_clean_a is True
         assert [c[1]["uid"] for c in calls if c[0] == "discard"] == ["uid-stale-A"]
+        assert "sid_a_stale" in logout_sids
+        assert "sid_clean_1_tok" not in logout_sids
+        assert "sid_c_stale" not in logout_sids
         assert await amgmt.cache.get_sid("mds1", SYSTEM_DOMAIN_KEY, auth_identity=id_a) is None
         row_b_after = await amgmt.cache.get_sid("mds1", SYSTEM_DOMAIN_KEY, auth_identity=id_b)
         assert row_b_after is not None and row_b_after.sid == "sid_clean_1_tok"
+        row_c_after = await amgmt.cache.get_sid("mds1", SYSTEM_DOMAIN_KEY, auth_identity=id_c)
+        assert row_c_after is not None and row_c_after.sid == "sid_c_stale"
     finally:
         await amgmt.close()
 
@@ -467,8 +509,15 @@ def test_wave3_reexports_shared_loggers_traced_parity_and_dead_code_removal() ->
     assert transport_mod.FingerprintTCPConnector is connector.FingerprintTCPConnector
     assert transport_mod.extract_peer_der_cert is connector.extract_peer_der_cert
     assert transport_mod.verify_transport_peer_certificate is connector.verify_transport_peer_certificate
-    assert transport_mod._DEFAULT_CHECKPOINT_SSL_CONTEXT is connector._DEFAULT_CHECKPOINT_SSL_CONTEXT
-    assert transport_mod._create_checkpoint_ssl_context is connector._create_checkpoint_ssl_context
+    assert not hasattr(transport_mod, "_DEFAULT_CHECKPOINT_SSL_CONTEXT")
+    assert not hasattr(connector, "_DEFAULT_CHECKPOINT_SSL_CONTEXT")
+    assert not hasattr(transport_mod, "_create_checkpoint_ssl_context")
+    assert not hasattr(connector, "_create_checkpoint_ssl_context")
+    assert not hasattr(transport_mod, "logger")
+
+    from arodonata.adapters import checkpoint as checkpoint_pkg
+
+    assert checkpoint_pkg.PolicyBoundSSLContext is tls_mod.PolicyBoundSSLContext
 
     # Shared logger identity
     assert client_pkg.logger is client_base.logger is client_warmup.logger
@@ -501,3 +550,101 @@ def test_wave3_reexports_shared_loggers_traced_parity_and_dead_code_removal() ->
     ):
         assert not hasattr(cache_adapter, dead_helper)
         assert not hasattr(cache_mappers, dead_helper)
+    for dead_client_attr in ("_warmup_tasks", "_warmup_flights", "_warmup_status"):
+        assert dead_client_attr not in client_base.ClientBase.__dict__
+    for dead_client_method in ("_ensure_db_initialized", "_handle_amgmt_domain_invalidated"):
+        assert not hasattr(ArodonataClient, dead_client_method)
+
+
+@pytest.mark.spec("SCN-SESS-004-1", "SCN-SESS-004-2")
+async def test_login_coordinator_max_sessions_cleanup_is_non_recursive(tmp_path: Path) -> None:
+    """Verify max-sessions refusal runs SessionCleaner at most once without unbounded recursion."""
+    der, fp = _make_der("max-sess-guard")
+    settings = ArodonataSettings(
+        mgmt_name="mds1",
+        mgmt_ip="10.0.0.1",
+        api_key="max-sess-key",
+        tls_trust="pinned",
+        tls_fingerprints=f"10.0.0.1:443={fp}",
+    )
+
+    login_calls = 0
+    commands: list[str] = []
+    mode = "always_fail"
+
+    async def fake_sender(
+        *,
+        host: str,
+        port: int,
+        command: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes,
+        connect_timeout: float,
+        read_timeout: float,
+        reused_entry: PooledSocketEntry | None,
+    ) -> tuple[RawHttpResponse, PooledSocketEntry | None]:
+        nonlocal login_calls
+        commands.append(command)
+        entry = reused_entry or PooledSocketEntry(
+            host=host, port=port, fingerprint=fp, protocol=object(), last_used_at=1.0
+        )
+        if command == "login":
+            login_calls += 1
+            if mode == "always_fail" or (mode == "recover_once" and login_calls == 1):
+                err = {"code": "generic_err_login_failed", "message": "Maximum number of open sessions reached"}
+                return RawHttpResponse(status=400, body=json.dumps(err).encode("utf-8")), entry
+            return RawHttpResponse(
+                status=200,
+                body=json.dumps({"sid": f"sid_max_{login_calls}", "uid": f"uid-{login_calls}"}).encode("utf-8"),
+            ), entry
+        if command == "show-sessions":
+            return RawHttpResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "objects": [
+                            {
+                                "uid": "uid-abandoned",
+                                "application": "arodonata",
+                                "session-name": "arodonata-old",
+                                "changes": 0,
+                                "locks": 0,
+                            }
+                        ]
+                    }
+                ).encode("utf-8"),
+            ), entry
+        return RawHttpResponse(status=200, body=json.dumps({"message": "OK"}).encode("utf-8")), entry
+
+    transport = ApiTransport(
+        settings=settings,
+        trust_policy=tls_mod.TrustPolicy(
+            mode="pinned",
+            known_hosts_path=tmp_path / "max_sess_kh.json",
+            pinned_fingerprints=f"10.0.0.1:443={fp}",
+        ),
+        connection_pool=VerifiedConnectionPool(),
+        peer_cert_getter=lambda _h, _p: der,
+        request_sender=fake_sender,
+    )
+
+    amgmt = AMgmtClient(settings, transport=transport)
+    await amgmt.initialize(run_startup_cleanup=False)
+    try:
+        # 1. Server stays at max-sessions even for cleaner login -> fails cleanly after 2 logins (no recursion)
+        with pytest.raises(AuthenticationError, match="Maximum number of open sessions"):
+            await amgmt.login_coordinator.get_readonly_session("mds1")
+        assert login_calls == 2
+        assert commands == ["login", "login"]
+
+        # 2. Recoverable max-sessions -> cleaner opens session, discards idle UID, logs out, retry login succeeds
+        login_calls = 0
+        commands.clear()
+        mode = "recover_once"
+        sid, srv_ip = await amgmt.login_coordinator.get_readonly_session("mds1")
+        assert sid == "sid_max_3"
+        assert srv_ip == "10.0.0.1"
+        assert commands == ["login", "login", "show-sessions", "discard", "logout", "login"]
+    finally:
+        await amgmt.close()

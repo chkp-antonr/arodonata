@@ -658,9 +658,6 @@ class ClientInventoryMixin(ClientLifecycleMixin):
         cache_ttl: float | None = None,
     ) -> CPObject | CPService | Asset | None:
         """Find a single `CPObject`, `CPService`, or `Asset` by exact `uid` or `name` in `(mgmt_name, domain)` (or across all domains when `domain` is `None`), including active `WriteSession` overlay."""
-        clean_query = name_or_uid.strip() if name_or_uid else ""
-        if not clean_query:
-            raise ValidationError("name_or_uid must not be empty or whitespace")
         await self._ensure_initialized()
         return await self._search_service.find_object(
             mgmt_name,

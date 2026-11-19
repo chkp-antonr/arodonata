@@ -60,13 +60,18 @@ class SessionCleaner:
         """Currently running startup cleanup tasks."""
         return set(self._startup_tasks)
 
+    def _is_cold_dynamic_mode(self, *, auth: AuthContext | None = None) -> bool:
+        """Return `True` when dynamic auth mode has no explicit, contextual, or provider credentials."""
+        return (
+            self._settings.auth_mode == "dynamic"
+            and auth is None
+            and get_auth_context() is None
+            and not self._login_coordinator.has_dynamic_auth_provider()
+        )
+
     def schedule_startup_cleanup(self) -> list[asyncio.Task[bool]]:
         """Schedule startup stale-session cleanup for all configured servers when static credentials exist."""
-        if (
-            self._settings.auth_mode == "dynamic"
-            and get_auth_context() is None
-            and self._login_coordinator._auth_provider is None
-        ):
+        if self._is_cold_dynamic_mode():
             return []
 
         tasks: list[asyncio.Task[bool]] = []
@@ -93,11 +98,7 @@ class SessionCleaner:
     @traced
     async def run_startup_cleanup(self) -> dict[str, bool]:
         """Run startup session cleanup across all configured servers (skipping in cold dynamic mode)."""
-        if (
-            self._settings.auth_mode == "dynamic"
-            and get_auth_context() is None
-            and self._login_coordinator._auth_provider is None
-        ):
+        if self._is_cold_dynamic_mode():
             span_attrs(startup_cleanup_skipped=True, reason="dynamic_auth_mode")
             return {}
 
@@ -118,12 +119,7 @@ class SessionCleaner:
         seed_system_sid: bool = False,
     ) -> bool:
         """Inspect open Web API sessions on `mgmt_name` and discard stale/abandoned sessions."""
-        if (
-            self._settings.auth_mode == "dynamic"
-            and auth is None
-            and get_auth_context() is None
-            and self._login_coordinator._auth_provider is None
-        ):
+        if self._is_cold_dynamic_mode(auth=auth):
             return False
 
         dom_key = normalize_domain_key(domain)
@@ -146,11 +142,10 @@ class SessionCleaner:
         identity = resolved_auth.identity_key
 
         existing_cached = await self._cache.get_sid(mgmt_name, dom_key, auth_identity=identity)
-        now = self._login_coordinator._now()
+        now = self._login_coordinator.now()
         if (
             seed_system_sid
             and existing_cached is not None
-            and existing_cached.auth_identity == identity
             and existing_cached.expires_at is not None
             and existing_cached.expires_at > now
             and existing_cached.sid
@@ -161,7 +156,7 @@ class SessionCleaner:
             mgmt_name, domain
         )
 
-        # Open a dedicated session to inspect/discard stale sessions
+        # Open a dedicated session to inspect/discard stale sessions (never recurse on max-sessions)
         try:
             (
                 sid,
@@ -172,6 +167,7 @@ class SessionCleaner:
                 domain,
                 auth=resolved_auth,
                 session_name="arodonata-session-cleaner",
+                allow_max_sessions_cleanup=False,
             )
         except (
             AuthenticationError,
@@ -222,12 +218,11 @@ class SessionCleaner:
                         if not (is_arodonata_owned and has_no_changes_or_locks):
                             continue
                         cached_entry = cached_by_uid.get(target_uid)
-                        if (
-                            cached_entry is not None
-                            and seed_system_sid
-                            and self._login_coordinator._is_sid_entry_fresh(cached_entry)
-                        ):
-                            continue
+                        if cached_entry is not None:
+                            if self._login_coordinator.is_sid_entry_fresh(cached_entry):
+                                continue
+                            if cached_entry.auth_identity != identity:
+                                continue
                         logger.debug(
                             f"Discarding stale session uid={target_uid} on '{mgmt_name}:{dom_key}'.",
                             mgmt_name=mgmt_name,
@@ -244,11 +239,24 @@ class SessionCleaner:
                                 timeout=self._settings.api_timeout,
                             )
                         if cached_entry is not None:
-                            await self._cache.evict_sid(
-                                cached_entry.mgmt_name,
-                                cached_entry.domain_name,
-                                auth_identity=cached_entry.auth_identity,
-                            )
+                            logged_out = False
+                            if cached_entry.sid:
+                                try:
+                                    logged_out = await self._login_coordinator.logout_sid(
+                                        cached_entry.mgmt_name,
+                                        cached_entry.sid,
+                                        server_ip=cached_entry.server_ip,
+                                    )
+                                except ServerIdentityError:
+                                    raise
+                                except Exception:
+                                    logged_out = False
+                            if not logged_out:
+                                await self._cache.evict_sid(
+                                    cached_entry.mgmt_name,
+                                    cached_entry.domain_name,
+                                    auth_identity=cached_entry.auth_identity,
+                                )
 
             # Check if we should seed `arodonata_sid_cache` with this session instead of logging it out
             if seed_system_sid and dom_key == SYSTEM_DOMAIN_KEY and not had_cached_or_inflight:
@@ -256,7 +264,7 @@ class SessionCleaner:
                 if current_cached is None and not self._login_coordinator.has_inflight_or_cached_login(
                     mgmt_name, domain
                 ):
-                    now = self._login_coordinator._now()
+                    now = self._login_coordinator.now()
                     entry = SIDCacheEntry(
                         id=f"{mgmt_name}:{dom_key}:{identity}",
                         mgmt_name=mgmt_name,
@@ -270,7 +278,7 @@ class SessionCleaner:
                         expires_at=now + timedelta(seconds=self._settings.session_expire_seconds),
                     )
                     await self._cache.upsert_sid(entry)
-                    self._login_coordinator._active_dedicated_sids.pop((mgmt_name, sid), None)
+                    self._login_coordinator.adopt_dedicated_sid(mgmt_name, sid)
                     retain_in_cache = True
             return True
         finally:

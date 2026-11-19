@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from typing import Any
 
@@ -19,7 +20,7 @@ from arodonata.adapters.storage import DatabaseManager, SqlCacheAdapter, SqlLock
 from arodonata.api_reference import ApiReferenceEngine, get_api_reference
 from arodonata.client.warmup import CacheWarmupCoordinator, logger
 from arodonata.core.config import ArodonataSettings
-from arodonata.core.context import normalize_domain_key
+from arodonata.core.context import AuthContext, UserContext, WriteSession, normalize_domain_key
 from arodonata.core.models.common import utc_now
 from arodonata.core.ports import ApiPort, AuthProvider, CachePort, GatewayCliCallable, GatewayCliPort, LockPort
 from arodonata.core.services import (
@@ -102,7 +103,7 @@ class ClientBase:
                 rate_limiter=rate_limiter,
                 login_gate=login_gate,
                 auth_provider=auth_provider,
-                on_domain_invalidated=self._handle_amgmt_domain_invalidated,
+                on_domain_invalidated=lambda m, d: self.invalidate_domain(m, d),
                 monotonic_fn=monotonic_fn,
                 now_fn=now_fn,
                 sleep_fn=sleep_fn,
@@ -166,7 +167,7 @@ class ClientBase:
         self._script_service = ScriptRepositoryService(
             api=self._api,
             settings=self._settings,
-            write_session_factory=self.write_session,  # type: ignore[attr-defined]
+            write_session_factory=self.write_session,
             on_domain_invalidated=self.invalidate_domain,
         )
         self._topology_service = TopologyService(
@@ -201,20 +202,25 @@ class ClientBase:
             now_fn=now_fn,
             ensure_initialized=self._ensure_initialized,
         )
-        self._warmup_tasks = self._warmup._tasks
-        self._warmup_flights = self._warmup._flights
-        self._warmup_status = self._warmup._status
         self._api_reference: ApiReferenceEngine | None = None
 
     async def _ensure_initialized(self) -> None:
         if not self._db.is_initialized:
             await self._db.initialize()
 
-    async def _ensure_db_initialized(self) -> None:
-        await self._ensure_initialized()
-
-    def _handle_amgmt_domain_invalidated(self, mgmt_name: str, domain: str | None) -> None:
-        self.invalidate_domain(mgmt_name, domain)
+    def write_session(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        auth: AuthContext | None = None,
+        user: UserContext | None = None,
+        session_name: str | None = None,
+        session_description: str | None = None,
+        publish_on_exit: bool = True,
+    ) -> AbstractAsyncContextManager[WriteSession]:
+        """Open a context-bound isolated `WriteSession` (implemented by `ClientLifecycleMixin`)."""
+        raise NotImplementedError("write_session must be provided by ClientLifecycleMixin")
 
     def invalidate_domain(self, mgmt_name: str, domain: str | None = None) -> None:
         """Invalidate freshness memos for `(mgmt_name, domain)` so the next smart read re-checks published head."""
