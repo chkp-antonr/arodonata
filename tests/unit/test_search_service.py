@@ -864,3 +864,126 @@ async def test_query_objects_cpmi_asset_equivalents_and_group_by_aliases() -> No
         assert canon["groups"] == [{"domain_name": "Perimeter", "type": "CpmiGatewayCluster", "count": 1}]
     finally:
         await db.close()
+
+
+@pytest.mark.spec("SCN-CLIENT-005-1")
+async def test_search_service_find_object_cache_fallbacks_and_single_asset_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify SearchService.find_object falls back to CachePort for services/assets and scans assets once per pass."""
+    db = DatabaseManager(engine=None)
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        lock_port = SqlLockAdapter(db)
+        api = SearchFakeApi()
+        settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+        domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+        coordinator = DomainSyncCoordinator(
+            settings=settings,
+            api=api,
+            cache=cache,
+            lock_port=lock_port,
+            domain_service=domain_service,
+        )
+        object_service = ObjectService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+        # Omit optional service_cache and asset_service intentionally (F5)
+        search_service = SearchService(cache=cache, object_service=object_service)
+
+        await cache.upsert_domains(
+            [
+                DomainInfo(mgmt_name="mds1", uid="d-corp", name="Corp"),
+                DomainInfo(mgmt_name="mds1", uid="d-dmz", name="DMZ"),
+            ]
+        )
+        await cache.replace_domain_services(
+            "mds1",
+            "Corp",
+            [
+                CPService.from_cp_dict(
+                    "mds1",
+                    "Corp",
+                    {"uid": "svc-8443", "name": "tcp_8443", "type": "service-tcp", "port": "8443"},
+                )
+            ],
+            types=["service-tcp"],
+        )
+        await cache.replace_domain_assets(
+            "mds1",
+            "Corp",
+            [
+                Asset(
+                    uid="gw-corp-1",
+                    name="CorpGw01",
+                    type="CpmiGatewayPlain",
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                )
+            ],
+        )
+
+        # Single-domain fallback lookups for services and assets
+        found_svc = await search_service.find_object(
+            "mds1",
+            "Corp",
+            "tcp_8443",
+            obj_type="service-tcp",
+            cache_mode="cache",
+        )
+        assert isinstance(found_svc, CPService) and found_svc.uid == "svc-8443"
+
+        found_gw = await search_service.find_object(
+            "mds1",
+            "Corp",
+            "CorpGw01",
+            obj_type="gateway",
+            cache_mode="cache",
+        )
+        assert isinstance(found_gw, Asset) and found_gw.uid == "gw-corp-1"
+
+        # Active WriteSession overlay for service UID works even without service_cache
+        overlay = SessionOverlay(mgmt_name="mds1", domain_name="Corp")
+        overlay_svc = CPService.from_cp_dict(
+            "mds1",
+            "Corp",
+            {"uid": "uid-overlay-svc", "name": "tcp_9443", "type": "service-tcp", "port": "9443"},
+        )
+        overlay.record_service_upsert(overlay_svc)
+        ws = WriteSession(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            sid="ws-sid-1",
+            server_ip="10.1.0.1",
+            overlay=overlay,
+        )
+        with write_session_context(ws):
+            found_ws_svc = await search_service.find_object(
+                "mds1",
+                "Corp",
+                "uid-overlay-svc",
+                obj_type="service-tcp",
+                cache_mode="cache",
+            )
+            assert isinstance(found_ws_svc, CPService) and found_ws_svc.name == "tcp_9443"
+
+        # Cross-domain lookup runs get_assets only once across Pass 1 + Pass 2
+        get_assets_calls = 0
+        orig_get_assets = cache.get_assets
+
+        async def _spy_get_assets(*args: Any, **kwargs: Any) -> list[Asset]:
+            nonlocal get_assets_calls
+            get_assets_calls += 1
+            return await orig_get_assets(*args, **kwargs)
+
+        monkeypatch.setattr(cache, "get_assets", _spy_get_assets)
+
+        ci_gw = await search_service.find_object("mds1", None, "corpgw01", cache_mode="cache")
+        assert isinstance(ci_gw, Asset) and ci_gw.uid == "gw-corp-1"
+        assert get_assets_calls == 1
+
+        get_assets_calls = 0
+        missing = await search_service.find_object("mds1", None, "totally-nonexistent", cache_mode="cache")
+        assert missing is None
+        assert get_assets_calls == 1
+    finally:
+        await db.close()

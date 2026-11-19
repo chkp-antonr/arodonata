@@ -16,6 +16,7 @@ Provides:
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 from collections import defaultdict, deque
 from collections.abc import Callable, Sequence
@@ -23,6 +24,7 @@ from datetime import datetime
 from fnmatch import fnmatchcase
 from typing import Any, Literal, Protocol
 
+from arodonata.core.context import SERVICE_COMMAND_TYPES, get_write_session
 from arodonata.core.errors import AmbiguousObjectError, ValidationError
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
@@ -570,6 +572,139 @@ class SearchService:
                     by_uid[uid] = item
         return [by_uid[u] for u in order]
 
+    @staticmethod
+    def _match_assets(
+        assets: Sequence[Asset],
+        clean_query: str,
+        lookup_key: str,
+        *,
+        case_insensitive: bool = False,
+    ) -> list[Asset]:
+        """Match assets by `uid`, `name`, `asset_id`, or `id` (exact or case-insensitive)."""
+        if not case_insensitive:
+            return [
+                asset
+                for asset in assets
+                if (
+                    asset.uid in (clean_query, lookup_key)
+                    or asset.name in (clean_query, lookup_key)
+                    or asset.asset_id == clean_query
+                    or asset.id == clean_query
+                )
+            ]
+        needle_lower = clean_query.lower()
+        lookup_lower = lookup_key.lower()
+        return [
+            asset
+            for asset in assets
+            if (
+                asset.uid.lower() in (needle_lower, lookup_lower)
+                or asset.name.lower() in (needle_lower, lookup_lower)
+                or asset.asset_id.lower() == needle_lower
+                or asset.id.lower() == needle_lower
+            )
+        ]
+
+    async def _get_services_for_find(
+        self,
+        *,
+        mgmt_name: str,
+        domain: str | None,
+        types: Sequence[str] | None,
+        names: Sequence[str] | None = None,
+        uids: Sequence[str] | None = None,
+        include_global: bool = False,
+        cache_mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> list[CPService]:
+        """Fetch services via `ServiceCacheService` or fall back directly to `ServiceCachePort` + overlay."""
+        if self._service_cache is not None:
+            return await self._service_cache.get_services(
+                mgmt_name=mgmt_name,
+                domain=domain,
+                types=types,
+                names=names,
+                uids=uids,
+                include_global=include_global,
+                cache_mode=cache_mode,
+                cache_ttl=cache_ttl,
+            )
+        cached = await self._cache.get_services(
+            mgmt_name=mgmt_name,
+            domain_name=domain,
+            types=types,
+            names=names,
+            uids=uids,
+        )
+        if not include_global and domain is None:
+            cached = [s for s in cached if s.domain_name != "Global"]
+        return ServiceCacheService.apply_context_overlay(
+            cached,
+            mgmt_name=mgmt_name,
+            domain_name=domain,
+            types=types,
+            names=names,
+            uids=uids,
+        )
+
+    async def _get_service_by_uid_for_find(
+        self,
+        mgmt_name: str,
+        domain: str,
+        uid: str,
+        *,
+        cache_mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> CPService | None:
+        """Fetch a single service by UID via `ServiceCacheService` or `ServiceCachePort` + overlay."""
+        if self._service_cache is not None:
+            return await self._service_cache.get_service_by_uid(
+                mgmt_name,
+                domain,
+                uid,
+                cache_mode=cache_mode,
+                cache_ttl=cache_ttl,
+            )
+        ws = get_write_session(mgmt_name=mgmt_name, domain_name=domain)
+        if ws is not None:
+            touched, overlaid = ws.overlay.lookup_service_by_uid(uid)
+            if touched:
+                return overlaid
+        svc = await self._cache.get_service_by_uid(mgmt_name, domain, uid)
+        if svc is not None and ws is not None:
+            merged = ws.overlay.apply_to_services([svc])
+            return merged[0] if merged else None
+        return svc
+
+    async def _get_assets_for_find(
+        self,
+        *,
+        mgmt_name: str,
+        domain: str | None,
+        types: Sequence[str] | None,
+        include_global: bool = False,
+        cache_mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> list[Asset]:
+        """Fetch assets via `AssetRefreshService` or fall back directly to `AssetCachePort`."""
+        if self._asset_service is not None:
+            return await self._asset_service.get_assets(
+                mgmt_name=mgmt_name,
+                domain=domain,
+                types=types,
+                include_global=include_global,
+                cache_mode=cache_mode,
+                cache_ttl=cache_ttl,
+            )
+        cached_assets = await self._cache.get_assets(
+            mgmt_name=mgmt_name,
+            domain_name=domain,
+            types=types,
+        )
+        if not include_global and domain is None:
+            cached_assets = [a for a in cached_assets if a.domain_name != "Global"]
+        return cached_assets
+
     @traced
     async def resolve_group_with_members(
         self,
@@ -837,6 +972,299 @@ class SearchService:
             cache_ttl=cache_ttl,
         )
         return members
+
+    @traced
+    async def find_object(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        name_or_uid: str = "",
+        *,
+        obj_type: str | None = None,
+        cache_mode: CacheMode = "smart",
+        cache_ttl: float | None = None,
+    ) -> CPObject | CPService | Asset | None:
+        """Find a single `CPObject`, `CPService`, or `Asset` by exact `uid`, `name`, or composite ID."""
+        clean_query = name_or_uid.strip() if name_or_uid else ""
+        if not clean_query:
+            raise ValidationError("name_or_uid must not be empty or whitespace")
+
+        clean_type = normalize_any_type(obj_type) if obj_type else None
+        is_service_type = clean_type is not None and (
+            clean_type in SERVICE_COMMAND_TYPES or clean_type.startswith("service-")
+        )
+        is_asset_type = clean_type is not None and clean_type in {t.lower() for t in CANONICAL_ASSET_TYPES}
+
+        eff_domain = domain.strip() if domain and domain.strip() else None
+        lookup_key = clean_query
+        if eff_domain:
+            composite_prefix = f"{mgmt_name}:{eff_domain}:"
+            if clean_query.startswith(composite_prefix):
+                lookup_key = clean_query.removeprefix(composite_prefix)
+        elif clean_query.startswith(f"{mgmt_name}:"):
+            parts = clean_query.split(":", 2)
+            if len(parts) == 3 and parts[1].strip() and parts[2].strip():
+                eff_domain = parts[1].strip()
+                lookup_key = parts[2].strip()
+        lookup_names = list(dict.fromkeys([clean_query, lookup_key]))
+
+        if eff_domain is not None:
+            if not is_service_type and not is_asset_type:
+                by_uid = await self._object_service.get_object_by_uid(
+                    mgmt_name,
+                    eff_domain,
+                    lookup_key,
+                    cache_mode=cache_mode,
+                    cache_ttl=cache_ttl,
+                )
+                if by_uid is not None and (clean_type is None or by_uid.type.lower() == clean_type):
+                    return by_uid
+
+                objs = await self._object_service.get_objects(
+                    mgmt_name=mgmt_name,
+                    domain=eff_domain,
+                    types=[clean_type] if clean_type else None,
+                    names=lookup_names,
+                    include_global=(eff_domain == "Global"),
+                    cache_mode="cache" if cache_mode != "force" else cache_mode,
+                    cache_ttl=cache_ttl,
+                )
+                if objs:
+                    return objs[0]
+
+            if is_service_type or clean_type is None:
+                svc_by_uid = await self._get_service_by_uid_for_find(
+                    mgmt_name,
+                    eff_domain,
+                    lookup_key,
+                    cache_mode=cache_mode,
+                    cache_ttl=cache_ttl,
+                )
+                if svc_by_uid is not None and (clean_type is None or svc_by_uid.type.lower() == clean_type):
+                    return svc_by_uid
+
+                svcs = await self._get_services_for_find(
+                    mgmt_name=mgmt_name,
+                    domain=eff_domain,
+                    types=[clean_type] if clean_type else None,
+                    names=lookup_names,
+                    include_global=(eff_domain == "Global"),
+                    cache_mode="cache" if cache_mode != "force" else cache_mode,
+                    cache_ttl=cache_ttl,
+                )
+                if svcs:
+                    return svcs[0]
+
+            if is_asset_type or clean_type is None:
+                assets = await self._get_assets_for_find(
+                    mgmt_name=mgmt_name,
+                    domain=eff_domain,
+                    types=[clean_type] if clean_type else None,
+                    include_global=(eff_domain == "Global"),
+                    cache_mode=cache_mode,
+                    cache_ttl=cache_ttl,
+                )
+                exact_assets = self._match_assets(assets, clean_query, lookup_key, case_insensitive=False)
+                if exact_assets:
+                    return exact_assets[0]
+                ci_assets = self._match_assets(assets, clean_query, lookup_key, case_insensitive=True)
+                if ci_assets:
+                    return ci_assets[0]
+
+            return None
+
+        # Cross-domain lookup (eff_domain is None): refresh single-domain SMC when appropriate (`R2`),
+        # query indexed exact UID/name first (`R8`), and deduplicate by UID (`R3`).
+        sync_domain, eff_cross_mode = await self._resolve_implicit_domain_mode(
+            mgmt_name,
+            None,
+            cache_mode,
+        )
+
+        async def _refresh_single_domain() -> None:
+            if sync_domain is None or eff_cross_mode == "cache":
+                return
+            if not is_service_type and not is_asset_type:
+                await self._object_service.refresh_objects(
+                    mgmt_name=mgmt_name,
+                    domains=[sync_domain],
+                    types=[clean_type] if clean_type else None,
+                    include_global=False,
+                    mode=eff_cross_mode,
+                    cache_ttl=cache_ttl,
+                )
+            if (is_service_type or clean_type is None) and self._service_cache is not None:
+                await self._service_cache.refresh_services(
+                    mgmt_name=mgmt_name,
+                    domains=[sync_domain],
+                    types=[clean_type] if clean_type else None,
+                    include_global=False,
+                    mode=eff_cross_mode,
+                    cache_ttl=cache_ttl,
+                )
+            if (is_asset_type or clean_type is None) and self._asset_service is not None:
+                await self._asset_service.refresh_assets(
+                    mgmt_name=mgmt_name,
+                    domains=[sync_domain],
+                    include_global=False,
+                    mode=eff_cross_mode,
+                    cache_ttl=cache_ttl,
+                )
+
+        if eff_cross_mode == "force":
+            await _refresh_single_domain()
+
+        needle_lower = clean_query.lower()
+        lookup_lower = lookup_key.lower()
+        type_filter = [clean_type] if clean_type else None
+
+        async def _fetch_exact_objects() -> list[CPObject]:
+            if is_service_type or is_asset_type:
+                return []
+            by_uid, by_name = await asyncio.gather(
+                self._object_service.get_objects(
+                    mgmt_name=mgmt_name,
+                    domain=None,
+                    types=type_filter,
+                    uids=lookup_names,
+                    include_global=True,
+                    cache_mode="cache",
+                    cache_ttl=cache_ttl,
+                ),
+                self._object_service.get_objects(
+                    mgmt_name=mgmt_name,
+                    domain=None,
+                    types=type_filter,
+                    names=lookup_names,
+                    include_global=True,
+                    cache_mode="cache",
+                    cache_ttl=cache_ttl,
+                ),
+            )
+            return [*by_uid, *by_name]
+
+        async def _fetch_exact_services() -> list[CPService]:
+            if not (is_service_type or clean_type is None):
+                return []
+            by_uid, by_name = await asyncio.gather(
+                self._get_services_for_find(
+                    mgmt_name=mgmt_name,
+                    domain=None,
+                    types=type_filter,
+                    uids=lookup_names,
+                    include_global=True,
+                    cache_mode="cache",
+                    cache_ttl=cache_ttl,
+                ),
+                self._get_services_for_find(
+                    mgmt_name=mgmt_name,
+                    domain=None,
+                    types=type_filter,
+                    names=lookup_names,
+                    include_global=True,
+                    cache_mode="cache",
+                    cache_ttl=cache_ttl,
+                ),
+            )
+            return [*by_uid, *by_name]
+
+        async def _fetch_all_assets() -> list[Asset]:
+            if not (is_asset_type or clean_type is None):
+                return []
+            return await self._get_assets_for_find(
+                mgmt_name=mgmt_name,
+                domain=None,
+                types=type_filter,
+                include_global=True,
+                cache_mode="cache",
+                cache_ttl=cache_ttl,
+            )
+
+        async def _fetch_all_objects() -> list[CPObject]:
+            if is_service_type or is_asset_type:
+                return []
+            return await self._object_service.get_objects(
+                mgmt_name=mgmt_name,
+                domain=None,
+                types=type_filter,
+                names=None,
+                include_global=True,
+                cache_mode="cache",
+                cache_ttl=cache_ttl,
+            )
+
+        async def _fetch_all_services() -> list[CPService]:
+            if not (is_service_type or clean_type is None):
+                return []
+            return await self._get_services_for_find(
+                mgmt_name=mgmt_name,
+                domain=None,
+                types=type_filter,
+                names=None,
+                include_global=True,
+                cache_mode="cache",
+                cache_ttl=cache_ttl,
+            )
+
+        async def _scan_cross_domain_cache() -> list[CPObject | CPService | Asset]:
+            # Pass 1 (`R8`): Run exact UID/name queries and asset load concurrently
+            exact_objects, exact_services, pass1_assets = await asyncio.gather(
+                _fetch_exact_objects(),
+                _fetch_exact_services(),
+                _fetch_all_assets(),
+            )
+            exact_matches: list[CPObject | CPService | Asset] = [
+                *exact_objects,
+                *exact_services,
+                *self._match_assets(pass1_assets, clean_query, lookup_key, case_insensitive=False),
+            ]
+            if exact_matches:
+                return exact_matches
+
+            # Pass 2: Case-insensitive fallback scan concurrently (reusing pass1_assets without re-querying)
+            all_objects, all_services = await asyncio.gather(
+                _fetch_all_objects(),
+                _fetch_all_services(),
+            )
+            ci_matches: list[CPObject | CPService | Asset] = []
+            for o in all_objects:
+                if (
+                    o.uid.lower() in (needle_lower, lookup_lower)
+                    or o.name.lower() in (needle_lower, lookup_lower)
+                    or o.object_id.lower() == needle_lower
+                    or o.id.lower() == needle_lower
+                ):
+                    ci_matches.append(o)
+
+            for s in all_services:
+                if (
+                    s.uid.lower() in (needle_lower, lookup_lower)
+                    or s.name.lower() in (needle_lower, lookup_lower)
+                    or s.service_id.lower() == needle_lower
+                    or s.id.lower() == needle_lower
+                ):
+                    ci_matches.append(s)
+
+            ci_matches.extend(self._match_assets(pass1_assets, clean_query, lookup_key, case_insensitive=True))
+            return ci_matches
+
+        chosen_pool = await _scan_cross_domain_cache()
+        if not chosen_pool and eff_cross_mode in ("smart", "smart-fast") and sync_domain is not None:
+            await _refresh_single_domain()
+            chosen_pool = await _scan_cross_domain_cache()
+
+        if not chosen_pool:
+            return None
+
+        deduped = self._dedup_entities_by_uid(chosen_pool)
+        distinct_domains = {(getattr(item, "original_domain", None) or item.domain_name) for item in deduped}
+        if len(distinct_domains) > 1:
+            raise AmbiguousObjectError(
+                mgmt_name,
+                clean_query,
+                [item.model_dump(mode="json") for item in deduped],
+            )
+        return deduped[0]
 
     @traced
     async def describe_objects(

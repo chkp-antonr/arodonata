@@ -25,9 +25,11 @@ from arodonata.adapters.checkpoint.task_waiter import (
 )
 from arodonata.adapters.checkpoint.tls import (
     KnownHostEntry,
+    PolicyBoundSSLContext,
     TrustPolicy,
     TrustStore,
     compute_der_fingerprint,
+    create_verified_ssl_context,
     format_host_port,
     normalize_fingerprint,
     parse_tls_fingerprints,
@@ -66,6 +68,7 @@ __all__ = [
     "KnownHostEntry",
     "LoginCoordinator",
     "LoginGate",
+    "PolicyBoundSSLContext",
     "PooledSocketEntry",
     "RateLimiter",
     "RawHttpResponse",
@@ -75,6 +78,7 @@ __all__ = [
     "TrustStore",
     "VerifiedConnectionPool",
     "compute_der_fingerprint",
+    "create_verified_ssl_context",
     "derive_session_pool_scope",
     "extract_peer_der_cert",
     "extract_task_ids",

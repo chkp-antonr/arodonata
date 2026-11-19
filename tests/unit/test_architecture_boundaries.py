@@ -79,6 +79,14 @@ _LAYER_FORBIDDEN_IMPORTS: dict[str, tuple[str, ...]] = {
         "asyncpg",
         "aiosqlite",
     ),
+    "adapters": (
+        "arodonata.client",
+        "arodonata.mcp",
+        "arodonata.cpcrud",
+        "arodonata.reports",
+        "arodonata.rulebase",
+        "arodonata.testing",
+    ),
     "cpcrud": (
         "arodonata.adapters",
         "arodonata.client",
@@ -128,7 +136,7 @@ def _resolve_import_targets(file_path: Path, node: ast.Import | ast.ImportFrom) 
 
 
 @pytest.mark.spec("SCN-CLIENT-018-1")
-@pytest.mark.parametrize("layer", ["core", "cpcrud", "rulebase", "reports"])
+@pytest.mark.parametrize("layer", ["core", "adapters", "cpcrud", "rulebase", "reports"])
 def test_layer_ast_import_boundaries(layer: str) -> None:
     """SCN-CLIENT-018-1: Enforce hexagonal layer import boundaries via AST traversal (including lazy and TYPE_CHECKING imports)."""
     layer_dir = _ARODONATA_ROOT / layer

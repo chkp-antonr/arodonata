@@ -332,12 +332,13 @@ All major client, transport, login, lock, cache, and CPCRUD entry points SHALL b
 **Intent**: Enforce strict hexagonal import isolation, Interface Segregation on `CachePort`, and DRY core primitives and Check Point sentinel definitions.\
 **Non-goals**: Behavioral changes to Management API pagination or cache schema migrations.
 
-Hexagonal layers (`core`, `cpcrud`, `rulebase`, `reports`) SHALL obey AST-verified import boundaries, `CachePort` SHALL compose eight `@runtime_checkable` ISP sub-protocols matched to service consumers alongside `RulebaseRefreshPort`, and `arodonata.core.primitives` / `arodonata.core.models.sentinels` SHALL provide shared primitives and Check Point sentinel UIDs with backward-compatible re-exports.
+Hexagonal layers (`core`, `adapters`, `cpcrud`, `rulebase`, `reports`) SHALL obey AST-verified import boundaries, `CachePort` SHALL compose eight `@runtime_checkable` ISP sub-protocols matched to service consumers alongside `RulebaseRefreshPort`, and `arodonata.core.primitives` / `arodonata.core.models.sentinels` SHALL provide shared primitives and Check Point sentinel UIDs with backward-compatible re-exports.
 
-#### Scenario: SCN-CLIENT-018-1 — Hexagonal layer import boundaries are enforced via AST across core, cpcrud, rulebase, and reports
+#### Scenario: SCN-CLIENT-018-1 — Hexagonal layer import boundaries are enforced via AST across core, adapters, cpcrud, rulebase, and reports
 
-- **WHEN** an AST boundary scan inspects every import statement (including relative, lazy, and `TYPE_CHECKING` imports) in `core`, `cpcrud`, `rulebase`, and `reports`
+- **WHEN** an AST boundary scan inspects every import statement (including relative, lazy, and `TYPE_CHECKING` imports) in `core`, `adapters`, `cpcrud`, `rulebase`, and `reports`
 - **THEN** `core` SHALL have zero imports from `arodonata.adapters`, `arodonata.client`, `arodonata.mcp`, `arodonata.cpcrud`, `arodonata.reports`, `arodonata.rulebase`, `arodonata.testing`, `cpapi`, `aiohttp`, `sqlalchemy`, `sqlmodel`, `asyncpg`, or `aiosqlite`
+- **AND** `adapters` SHALL not import `arodonata.client`, `arodonata.mcp`, `arodonata.cpcrud`, `arodonata.reports`, `arodonata.rulebase`, or `arodonata.testing`
 - **AND** `cpcrud` SHALL not import `arodonata.adapters` or `arodonata.client`, `rulebase` SHALL not import `arodonata.cpcrud`, `arodonata.adapters`, or `arodonata.client`, and `reports` SHALL not import `arodonata.adapters`, `arodonata.client`, `arodonata.mcp`, or `arodonata.testing`
 
 #### Scenario: SCN-CLIENT-018-2 — CachePort composes eight runtime-checkable ISP sub-protocols and RulebaseRefreshPort decouples TopologyService

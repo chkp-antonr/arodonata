@@ -674,7 +674,7 @@ async def test_dedicated_session_scope_pools_mutations_and_isolates_scopes(tmp_p
 @pytest.mark.spec("SCN-TRANS-004-4")
 async def test_real_loopback_tls_dedicated_session_pooling_and_95_request_rotation(tmp_path: Path) -> None:
     """Exercise real FingerprintTCPConnector against loopback TLS server:
-    - Verifies _DEFAULT_CHECKPOINT_SSL_CONTEXT enforces TLS 1.2+, CERT_NONE, NO_COMPRESSION, and HTTP/1.1 ALPN
+    - Verifies TrustPolicy-bound PolicyBoundSSLContext enforces TLS 1.2+, CERT_NONE, NO_COMPRESSION, and HTTP/1.1 ALPN
     - Reuses 1 verified TCP/TLS socket for requests 1..95 in dedicated session_scope
     - Rotates cleanly on release at request 95 so request 96 opens a fresh TLS connection
     """
