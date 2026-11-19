@@ -15,7 +15,7 @@ from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import RulebaseLayerEntry
 from arodonata.core.models.services import CPService
 from arodonata.core.primitives import is_uuid, validate_command_name
-from arodonata.mcp.errors import ToolFailure, collect_known_sids, json_tool_result
+from arodonata.mcp.errors import ToolFailure, collect_known_sids, consume_live_quota_if_needed, json_tool_result
 from arodonata.mcp.tools._common import (
     CANONICAL_LAYER_AND_PACKAGE_TYPES,
     CANONICAL_SHOW_OBJECT_TYPES,
@@ -271,6 +271,7 @@ async def live_show_object(
     else:
         payload["uid"] = query_str
 
+    consume_live_quota_if_needed()
     res = await client.api_call(eff_mgmt, cmd, payload, domain=eff_domain)
     if not res.success:
         known_sids = await collect_known_sids(client, eff_mgmt)

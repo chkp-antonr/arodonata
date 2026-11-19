@@ -183,6 +183,46 @@ class MCPToolQuotaManager:
             retry_after_seconds=0.0,
         )
 
+    def check_and_consume_live_only(self, client_id: str | None) -> QuotaDecision:
+        """Check and consume only the `live` quota bucket after `general` was already charged."""
+        clean_cid = client_id.strip() if isinstance(client_id, str) and client_id.strip() else "anonymous"
+        if self._live_limit == 0:
+            return QuotaDecision(
+                allowed=True,
+                client_id=clean_cid,
+                bucket="live",
+                limit=0,
+                remaining=-1,
+                retry_after_seconds=0.0,
+            )
+
+        _general_dq, live_dq = self._get_buckets(clean_cid)
+        now = float(self._monotonic())
+        cutoff = now - self._window_seconds
+        while live_dq and live_dq[0] <= cutoff:
+            live_dq.popleft()
+
+        if len(live_dq) >= self._live_limit:
+            retry_after = max(0.001, round((live_dq[0] + self._window_seconds) - now, 3))
+            return QuotaDecision(
+                allowed=False,
+                client_id=clean_cid,
+                bucket="live",
+                limit=self._live_limit,
+                remaining=0,
+                retry_after_seconds=retry_after,
+            )
+
+        live_dq.append(now)
+        return QuotaDecision(
+            allowed=True,
+            client_id=clean_cid,
+            bucket="live",
+            limit=self._live_limit,
+            remaining=max(0, self._live_limit - len(live_dq)),
+            retry_after_seconds=0.0,
+        )
+
 
 __all__ = [
     "MCPToolQuotaManager",

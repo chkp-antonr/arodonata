@@ -124,9 +124,15 @@ app.mount("/mcp", mcp_asgi)
 | `ARODONATA_MCP_ALLOWED_ORIGINS` | `list[str]` (CSV) | `http(s)://localhost:*`, `127.0.0.1:*` | Permitted browser `Origin` headers |
 | `ARODONATA_MCP_ALLOW_WRITE_API` | `bool` | `False` | When `False`, `api_call` permits only the explicit read-only allowlist (`show-*`, `where-used`, `verify-policy`); when `True`, mutating calls run in an isolated dedicated session |
 | `ARODONATA_MCP_CPCRUD` | `bool` | `False` | Registers the 5 tamper-proof HMAC-signed CPCRUD tools (`cpcrud_validate`, `cpcrud_plan`, `cpcrud_apply`, `cpcrud_inverse`, `cpcrud_staged_session`) |
-| `ARODONATA_MCP_ALLOW_INSECURE_UNAUTHENTICATED` | `bool` | `False` | Explicit opt-in required to pair `ARODONATA_MCP_AUTH_MODE=none` with non-loopback `host`, wildcards, `allow_write_api=true`, or `cpcrud=true` (emits a `SECURITY WARNING`) |
-| `ARODONATA_MCP_TOOL_RATE_LIMIT_PER_MINUTE` | `int` | `120` | Sliding-window per-`client_id` tool invocation limit per minute across all MCP tools (`0` disables enforcement) |
-| `ARODONATA_MCP_LIVE_TOOL_RATE_LIMIT_PER_MINUTE` | `int` | `30` | Stricter per-`client_id` sliding-window limit per minute for live/mutating MCP tools (`0` disables enforcement) |
+| `ARODONATA_MCP_ALLOW_INSECURE_UNAUTHENTICATED` | `bool` | `False` | Explicit opt-in required to pair `ARODONATA_MCP_AUTH_MODE=none` with non-loopback `host`, disabled DNS rebinding protection, wildcard or non-loopback allowlist entries, `allow_write_api=true`, or `cpcrud=true` (emits a `SECURITY WARNING`) |
+| `ARODONATA_MCP_TOOL_RATE_LIMIT_PER_MINUTE` | `int` | `120` | Sliding-window per-caller (`client_id[:user_id]`) tool invocation limit per minute across all MCP tools (`0` disables enforcement) |
+| `ARODONATA_MCP_LIVE_TOOL_RATE_LIMIT_PER_MINUTE` | `int` | `30` | Stricter per-caller sliding-window limit per minute for live/mutating tools, cold/stale `smart` syncs, domain-miss refreshes, and `show_object` live fallbacks (`0` disables enforcement) |
 | `ARODONATA_MCP_JSON_RESPONSE` | `bool` | `False` | Return JSON responses instead of SSE streams on Streamable-HTTP POST |
-| `ARODONATA_MCP_STATELESS_HTTP` | `bool` | `False` | Enable stateless Streamable-HTTP mode per request |
+| `ARODONATA_MCP_STATELESS_HTTP` | `bool` | `False` | Enable stateless Streamable-HTTP mode per request (recommended when serving multiple identities over one `auth_mode="host"` endpoint) |
 | `ARODONATA_MCP_SERVER_NAME` | `str` | `"arodonata-mcp"` | Server identifier reported in MCP initialization |
+
+### 4.1 Security, Multi-Tenant Isolation & Quota Semantics
+
+- **Embedded `auth_mode="host"` Middleware**: When embedding via `create_asgi_app(..., auth_mode="host")`, the enclosing host ASGI middleware MUST bind `UserContext` on every incoming HTTP request. For multi-tenant hosts handling varying caller identities over one Streamable-HTTP mount, configure `stateless_http=True` so each request executes with its own `UserContext` rather than inheriting the opening session's context.
+- **Per-Caller CPCRUD Isolation**: `cpcrud_plan`, `cpcrud_apply`, `cpcrud_inverse`, and `cpcrud_staged_session` scope HMAC signatures, `plan_store`, `last_report`, and `staged_session_store` strictly by resolved caller identity (`client_id[:user_id]`). If `staged_session_store` exceeds `MAX_STORED_PLANS`, the oldest staged session is cleanly discarded and logged out with a SID-redacted `WARNING`.
+- **Smart-Sync Live Quotas**: Cached reads served from fresh warm cache (`cache_mode="cache"` or `cache_mode="smart"` within `cache_ttl`) consume only `tool_rate_limit_per_minute`, while cold/stale `smart` syncs, domain-list cache misses, and live fallbacks also consume `live_tool_rate_limit_per_minute` (at most once per tool call).

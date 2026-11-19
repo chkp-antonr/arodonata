@@ -31,6 +31,32 @@ from arodonata.mcp.tools._common import (
 from arodonata.reports import RangeScope, RenderOptions, ReportScope, SessionScope
 
 
+def _parse_iso_datetime(
+    value: str | None,
+    field_name: str,
+    mgmt_name: str,
+    domain: str | None,
+) -> datetime | None:
+    """Parse an optional ISO-8601 timestamp string or raise an actionable `ToolFailure`."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ToolFailure(
+            f"Invalid ISO-8601 {field_name!r} value {value!r}: expected non-empty ISO-8601 date/time string.",
+            mgmt_name=mgmt_name,
+            domain=domain,
+        )
+    try:
+        return datetime.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise ToolFailure(
+            f"Invalid ISO-8601 {field_name!r} value {value!r}: {exc}. "
+            "Expected ISO-8601 format such as '2026-10-24T00:00:00Z'.",
+            mgmt_name=mgmt_name,
+            domain=domain,
+        ) from exc
+
+
 def register_admin_tools(
     server: MCPServer,
     client_getter: Callable[[], ArodonataClient],
@@ -172,6 +198,13 @@ def register_admin_tools(
                 sc_copy = dict(raw_sc)
                 sc_copy["mgmt_name"] = sc_mgmt
                 sc_copy["domain"] = sc_dom
+                for date_field in ("from_date", "to_date"):
+                    if (
+                        date_field in sc_copy
+                        and sc_copy[date_field] is not None
+                        and not isinstance(sc_copy[date_field], datetime)
+                    ):
+                        sc_copy[date_field] = _parse_iso_datetime(sc_copy[date_field], date_field, sc_mgmt, sc_dom)
                 parsed_scopes.append(sc_copy)
         elif session_uids:
             parsed_scopes.append(
@@ -182,8 +215,8 @@ def register_admin_tools(
                 )
             )
         elif any(x is not None for x in (from_date, to_date, from_session, to_session)):
-            parsed_from = datetime.fromisoformat(from_date) if from_date else None
-            parsed_to = datetime.fromisoformat(to_date) if to_date else None
+            parsed_from = _parse_iso_datetime(from_date, "from_date", eff_mgmt, eff_domain)
+            parsed_to = _parse_iso_datetime(to_date, "to_date", eff_mgmt, eff_domain)
             parsed_scopes.append(
                 RangeScope(
                     mgmt_name=eff_mgmt,
@@ -271,6 +304,7 @@ def register_admin_tools(
                 )
             eff_timeout = min(float(timeout), MAX_MCP_API_TIMEOUT_SECONDS)
 
+        dedicated_sid: str | None = None
         if is_readonly_command(clean_cmd):
             res = await client.api_call(
                 eff_mgmt,
@@ -288,6 +322,7 @@ def register_admin_tools(
                 session_name="arodonata-mcp-api-call",
                 session_description=f"MCP api_call: {clean_cmd}",
             )
+            dedicated_sid = sid
             try:
                 res = await client.api_call(
                     eff_mgmt,
@@ -304,6 +339,8 @@ def register_admin_tools(
                     await client.api.logout_sid(eff_mgmt, sid, server_ip=srv_ip)
 
         known_sids = await collect_known_sids(client, eff_mgmt)
+        if dedicated_sid and dedicated_sid not in known_sids:
+            known_sids.append(dedicated_sid)
         if not res.success:
             err_msg = redact_sid(res.error_message or f"API command {clean_cmd!r} failed", known_sids=known_sids)
             raise ToolFailure(

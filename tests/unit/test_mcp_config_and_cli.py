@@ -16,6 +16,8 @@ from arodonata.mcp import (
     main,
     run_cli,
 )
+from arodonata.mcp import cli as mcp_cli
+from arodonata.mcp import config as mcp_config
 
 
 def test_mcp_settings_defaults_and_token_redaction() -> None:
@@ -219,3 +221,42 @@ def test_unified_security_policy_cli_and_settings_validation(
     rc_wild_orig = run_cli([], uvicorn_runner=lambda *_a, **_kw: None)
     assert rc_wild_orig == EXIT_CONFIG_ERROR
     assert "Wildcard" in capsys.readouterr().err
+
+    # 5. Tightened auth_mode='none' also rejects disabled DNS rebinding and non-loopback allowlist entries
+    monkeypatch.delenv("ARODONATA_MCP_TOKEN_VARS", raising=False)
+    monkeypatch.delenv("TEAM_A_TOKEN", raising=False)
+    monkeypatch.delenv("ARODONATA_MCP_ALLOWED_ORIGINS", raising=False)
+
+    for env_key, env_val in (
+        ("ARODONATA_MCP_ENABLE_DNS_REBINDING_PROTECTION", "false"),
+        ("ARODONATA_MCP_ALLOWED_HOSTS", "mcp.corp.example.com"),
+        ("ARODONATA_MCP_ALLOWED_ORIGINS", "https://app.example.com"),
+    ):
+        monkeypatch.setenv(env_key, env_val)
+        rc_none_bad = run_cli(["--auth-mode", "none"], uvicorn_runner=lambda *_a, **_kw: None)
+        assert rc_none_bad == EXIT_CONFIG_ERROR
+        assert "auth_mode='none'" in capsys.readouterr().err
+        monkeypatch.delenv(env_key, raising=False)
+
+    # 6. CLI opt-in emits SECURITY WARNING strictly once and binds owned client lifecycle
+    warn_msgs: list[str] = []
+    monkeypatch.setattr(mcp_config.logger, "warning", lambda msg, *_a, **_kw: warn_msgs.append(str(msg)))
+    captured_apps: list[Any] = []
+    rc_single_warn = run_cli(
+        ["--auth-mode", "none", "--host", "0.0.0.0", "--allow-insecure-unauthenticated"],
+        uvicorn_runner=lambda app, **_kw: captured_apps.append(app),
+    )
+    assert rc_single_warn == 0
+    assert len(warn_msgs) == 1
+    assert "SECURITY WARNING" in warn_msgs[0]
+    assert len(captured_apps) == 1
+    assert captured_apps[0].mcp_server._arodonata_owns_client is True
+
+    # 7. CLI handles ConfigurationError raised during create_asgi_app cleanly with EXIT_CONFIG_ERROR
+    def _boom_create_asgi_app(*_a: Any, **_kw: Any) -> Any:
+        raise ConfigurationError("simulated factory conflict")
+
+    monkeypatch.setattr(mcp_cli, "create_asgi_app", _boom_create_asgi_app)
+    rc_factory_err = run_cli(["--auth-mode", "none"], uvicorn_runner=lambda *_a, **_kw: None)
+    assert rc_factory_err == EXIT_CONFIG_ERROR
+    assert "simulated factory conflict" in capsys.readouterr().err

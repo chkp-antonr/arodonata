@@ -45,6 +45,23 @@ def is_loopback_host(host: str) -> bool:
     return clean in LOOPBACK_HOSTS
 
 
+def _extract_host_from_pattern(raw: str) -> str:
+    """Extract normalized host token from a `Host` or `Origin` allowlist entry."""
+    cleaned = raw.strip().lower()
+    if not cleaned:
+        return ""
+    host_part = cleaned.partition("://")[2] if "://" in cleaned else cleaned
+    host_part = host_part.split("/", 1)[0]
+    if host_part.startswith("["):
+        end_bracket = host_part.find("]")
+        return host_part[1:end_bracket] if end_bracket != -1 else host_part.lstrip("[")
+    if host_part.count(":") >= 2:
+        return host_part
+    if ":" in host_part:
+        return host_part.rsplit(":", 1)[0]
+    return host_part
+
+
 def _has_wildcard_entry(entries: Sequence[str]) -> bool:
     """Return `True` if any host or origin pattern uses a hostname wildcard (e.g. `*`, `http://*`, `*.domain`).
 
@@ -52,14 +69,21 @@ def _has_wildcard_entry(entries: Sequence[str]) -> bool:
     `http://localhost:*` are permitted.
     """
     for raw in entries:
-        cleaned = raw.strip().lower()
-        if not cleaned:
+        if not raw.strip():
             continue
-        host_part = cleaned.partition("://")[2] if "://" in cleaned else cleaned
-        host_part = host_part.split("/", 1)[0]
-        if host_part.endswith(":*"):
-            host_part = host_part[:-2]
+        host_part = _extract_host_from_pattern(raw)
         if not host_part or "*" in host_part:
+            return True
+    return False
+
+
+def _has_non_loopback_entry(entries: Sequence[str]) -> bool:
+    """Return `True` if any non-empty allowlist entry targets a non-loopback host."""
+    for raw in entries:
+        if not raw.strip():
+            continue
+        host_part = _extract_host_from_pattern(raw)
+        if not is_loopback_host(host_part):
             return True
     return False
 
@@ -276,6 +300,7 @@ class ArodonataMCPSettings(BaseSettings):
         standalone: bool = False,
         has_token_verifier: bool = False,
         environ: dict[str, str] | None = None,
+        emit_warning: bool = True,
     ) -> None:
         """Enforce unified fail-closed MCP security invariants across CLI, server, and ASGI factories.
 
@@ -283,10 +308,10 @@ class ArodonataMCPSettings(BaseSettings):
            without an explicit `token_verifier`.
         2. Requires at least one valid static bearer token in standalone `auth_mode="static"`.
         3. Rejects hostname/origin wildcards (`"*"`) whenever DNS rebinding protection is active.
-        4. Rejects `auth_mode="none"` paired with non-loopback `host`, wildcard `allowed_hosts` /
-           `allowed_origins`, or mutating capabilities (`allow_write_api=True`, `cpcrud=True`)
-           unless `allow_insecure_unauthenticated=True` is explicitly set (in which case a prominent
-           `WARNING` is logged).
+        4. Rejects `auth_mode="none"` paired with non-loopback `host`, disabled DNS rebinding protection,
+           wildcard or non-loopback `allowed_hosts` / `allowed_origins`, or mutating capabilities
+           (`allow_write_api=True`, `cpcrud=True`) unless `allow_insecure_unauthenticated=True` is
+           explicitly set (in which case a prominent `WARNING` is logged when `emit_warning=True`).
         """
         if standalone and self.auth_mode in ("host", "jwt"):
             raise ConfigurationError(
@@ -324,10 +349,16 @@ class ArodonataMCPSettings(BaseSettings):
             unsafe_reasons: list[str] = []
             if not is_loopback_host(self.host):
                 unsafe_reasons.append(f"non-loopback host={self.host!r}")
+            if not self.enable_dns_rebinding_protection:
+                unsafe_reasons.append("enable_dns_rebinding_protection=False")
             if has_wildcard_host:
                 unsafe_reasons.append("wildcard entry in allowed_hosts")
+            elif _has_non_loopback_entry(self.allowed_hosts):
+                unsafe_reasons.append("non-loopback entry in allowed_hosts")
             if has_wildcard_origin:
                 unsafe_reasons.append("wildcard entry in allowed_origins")
+            elif _has_non_loopback_entry(self.allowed_origins):
+                unsafe_reasons.append("non-loopback entry in allowed_origins")
             if self.allow_write_api:
                 unsafe_reasons.append("allow_write_api=True")
             if self.cpcrud:
@@ -338,28 +369,31 @@ class ArodonataMCPSettings(BaseSettings):
                     raise ConfigurationError(
                         "Refusing unsafe unauthenticated MCP configuration (auth_mode='none') with "
                         f"{', '.join(unsafe_reasons)}. Configure authentication (auth_mode='static'/'host'/'jwt') "
-                        "or bind strictly to loopback without wildcards or write tools, or set "
-                        "allow_insecure_unauthenticated=True (ARODONATA_MCP_ALLOW_INSECURE_UNAUTHENTICATED=true) "
-                        "to opt in explicitly."
+                        "or bind strictly to loopback with DNS rebinding protection and no wildcards, non-loopback "
+                        "allowlist entries, or write tools, or set allow_insecure_unauthenticated=True "
+                        "(ARODONATA_MCP_ALLOW_INSECURE_UNAUTHENTICATED=true) to opt in explicitly."
                     )
-                logger.warning(
-                    "SECURITY WARNING: MCP server configured with auth_mode='none' and allow_insecure_unauthenticated=True",
-                    host=self.host,
-                    allowed_hosts=self.allowed_hosts,
-                    allowed_origins=self.allowed_origins,
-                    allow_write_api=self.allow_write_api,
-                    cpcrud=self.cpcrud,
-                    reasons=unsafe_reasons,
-                )
+                if emit_warning:
+                    logger.warning(
+                        "SECURITY WARNING: MCP server configured with auth_mode='none' and allow_insecure_unauthenticated=True",
+                        host=self.host,
+                        allowed_hosts=self.allowed_hosts,
+                        allowed_origins=self.allowed_origins,
+                        enable_dns_rebinding_protection=self.enable_dns_rebinding_protection,
+                        allow_write_api=self.allow_write_api,
+                        cpcrud=self.cpcrud,
+                        reasons=unsafe_reasons,
+                    )
 
     def validate_standalone_startup(
         self,
         core_settings: ArodonataSettings | None = None,
         *,
         environ: dict[str, str] | None = None,
+        emit_warning: bool = True,
     ) -> TrustPolicy:
         """Validate standalone CLI (`arodonata-mcp`) security policy and TLS trust store configuration."""
-        self.validate_security_policy(standalone=True, environ=environ)
+        self.validate_security_policy(standalone=True, environ=environ, emit_warning=emit_warning)
 
         resolved_core = core_settings if core_settings is not None else ArodonataSettings()
         from arodonata.client import build_validated_trust_policy

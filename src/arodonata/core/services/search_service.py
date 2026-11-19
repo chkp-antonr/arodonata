@@ -546,7 +546,14 @@ class SearchService:
             return non_global[0], cache_mode
         return "default", cache_mode
 
-    _resolve_implicit_domain_mode = resolve_implicit_domain_mode
+    async def _resolve_implicit_domain_mode(
+        self,
+        mgmt_name: str,
+        eff_domain: str | None,
+        cache_mode: CacheMode,
+    ) -> tuple[str | None, CacheMode]:
+        """Forwarding wrapper preserving `_resolve_implicit_domain_mode` compatibility with `resolve_implicit_domain_mode`."""
+        return await self.resolve_implicit_domain_mode(mgmt_name, eff_domain, cache_mode)
 
     @staticmethod
     def _dedup_entities_by_uid(
@@ -730,7 +737,7 @@ class SearchService:
             if parsed_target is not None and parsed_target[0] == mgmt_name:
                 eff_domain = parsed_target[1]
 
-        sync_domain, eff_cache_mode = await self._resolve_implicit_domain_mode(mgmt_name, eff_domain, cache_mode)
+        sync_domain, eff_cache_mode = await self.resolve_implicit_domain_mode(mgmt_name, eff_domain, cache_mode)
         eff_include_global = True if eff_domain is None else (eff_domain == "Global")
 
         if eff_domain is None and eff_cache_mode != "cache" and sync_domain is not None:
@@ -1077,7 +1084,7 @@ class SearchService:
 
         # Cross-domain lookup (eff_domain is None): refresh single-domain SMC when appropriate (`R2`),
         # query indexed exact UID/name first (`R8`), and deduplicate by UID (`R3`).
-        sync_domain, eff_cross_mode = await self._resolve_implicit_domain_mode(
+        sync_domain, eff_cross_mode = await self.resolve_implicit_domain_mode(
             mgmt_name,
             None,
             cache_mode,

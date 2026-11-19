@@ -20,6 +20,7 @@ from arodonata.mcp.errors import (
 from arodonata.mcp.quota import MCPToolQuotaManager
 from arodonata.mcp.tools._common import (
     _compute_cache_age,
+    _enforce_live_quota_if_sync_required,
     _is_live_cache_mode,
     _normalize_cache_mode,
 )
@@ -64,6 +65,7 @@ def register_topology_tools(
         )
         mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
         eff_mode: CacheMode = "force" if is_live else mode
+        await _enforce_live_quota_if_sync_required(client, eff_mgmt, eff_domain, "topology", eff_mode)
         candidates = await client.find_affected_gateways(
             sources=sources,
             destinations=destinations,

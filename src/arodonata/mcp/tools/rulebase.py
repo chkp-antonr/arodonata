@@ -21,6 +21,7 @@ from arodonata.mcp.errors import (
 )
 from arodonata.mcp.quota import MCPToolQuotaManager
 from arodonata.mcp.tools._common import (
+    _enforce_live_quota_if_sync_required,
     _is_live_cache_mode,
     _is_live_rulebase_call,
     _normalize_cache_mode,
@@ -252,6 +253,7 @@ def register_rulebase_tools(
 
         # Discovery mode: when neither package nor layer is specified, return cached packages and layers
         if not eff_package and not eff_layer:
+            await _enforce_live_quota_if_sync_required(client, eff_mgmt, target_domain, "rulebase", mode)
             snap, _, _, _, snap_age = await client.rulebase_source.ensure_and_load_snapshot(
                 eff_mgmt, target_domain, cache_mode=mode
             )
@@ -301,6 +303,7 @@ def register_rulebase_tools(
                 show_membership=show_membership,
             )
 
+        await _enforce_live_quota_if_sync_required(client, eff_mgmt, target_domain, "rulebase", mode)
         snap_check, _, _, _, snap_age = await client.rulebase_source.ensure_and_load_snapshot(
             eff_mgmt, target_domain, cache_mode=mode
         )
@@ -373,6 +376,7 @@ def register_rulebase_tools(
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
         eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
         mode, _ = _normalize_cache_mode(cache_mode, default="smart")
+        await _enforce_live_quota_if_sync_required(client, eff_mgmt, eff_domain, "rulebase", mode)
         locations = await client.locate_rules(
             eff_mgmt,
             eff_domain,

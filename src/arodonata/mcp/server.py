@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from arodonata.client import TrustPolicy
 
 import arlogi
 from mcp.server.auth.provider import TokenVerifier
@@ -95,6 +98,7 @@ def _validate_injected_server_compatibility(
     *,
     client: ArodonataClient | None,
     settings: ArodonataSettings | None,
+    trust_policy: TrustPolicy | None,
     mcp_settings: ArodonataMCPSettings | None,
     auth_mode: MCPAuthMode | None,
     token_verifier: TokenVerifier | None,
@@ -109,9 +113,16 @@ def _validate_injected_server_compatibility(
             "create_asgi_app received a 'client' instance that differs from the client bound to 'mcp_server'."
         )
     if settings is not None:
+        baked_settings = getattr(baked_client, "settings", None)
+        if baked_settings is None or settings != baked_settings:
+            raise ConfigurationError(
+                "create_asgi_app cannot apply conflicting 'settings' to a pre-constructed 'mcp_server'; "
+                "pass 'settings' to create_mcp_server() or omit 'mcp_server'."
+            )
+    if trust_policy is not None and baked_client is not None:
         raise ConfigurationError(
-            "create_asgi_app cannot apply 'settings' to a pre-constructed 'mcp_server'; "
-            "pass 'settings' to create_mcp_server() or omit 'mcp_server'."
+            "create_asgi_app cannot apply 'trust_policy' to a pre-constructed 'mcp_server'; "
+            "pass 'trust_policy' to create_mcp_server() or omit 'mcp_server'."
         )
 
     baked_verifier = getattr(mcp_server, "_arodonata_token_verifier", None)
@@ -178,6 +189,7 @@ def create_mcp_server(
     client: ArodonataClient | None = None,
     *,
     settings: ArodonataSettings | None = None,
+    trust_policy: TrustPolicy | None = None,
     mcp_settings: ArodonataMCPSettings | None = None,
     auth_mode: MCPAuthMode | None = None,
     token_verifier: TokenVerifier | None = None,
@@ -245,7 +257,7 @@ def create_mcp_server(
     )
 
     owns_client = client is None
-    eff_client = client if client is not None else ArodonataClient(settings=settings)
+    eff_client = client if client is not None else ArodonataClient(settings=settings, trust_policy=trust_policy)
     eff_quota_manager = quota_manager if quota_manager is not None else MCPToolQuotaManager.from_settings(eff_mcp)
 
     @asynccontextmanager
@@ -285,6 +297,7 @@ def create_asgi_app(
     *,
     mcp_server: MCPServer | None = None,
     settings: ArodonataSettings | None = None,
+    trust_policy: TrustPolicy | None = None,
     mcp_settings: ArodonataMCPSettings | None = None,
     auth_mode: MCPAuthMode | None = None,
     token_verifier: TokenVerifier | None = None,
@@ -311,7 +324,9 @@ def create_asgi_app(
     - DNS rebinding protection (`Host` not in `allowed_hosts` -> HTTP `421`).
     - Browser `Origin` header validation (`Origin` not in `allowed_origins` -> HTTP `403`).
     - Static/JWT bearer token verification (`auth_mode="static"` / `"jwt"`) binding `client_id`
-      in `UserContext`, or pass-through in `auth_mode="host"`.
+      in `UserContext`, or pass-through in `auth_mode="host"`. In `auth_mode="host"`, the enclosing
+      ASGI middleware must bind `UserContext` on every request, and multi-tenant hosts serving
+      varying identities over one endpoint should set `stateless_http=True`.
     """
     if mcp_server is not None:
         baked_mcp: ArodonataMCPSettings | None = getattr(mcp_server, "_arodonata_mcp_settings", None)
@@ -321,6 +336,7 @@ def create_asgi_app(
                 baked_mcp,
                 client=client,
                 settings=settings,
+                trust_policy=trust_policy,
                 mcp_settings=mcp_settings,
                 auth_mode=auth_mode,
                 token_verifier=token_verifier,
@@ -362,7 +378,7 @@ def create_asgi_app(
                 json_response=json_response,
                 stateless_http=stateless_http,
             )
-            eff_client = client if client is not None else ArodonataClient(settings=settings)
+            eff_client = client if client is not None else ArodonataClient(settings=settings, trust_policy=trust_policy)
             if eff_mcp.auth_mode in ("host", "none"):
                 eff_verifier = None
             elif eff_mcp.auth_mode == "static":
@@ -402,6 +418,7 @@ def create_asgi_app(
         srv = create_mcp_server(
             client,
             settings=settings,
+            trust_policy=trust_policy,
             mcp_settings=eff_mcp,
             token_verifier=token_verifier,
             quota_manager=quota_manager,

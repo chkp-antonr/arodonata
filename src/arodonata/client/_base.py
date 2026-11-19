@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from typing import Any
@@ -229,6 +229,37 @@ class ClientBase:
         self._sync_coordinator.invalidate_domain(mgmt_name, domain)
         if self._amgmt is not None and (mgmt_name, normalize_domain_key(domain)) not in self._amgmt.invalidated_domains:
             self._amgmt._invalidated_domains.add((mgmt_name, normalize_domain_key(domain)))
+
+    def get_active_dedicated_sids(self, mgmt_name: str | None = None) -> list[str]:
+        """Return deduplicated active dedicated session SIDs tracked by the transport or injected API double."""
+        sources: list[Any] = []
+        if self._amgmt is not None:
+            coord = getattr(self._amgmt, "login_coordinator", None)
+            if coord is not None:
+                sources.append(getattr(coord, "active_dedicated_sids", None))
+        if self._api is not None and self._api is not self._amgmt:
+            api_coord = getattr(self._api, "login_coordinator", None)
+            if api_coord is not None:
+                sources.append(getattr(api_coord, "active_dedicated_sids", None))
+            sources.append(getattr(self._api, "active_dedicated_sids", None))
+            sources.append(getattr(self._api, "_active_dedicated_sids", None))
+
+        sids: list[str] = []
+        for raw in sources:
+            if raw is None:
+                continue
+            items = raw.keys() if isinstance(raw, Mapping) else raw if isinstance(raw, (set, list, tuple)) else ()
+            for item in items:
+                if isinstance(item, tuple) and len(item) >= 2:
+                    item_mgmt, item_sid = item[0], item[1]
+                    if mgmt_name is not None and item_mgmt != mgmt_name:
+                        continue
+                    sid_val = item_sid
+                else:
+                    sid_val = item
+                if isinstance(sid_val, str) and sid_val and sid_val not in sids:
+                    sids.append(sid_val)
+        return sids
 
     # ------------------------------------------------------------------
     # Properties

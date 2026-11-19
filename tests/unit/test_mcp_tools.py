@@ -14,11 +14,13 @@ from mcp.types import CallToolResult, TextContent
 
 from arodonata import ArodonataClient
 from arodonata.core.config import ArodonataSettings
-from arodonata.core.context import AuthContext
+from arodonata.core.context import AuthContext, user_context
 from arodonata.core.errors import REDACTED_PLACEHOLDER, InvalidCredentialsError
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
 from arodonata.core.models.objects import CPObject
 from arodonata.mcp import create_mcp_server
+from arodonata.mcp.errors import ToolFailure, collect_known_sids, mcp_tool_guard
+from arodonata.mcp.tools import cpcrud as cpcrud_mod
 
 
 class MCPFakeApi:
@@ -36,6 +38,10 @@ class MCPFakeApi:
         self.raise_unexpected_for_command: str | None = None
         self.fail_command_with_sid: tuple[str, str] | None = None
         self._active_dedicated_sids: set[tuple[str, str]] = set()
+        self.staged_uid_sequence: list[str] = []
+        self.unique_dedicated_sids: bool = False
+        self._sid_counter: int = 0
+        self._sid_to_staged_uid: dict[str, str] = {}
 
     async def api_call(
         self,
@@ -135,10 +141,21 @@ class MCPFakeApi:
                         "publish-time": {"iso-8601": "2026-10-24T10:00:00Z"},
                     },
                 )
+            req_uid = (payload or {}).get("uid")
+            if isinstance(req_uid, str) and req_uid:
+                staged_uid = req_uid
+            elif sid and sid in self._sid_to_staged_uid:
+                staged_uid = self._sid_to_staged_uid[sid]
+            elif self.staged_uid_sequence:
+                staged_uid = self.staged_uid_sequence.pop(0)
+                if sid:
+                    self._sid_to_staged_uid[sid] = staged_uid
+            else:
+                staged_uid = "sess-staged-mcp-1"
             return ApiCallResult(
                 success=True,
                 data={
-                    "uid": (payload or {}).get("uid") or "sess-staged-mcp-1",
+                    "uid": staged_uid,
                     "name": "arodonata-cpcrud-staged",
                     "application": "arodonata",
                     "state": "open",
@@ -437,8 +454,13 @@ class MCPFakeApi:
         session_description: str | None = None,
     ) -> tuple[str, str]:
         self.dedicated_sessions_created.append((mgmt_name, domain))
-        self._active_dedicated_sids.add((mgmt_name, "dedicated-sid-999"))
-        return "dedicated-sid-999", "10.1.0.1"
+        if self.unique_dedicated_sids:
+            self._sid_counter += 1
+            sid_val = f"dedicated-sid-{self._sid_counter}"
+        else:
+            sid_val = "dedicated-sid-999"
+        self._active_dedicated_sids.add((mgmt_name, sid_val))
+        return sid_val, "10.1.0.1"
 
     def logout_sid(
         self,
@@ -1841,3 +1863,219 @@ def test_mcp_tools_package_backward_compatible_reexports() -> None:
     assert mcp_tools.RULEBASE_TYPE_TO_LIVE_COMMAND is RULEBASE_TYPE_TO_COMMAND
     for public_sym in mcp_tools.__all__:
         assert hasattr(mcp_tools, public_sym)
+
+
+@pytest.mark.spec("SCN-MCP-010-2")
+@pytest.mark.asyncio
+async def test_real_amgmt_dedicated_sid_and_api_call_sid_redaction() -> None:
+    """SCN-MCP-010-2: Real `AMgmtClient.login_coordinator.active_dedicated_sids` and closed write SIDs are redacted."""
+    # 1. Real AMgmtClient tracks dedicated SIDs on amgmt.login_coordinator
+    real_settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret-k1")
+    async with ArodonataClient(real_settings) as real_client:
+        assert real_client.amgmt is not None
+        real_client.amgmt.login_coordinator._active_dedicated_sids[("mds1", "real-ded-sid-777")] = "10.0.0.1"
+        real_client.amgmt.login_coordinator._active_dedicated_sids[("other", "other-ded-sid-888")] = "10.0.0.2"
+
+        assert real_client.get_active_dedicated_sids("mds1") == ["real-ded-sid-777"]
+        assert set(real_client.get_active_dedicated_sids()) == {"real-ded-sid-777", "other-ded-sid-888"}
+        collected = await collect_known_sids(real_client, "mds1")
+        assert "real-ded-sid-777" in collected
+        assert "other-ded-sid-888" not in collected
+        # Clear test entries before close() so logout_all does not attempt live HTTP logouts
+        real_client.amgmt.login_coordinator._active_dedicated_sids.clear()
+
+    # 2. Failing mutating api_call redacts its just-logged-out dedicated SID from ToolFailure output
+    fake_api = MCPFakeApi()
+    async with ArodonataClient(real_settings, api=fake_api) as client:
+        await client.get_domains("mds1")
+        srv = create_mcp_server(client, auth_mode="host", allow_write_api=True)
+        fake_api.fail_command_with_sid = ("add-host", "dedicated-sid-999")
+        fail_res = await srv.call_tool(
+            "api_call",
+            {
+                "command": "add-host",
+                "payload": {"name": "fail-host", "ipv4-address": "10.1.2.3"},
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+            },
+        )
+        assert fail_res.is_error is True
+        err_text = _get_tool_text(fail_res)
+        assert "dedicated-sid-999" not in err_text
+        assert REDACTED_PLACEHOLDER in err_text
+        assert ("mds1", "dedicated-sid-999") in fake_api.logged_out_sids
+
+
+@pytest.mark.spec("SCN-MCP-009-4")
+@pytest.mark.asyncio
+async def test_mcp_cpcrud_per_caller_isolation_and_eviction_discard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-MCP-009-4: CPCRUD plans/reports/staged sessions isolate per caller and eviction discards cleanly."""
+    fake_api = MCPFakeApi()
+    fake_api.unique_dedicated_sids = True
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    warn_logs: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(cpcrud_mod.logger, "warning", lambda msg, **kw: warn_logs.append((str(msg), dict(kw))))
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        await client.get_domains("mds1")
+        server = create_mcp_server(client, auth_mode="host", cpcrud=True)
+        tpl_a = {
+            "version": 1,
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "objects": [{"type": "host", "name": "iso-host-a", "ipv4-address": "10.60.0.1"}],
+        }
+        tpl_b = {
+            "version": 1,
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "objects": [{"type": "host", "name": "iso-host-b", "ipv4-address": "10.60.0.2"}],
+        }
+
+        with user_context(user_id="TEAM_A", client_id="TEAM_A"):
+            plan_a_dict = _parse_tool_json(await server.call_tool("cpcrud_plan", {"template": tpl_a}))
+            fake_api.staged_uid_sequence.append("sess-evict-1")
+            apply_a = _parse_tool_json(
+                await server.call_tool(
+                    "cpcrud_apply",
+                    {"plan_id": plan_a_dict["plan_id"], "no_publish": True, "keep_session": True},
+                )
+            )
+            staged_uid_a = apply_a["staged_sessions"][0]["session_uid"]
+            assert staged_uid_a == "sess-evict-1"
+
+        # TEAM_B cannot use TEAM_A's plan_id, signed plan dict, last_report, or staged session_uid
+        with user_context(user_id="TEAM_B", client_id="TEAM_B"):
+            calls_before = len(fake_api.calls)
+            for tool_name, tool_args in (
+                ("cpcrud_apply", {"plan_id": plan_a_dict["plan_id"]}),
+                ("cpcrud_apply", {"plan": plan_a_dict}),
+                ("cpcrud_inverse", {"plan_id": plan_a_dict["plan_id"]}),
+                ("cpcrud_inverse", {"plan": plan_a_dict}),
+                (
+                    "cpcrud_staged_session",
+                    {"mgmt_name": "mds1", "domain": "Corp", "session_uid": staged_uid_a, "action": "publish"},
+                ),
+            ):
+                rej = await server.call_tool(tool_name, tool_args)
+                assert rej.is_error is True
+            assert len(fake_api.calls) == calls_before
+
+            # TEAM_B generating its own plan still cannot inherit TEAM_A's last ApplyReport
+            plan_b_dict = _parse_tool_json(await server.call_tool("cpcrud_plan", {"template": tpl_b}))
+            inv_no_report = await server.call_tool("cpcrud_inverse", {"plan_id": plan_b_dict["plan_id"]})
+            assert inv_no_report.is_error is True
+            assert "requires an ApplyReport" in _get_tool_text(inv_no_report)
+
+        # Eviction: cap MAX_STORED_PLANS=2 and stage 2 more sessions -> oldest (sess-evict-1) discarded & logged out
+        monkeypatch.setattr(cpcrud_mod, "MAX_STORED_PLANS", 2)
+        with user_context(user_id="TEAM_A", client_id="TEAM_A"):
+            fake_api.staged_uid_sequence.extend(["sess-evict-2", "sess-evict-3"])
+            await server.call_tool(
+                "cpcrud_apply",
+                {"plan_id": plan_a_dict["plan_id"], "no_publish": True, "keep_session": True},
+            )
+            discards_before = [c for c in fake_api.calls if c[1] == "discard"]
+            await server.call_tool(
+                "cpcrud_apply",
+                {"plan_id": plan_a_dict["plan_id"], "no_publish": True, "keep_session": True},
+            )
+            discards_after = [c for c in fake_api.calls if c[1] == "discard"]
+            assert len(discards_after) == len(discards_before) + 1
+            assert any(
+                "Evicted oldest CPCRUD staged session" in msg and kw.get("session_uid") == "sess-evict-1"
+                for msg, kw in warn_logs
+            )
+            assert ("mds1", "dedicated-sid-1") in fake_api.logged_out_sids
+            assert "dedicated-sid-1" not in repr(warn_logs)
+
+            # Evicted sess-evict-1 is no longer staged in registry
+            evicted_res = await server.call_tool(
+                "cpcrud_staged_session",
+                {"mgmt_name": "mds1", "domain": "Corp", "session_uid": "sess-evict-1", "action": "publish"},
+            )
+            assert evicted_res.is_error is True
+            assert "Unknown or foreign staged session_uid" in _get_tool_text(evicted_res)
+
+
+@pytest.mark.spec("SCN-MCP-010-1")
+@pytest.mark.asyncio
+async def test_change_report_invalid_iso_dates_and_structured_tool_failure_core_keys() -> None:
+    """Invalid ISO-8601 dates in `change_report` return actionable `ToolFailure`, and structured `ToolFailure` protects core keys."""
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        await client.get_domains("mds1")
+        srv = create_mcp_server(client, auth_mode="host")
+
+        for bad_args in (
+            {"mgmt_name": "mds1", "domain": "Corp", "from_date": "not-a-date"},
+            {"mgmt_name": "mds1", "domain": "Corp", "to_date": "2026-99-99"},
+            {"mgmt_name": "mds1", "domain": "Corp", "scopes": [{"from_date": "bad-scope-date"}]},
+        ):
+            res = await srv.call_tool("change_report", bad_args)
+            assert res.is_error is True
+            txt = _get_tool_text(res)
+            assert "Invalid ISO-8601" in txt
+            assert "internal error" not in txt
+
+        @mcp_tool_guard("spoof_check_tool", lambda: client)
+        async def _guarded_fail() -> CallToolResult:
+            raise ToolFailure(
+                "bad input secret=s1",
+                error_code="custom_err",
+                details={
+                    "error": "spoof",
+                    "error_code": "spoof",
+                    "message": "spoof",
+                    "tool": "spoof",
+                    "safe_key": 42,
+                },
+            )
+
+        err_res = await _guarded_fail()
+        assert err_res.is_error is True
+        err_json = _parse_tool_json(err_res)
+        assert err_json["error"] == "ToolFailure"
+        assert err_json["error_code"] == "custom_err"
+        assert err_json["message"] == "bad input secret=s1"
+        assert err_json["tool"] == "spoof_check_tool"
+        assert err_json["safe_key"] == 42
+
+
+@pytest.mark.spec("SCN-MCP-006-1")
+@pytest.mark.asyncio
+async def test_public_method_wrappers_preserve_monkeypatch_consistency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Monkeypatching `ensure_and_load_snapshot` and `resolve_implicit_domain_mode` affects both public and legacy private callers."""
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        snap_calls: list[str] = []
+        orig_snap = client.rulebase_source.ensure_and_load_snapshot
+
+        async def _spy_snap(mgmt_name: str, domain_name: str, **kwargs: Any) -> Any:
+            snap_calls.append(f"{mgmt_name}:{domain_name}")
+            return await orig_snap(mgmt_name, domain_name, **kwargs)
+
+        monkeypatch.setattr(client.rulebase_source, "ensure_and_load_snapshot", _spy_snap)
+        await client.rulebase_source._ensure_and_load_snapshot("mds1", "Corp")
+        await client.rulebase_source.locate_rules("mds1", "Corp", cache_mode="cache")
+        assert snap_calls == ["mds1:Corp", "mds1:Corp"]
+
+        mode_calls: list[str] = []
+
+        async def _spy_mode(mgmt_name: str, eff_domain: str | None, cache_mode: str) -> Any:
+            mode_calls.append(f"{mgmt_name}:{eff_domain}:{cache_mode}")
+            return (eff_domain or "Corp"), cache_mode
+
+        monkeypatch.setattr(client.search_service, "resolve_implicit_domain_mode", _spy_mode)
+        await client.search_service._resolve_implicit_domain_mode("mds1", None, "smart")
+        await client.find_object("mds1", None, "web-srv-1", cache_mode="cache")
+        assert mode_calls == ["mds1:None:smart", "mds1:None:cache"]

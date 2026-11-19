@@ -224,7 +224,7 @@ def test_standalone_mcp_cli_warns_when_auth_none_with_non_loopback_or_wildcard_h
     assert rc_blocked_host == 2
     assert "allow_insecure_unauthenticated" in capsys.readouterr().err
 
-    # 2. Explicit opt-in (--allow-insecure-unauthenticated, plus DNS rebinding disabled when ALLOWED_HOSTS='*') succeeds with WARNING
+    # 2. Explicit opt-in (--allow-insecure-unauthenticated, plus DNS rebinding disabled when ALLOWED_HOSTS='*') succeeds with single WARNING
     monkeypatch.setenv("ARODONATA_MCP_ALLOWED_HOSTS", "*")
     monkeypatch.setenv("ARODONATA_MCP_ENABLE_DNS_REBINDING_PROTECTION", "false")
     rc_opt_in = mcp_cli.run_cli(
@@ -232,6 +232,7 @@ def test_standalone_mcp_cli_warns_when_auth_none_with_non_loopback_or_wildcard_h
         uvicorn_runner=lambda *_a, **_kw: None,
     )
     assert rc_opt_in == 0
+    assert len(warnings_logged) == 1
     assert any(
         "unauthenticated" in w.lower()
         or "security warning" in w.lower()

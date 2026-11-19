@@ -22,7 +22,9 @@ from arodonata import ArodonataClient
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import get_user_context, user_context
 from arodonata.core.errors import REDACTED_PLACEHOLDER, ConfigurationError
-from arodonata.core.models.common import ApiCallResult, ApiQueryResult
+from arodonata.core.models.common import ApiCallResult, ApiQueryResult, utc_now
+from arodonata.core.models.domains import DomainInfo, DomainSyncState
+from arodonata.core.models.objects import CPObject
 from arodonata.core.telemetry import set_trace_modules
 from arodonata.mcp import (
     ArodonataMCPSettings,
@@ -240,6 +242,9 @@ def test_create_mcp_server_and_asgi_app_enforce_fail_closed_security_policy(
         {"host": "0.0.0.0"},
         {"host": "::"},
         {"host": "10.0.0.10"},
+        {"enable_dns_rebinding_protection": False},
+        {"allowed_hosts": ["mcp.corp.example.com"]},
+        {"allowed_origins": ["https://app.example.com"]},
         {"allow_write_api": True},
         {"cpcrud": True},
         {"allowed_hosts": ["*"], "enable_dns_rebinding_protection": False},
@@ -324,15 +329,22 @@ def test_ipv6_issuer_url_formatting_and_create_asgi_app_parity() -> None:
     with pytest.raises(ConfigurationError, match="Wildcard"):
         create_asgi_app(mcp_server=srv_loopback_none, allowed_hosts=["*"])
 
-    # Accepts identical baked values + compatible transport overrides
+    # Accepts identical settings / baked values + compatible transport overrides, rejects trust_policy override
     app_ok = create_asgi_app(
         mcp_server=srv_loopback_none,
+        settings=srv_loopback_none._arodonata_client.settings,  # type: ignore[attr-defined]
         auth_mode="none",
         allow_write_api=False,
         cpcrud=False,
         path="/custom-mcp",
     )
     assert app_ok.mcp_settings.path == "/custom-mcp"
+
+    with pytest.raises(ConfigurationError, match="trust_policy"):
+        create_asgi_app(
+            mcp_server=srv_loopback_none,
+            trust_policy=object(),  # type: ignore[arg-type]
+        )
 
     # External raw MCPServer without Arodonata metadata still validates security policy fail-closed
     raw_srv = MCPServer(name="external-raw")
@@ -453,7 +465,7 @@ async def test_per_client_tool_quota_isolation_window_recovery_and_telemetry(
         srv = create_mcp_server(client, mcp_settings=mcp_cfg, quota_manager=e2e_qm)
         tracer = trace.get_tracer("test.mcp.quota")
 
-        with user_context(user_id="team-alpha", client_id="TEAM_ALPHA_TOKEN"):
+        with user_context(user_id="TEAM_ALPHA_TOKEN", client_id="TEAM_ALPHA_TOKEN"):
             r1 = await srv.call_tool("list_domains", {"mgmt_name": "mds1", "cache_mode": "live"})
             assert r1.is_error is False
             with tracer.start_as_current_span("rate_limit_check"):
@@ -468,7 +480,7 @@ async def test_per_client_tool_quota_isolation_window_recovery_and_telemetry(
             assert err_json["retry_after_seconds"] > 0
 
         # TEAM_BETA_TOKEN is isolated and still allowed
-        with user_context(user_id="team-beta", client_id="TEAM_BETA_TOKEN"):
+        with user_context(user_id="TEAM_BETA_TOKEN", client_id="TEAM_BETA_TOKEN"):
             r_beta = await srv.call_tool("list_domains", {"mgmt_name": "mds1", "cache_mode": "live"})
             assert r_beta.is_error is False
 
@@ -509,3 +521,142 @@ async def test_per_client_tool_quota_isolation_window_recovery_and_telemetry(
             assert isinstance(r_leak2.content[0], TextContent)
             assert leaked_secret not in r_leak2.content[0].text
             assert leaked_secret not in repr(warn_logs)
+
+
+class _SmartQuotaFakeApi(_QuotaDummyApi):
+    async def api_call(
+        self,
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        domain: str | None = None,
+        **_kwargs: Any,
+    ) -> ApiCallResult:
+        if command == "show-domains":
+            return ApiCallResult(
+                success=True,
+                data={"objects": [{"uid": "dom-corp", "name": "Corp", "type": "domain"}]},
+            )
+        if command == "show-last-published-session":
+            return ApiCallResult(
+                success=True,
+                data={"uid": "pub-1", "publish-time": {"iso-8601": "2026-11-19T12:00:00Z"}},
+            )
+        if command in ("show-host", "show-object"):
+            ident = (payload or {}).get("name") or (payload or {}).get("uid") or "miss"
+            return ApiCallResult(
+                success=False,
+                status_code=404,
+                error_message=f"Object {ident} not found",
+            )
+        return ApiCallResult(success=True, data={})
+
+    async def api_query(
+        self,
+        _mgmt_name: str,
+        command: str,
+        *,
+        domain: str | None = None,
+        **_kwargs: Any,
+    ) -> ApiQueryResult:
+        if command == "show-hosts":
+            return ApiQueryResult(
+                success=True,
+                objects=[
+                    {
+                        "uid": "h-smart-1",
+                        "name": "smart-host-1",
+                        "type": "host",
+                        "ipv4-address": "10.0.0.10",
+                        "domain": {"name": domain or "Corp"},
+                    }
+                ],
+                total=1,
+            )
+        return ApiQueryResult(success=True, objects=[], total=0)
+
+
+@pytest.mark.spec("SCN-MCP-012-2")
+@pytest.mark.asyncio
+async def test_mcp_caller_identity_composite_and_smart_sync_live_quota() -> None:
+    """SCN-MCP-012-2: Composite `client_id:user_id` isolates users under one OAuth client, cold/stale `smart`
+    syncs + domain-miss refreshes + `show_object` live fallbacks consume `live` quota, and warm cache hits stay on `general`.
+    """
+    clock = [200.0]
+    mcp_cfg = ArodonataMCPSettings(
+        auth_mode="host",
+        tool_rate_limit_per_minute=10,
+        live_tool_rate_limit_per_minute=2,
+    )
+    qm = MCPToolQuotaManager.from_settings(mcp_cfg, monotonic_fn=lambda: clock[0])
+
+    async with ArodonataClient(
+        ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="k1", cache_ttl=300),
+        api=_SmartQuotaFakeApi(),
+    ) as client:
+        await client.cache.upsert_domains([DomainInfo(id="mds1:Corp", mgmt_name="mds1", uid="dom-corp", name="Corp")])
+        srv = create_mcp_server(client, mcp_settings=mcp_cfg, quota_manager=qm)
+
+        # 1. Warm cache hits for Carol consume ONLY general quota (5 calls > live limit of 2 all succeed)
+        await client.cache.replace_domain_objects(
+            "mds1",
+            "Corp",
+            [CPObject(uid="h-warm", name="warm-host", type="host", mgmt_name="mds1", domain_name="Corp")],
+            types=["host"],
+        )
+        await client.cache.upsert_sync_state(
+            DomainSyncState(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                scope="objects",
+                item_type="host",
+                synced_at=utc_now(),
+                status="ok",
+                last_session_uid="pub-1",
+            )
+        )
+        with user_context(user_id="carol", client_id="SHARED_OAUTH_APP"):
+            for _ in range(5):
+                warm_res = await srv.call_tool(
+                    "list_objects",
+                    {"mgmt_name": "mds1", "domain": "Corp", "types": ["host"], "cache_mode": "smart"},
+                )
+                assert warm_res.is_error is False
+
+        # 2. Alice cold/stale `smart` sync + domain-miss `validate_domain_or_fail` exhaust live=2 independently of Bob
+        client.invalidate_domain("mds1", "Corp")
+        with user_context(user_id="alice", client_id="SHARED_OAUTH_APP"):
+            cold_smart = await srv.call_tool(
+                "list_objects",
+                {"mgmt_name": "mds1", "domain": "Corp", "types": ["host"], "cache_mode": "smart"},
+            )
+            assert cold_smart.is_error is False
+
+            # Unknown domain triggers a live domain-list refresh -> consumes Alice's 2nd live slot
+            unk_dom = await srv.call_tool(
+                "list_objects",
+                {"mgmt_name": "mds1", "domain": "MissingDom", "types": ["host"], "cache_mode": "cache"},
+            )
+            assert unk_dom.is_error is True
+            assert "Unknown domain" in unk_dom.content[0].text  # type: ignore[union-attr]
+
+            # Next live fallback via `show_object` hits Alice's live=2 limit with composite caller ID
+            live_miss = await srv.call_tool(
+                "show_object",
+                {"uid_or_name": "nonexistent-obj", "mgmt_name": "mds1", "domain": "Corp", "cache_mode": "smart"},
+            )
+            assert live_miss.is_error is True
+            err_alice = json.loads(live_miss.content[0].text)  # type: ignore[union-attr]
+            assert err_alice["error_code"] == "rate_limit_exceeded"
+            assert err_alice["bucket"] == "live"
+            assert err_alice["client_id"] == "SHARED_OAUTH_APP:alice"
+
+        # 3. Bob shares client_id="SHARED_OAUTH_APP" but is completely isolated from Alice
+        with user_context(user_id="bob", client_id="SHARED_OAUTH_APP"):
+            bob_res = await srv.call_tool(
+                "show_object",
+                {"uid_or_name": "nonexistent-obj", "mgmt_name": "mds1", "domain": "Corp", "cache_mode": "smart"},
+            )
+            assert bob_res.is_error is True
+            assert "not found" in bob_res.content[0].text  # type: ignore[union-attr]

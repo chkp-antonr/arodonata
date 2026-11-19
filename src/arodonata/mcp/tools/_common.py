@@ -6,22 +6,47 @@ import hashlib
 import hmac
 import json
 from collections.abc import Callable, Sequence
-from datetime import datetime
 from typing import Any, Literal
 
 from arodonata.client import ArodonataClient
-from arodonata.core.errors import InvalidCredentialsError, sanitize_mapping
+from arodonata.core.errors import sanitize_mapping
 from arodonata.core.models.assets import Asset
-from arodonata.core.models.common import CANONICAL_ASSET_TYPES, CacheMode, SyncScope, utc_now
+from arodonata.core.models.common import CANONICAL_ASSET_TYPES, SyncScope
 from arodonata.core.models.domains import DomainInfo
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import RulebaseLayerEntry, RulebaseType
 from arodonata.core.models.services import CPService
-from arodonata.core.ports import CachePort
 from arodonata.core.services.search_service import classify_search_term, matches_classified_term
 from arodonata.cpcrud import Plan
 from arodonata.cpcrud.state_reader import OBJECT_ITEM_TYPES, SERVICE_ITEM_TYPES
 from arodonata.mcp.errors import ToolFailure, validate_domain_or_fail
+from arodonata.mcp.tools._cache import (
+    _compute_cache_age as _compute_cache_age,
+)
+from arodonata.mcp.tools._cache import (
+    _enforce_live_quota_if_sync_required as _enforce_live_quota_if_sync_required,
+)
+from arodonata.mcp.tools._cache import (
+    _get_v2_cache as _get_v2_cache,
+)
+from arodonata.mcp.tools._cache import (
+    _is_live_cache_mode as _is_live_cache_mode,
+)
+from arodonata.mcp.tools._cache import (
+    _is_live_rulebase_call as _is_live_rulebase_call,
+)
+from arodonata.mcp.tools._cache import (
+    _is_refresh_action as _is_refresh_action,
+)
+from arodonata.mcp.tools._cache import (
+    _normalize_cache_mode as _normalize_cache_mode,
+)
+from arodonata.mcp.tools._cache import (
+    _raise_if_sync_failed as _raise_if_sync_failed,
+)
+from arodonata.mcp.tools._cache import (
+    _upgrade_uninitialized_cache_mode as _upgrade_uninitialized_cache_mode,
+)
 from arodonata.rulebase import RULEBASE_TYPE_TO_COMMAND, PolicyPackageInfo
 
 MCPCacheModeInput = Literal["cache", "smart", "smart-fast", "force", "live"]
@@ -47,33 +72,6 @@ CANONICAL_SHOW_OBJECT_TYPES: frozenset[str] = (
 RULEBASE_TYPE_TO_LIVE_COMMAND: dict[RulebaseType, str] = RULEBASE_TYPE_TO_COMMAND
 
 
-def _is_live_cache_mode(kwargs: dict[str, Any]) -> bool:
-    """Return `True` when `cache_mode` requests live Management API execution (`'force'` or `'live'`)."""
-    raw = kwargs.get("cache_mode")
-    return isinstance(raw, str) and raw.strip().lower() in ("force", "live")
-
-
-def _is_live_rulebase_call(kwargs: dict[str, Any]) -> bool:
-    """Return `True` when `show_rulebase` arguments force a live Management API call."""
-    if _is_live_cache_mode(kwargs):
-        return True
-    bool_flags = (
-        "show_hits",
-        "show_as_ranges",
-        "show_expiration_settings",
-        "dereference_group_members",
-        "show_membership",
-    )
-    if any(bool(kwargs.get(flag)) for flag in bool_flags):
-        return True
-    return any(kwargs.get(opt) is not None for opt in ("order", "filter_settings", "hits_settings"))
-
-
-def _is_refresh_action(kwargs: dict[str, Any]) -> bool:
-    """Return `True` when `cache_control` invokes `action='refresh'`."""
-    return kwargs.get("action") == "refresh"
-
-
 def _canonical_plan_payload(plan_dict: dict[str, Any]) -> bytes:
     """Return canonical JSON bytes for a CPCRUD `Plan` dictionary excluding `plan_id` / `plan_signature`."""
     stripped = {k: v for k, v in plan_dict.items() if k not in ("plan_id", "plan_signature")}
@@ -81,128 +79,12 @@ def _canonical_plan_payload(plan_dict: dict[str, Any]) -> bytes:
     return json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
-def _sign_plan(hmac_key: bytes, plan_dict: dict[str, Any]) -> str:
-    """Compute HMAC-SHA256 hex digest over the canonical serialized `Plan`."""
-    return hmac.new(hmac_key, _canonical_plan_payload(plan_dict), hashlib.sha256).hexdigest()
-
-
-def _normalize_cache_mode(mode: str | None, *, default: CacheMode = "smart") -> tuple[CacheMode, bool]:
-    """Return `(cache_mode, is_live)` from a user-supplied `cache_mode` parameter."""
-    if not mode or not mode.strip():
-        return default, False
-    cleaned = mode.strip().lower()
-    if cleaned == "live":
-        return "force", True
-    if cleaned in ("cache", "smart", "smart-fast", "force"):
-        return cleaned, False  # type: ignore[return-value]
-    raise ToolFailure(f"Invalid cache_mode {mode!r}. Expected one of: 'cache', 'smart', 'smart-fast', 'force', 'live'.")
-
-
-def _get_v2_cache(client: ArodonataClient) -> CachePort:
-    """Return the active `CachePort` exposed by `client.cache`."""
-    return client.cache
-
-
-async def _upgrade_uninitialized_cache_mode(
-    client: ArodonataClient,
-    mgmt_name: str | None,
-    domain: str | None,
-    scope: Literal["domains", "objects", "services", "assets"],
-    mode: CacheMode,
-) -> CacheMode:
-    """Upgrade `cache_mode='cache'` to `'smart'` when `scope` has never been synced and holds zero rows."""
-    if mode != "cache":
-        return mode
-    v2_cache = _get_v2_cache(client)
-    states = await v2_cache.list_sync_states(
-        mgmt_name=mgmt_name,
-        domain_name=domain if domain else None,
-        scope=scope,
-    )
-    if states:
-        return mode
-    if scope == "domains":
-        existing_domains = await v2_cache.get_domains(mgmt_name=mgmt_name, include_global=True)
-        return mode if existing_domains else "smart"
-    if scope == "objects":
-        topo_states = await v2_cache.list_sync_states(
-            mgmt_name=mgmt_name,
-            domain_name=domain if domain else None,
-            scope="topology",
-        )
-        if topo_states:
-            return "smart"
-        existing: Sequence[Any] = await v2_cache.get_objects(
-            mgmt_name=mgmt_name, domain_name=domain if domain else None
-        )
-    elif scope == "services":
-        existing = await v2_cache.get_services(mgmt_name=mgmt_name, domain_name=domain if domain else None)
-    else:
-        existing = await v2_cache.get_assets(mgmt_name=mgmt_name, domain_name=domain if domain else None)
-    if existing:
-        return mode
-    return "smart"
-
-
-async def _compute_cache_age(
-    client: ArodonataClient,
-    mgmt_name: str | None,
-    domain: str | None,
-    scope: SyncScope,
-    item_type: str = "*",
-    *,
-    now_fn: Callable[[], datetime] = utc_now,
-) -> float | None:
-    """Compute `cache_age_seconds` from `domain_sync_state` for `(mgmt_name, domain, scope, item_type)`."""
-    v2_cache = _get_v2_cache(client)
-    states = await v2_cache.list_sync_states(
-        mgmt_name=mgmt_name,
-        domain_name=domain if domain else None,
-        scope=scope,
-    )
-    if item_type != "*":
-        matching = [s for s in states if s.item_type in (item_type, "*")]
-        if matching:
-            states = matching
-
-    synced_times = [s.synced_at for s in states if s.synced_at is not None]
-    if not synced_times:
-        return None
-    latest = max(synced_times)
-    return float(max(0.0, round((now_fn() - latest).total_seconds(), 3)))
-
-
-async def _raise_if_sync_failed(
-    client: ArodonataClient,
-    mgmt_name: str,
-    domain: str | None,
-    scope: SyncScope,
-    item_type: str = "*",
-    *,
-    has_cached_data: bool = False,
-) -> None:
-    """Inspect `domain_sync_state` and raise `InvalidCredentialsError` or `ToolFailure` if sync failed."""
-    states = await client.cache.list_sync_states(
-        mgmt_name=mgmt_name,
-        domain_name=domain if domain else None,
-        scope=scope,
-    )
-    if item_type != "*":
-        matching = [s for s in states if s.item_type in (item_type, "*")]
-        if matching:
-            states = matching
-
-    for st in states:
-        if st.status == "failed" and st.last_error:
-            lowered = st.last_error.lower()
-            if any(kw in lowered for kw in ("login", "credential", "authentication", "rejected", "unauthorized")):
-                raise InvalidCredentialsError(st.last_error)
-            if not has_cached_data:
-                raise ToolFailure(
-                    f"Synchronization failed for {mgmt_name!r} ({domain or 'default'}): {st.last_error}",
-                    mgmt_name=mgmt_name,
-                    domain=domain,
-                )
+def _sign_plan(hmac_key: bytes, plan_dict: dict[str, Any], *, owner_id: str | None = None) -> str:
+    """Compute HMAC-SHA256 hex digest over the canonical serialized `Plan` (optionally bound to `owner_id`)."""
+    payload = _canonical_plan_payload(plan_dict)
+    if owner_id is not None:
+        payload = owner_id.encode("utf-8") + b"\x00" + payload
+    return hmac.new(hmac_key, payload, hashlib.sha256).hexdigest()
 
 
 def _serialize_domain(dom: DomainInfo, details_level: str = "standard") -> dict[str, Any]:

@@ -31,6 +31,7 @@ from arodonata.mcp.quota import MCPToolQuotaManager
 from arodonata.mcp.tools._common import (
     _build_page_envelope,
     _compute_cache_age,
+    _enforce_live_quota_if_sync_required,
     _fetch_live_collection,
     _filter_assets,
     _filter_cp_objects,
@@ -145,6 +146,14 @@ def register_object_tools(
             return json_tool_result(live_envelope)
 
         mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "objects", mode)
+        await _enforce_live_quota_if_sync_required(
+            client,
+            eff_mgmt,
+            eff_domain,
+            "objects",
+            mode,
+            item_types=normalized_types or list(DEFAULT_OBJECT_TYPES),
+        )
         objs = await client.get_objects(
             mgmt_name=eff_mgmt,
             domain=eff_domain,
@@ -214,6 +223,14 @@ def register_object_tools(
             return json_tool_result(live_envelope)
 
         mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "services", mode)
+        await _enforce_live_quota_if_sync_required(
+            client,
+            eff_mgmt,
+            eff_domain,
+            "services",
+            mode,
+            item_types=normalized_types or list(DEFAULT_SERVICE_TYPES),
+        )
         svcs = await client.get_services(
             mgmt_name=eff_mgmt,
             domain=eff_domain,
@@ -299,6 +316,7 @@ def register_object_tools(
 
         # When filtering by `parent`, load all domain assets first so parent -> member_uids can be resolved
         mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "assets", mode)
+        await _enforce_live_quota_if_sync_required(client, eff_mgmt, eff_domain, "assets", mode)
         all_assets = await client.get_gateways(
             mgmt_name=eff_mgmt,
             domain=eff_domain,
@@ -358,6 +376,14 @@ def register_object_tools(
         raw_types = [t.strip() for t in types if t and t.strip()] if types else None
         mode, _ = _normalize_cache_mode(cache_mode, default="smart")
         mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "objects", mode)
+        await _enforce_live_quota_if_sync_required(
+            client,
+            eff_mgmt,
+            eff_domain,
+            "objects",
+            mode,
+            domains=target_domains,
+        )
         result = await client.search_objects(
             query,
             mgmt_name=eff_mgmt,
@@ -432,6 +458,14 @@ def register_object_tools(
 
         mode, _ = _normalize_cache_mode(cache_mode, default="smart")
         mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "objects", mode)
+        await _enforce_live_quota_if_sync_required(
+            client,
+            eff_mgmt,
+            eff_domain,
+            "objects",
+            mode,
+            domains=domains,
+        )
         result = await client.query_objects(
             mgmt_name=eff_mgmt,
             domain_name=eff_domain,

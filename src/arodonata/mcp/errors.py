@@ -5,6 +5,8 @@ from __future__ import annotations
 import functools
 import json
 from collections.abc import Awaitable, Callable, Iterable
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 
 import arlogi
@@ -25,16 +27,18 @@ from arodonata.core.errors import (
     sanitize_mapping,
 )
 from arodonata.core.telemetry import span_attrs
-from arodonata.mcp.quota import MCPToolQuotaManager
+from arodonata.mcp.quota import MCPToolQuotaManager, QuotaDecision
 
 logger = arlogi.get_logger(__name__)
 
 
 async def collect_known_sids(
-    client: ArodonataClient,
+    client: ArodonataClient | None,
     mgmt_name: str | None = None,
 ) -> list[str]:
-    """Collect active session tokens from the SID cache and transport adapter for redaction."""
+    """Collect active session tokens from the SID cache and public client dedicated-SID registry."""
+    if client is None:
+        return []
     sids: list[str] = []
     try:
         cached = await client.cache.list_sids(mgmt_name=mgmt_name)
@@ -44,14 +48,14 @@ async def collect_known_sids(
     except Exception:
         pass
 
-    api_obj = getattr(client, "api", None)
-    if api_obj is not None:
-        active_set = getattr(api_obj, "_active_dedicated_sids", None)
-        if isinstance(active_set, (set, list, tuple)):
-            for item in active_set:
-                sid_val = item[1] if isinstance(item, tuple) and len(item) >= 2 else item
+    get_dedicated = getattr(client, "get_active_dedicated_sids", None)
+    if callable(get_dedicated):
+        try:
+            for sid_val in get_dedicated(mgmt_name=mgmt_name):
                 if isinstance(sid_val, str) and sid_val and sid_val not in sids:
                     sids.append(sid_val)
+        except Exception:
+            pass
     return sids
 
 
@@ -75,15 +79,79 @@ class ToolFailure(ArodonataError):
         self.details = dict(details) if details is not None else None
 
 
-def _resolve_mcp_client_id() -> str:
-    """Resolve the active MCP `client_id` from `UserContext`, falling back to `'anonymous'`."""
+@dataclass(slots=True)
+class _ActiveQuotaState:
+    """Per-invocation quota context for deferred live-sync charging inside an MCP tool call."""
+
+    quota_manager: MCPToolQuotaManager
+    client_id: str
+    tool_name: str
+    live_consumed: bool = False
+
+
+_ACTIVE_MCP_QUOTA_STATE: ContextVar[_ActiveQuotaState | None] = ContextVar(
+    "arodonata_active_mcp_quota_state",
+    default=None,
+)
+
+
+def resolve_mcp_caller_id() -> str:
+    """Resolve the active MCP caller identity (`client_id[:user_id]`) from `UserContext`, or `'anonymous'`."""
     ctx = get_user_context()
     if ctx is not None:
-        if isinstance(ctx.client_id, str) and ctx.client_id.strip():
-            return ctx.client_id.strip()
-        if isinstance(ctx.user_id, str) and ctx.user_id.strip():
-            return ctx.user_id.strip()
+        cid = ctx.client_id.strip() if isinstance(ctx.client_id, str) and ctx.client_id.strip() else None
+        uid = ctx.user_id.strip() if isinstance(ctx.user_id, str) and ctx.user_id.strip() else None
+        if cid and uid:
+            return cid if cid == uid else f"{cid}:{uid}"
+        if cid:
+            return cid
+        if uid:
+            return uid
     return "anonymous"
+
+
+_resolve_mcp_client_id = resolve_mcp_caller_id
+
+
+def _emit_rate_limit_failure(tool_name: str, client_id: str, decision: QuotaDecision) -> ToolFailure:
+    """Record rate-limit telemetry/audit warning and construct a structured `ToolFailure`."""
+    span_attrs(
+        mcp_rate_limited=True,
+        mcp_client_id=client_id,
+        mcp_tool=tool_name,
+        mcp_quota_bucket=decision.bucket,
+    )
+    logger.warning(
+        "MCP tool rate limit exceeded",
+        tool=tool_name,
+        client_id=client_id,
+        bucket=decision.bucket,
+        limit=decision.limit,
+        retry_after_seconds=decision.retry_after_seconds,
+    )
+    return ToolFailure(
+        f"Rate limit exceeded for MCP tool {tool_name!r} "
+        f"(bucket={decision.bucket}, limit={decision.limit}/min). "
+        f"Retry after {decision.retry_after_seconds}s.",
+        error_code="rate_limit_exceeded",
+        details={
+            "client_id": client_id,
+            "bucket": decision.bucket,
+            "limit_per_minute": decision.limit,
+            "retry_after_seconds": decision.retry_after_seconds,
+        },
+    )
+
+
+def consume_live_quota_if_needed() -> None:
+    """Consume a `live` quota slot for the active guarded tool call when remote sync is required."""
+    state = _ACTIVE_MCP_QUOTA_STATE.get()
+    if state is None or state.live_consumed:
+        return
+    decision = state.quota_manager.check_and_consume_live_only(state.client_id)
+    if not decision.allowed:
+        raise _emit_rate_limit_failure(state.tool_name, state.client_id, decision)
+    state.live_consumed = True
 
 
 def resolve_mgmt_name(client: ArodonataClient, mgmt_name: str | None = None) -> str:
@@ -158,6 +226,7 @@ async def validate_domain_or_fail(
         return clean_domain
 
     # 2. Perform at most a single domain-list refresh on a miss
+    consume_live_quota_if_needed()
     try:
         refreshed_domains = await client.get_domains(
             mgmt_name=mgmt_name,
@@ -240,6 +309,25 @@ def json_tool_result(
     )
 
 
+def _format_structured_tool_failure(
+    tf: ToolFailure,
+    *,
+    tool_name: str,
+    sanitized_reason: str,
+) -> dict[str, Any]:
+    """Build structured `ToolFailure` JSON payload where core envelope keys cannot be overridden by `details`."""
+    payload: dict[str, Any] = dict(tf.details) if tf.details else {}
+    payload.update(
+        {
+            "error": "ToolFailure",
+            "error_code": tf.error_code,
+            "message": sanitized_reason,
+            "tool": tool_name,
+        }
+    )
+    return payload
+
+
 def mcp_tool_guard(
     tool_name: str,
     client_getter: Callable[[], ArodonataClient],
@@ -258,51 +346,33 @@ def mcp_tool_guard(
     ) -> Callable[..., Awaitable[CallToolResult]]:
         @functools.wraps(fn)
         async def wrapper(*args: Any, **kwargs: Any) -> CallToolResult:
-            if quota_manager is not None:
-                client_id = redact_sid(_resolve_mcp_client_id())
-                is_live = is_live_tool(kwargs) if callable(is_live_tool) else bool(is_live_tool)
-                decision = quota_manager.check_and_consume(client_id, is_live=is_live)
-                if not decision.allowed:
-                    span_attrs(
-                        mcp_rate_limited=True,
-                        mcp_client_id=client_id,
-                        mcp_tool=tool_name,
-                        mcp_quota_bucket=decision.bucket,
-                    )
-                    logger.warning(
-                        "MCP tool rate limit exceeded",
-                        tool=tool_name,
-                        client_id=client_id,
-                        bucket=decision.bucket,
-                        limit=decision.limit,
-                        retry_after_seconds=decision.retry_after_seconds,
-                    )
-                    return json_tool_result(
-                        {
-                            "error": "ToolFailure",
-                            "error_code": "rate_limit_exceeded",
-                            "message": (
-                                f"Rate limit exceeded for MCP tool {tool_name!r} "
-                                f"(bucket={decision.bucket}, limit={decision.limit}/min). "
-                                f"Retry after {decision.retry_after_seconds}s."
-                            ),
-                            "tool": tool_name,
-                            "client_id": client_id,
-                            "bucket": decision.bucket,
-                            "limit_per_minute": decision.limit,
-                            "retry_after_seconds": decision.retry_after_seconds,
-                        },
-                        is_error=True,
-                    )
-
             mgmt_arg = kwargs.get("mgmt_name") if isinstance(kwargs.get("mgmt_name"), str) else None
             domain_arg = (
                 kwargs.get("domain")
                 if isinstance(kwargs.get("domain"), str)
                 else (kwargs.get("domain_name") if isinstance(kwargs.get("domain_name"), str) else None)
             )
+            quota_token: Any = None
             try:
-                return await fn(*args, **kwargs)
+                if quota_manager is not None:
+                    client_id = redact_sid(resolve_mcp_caller_id())
+                    is_live = is_live_tool(kwargs) if callable(is_live_tool) else bool(is_live_tool)
+                    decision = quota_manager.check_and_consume(client_id, is_live=is_live)
+                    if not decision.allowed:
+                        raise _emit_rate_limit_failure(tool_name, client_id, decision)
+                    quota_token = _ACTIVE_MCP_QUOTA_STATE.set(
+                        _ActiveQuotaState(
+                            quota_manager=quota_manager,
+                            client_id=client_id,
+                            tool_name=tool_name,
+                            live_consumed=is_live,
+                        )
+                    )
+                try:
+                    return await fn(*args, **kwargs)
+                finally:
+                    if quota_token is not None:
+                        _ACTIVE_MCP_QUOTA_STATE.reset(quota_token)
             except ToolFailure as tf:
                 eff_mgmt = tf.mgmt_name or mgmt_arg
                 eff_dom = tf.domain or domain_arg
@@ -311,22 +381,18 @@ def mcp_tool_guard(
                 except Exception:
                     known_sids = []
                 sanitized_reason = redact_sid(tf.message, known_sids=known_sids)
-                logger.warning(
-                    "MCP ToolFailure",
-                    tool=tool_name,
-                    mgmt_name=eff_mgmt,
-                    domain=eff_dom,
-                    error=sanitized_reason,
-                )
+                if tf.error_code != "rate_limit_exceeded":
+                    logger.warning(
+                        "MCP ToolFailure",
+                        tool=tool_name,
+                        mgmt_name=eff_mgmt,
+                        domain=eff_dom,
+                        error=sanitized_reason,
+                    )
                 if tf.error_code is not None:
-                    err_payload: dict[str, Any] = {
-                        "error": "ToolFailure",
-                        "error_code": tf.error_code,
-                        "message": sanitized_reason,
-                        "tool": tool_name,
-                    }
-                    if tf.details:
-                        err_payload.update(tf.details)
+                    err_payload = _format_structured_tool_failure(
+                        tf, tool_name=tool_name, sanitized_reason=sanitized_reason
+                    )
                     return json_tool_result(err_payload, is_error=True, known_sids=known_sids)
                 return CallToolResult(
                     content=[TextContent(type="text", text=sanitized_reason)],
@@ -409,10 +475,12 @@ def mcp_tool_guard(
 __all__ = [
     "ToolFailure",
     "collect_known_sids",
+    "consume_live_quota_if_needed",
     "format_invalid_credentials_failure",
     "get_known_domain_names",
     "json_tool_result",
     "mcp_tool_guard",
+    "resolve_mcp_caller_id",
     "resolve_mgmt_name",
     "validate_domain_or_fail",
 ]

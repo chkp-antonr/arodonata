@@ -11,7 +11,7 @@ from mcp.types import CallToolResult
 from arodonata.client import ArodonataClient
 from arodonata.core.context import SERVICE_COMMAND_TYPES
 from arodonata.core.errors import AmbiguousObjectError
-from arodonata.core.models.common import CANONICAL_ASSET_TYPES
+from arodonata.core.models.common import CANONICAL_ASSET_TYPES, CacheMode, SyncScope
 from arodonata.mcp.config import ArodonataMCPSettings
 from arodonata.mcp.errors import (
     ToolFailure,
@@ -25,6 +25,7 @@ from arodonata.mcp.tools._common import (
     CANONICAL_LAYER_AND_PACKAGE_TYPES,
     _build_page_envelope,
     _compute_cache_age,
+    _enforce_live_quota_if_sync_required,
     _is_live_cache_mode,
     _normalize_cache_mode,
     _serialize_any_entity,
@@ -40,6 +41,30 @@ from arodonata.mcp.tools._show_object import (
     sliced_candidate_result,
     validate_show_object_type,
 )
+
+
+async def _resolve_lookup_mode_and_enforce_live_quota(
+    client: ArodonataClient,
+    eff_mgmt: str,
+    eff_domain: str | None,
+    mode: CacheMode,
+    *,
+    scope: SyncScope = "objects",
+    item_types: list[str] | None = None,
+) -> tuple[str | None, CacheMode]:
+    """Resolve implicit domain sync mode and enforce live quota if domain or scope sync is required."""
+    if mode != "cache" and eff_domain is None and not await client.cache.get_domains(eff_mgmt, include_global=True):
+        await _enforce_live_quota_if_sync_required(client, eff_mgmt, None, "domains", mode)
+    sync_domain, eff_mode = await client.search_service.resolve_implicit_domain_mode(eff_mgmt, eff_domain, mode)
+    await _enforce_live_quota_if_sync_required(
+        client,
+        eff_mgmt,
+        sync_domain or eff_domain,
+        scope,
+        eff_mode,
+        item_types=item_types,
+    )
+    return sync_domain, eff_mode
 
 
 def register_lookup_tools(
@@ -69,6 +94,7 @@ def register_lookup_tools(
         mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
         if not is_live:
             mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, None, "domains", mode)
+            await _enforce_live_quota_if_sync_required(client, eff_mgmt, None, "domains", mode)
         domains = await client.get_domains(
             mgmt_name=eff_mgmt,
             include_global=include_global,
@@ -121,12 +147,29 @@ def register_lookup_tools(
         has_explicit_wildcard = "*" in query_str or "?" in query_str
 
         if not is_live:
-            sync_domain, eff_mode = await client.search_service.resolve_implicit_domain_mode(eff_mgmt, eff_domain, mode)
             is_service_type = clean_obj_type is not None and (
                 clean_obj_type in SERVICE_COMMAND_TYPES or clean_obj_type.startswith("service-")
             )
             is_asset_type = clean_obj_type is not None and clean_obj_type in {t.lower() for t in CANONICAL_ASSET_TYPES}
             is_layer_or_pkg_type = clean_obj_type is not None and clean_obj_type in CANONICAL_LAYER_AND_PACKAGE_TYPES
+            eff_scope: SyncScope = (
+                "services"
+                if is_service_type
+                else "assets"
+                if is_asset_type
+                else "rulebase"
+                if is_layer_or_pkg_type
+                else "objects"
+            )
+            item_types = [clean_obj_type] if clean_obj_type and eff_scope in ("objects", "services") else None
+            sync_domain, eff_mode = await _resolve_lookup_mode_and_enforce_live_quota(
+                client,
+                eff_mgmt,
+                eff_domain,
+                mode,
+                scope=eff_scope,
+                item_types=item_types,
+            )
 
             if not has_explicit_wildcard and not is_layer_or_pkg_type:
                 try:
@@ -273,7 +316,13 @@ def register_lookup_tools(
         eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
         target_domain = eff_domain or "default"
         mode, _ = _normalize_cache_mode(cache_mode, default="smart")
-        sync_domain, eff_mode = await client.search_service.resolve_implicit_domain_mode(eff_mgmt, eff_domain, mode)
+        sync_domain, eff_mode = await _resolve_lookup_mode_and_enforce_live_quota(
+            client,
+            eff_mgmt,
+            eff_domain,
+            mode,
+            scope="objects",
+        )
 
         try:
             resolved_group, members = await client.search_service.resolve_group_with_members(
