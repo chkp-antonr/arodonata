@@ -252,6 +252,49 @@ def to_naive_utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
+def _parse_posix_timestamp(value: int | float) -> datetime:
+    ts = float(value)
+    if ts > 1e11:  # Milliseconds epoch
+        ts = ts / 1000.0
+    return datetime.fromtimestamp(ts, tz=UTC).replace(tzinfo=None)
+
+
+def _parse_iso_datetime(iso_str: str) -> datetime | None:
+    normalized = iso_str
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    # Handle "+0300" -> "+03:00"
+    if len(normalized) >= 5 and normalized[-5] in ("+", "-") and ":" not in normalized[-5:]:
+        normalized = f"{normalized[:-2]}:{normalized[-2:]}"
+    try:
+        dt = datetime.fromisoformat(normalized)
+        return to_naive_utc(dt)
+    except ValueError:
+        return None
+
+
+def parse_cp_publish_timestamp(raw_time: Any) -> datetime | None:
+    """Parse Check Point `publish-time` or `last-modify-time` dict/string/int into a naive UTC `datetime`."""
+    if raw_time is None:
+        return None
+    if isinstance(raw_time, datetime):
+        return to_naive_utc(raw_time)
+    if isinstance(raw_time, dict):
+        iso_str = raw_time.get("iso-8601") or raw_time.get("iso_8601")
+        if isinstance(iso_str, str) and iso_str.strip():
+            parsed = _parse_iso_datetime(iso_str.strip())
+            if parsed is not None:
+                return parsed
+        posix_val = raw_time.get("posix")
+        if isinstance(posix_val, (int, float)):
+            return _parse_posix_timestamp(posix_val)
+    if isinstance(raw_time, (int, float)):
+        return _parse_posix_timestamp(raw_time)
+    if isinstance(raw_time, str) and raw_time.strip():
+        return _parse_iso_datetime(raw_time.strip())
+    return None
+
+
 class ApiCallResult(BaseModel):
     """Typed result of a single Check Point Management API call."""
 

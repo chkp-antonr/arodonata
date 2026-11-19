@@ -14,7 +14,7 @@ import asyncio
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 import arlogi
 
@@ -28,8 +28,13 @@ from arodonata.core.errors import (
 )
 from arodonata.core.models.common import ApiCallResult, CacheMode, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainInfo, DomainSyncState
-from arodonata.core.ports import ApiPort, CachePort, LockPort
+from arodonata.core.ports import ApiPort, DomainCachePort, LockPort, SyncStatePort
 from arodonata.core.telemetry import span_attrs, traced
+
+
+class _DomainServiceCachePort(DomainCachePort, SyncStatePort, Protocol):
+    """Cache capabilities required by `DomainService`."""
+
 
 logger = arlogi.get_logger(__name__)
 
@@ -228,7 +233,7 @@ class DomainService:
         *,
         settings: ArodonataSettings,
         api: ApiPort,
-        cache: CachePort,
+        cache: _DomainServiceCachePort,
         lock_port: LockPort | None = None,
         tracker: DomainListRefreshTracker | None = None,
         now_fn: Callable[[], datetime] = utc_now,

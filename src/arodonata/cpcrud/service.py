@@ -20,7 +20,7 @@ from arodonata.core.context import AuthContext, UserContext
 from arodonata.core.errors import ConfigurationError, ValidationError
 from arodonata.core.events import CPCRUDEvent
 from arodonata.core.models.common import ApiCallResult, utc_now
-from arodonata.core.ports import ApiPort, CachePort
+from arodonata.core.ports import ApiPort
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.cpcrud.executor import Executor
 from arodonata.cpcrud.inverse import build_inverse_template
@@ -31,7 +31,7 @@ from arodonata.cpcrud.models import (
     NamingPrefixes,
     Plan,
 )
-from arodonata.cpcrud.planner import Planner
+from arodonata.cpcrud.planner import Planner, _PlannerCachePort
 from arodonata.cpcrud.validator import parse_template_input, validate_template
 
 
@@ -43,7 +43,7 @@ class CPCRUDService:
         *,
         settings: ArodonataSettings,
         api: ApiPort,
-        cache: CachePort,
+        cache: _PlannerCachePort,
         on_domain_invalidated: Callable[[str, str | None], None] | None = None,
         ensure_initialized: Callable[[], Any] | None = None,
         now_fn: Callable[[], datetime] = utc_now,

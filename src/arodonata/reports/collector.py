@@ -14,18 +14,17 @@ Implements `collect_change_report`:
 
 from __future__ import annotations
 
-import re
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 import arlogi
 
 from arodonata.core.errors import ChangeReportInputError, ServerIdentityError, redact_sid, sanitize_mapping
-from arodonata.core.models.common import to_naive_utc, utc_now
+from arodonata.core.models.common import parse_cp_publish_timestamp, to_naive_utc, utc_now
 from arodonata.core.models.rulebase import RulebaseType
-from arodonata.core.ports import ApiPort, CachePort
-from arodonata.core.services.sync_coordinator import parse_cp_publish_timestamp
+from arodonata.core.ports import ApiPort, ObjectCachePort, RulebaseCachePort, ServiceCachePort, SyncStatePort
+from arodonata.core.primitives import is_uuid
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.reports.models import (
     ChangeOperation,
@@ -47,8 +46,6 @@ from arodonata.reports.placement import apply_session_rule_placement
 logger = arlogi.get_logger(__name__)
 
 MAX_UID_LOOKUPS = 200
-
-_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 RULE_OBJECT_TYPES: frozenset[str] = frozenset(
     {
@@ -135,9 +132,7 @@ SYSTEM_INTERNAL_OBJECT_TYPES: frozenset[str] = frozenset(
 
 def is_bare_uid(value: Any) -> bool:
     """Return `True` if `value` is a bare UUID string (`8-4-4-4-12` hex)."""
-    if not isinstance(value, str):
-        return False
-    return bool(_UUID_RE.match(value.strip()))
+    return is_uuid(value)
 
 
 def _rulebase_type_from_obj_type(obj_type: str) -> RulebaseType:
@@ -941,10 +936,14 @@ def _replace_resolved_uids_in_session(
             fd.removed_items = _sub_list(fd.removed_items)
 
 
+class _ReportCachePort(ObjectCachePort, ServiceCachePort, RulebaseCachePort, SyncStatePort, Protocol):
+    """Cache capabilities required by change report collection and placement numbering."""
+
+
 @traced
 async def collect_change_report(
     api: ApiPort,
-    cache: CachePort,
+    cache: _ReportCachePort,
     scopes: Sequence[ReportScope | dict[str, Any]],
     *,
     options: RenderOptions | None = None,

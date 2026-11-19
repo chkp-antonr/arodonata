@@ -239,7 +239,7 @@ The cache layer SHALL persist `TopologyAnnotation` records in `arodonata_topolog
 
 #### Scenario: SCN-TOPO-012-2 — Policy package resolution combines asset policy metadata and rulebase installation targets
 
-- **GIVEN** an affected gateway with `raw_data["policy"]["access-policy-name"] = "Standard_Policy"` or an entry in cached `PolicyPackageInfo.installation_targets`
+- **GIVEN** an affected gateway with `raw_data["policy"]["access-policy-name"] = "Standard_Policy"` or an entry in cached `PolicyPackageInfo.raw_data["installation-targets"]`
 - **WHEN** `find_affected_gateways()` builds the candidate
 - **THEN** it SHALL populate `installed_access_policy` and `policy_packages=[installed_policy]` (assigning the single active installed policy) alongside ordered `access_layers` when cached
 

@@ -25,12 +25,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import ipaddress
-import re
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 from weakref import WeakKeyDictionary
 
 import arlogi
@@ -51,11 +50,16 @@ from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import CacheMode, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainInfo, DomainSyncState, RefreshOutcome
 from arodonata.core.models.objects import CPObject
-from arodonata.core.models.rulebase import DomainRulebaseSnapshot
+from arodonata.core.models.rulebase import DomainRulebaseSnapshot, extract_policy_packages
 from arodonata.core.models.scripts import (
     CpridScriptMode,
     EnsureRepositoryScriptResult,
     RepositoryScriptStatus,
+)
+from arodonata.core.models.sentinels import (
+    ANY_RULE_TOKENS,
+    ORIGINAL_NAT_TOKENS,
+    POLICY_TARGETS_TOKENS,
 )
 from arodonata.core.models.topology import (
     LIVE_ROUTE_SOURCES,
@@ -79,7 +83,26 @@ from arodonata.core.models.topology import (
     TopologyZone,
     TrafficFlowMatch,
 )
-from arodonata.core.ports import ApiPort, CachePort, GatewayCliCallable, GatewayCliPort
+from arodonata.core.ports import (
+    ApiPort,
+    AssetCachePort,
+    DomainCachePort,
+    GatewayCliCallable,
+    GatewayCliPort,
+    ObjectCachePort,
+    RulebaseCachePort,
+    RulebaseRefreshPort,
+    SyncStatePort,
+    TopologyCachePort,
+)
+from arodonata.core.primitives import (
+    MAX_IPV4_INT,
+    effective_range_prefix_len,
+    is_uuid,
+    mask_to_prefix_len,
+    normalize_str_sequence,
+    parse_cidr_or_range_bounds,
+)
 from arodonata.core.services.asset_service import (
     VSX_CHILD_TYPES,
     AssetRefreshService,
@@ -108,16 +131,11 @@ from arodonata.core.services.sync_coordinator import (
     resolve_loop_state,
 )
 from arodonata.core.telemetry import span_attrs, traced
-from arodonata.cpcrud.rule_identity import NAT_ANY_OBJECT_UID, NAT_ORIGINAL_OBJECT_UID
-from arodonata.rulebase.numbering import extract_policy_packages
-from arodonata.rulebase.refresh import RulebaseRefreshService
 
 logger = arlogi.get_logger(__name__)
 
-MAX_IPV4_INT = 4294967295
 TOPOLOGY_OBJECT_LOOKUP_CONCURRENCY = 8
 _TOPOLOGY_OBJECT_SYNC_TYPES: tuple[str, ...] = ("group", "network", "host", "address-range")
-_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 POLICY_GATEWAY_TYPES: frozenset[str] = frozenset(
     {
@@ -168,33 +186,6 @@ def is_policy_enforcing_gateway(asset: Asset) -> bool:
     return "gateway" in lower_type or "cluster" in lower_type or "virtual-system" in lower_type
 
 
-def _mask_to_prefix_len(mask_val: str | int | None) -> int | None:
-    """Convert a netmask string (`255.255.255.0`) or integer prefix length (`24`) to `0..32`."""
-    if mask_val is None or mask_val == "":
-        return None
-    if isinstance(mask_val, int):
-        return mask_val if 0 <= mask_val <= 32 else None
-    clean = str(mask_val).strip()
-    if not clean:
-        return None
-    if clean.isdigit():
-        plen = int(clean)
-        return plen if 0 <= plen <= 32 else None
-    try:
-        return ipaddress.IPv4Network(f"0.0.0.0/{clean}", strict=False).prefixlen
-    except ValueError:
-        return None
-
-
-def _effective_range_prefix_len(ip_first_int: int, ip_last_int: int) -> int:
-    """Compute an effective specificity (`0..32`) from an IPv4 integer interval span."""
-    span = max(0, ip_last_int - ip_first_int)
-    if span == 0:
-        return 32
-    bits = span.bit_length()
-    return max(0, 32 - bits)
-
-
 @dataclass(frozen=True)
 class _NormalizedInterface:
     """Internal normalized representation of a gateway/cluster/VS network interface."""
@@ -235,34 +226,6 @@ class _InterfaceMatch:
     is_standby_path: bool = False
     confidence_factors: tuple[ConfidenceDelta, ...] = ()
     warnings: tuple[str, ...] = ()
-
-
-_ANY_RULE_TOKENS: frozenset[str] = frozenset(
-    {
-        "any",
-        "cpmianyobject",
-        NAT_ANY_OBJECT_UID.lower(),
-        "0.0.0.0/0",
-    }
-)
-
-_ORIGINAL_NAT_TOKENS: frozenset[str] = frozenset(
-    {
-        "original",
-        NAT_ORIGINAL_OBJECT_UID.lower(),
-    }
-)
-
-_POLICY_TARGETS_TOKENS: frozenset[str] = frozenset(
-    {
-        "policy targets",
-        "policy-targets",
-        "policy_targets",
-        "all",
-        "*",
-        "6c488338-8eec-4103-ad21-cd461ac2c476",
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -381,7 +344,7 @@ def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -
         except ValueError:
             ipv4_address = None
 
-    mask_len = _mask_to_prefix_len(
+    mask_len = mask_to_prefix_len(
         raw_if.get("ipv4-mask-length")
         or raw_if.get("ipv4_mask_length")
         or raw_if.get("mask-length")
@@ -402,7 +365,7 @@ def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -
     def _extract_inline_cidr(spec_dict: dict[str, Any]) -> str | None:
         sub4 = spec_dict.get("subnet4") or spec_dict.get("subnet")
         if sub4 and str(sub4).strip():
-            plen = _mask_to_prefix_len(
+            plen = mask_to_prefix_len(
                 spec_dict.get("mask-length4")
                 or spec_dict.get("mask_length4")
                 or spec_dict.get("mask-length")
@@ -720,7 +683,7 @@ def _parse_route_destination(route: dict[str, Any]) -> ipaddress.IPv4Network | N
     if mask_val is None and dest_str == "0.0.0.0":
         return ipaddress.IPv4Network("0.0.0.0/0")
 
-    plen = _mask_to_prefix_len(mask_val)
+    plen = mask_to_prefix_len(mask_val)
     if plen is None:
         plen = 0 if dest_str == "0.0.0.0" else 32
     try:
@@ -940,6 +903,18 @@ async def _run_single_flight[T](
             flights.pop(flight_key, None)
 
 
+class _TopologyServiceCachePort(
+    DomainCachePort,
+    ObjectCachePort,
+    AssetCachePort,
+    TopologyCachePort,
+    RulebaseCachePort,
+    SyncStatePort,
+    Protocol,
+):
+    """Cache capabilities required by `TopologyService`."""
+
+
 class TopologyService:
     """Extracts, caches, reconciles, and matches gateway interface topology and live routes across domains."""
 
@@ -948,28 +923,23 @@ class TopologyService:
         *,
         settings: ArodonataSettings,
         api: ApiPort,
-        cache: CachePort,
+        cache: _TopologyServiceCachePort,
         coordinator: DomainSyncCoordinator,
         asset_service: AssetRefreshService,
         object_service: ObjectService,
-        rulebase_refresh: RulebaseRefreshService | None = None,
+        rulebase_refresh: RulebaseRefreshPort | None = None,
         gateway_cli: GatewayCliPort | GatewayCliCallable | None = None,
         script_service: ScriptRepositoryService | None = None,
         now_fn: Callable[[], datetime] = utc_now,
     ) -> None:
+        """Initialize `TopologyService`; pass `rulebase_refresh` (`RulebaseRefreshPort`) to enable lazy `show-packages` catalog warming."""
         self._settings = settings
         self._api = api
         self._cache = cache
         self._coordinator = coordinator
         self._asset_service = asset_service
         self._object_service = object_service
-        self._rulebase_refresh = rulebase_refresh or RulebaseRefreshService(
-            settings=settings,
-            api=api,
-            cache=cache,
-            coordinator=coordinator,
-            now_fn=now_fn,
-        )
+        self._rulebase_refresh: RulebaseRefreshPort | None = rulebase_refresh
         self._gateway_cli = gateway_cli
         self._script_service = script_service or ScriptRepositoryService(api=api, settings=settings)
         self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
@@ -1023,6 +993,14 @@ class TopologyService:
         full_st = await self._cache.get_sync_state(mgmt_name, domain_name, "rulebase", "*")
         pkg_st = await self._cache.get_sync_state(mgmt_name, domain_name, "rulebase", "packages")
         if (full_st is not None and full_st.status == "ok") or (pkg_st is not None and pkg_st.status == "ok"):
+            return snap
+        if self._rulebase_refresh is None:
+            logger.warning(
+                f"Skipping lazy show-packages refresh during topology extraction on {mgmt_name}:{domain_name}: "
+                "TopologyService was initialized without rulebase_refresh (RulebaseRefreshPort).",
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+            )
             return snap
         try:
             await self._rulebase_refresh.refresh_policy_packages(
@@ -1141,11 +1119,7 @@ class TopologyService:
 
     @staticmethod
     def _normalize_gateway_filter_tokens(gateways: Sequence[str] | str | None) -> list[str]:
-        if gateways is None:
-            return []
-        if isinstance(gateways, str):
-            return [g.strip().lower() for g in gateways.split(",") if g.strip()]
-        return [str(g).strip().lower() for g in gateways if str(g).strip()]
+        return normalize_str_sequence(gateways, lowercase=True)
 
     @staticmethod
     def _matches_gateway_filter(asset: Asset, tokens: set[str]) -> bool:
@@ -1264,12 +1238,9 @@ class TopologyService:
         span_attrs(mgmt_name=mgmt_name, mode=mode, include_global=include_global, collect_routes=collect_routes)
         gw_tokens = self._normalize_gateway_filter_tokens(gateways)
 
-        if domains is None:
-            norm_domains: tuple[str, ...] | None = None
-        elif isinstance(domains, str):
-            norm_domains = tuple(sorted({d.strip() for d in domains.split(",") if d.strip()}))
-        else:
-            norm_domains = tuple(sorted({str(d).strip() for d in domains if str(d).strip()}))
+        norm_domains: tuple[str, ...] | None = (
+            tuple(sorted(set(normalize_str_sequence(domains)))) if domains is not None else None
+        )
 
         can_coalesce = get_write_session() is None
         flights = self._get_refresh_flights()
@@ -1912,7 +1883,7 @@ class TopologyService:
         ref_name: str | None,
     ) -> tuple[str, dict[str, Any]] | None:
         """Fetch a single network/group object dictionary from `search_dom` by UID or name."""
-        uid_target = ref_uid or (ref_name if ref_name and _UUID_RE.match(ref_name) else None)
+        uid_target = ref_uid or (ref_name if ref_name and is_uuid(ref_name) else None)
         if uid_target:
             try:
                 res = await self._api.api_call(
@@ -1931,7 +1902,7 @@ class TopologyService:
                     enriched_uid_obj = await self._enrich_group_raw_if_needed(mgmt_name, search_dom, raw_obj)
                     return search_dom, enriched_uid_obj
 
-        name_target = ref_name or (ref_uid if ref_uid and not _UUID_RE.match(ref_uid) else None)
+        name_target = ref_name or (ref_uid if ref_uid and not is_uuid(ref_uid) else None)
         if not name_target:
             return None
 
@@ -2768,7 +2739,7 @@ class TopologyService:
                 except ValueError:
                     pass
             elif curr.subnet4:
-                plen = _mask_to_prefix_len(curr.mask_length4 if curr.mask_length4 is not None else curr.subnet_mask)
+                plen = mask_to_prefix_len(curr.mask_length4 if curr.mask_length4 is not None else curr.subnet_mask)
                 if plen is not None:
                     try:
                         net = ipaddress.IPv4Network(f"{curr.subnet4.strip()}/{plen}", strict=False)
@@ -2795,7 +2766,7 @@ class TopologyService:
                     range_str = f"{ipaddress.IPv4Address(lo)}-{ipaddress.IPv4Address(hi)}"
                     if range_str not in seen_intervals:
                         seen_intervals.add(range_str)
-                        results.append((range_str, lo, hi, _effective_range_prefix_len(lo, hi), root_ref))
+                        results.append((range_str, lo, hi, effective_range_prefix_len(lo, hi), root_ref))
                 except ValueError:
                     pass
 
@@ -2941,26 +2912,7 @@ class TopologyService:
     @staticmethod
     def _parse_cidr_or_range_bounds(cidr_or_range: str) -> tuple[int, int, int] | None:
         """Parse a CIDR (`10.0.0.0/24`), single IPv4 (`10.0.0.1`), or range (`10.0.0.1-10.0.0.10`) into `(lo, hi, prefix_len)`."""
-        clean = cidr_or_range.strip()
-        if not clean or clean == "*":
-            return None
-        if clean.lower() == "default" or clean == "0.0.0.0/0":
-            return 0, MAX_IPV4_INT, 0
-        if "-" in clean and "/" not in clean:
-            parts = clean.split("-", 1)
-            try:
-                ip1 = ipaddress.IPv4Address(parts[0].strip())
-                ip2 = ipaddress.IPv4Address(parts[1].strip())
-                lo = min(int(ip1), int(ip2))
-                hi = max(int(ip1), int(ip2))
-                return lo, hi, _effective_range_prefix_len(lo, hi)
-            except ValueError:
-                return None
-        try:
-            net = ipaddress.IPv4Network(clean, strict=False) if "/" in clean else ipaddress.IPv4Network(f"{clean}/32")
-            return int(net.network_address), int(net.broadcast_address), net.prefixlen
-        except ValueError:
-            return None
+        return parse_cidr_or_range_bounds(cidr_or_range)
 
     # ------------------------------------------------------------------
     # Static Topology Health Diagnostics (`get_topology_diagnostics`)
@@ -3263,10 +3215,7 @@ class TopologyService:
 
         domain_set: set[str] | None = None
         if domains is not None:
-            if isinstance(domains, str):
-                domain_set = {d.strip() for d in domains.split(",") if d.strip()}
-            else:
-                domain_set = {str(d).strip() for d in domains if str(d).strip()}
+            domain_set = set(normalize_str_sequence(domains))
         elif domain is not None and domain.strip():
             domain_set = {domain.strip()}
 
@@ -5036,7 +4985,7 @@ class TopologyService:
             val = str(t).strip()
             if not val:
                 continue
-            if val.lower() in _ANY_RULE_TOKENS:
+            if val.lower() in ANY_RULE_TOKENS:
                 return []
             cleaned.append(val)
         return cleaned
@@ -5058,7 +5007,7 @@ class TopologyService:
             if not clean:
                 continue
             lower_val = clean.lower()
-            if lower_val in _POLICY_TARGETS_TOKENS:
+            if lower_val in POLICY_TARGETS_TOKENS:
                 has_generic = True
                 continue
             tokens.add(lower_val)
@@ -5211,10 +5160,10 @@ class TopologyService:
             xlate_dst_raw = (nr.translated_destination or "").strip()
 
             eff_xlate_src = (
-                orig_src_raw if (not xlate_src_raw or xlate_src_raw.lower() in _ORIGINAL_NAT_TOKENS) else xlate_src_raw
+                orig_src_raw if (not xlate_src_raw or xlate_src_raw.lower() in ORIGINAL_NAT_TOKENS) else xlate_src_raw
             )
             eff_xlate_dst = (
-                orig_dst_raw if (not xlate_dst_raw or xlate_dst_raw.lower() in _ORIGINAL_NAT_TOKENS) else xlate_dst_raw
+                orig_dst_raw if (not xlate_dst_raw or xlate_dst_raw.lower() in ORIGINAL_NAT_TOKENS) else xlate_dst_raw
             )
 
             if for_reconciliation:
@@ -5438,16 +5387,8 @@ class TopologyService:
         cache_ttl: float | None = None,
     ) -> list[AffectedGatewayCandidate]:
         """Locate all policy-enforcing gateways where `sources` and `destinations` resolve to distinct interfaces (`src_interface != dst_interface`), or via explicit installed policy rules when `include_policy_inferred=True`."""
-        src_list = (
-            [s.strip() for s in sources.split(",") if s.strip()]
-            if isinstance(sources, str)
-            else [str(s).strip() for s in sources if str(s).strip()]
-        )
-        dst_list = (
-            [d.strip() for d in destinations.split(",") if d.strip()]
-            if isinstance(destinations, str)
-            else [str(d).strip() for d in destinations if str(d).strip()]
-        )
+        src_list = normalize_str_sequence(sources)
+        dst_list = normalize_str_sequence(destinations)
         if not src_list:
             raise ValidationError("sources must contain at least one IPv4 address, subnet, range, or object name")
         if not dst_list:
@@ -5605,7 +5546,7 @@ class TopologyService:
                     scoped_objs = await self._resolve_topology_objects_on_demand(
                         target_mgmt,
                         target_dom,
-                        seed_refs=[(t if _UUID_RE.match(t) else None, t) for t in endpoint_object_terms],
+                        seed_refs=[(t if is_uuid(t) else None, t) for t in endpoint_object_terms],
                         existing_objects=scoped_objs,
                         force_refresh=(cache_mode == "force"),
                         global_cache=global_obj_cache,

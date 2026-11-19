@@ -17,12 +17,11 @@ Provides:
 from __future__ import annotations
 
 import ipaddress
-import re
 from collections import defaultdict, deque
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from fnmatch import fnmatchcase
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from arodonata.core.errors import AmbiguousObjectError, ValidationError
 from arodonata.core.models.assets import Asset
@@ -44,15 +43,37 @@ from arodonata.core.models.objects import (
     SearchResult,
 )
 from arodonata.core.models.services import CPService
-from arodonata.core.ports import CachePort
+from arodonata.core.ports import (
+    AssetCachePort,
+    DomainCachePort,
+    ObjectCachePort,
+    ServiceCachePort,
+    SyncStatePort,
+)
+from arodonata.core.primitives import (
+    is_uuid,
+    normalize_str_sequence,
+    object_ipv4_bounds,
+    parse_composite_id,
+)
 from arodonata.core.services.asset_service import AssetRefreshService
 from arodonata.core.services.object_service import ObjectService
 from arodonata.core.services.service_cache import ServiceCacheService
 from arodonata.core.telemetry import span_attrs, traced
 
-SearchTermKind = Literal["ipv4", "cidr", "range", "wildcard", "uid", "name"]
 
-_UID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+class _SearchServiceCachePort(
+    DomainCachePort,
+    ObjectCachePort,
+    ServiceCachePort,
+    AssetCachePort,
+    SyncStatePort,
+    Protocol,
+):
+    """Cache capabilities required by `SearchService`."""
+
+
+SearchTermKind = Literal["ipv4", "cidr", "range", "wildcard", "uid", "name"]
 
 
 class ClassifiedSearchTerm:
@@ -77,7 +98,7 @@ class ClassifiedSearchTerm:
 def classify_search_term(term: str) -> ClassifiedSearchTerm:
     """Classify a single search term into `"ipv4"`, `"cidr"`, `"range"`, `"wildcard"`, `"uid"`, or `"name"`."""
     cleaned = term.strip()
-    if _UID_RE.match(cleaned):
+    if is_uuid(cleaned):
         return ClassifiedSearchTerm(cleaned, "uid")
 
     if "/" in cleaned and "*" not in cleaned and "?" not in cleaned:
@@ -110,35 +131,6 @@ def classify_search_term(term: str) -> ClassifiedSearchTerm:
     return ClassifiedSearchTerm(cleaned, "name")
 
 
-def _object_ipv4_bounds(obj: CPObject) -> tuple[int, int] | None:
-    """Return `(min_ip_int, max_ip_int)` for a `host`, `network`, or `address-range` `CPObject`."""
-    if obj.ipv4_address:
-        try:
-            val = int(ipaddress.IPv4Address(obj.ipv4_address.strip()))
-            return val, val
-        except ValueError:
-            return None
-
-    if obj.subnet4:
-        mask_part: str | int | None = obj.mask_length4 if obj.mask_length4 is not None else obj.subnet_mask
-        cidr_str = f"{obj.subnet4.strip()}/{mask_part}" if mask_part is not None else obj.subnet4.strip()
-        try:
-            net = ipaddress.IPv4Network(cidr_str, strict=False)
-            return int(net.network_address), int(net.broadcast_address)
-        except ValueError:
-            return None
-
-    if obj.ipv4_address_first and obj.ipv4_address_last:
-        try:
-            first_int = int(ipaddress.IPv4Address(obj.ipv4_address_first.strip()))
-            last_int = int(ipaddress.IPv4Address(obj.ipv4_address_last.strip()))
-            return min(first_int, last_int), max(first_int, last_int)
-        except ValueError:
-            return None
-
-    return None
-
-
 def matches_classified_term(
     obj: CPObject,
     term: ClassifiedSearchTerm,
@@ -151,7 +143,7 @@ def matches_classified_term(
 
     if term.kind == "ipv4" and term.ip is not None:
         target_int = int(term.ip)
-        bounds = _object_ipv4_bounds(obj)
+        bounds = object_ipv4_bounds(obj)
         if exact_match:
             if bounds is not None:
                 lo, hi = bounds
@@ -167,7 +159,7 @@ def matches_classified_term(
     if term.kind == "cidr" and term.network is not None:
         q_lo = int(term.network.network_address)
         q_hi = int(term.network.broadcast_address)
-        bounds = _object_ipv4_bounds(obj)
+        bounds = object_ipv4_bounds(obj)
         if bounds is not None:
             o_lo, o_hi = bounds
             if exact_match:
@@ -179,7 +171,7 @@ def matches_classified_term(
 
     if term.kind == "range" and term.range_bounds is not None:
         q_lo, q_hi = term.range_bounds
-        bounds = _object_ipv4_bounds(obj)
+        bounds = object_ipv4_bounds(obj)
         if bounds is not None:
             o_lo, o_hi = bounds
             return not (o_hi < q_lo or o_lo > q_hi)
@@ -232,7 +224,7 @@ class SearchService:
     def __init__(
         self,
         *,
-        cache: CachePort,
+        cache: _SearchServiceCachePort,
         object_service: ObjectService,
         service_cache: ServiceCacheService | None = None,
         asset_service: AssetRefreshService | None = None,
@@ -259,7 +251,7 @@ class SearchService:
         cache_ttl: float | None = None,
     ) -> SearchResult:
         """Search cached objects across comma-separated terms and resolve parent group memberships up to `max_depth`."""
-        raw_terms = [t.strip() for t in query.split(",") if t.strip()]
+        raw_terms = normalize_str_sequence(query)
         classified_terms = [classify_search_term(t) for t in raw_terms]
         span_attrs(
             query=query,
@@ -273,11 +265,7 @@ class SearchService:
         if not classified_terms:
             return SearchResult(query=query, matches=[], memberships={})
 
-        domain_list: list[str] | None = None
-        if isinstance(domains, str):
-            domain_list = [d.strip() for d in domains.split(",") if d.strip()]
-        elif domains is not None:
-            domain_list = [str(d).strip() for d in domains if str(d).strip()]
+        domain_list = normalize_str_sequence(domains) if domains is not None else None
 
         want_global = include_global or (domain_list is not None and "Global" in domain_list)
 
@@ -601,9 +589,9 @@ class SearchService:
 
         eff_domain = domain.strip() if domain and domain.strip() else None
         if eff_domain is None and clean_target.startswith(f"{mgmt_name}:"):
-            parts = clean_target.split(":", 2)
-            if len(parts) == 3 and parts[1].strip() and parts[2].strip():
-                eff_domain = parts[1].strip()
+            parsed_target = parse_composite_id(clean_target, expected_parts=3)
+            if parsed_target is not None and parsed_target[0] == mgmt_name:
+                eff_domain = parsed_target[1]
 
         sync_domain, eff_cache_mode = await self._resolve_implicit_domain_mode(mgmt_name, eff_domain, cache_mode)
         eff_include_global = True if eff_domain is None else (eff_domain == "Global")

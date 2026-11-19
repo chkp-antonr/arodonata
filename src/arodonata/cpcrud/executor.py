@@ -22,8 +22,6 @@ from contextlib import suppress
 from datetime import datetime
 from typing import Any
 
-from arodonata.adapters.checkpoint.client import _update_overlay_from_command
-from arodonata.adapters.checkpoint.sessions import normalize_domain_key
 from arodonata.core.context import (
     AuthContext,
     SessionOverlay,
@@ -31,6 +29,8 @@ from arodonata.core.context import (
     WriteSession,
     get_auth_context,
     get_user_context,
+    normalize_domain_key,
+    update_overlay_from_command,
     write_session_context,
 )
 from arodonata.core.errors import ServerIdentityError, ValidationError, redact_sid
@@ -42,9 +42,8 @@ from arodonata.core.events import (
     CPCRUDStartedEvent,
     StagedSessionEvent,
 )
-from arodonata.core.models.common import ApiCallResult, to_naive_utc, utc_now
+from arodonata.core.models.common import ApiCallResult, parse_cp_publish_timestamp, to_naive_utc, utc_now
 from arodonata.core.ports import ApiPort
-from arodonata.core.services.sync_coordinator import parse_cp_publish_timestamp
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.cpcrud.models import (
     ActionResult,
@@ -636,7 +635,7 @@ class Executor:
                             continue
 
                         # Update SessionOverlay as each action succeeds
-                        _update_overlay_from_command(ws.overlay, cmd, act.payload, call_res)
+                        update_overlay_from_command(ws.overlay, cmd, act.payload, call_res)
                         any_write_succeeded = True
                         resp_dict = call_res.data if isinstance(call_res.data, dict) else {}
                         returned_uid = str(resp_dict.get("uid") or act.target_uid or "") or None

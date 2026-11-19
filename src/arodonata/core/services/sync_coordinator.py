@@ -25,8 +25,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import suppress as _suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Any
+from datetime import datetime
+from typing import Any, Protocol
 from weakref import WeakKeyDictionary
 
 import arlogi
@@ -48,56 +48,19 @@ from arodonata.core.events import (
     SyncProgressEvent,
     SyncStartedEvent,
 )
-from arodonata.core.models.common import CacheMode, SyncScope, to_naive_utc, utc_now
+from arodonata.core.models.common import CacheMode, SyncScope, parse_cp_publish_timestamp, to_naive_utc, utc_now
 from arodonata.core.models.domains import DomainInfo, DomainSyncState, RefreshOutcome
-from arodonata.core.ports import ApiPort, CachePort, LockPort
+from arodonata.core.ports import ApiPort, DomainCachePort, LockPort, SidCachePort, SyncStatePort
+from arodonata.core.primitives import normalize_str_sequence
 from arodonata.core.services.domain_service import SYSTEM_DOMAIN_KEY, DomainService
 from arodonata.core.telemetry import span_attrs, traced
 
+
+class _SyncCoordinatorCachePort(DomainCachePort, SidCachePort, SyncStatePort, Protocol):
+    """Cache capabilities required by `DomainSyncCoordinator`."""
+
+
 logger = arlogi.get_logger(__name__)
-
-
-def parse_cp_publish_timestamp(raw_time: Any) -> datetime | None:
-    """Parse Check Point `publish-time` or `last-modify-time` dict/string/int into a naive UTC `datetime`."""
-    if raw_time is None:
-        return None
-    if isinstance(raw_time, datetime):
-        return to_naive_utc(raw_time)
-    if isinstance(raw_time, dict):
-        iso_str = raw_time.get("iso-8601") or raw_time.get("iso_8601")
-        if isinstance(iso_str, str) and iso_str.strip():
-            parsed = _parse_iso_datetime(iso_str.strip())
-            if parsed is not None:
-                return parsed
-        posix_val = raw_time.get("posix")
-        if isinstance(posix_val, (int, float)):
-            return _parse_posix_timestamp(posix_val)
-    if isinstance(raw_time, (int, float)):
-        return _parse_posix_timestamp(raw_time)
-    if isinstance(raw_time, str) and raw_time.strip():
-        return _parse_iso_datetime(raw_time.strip())
-    return None
-
-
-def _parse_posix_timestamp(value: int | float) -> datetime:
-    ts = float(value)
-    if ts > 1e11:  # Milliseconds epoch
-        ts = ts / 1000.0
-    return datetime.fromtimestamp(ts, tz=UTC).replace(tzinfo=None)
-
-
-def _parse_iso_datetime(iso_str: str) -> datetime | None:
-    normalized = iso_str
-    if normalized.endswith("Z"):
-        normalized = normalized[:-1] + "+00:00"
-    # Handle "+0300" -> "+03:00"
-    if len(normalized) >= 5 and normalized[-5] in ("+", "-") and ":" not in normalized[-5:]:
-        normalized = f"{normalized[:-2]}:{normalized[-2:]}"
-    try:
-        dt = datetime.fromisoformat(normalized)
-        return to_naive_utc(dt)
-    except ValueError:
-        return None
 
 
 class DomainProbeResult:
@@ -148,7 +111,7 @@ class _InFlightDomainSync:
 
 
 def resolve_engine_registry[T](
-    cache: CachePort,
+    cache: Any,
     registries: WeakKeyDictionary[Any, T],
     fallback: T,
     factory: Callable[[], T],
@@ -245,7 +208,7 @@ class DomainSyncCoordinator:
         *,
         settings: ArodonataSettings,
         api: ApiPort,
-        cache: CachePort,
+        cache: _SyncCoordinatorCachePort,
         lock_port: LockPort,
         domain_service: DomainService,
         now_fn: Callable[[], datetime] = utc_now,
@@ -317,11 +280,7 @@ class DomainSyncCoordinator:
         mode: CacheMode = "smart",
     ) -> list[DomainInfo]:
         """Resolve the list of `DomainInfo` targets for a synchronization run."""
-        domain_names: list[str] | None = None
-        if isinstance(domains, str):
-            domain_names = [d.strip() for d in domains.split(",") if d.strip()]
-        elif domains is not None:
-            domain_names = [str(d).strip() for d in domains if str(d).strip()]
+        domain_names: list[str] | None = normalize_str_sequence(domains) if domains is not None else None
 
         want_global = include_global or (domain_names is not None and "Global" in domain_names)
         dom_mode: CacheMode = "cache" if mode == "cache" else "smart"
@@ -665,13 +624,9 @@ class DomainSyncCoordinator:
 
         failed_domains: dict[str, str] = {}
         if mode != "cache":
-            explicit_dom_names: set[str] | None = None
-            if isinstance(domains, str):
-                parsed_doms = {d.strip() for d in domains.split(",") if d.strip()}
-                explicit_dom_names = parsed_doms or None
-            elif domains is not None:
-                parsed_doms = {str(d).strip() for d in domains if str(d).strip()}
-                explicit_dom_names = parsed_doms or None
+            explicit_dom_names: set[str] | None = (
+                (set(normalize_str_sequence(domains)) or None) if domains is not None else None
+            )
             matched_dom_names = {d.name for d in target_domains}
             all_explicit_resolved = (
                 mgmt_name is None and explicit_dom_names is not None and explicit_dom_names.issubset(matched_dom_names)

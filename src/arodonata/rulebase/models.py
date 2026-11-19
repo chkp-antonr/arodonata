@@ -7,39 +7,19 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arodonata.core.models.common import SyncStatus, to_naive_utc, utc_now
+from arodonata.core.models.common import SyncStatus, to_naive_utc
 from arodonata.core.models.rulebase import (
     AccessRuleEntry,
     HttpsRuleEntry,
     NatRuleEntry,
+    PolicyPackageInfo,
     RulebaseLayerEntry,
-    RulebasePackageLayerEntry,
     RulebaseSectionEntry,
     RulebaseType,
     ThreatRuleEntry,
 )
 
 RuleFormat = Literal["markdown", "model_friendly", "raw", "cpcrud"]
-
-
-class PolicyPackageInfo(BaseModel):
-    """Summary of a cached policy package and its attached ordered layers / NAT policy."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    mgmt_name: str
-    domain_name: str
-    uid: str
-    name: str
-    has_nat_policy: bool = False
-    access_layers: list[RulebasePackageLayerEntry] = Field(default_factory=list)
-    https_layers: list[RulebasePackageLayerEntry] = Field(default_factory=list)
-    threat_layers: list[RulebasePackageLayerEntry] = Field(default_factory=list)
-    raw_data: dict[str, Any] = Field(default_factory=dict)
-    updated_at: datetime = Field(default_factory=utc_now)
-
-    def model_post_init(self, __context: Any) -> None:
-        self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
 
 class NumberedRule(BaseModel):

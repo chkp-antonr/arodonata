@@ -124,7 +124,7 @@ def compute_object_diff(
 
         req_mask = desired.get("mask_length4") if "mask_length4" in desired else desired.get("mask-length4")
         req_submask = desired.get("subnet_mask") or desired.get("subnet-mask")
-        norm_req_mask = normalize_mask_length(req_mask, req_submask)
+        norm_req_mask = normalize_mask_length(req_mask, req_submask, strict=True)
         norm_exist_mask = normalize_mask_length(existing.mask_length4, existing.subnet_mask)
         if norm_req_mask is not None and norm_req_mask != norm_exist_mask:
             diffs["mask-length4"] = FieldChange(

@@ -10,67 +10,30 @@ from typing import Any
 
 from arodonata.core.errors import REDACTED_PLACEHOLDER, is_sensitive_key, redact_sid, sanitize_mapping
 from arodonata.core.models.common import ApiCallResult
-
-ANY_UID = "97aeb369-9aea-11d5-bd16-0090272ccb30"
-ORIGINAL_UID = "85c0f50f-6d8a-4528-88ab-5fb11d8fe16c"
-ACCEPT_UID = "6c488338-8eec-4103-ad21-cd461ac2c472"
-DROP_UID = "6c488338-8eec-4103-ad21-cd461ac2c473"
-DROP_UID_ALT = "6c488338-8eec-4103-ad21-cd461ac2c476"
-REJECT_UID = "6c488338-8eec-4103-ad21-cd461ac2c474"
-APPLY_LAYER_UID = "6c488338-8eec-4103-ad21-cd461ac2c475"
-LOG_TRACK_UID = "598ead32-aa42-4615-90ed-f51a5928d41d"
-NONE_TRACK_UID = "29e53e3d-23bf-48fe-b6b1-d59bd88036f1"
-NONE_TRACK_UID_ALT = "29e53e3d-23bf-48fe-b6b1-d59bd88036f9"
+from arodonata.core.models.sentinels import (
+    ACCEPT_UID,
+    ACTION_NAME_TO_UID,
+    ACTION_UID_TO_NAME,
+    ANY_UID,
+    APPLY_LAYER_UID,
+    BUILTIN_SENTINELS,
+    DROP_UID,
+    LOG_TRACK_UID,
+    NONE_TRACK_UID,
+    NONE_TRACK_UID_ALT,
+    ORIGINAL_UID,
+    POLICY_TARGETS_UID,
+    REJECT_UID,
+    SENTINEL_NAME_TO_UID,
+    TRACK_NAME_TO_UID,
+    TRACK_UID_TO_NAME,
+)
 
 GLOBAL_DOMAIN_UID = "uid-dom-global"
 GLOBAL_DOMAIN_META: dict[str, Any] = {
     "uid": GLOBAL_DOMAIN_UID,
     "name": "Global",
     "domain-type": "global domain",
-}
-
-BUILTIN_SENTINELS: dict[str, dict[str, Any]] = {
-    ANY_UID: {"uid": ANY_UID, "name": "Any", "type": "CpmiAnyObject"},
-    ORIGINAL_UID: {"uid": ORIGINAL_UID, "name": "Original", "type": "CpmiAnyObject"},
-    ACCEPT_UID: {"uid": ACCEPT_UID, "name": "Accept", "type": "RulebaseAction"},
-    DROP_UID: {"uid": DROP_UID, "name": "Drop", "type": "RulebaseAction"},
-    DROP_UID_ALT: {"uid": DROP_UID_ALT, "name": "Drop", "type": "RulebaseAction"},
-    REJECT_UID: {"uid": REJECT_UID, "name": "Reject", "type": "RulebaseAction"},
-    APPLY_LAYER_UID: {"uid": APPLY_LAYER_UID, "name": "Apply Layer", "type": "RulebaseAction"},
-    LOG_TRACK_UID: {"uid": LOG_TRACK_UID, "name": "Log", "type": "Track"},
-    NONE_TRACK_UID: {"uid": NONE_TRACK_UID, "name": "None", "type": "Track"},
-    NONE_TRACK_UID_ALT: {"uid": NONE_TRACK_UID_ALT, "name": "None", "type": "Track"},
-}
-
-SENTINEL_NAME_TO_UID: dict[str, str] = {
-    "any": ANY_UID,
-    "original": ORIGINAL_UID,
-}
-
-ACTION_NAME_TO_UID: dict[str, str] = {
-    "accept": ACCEPT_UID,
-    "drop": DROP_UID,
-    "reject": REJECT_UID,
-    "apply layer": APPLY_LAYER_UID,
-    "inner layer": APPLY_LAYER_UID,
-}
-
-ACTION_UID_TO_NAME: dict[str, str] = {
-    ACCEPT_UID: "Accept",
-    DROP_UID: "Drop",
-    DROP_UID_ALT: "Drop",
-    REJECT_UID: "Reject",
-}
-
-TRACK_NAME_TO_UID: dict[str, str] = {
-    "log": LOG_TRACK_UID,
-    "none": NONE_TRACK_UID,
-}
-
-TRACK_UID_TO_NAME: dict[str, str] = {
-    LOG_TRACK_UID: "Log",
-    NONE_TRACK_UID: "None",
-    NONE_TRACK_UID_ALT: "None",
 }
 
 _MUTATING_NON_PREFIX_COMMANDS: frozenset[str] = frozenset(
@@ -473,3 +436,44 @@ def cp_error(
         error_code=code,
         error_message=full_message,
     )
+
+
+__all__ = [
+    "ACCEPT_UID",
+    "ACTION_NAME_TO_UID",
+    "ACTION_UID_TO_NAME",
+    "ANY_UID",
+    "APPLY_LAYER_UID",
+    "BUILTIN_SENTINELS",
+    "CMD_TO_ENTITY_ACTION",
+    "DROP_UID",
+    "ENTITY_SPECS",
+    "GLOBAL_DOMAIN_META",
+    "GLOBAL_DOMAIN_UID",
+    "GROUP_SPEC_TYPES",
+    "LOG_TRACK_UID",
+    "NONE_TRACK_UID",
+    "NONE_TRACK_UID_ALT",
+    "OBJ_TYPE_TO_SPEC",
+    "ORIGINAL_UID",
+    "PLURAL_SHOW_TO_SPEC",
+    "POLICY_TARGETS_UID",
+    "REJECT_UID",
+    "SENTINEL_NAME_TO_UID",
+    "SINGULAR_SHOW_TO_SPEC",
+    "TRACK_NAME_TO_UID",
+    "TRACK_UID_TO_NAME",
+    "EntitySpec",
+    "MutationRecord",
+    "PublishedDelta",
+    "ReplayStateSnapshot",
+    "SidBinding",
+    "WorkSession",
+    "cp_error",
+    "cp_ok",
+    "format_domain_meta",
+    "format_timestamp",
+    "is_mutating_command",
+    "sanitize_call_payload",
+    "summarize_payload",
+]

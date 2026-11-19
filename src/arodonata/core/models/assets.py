@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from arodonata.core.models.common import to_naive_utc, utc_now
+from arodonata.core.primitives import format_composite_id
 
 
 class Asset(BaseModel):
@@ -48,13 +49,13 @@ class Asset(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
-            self.id = f"{self.mgmt_name}:{self.domain_name}:{self.uid}"
+            self.id = format_composite_id(self.mgmt_name, self.domain_name, self.uid)
         if not self.asset_id:
-            self.asset_id = f"{self.mgmt_name}:{self.domain_name}:{self.name}"
+            self.asset_id = format_composite_id(self.mgmt_name, self.domain_name, self.name)
         if self.parent_uid and not self.parent_id:
-            self.parent_id = f"{self.mgmt_name}:{self.domain_name}:{self.parent_uid}"
+            self.parent_id = format_composite_id(self.mgmt_name, self.domain_name, self.parent_uid)
         if self.parent_name and not self.parent_asset_id:
-            self.parent_asset_id = f"{self.mgmt_name}:{self.domain_name}:{self.parent_name}"
+            self.parent_asset_id = format_composite_id(self.mgmt_name, self.domain_name, self.parent_name)
         self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
     @classmethod
@@ -73,8 +74,8 @@ class Asset(BaseModel):
                 interfaces = [item for item in objs if isinstance(item, dict)]
 
         return cls(
-            id=f"{mgmt_name}:{domain_name}:{uid}",
-            asset_id=f"{mgmt_name}:{domain_name}:{name}",
+            id=format_composite_id(mgmt_name, domain_name, uid),
+            asset_id=format_composite_id(mgmt_name, domain_name, name),
             uid=uid,
             name=name,
             type=asset_type,

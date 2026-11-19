@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from arodonata.core.models.common import to_naive_utc, utc_now
+from arodonata.core.primitives import format_composite_id
 
 TopologySourceType = Literal[
     "interface_connected",
@@ -126,13 +127,17 @@ class GatewayTopologyEntry(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if not self.gateway_id:
-            self.gateway_id = f"{self.mgmt_name}:{self.domain_name}:{self.gateway_uid}"
+            self.gateway_id = format_composite_id(self.mgmt_name, self.domain_name, self.gateway_uid)
         if not self.gateway_asset_id:
-            self.gateway_asset_id = f"{self.mgmt_name}:{self.domain_name}:{self.gateway_name}"
+            self.gateway_asset_id = format_composite_id(self.mgmt_name, self.domain_name, self.gateway_name)
         if not self.id:
-            self.id = (
-                f"{self.mgmt_name}:{self.domain_name}:{self.gateway_uid}:"
-                f"{self.interface_name}:{self.source_type}:{self.cidr_or_range}"
+            self.id = format_composite_id(
+                self.mgmt_name,
+                self.domain_name,
+                self.gateway_uid,
+                self.interface_name,
+                self.source_type,
+                self.cidr_or_range,
             )
         self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
@@ -235,9 +240,9 @@ class GatewayCliTarget(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if not self.gateway_id:
-            self.gateway_id = f"{self.mgmt_name}:{self.domain_name}:{self.gateway_uid}"
+            self.gateway_id = format_composite_id(self.mgmt_name, self.domain_name, self.gateway_uid)
         if not self.gateway_asset_id:
-            self.gateway_asset_id = f"{self.mgmt_name}:{self.domain_name}:{self.gateway_name}"
+            self.gateway_asset_id = format_composite_id(self.mgmt_name, self.domain_name, self.gateway_name)
 
 
 class GatewayCliResult(BaseModel):
@@ -276,9 +281,9 @@ class GatewayRouteCollectionStatus(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if not self.gateway_id:
-            self.gateway_id = f"{self.mgmt_name}:{self.domain_name}:{self.gateway_uid}"
+            self.gateway_id = format_composite_id(self.mgmt_name, self.domain_name, self.gateway_uid)
         if not self.gateway_asset_id:
-            self.gateway_asset_id = f"{self.mgmt_name}:{self.domain_name}:{self.gateway_name}"
+            self.gateway_asset_id = format_composite_id(self.mgmt_name, self.domain_name, self.gateway_name)
 
 
 class RouteCollectionOutcome(BaseModel):
@@ -315,9 +320,9 @@ class TopologyDiagnostic(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if not self.gateway_id:
-            self.gateway_id = f"{self.mgmt_name}:{self.domain_name}:{self.gateway_uid}"
+            self.gateway_id = format_composite_id(self.mgmt_name, self.domain_name, self.gateway_uid)
         if not self.gateway_asset_id:
-            self.gateway_asset_id = f"{self.mgmt_name}:{self.domain_name}:{self.gateway_name}"
+            self.gateway_asset_id = format_composite_id(self.mgmt_name, self.domain_name, self.gateway_name)
 
 
 class TopologyDiscrepancy(BaseModel):
@@ -347,9 +352,9 @@ class TopologyDiscrepancy(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if not self.gateway_id:
-            self.gateway_id = f"{self.mgmt_name}:{self.domain_name}:{self.gateway_uid}"
+            self.gateway_id = format_composite_id(self.mgmt_name, self.domain_name, self.gateway_uid)
         if not self.gateway_asset_id:
-            self.gateway_asset_id = f"{self.mgmt_name}:{self.domain_name}:{self.gateway_name}"
+            self.gateway_asset_id = format_composite_id(self.mgmt_name, self.domain_name, self.gateway_name)
 
 
 class TopologyReconciliationReport(BaseModel):
@@ -389,8 +394,12 @@ class TopologyAnnotation(BaseModel):
         self.interface_name = (self.interface_name or "*").strip() or "*"
         self.cidr_or_range = (self.cidr_or_range or "*").strip() or "*"
         if not self.id:
-            self.id = (
-                f"{self.mgmt_name}:{self.domain_name}:{self.gateway_uid}:{self.interface_name}:{self.cidr_or_range}"
+            self.id = format_composite_id(
+                self.mgmt_name,
+                self.domain_name,
+                self.gateway_uid,
+                self.interface_name,
+                self.cidr_or_range,
             )
         self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 

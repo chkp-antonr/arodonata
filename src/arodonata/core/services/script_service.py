@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from typing import Any
@@ -37,15 +36,10 @@ from arodonata.core.models.scripts import (
     normalize_script_body,
 )
 from arodonata.core.ports import ApiPort
+from arodonata.core.primitives import is_uuid
 from arodonata.core.telemetry import span_attrs, traced
 
-_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-
 _NOT_FOUND_CODES: frozenset[str] = frozenset({"generic_err_object_not_found"})
-
-
-def _is_uuid(value: str) -> bool:
-    return bool(_UUID_RE.fullmatch(value.strip()))
 
 
 def _is_not_found_text(code: str, message: str) -> bool:
@@ -225,7 +219,7 @@ class ScriptRepositoryService:
         span_attrs(mgmt_name=mgmt_name, domain=dom_key, script_ref=ref)
 
         payload: dict[str, Any] = {"details-level": details_level}
-        if _is_uuid(ref):
+        if is_uuid(ref):
             payload["uid"] = ref
         else:
             payload["name"] = ref
@@ -554,7 +548,7 @@ class ScriptRepositoryService:
         dom_key = normalize_domain_key(domain)
         span_attrs(mgmt_name=mgmt_name, domain=dom_key, script_ref=ref)
 
-        del_payload: dict[str, Any] = {"uid": ref} if _is_uuid(ref) else {"name": ref}
+        del_payload: dict[str, Any] = {"uid": ref} if is_uuid(ref) else {"name": ref}
 
         async def _delete_in_session() -> bool:
             res = await self._api.api_call(
@@ -637,7 +631,7 @@ class ScriptRepositoryService:
             "script-type": "repository",
             "targets": target_list,
         }
-        if _is_uuid(ref):
+        if is_uuid(ref):
             payload["uid"] = ref
         else:
             payload["script-name"] = ref

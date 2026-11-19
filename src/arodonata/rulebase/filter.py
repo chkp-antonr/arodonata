@@ -21,11 +21,11 @@ from arodonata.core.models.rulebase import (
     NatRuleEntry,
     ThreatRuleEntry,
 )
-from arodonata.core.models.services import CPService
-from arodonata.cpcrud.rule_identity import (
+from arodonata.core.models.sentinels import (
     normalize_any_sentinel,
     normalize_nat_original_sentinel,
 )
+from arodonata.core.models.services import CPService
 from arodonata.rulebase.models import (
     FilteredRulebaseResult,
     NumberedLayerRulebase,

@@ -15,12 +15,18 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Protocol
 
 from arodonata.core.errors import AmbiguousLayerName, DomainNotFoundError
 from arodonata.core.models.common import CacheMode, SyncStatus, to_naive_utc, utc_now
 from arodonata.core.models.rulebase import DomainRulebaseSnapshot, RulebaseType
-from arodonata.core.ports import CachePort
+from arodonata.core.ports import (
+    DomainCachePort,
+    ObjectCachePort,
+    RulebaseCachePort,
+    ServiceCachePort,
+    SyncStatePort,
+)
 from arodonata.core.services.object_service import ObjectService
 from arodonata.core.services.service_cache import ServiceCacheService
 from arodonata.core.telemetry import span_attrs, traced
@@ -42,13 +48,24 @@ from arodonata.rulebase.numbering import (
 from arodonata.rulebase.refresh import RulebaseRefreshService
 
 
+class _RulebaseSourceCachePort(
+    DomainCachePort,
+    ObjectCachePort,
+    ServiceCachePort,
+    RulebaseCachePort,
+    SyncStatePort,
+    Protocol,
+):
+    """Cache capabilities required by `CachedRulebaseSource`."""
+
+
 class CachedRulebaseSource:
     """High-level cached rulebase introspection, SmartConsole numbering, and local filtering engine."""
 
     def __init__(
         self,
         *,
-        cache: CachePort,
+        cache: _RulebaseSourceCachePort,
         refresh_service: RulebaseRefreshService | None = None,
         object_service: ObjectService | None = None,
         service_cache: ServiceCacheService | None = None,

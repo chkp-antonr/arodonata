@@ -23,6 +23,8 @@ from typing import Any, NamedTuple
 
 import platformdirs
 
+from arodonata.core.models.sentinels import ACCEPT_UID, ANY_UID, DROP_UID, LOG_TRACK_UID
+
 DATASET_VERSION = "1.2.0"
 DEFAULT_SEED = 20261108
 
@@ -2435,10 +2437,10 @@ def generate_enterprise_raw_dataset(
         # Build 105 access rules per domain (10 domains * 105 = 1,050 access rules!)
         # grouped into 3 sections of 35 rules each, plus `objects-dictionary`.
         obj_dict: list[dict[str, Any]] = [
-            {"uid": "97aeb369-9aea-11d5-bd16-0090272ccb30", "name": "Any", "type": "CpmiAnyObject"},
-            {"uid": "6c488338-8eec-4103-ad21-cd461ac2c472", "name": "Accept", "type": "RulebaseAction"},
-            {"uid": "6c488338-8eec-4103-ad21-cd461ac2c473", "name": "Drop", "type": "RulebaseAction"},
-            {"uid": "598ead32-aa42-4615-90ed-f51a5928d41d", "name": "Log", "type": "Track"},
+            {"uid": ANY_UID, "name": "Any", "type": "CpmiAnyObject"},
+            {"uid": ACCEPT_UID, "name": "Accept", "type": "RulebaseAction"},
+            {"uid": DROP_UID, "name": "Drop", "type": "RulebaseAction"},
+            {"uid": LOG_TRACK_UID, "name": "Log", "type": "Track"},
         ]
         dom_hosts = hosts_by_domain[dom][:30]
         dom_nets = networks_by_domain[dom][:20]
@@ -2460,26 +2462,10 @@ def generate_enterprise_raw_dataset(
             sec_rules: list[dict[str, Any]] = []
             sec_start = rule_num
             for _ in range(35):
-                src_obj = (
-                    dom_hosts[(rule_num - 1) % len(dom_hosts)]
-                    if dom_hosts
-                    else {"uid": "97aeb369-9aea-11d5-bd16-0090272ccb30", "name": "Any"}
-                )
-                dst_obj = (
-                    dom_nets[(rule_num - 1) % len(dom_nets)]
-                    if dom_nets
-                    else {"uid": "97aeb369-9aea-11d5-bd16-0090272ccb30", "name": "Any"}
-                )
-                svc_obj = (
-                    dom_svcs[(rule_num - 1) % len(dom_svcs)]
-                    if dom_svcs
-                    else {"uid": "97aeb369-9aea-11d5-bd16-0090272ccb30", "name": "Any"}
-                )
-                act_uid = (
-                    "6c488338-8eec-4103-ad21-cd461ac2c473"
-                    if rule_num == 105
-                    else "6c488338-8eec-4103-ad21-cd461ac2c472"
-                )
+                src_obj = dom_hosts[(rule_num - 1) % len(dom_hosts)] if dom_hosts else {"uid": ANY_UID, "name": "Any"}
+                dst_obj = dom_nets[(rule_num - 1) % len(dom_nets)] if dom_nets else {"uid": ANY_UID, "name": "Any"}
+                svc_obj = dom_svcs[(rule_num - 1) % len(dom_svcs)] if dom_svcs else {"uid": ANY_UID, "name": "Any"}
+                act_uid = DROP_UID if rule_num == 105 else ACCEPT_UID
                 if dom != "Global" and rule_num == 104:
                     src_list = ["uid-glob-grp-branches", src_obj["uid"]]
                     dst_list = ["uid-glob-host-001", "uid-glob-grp-dc"]
@@ -2504,8 +2490,8 @@ def generate_enterprise_raw_dataset(
                         "service": svc_list,
                         "service-negate": False,
                         "action": act_uid,
-                        "track": {"type": "598ead32-aa42-4615-90ed-f51a5928d41d"},
-                        "install-on": ["97aeb369-9aea-11d5-bd16-0090272ccb30"],
+                        "track": {"type": LOG_TRACK_UID},
+                        "install-on": [ANY_UID],
                         "comments": rule_comment,
                     }
                 )
@@ -2535,9 +2521,7 @@ def generate_enterprise_raw_dataset(
         # Build 12 NAT rules per domain (10 domains * 12 = 120 NAT rules)
         nat_rules: list[dict[str, Any]] = []
         for n_r in range(1, 13):
-            orig_src = (
-                dom_hosts[(n_r - 1) % len(dom_hosts)]["uid"] if dom_hosts else "97aeb369-9aea-11d5-bd16-0090272ccb30"
-            )
+            orig_src = dom_hosts[(n_r - 1) % len(dom_hosts)]["uid"] if dom_hosts else ANY_UID
             nat_rules.append(
                 {
                     "uid": f"uid-nrule-{d_slug}-{n_r:03d}",
@@ -2547,12 +2531,12 @@ def generate_enterprise_raw_dataset(
                     "enabled": True,
                     "method": "hide",
                     "original-source": orig_src,
-                    "original-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
-                    "original-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
+                    "original-destination": ANY_UID,
+                    "original-service": ANY_UID,
                     "translated-source": orig_src,
-                    "translated-destination": "97aeb369-9aea-11d5-bd16-0090272ccb30",
-                    "translated-service": "97aeb369-9aea-11d5-bd16-0090272ccb30",
-                    "install-on": ["97aeb369-9aea-11d5-bd16-0090272ccb30"],
+                    "translated-destination": ANY_UID,
+                    "translated-service": ANY_UID,
+                    "install-on": [ANY_UID],
                 }
             )
             total_nat_rules += 1

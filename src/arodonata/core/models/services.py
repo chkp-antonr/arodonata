@@ -9,6 +9,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from arodonata.core.models.common import to_naive_utc, utc_now
 from arodonata.core.models.objects import _extract_member_uids, _extract_original_domain, _extract_tag_names
+from arodonata.core.primitives import format_composite_id
 
 
 class CPService(BaseModel):
@@ -41,9 +42,9 @@ class CPService(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
-            self.id = f"{self.mgmt_name}:{self.domain_name}:{self.uid}"
+            self.id = format_composite_id(self.mgmt_name, self.domain_name, self.uid)
         if not self.service_id:
-            self.service_id = f"{self.mgmt_name}:{self.domain_name}:{self.name}"
+            self.service_id = format_composite_id(self.mgmt_name, self.domain_name, self.name)
         if self.original_domain is None:
             self.original_domain = self.domain_name
         self.updated_at = to_naive_utc(self.updated_at) or utc_now()
@@ -58,8 +59,8 @@ class CPService(BaseModel):
         protocol_raw = data.get("protocol") or data.get("ip-protocol")
 
         return cls(
-            id=f"{mgmt_name}:{domain_name}:{uid}",
-            service_id=f"{mgmt_name}:{domain_name}:{name}",
+            id=format_composite_id(mgmt_name, domain_name, uid),
+            service_id=format_composite_id(mgmt_name, domain_name, name),
             uid=uid,
             name=name,
             type=svc_type,

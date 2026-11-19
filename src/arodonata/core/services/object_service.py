@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import get_write_session
@@ -32,9 +32,14 @@ from arodonata.core.models.common import (
 )
 from arodonata.core.models.domains import DomainSyncState, RefreshOutcome
 from arodonata.core.models.objects import CPObject
-from arodonata.core.ports import ApiPort, CachePort
+from arodonata.core.ports import ApiPort, ObjectCachePort, SyncStatePort
 from arodonata.core.services.sync_coordinator import DomainProbeResult, DomainSyncCoordinator
 from arodonata.core.telemetry import span_attrs, traced
+
+
+class _ObjectServiceCachePort(ObjectCachePort, SyncStatePort, Protocol):
+    """Cache capabilities required by `ObjectService`."""
+
 
 OBJECT_TYPE_TO_SHOW_COMMAND: dict[str, str] = {
     "host": "show-hosts",
@@ -158,7 +163,7 @@ class ObjectService:
         *,
         settings: ArodonataSettings,
         api: ApiPort,
-        cache: CachePort,
+        cache: _ObjectServiceCachePort,
         coordinator: DomainSyncCoordinator,
         now_fn: Callable[[], datetime] = utc_now,
     ) -> None:

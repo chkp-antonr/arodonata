@@ -18,12 +18,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 from arodonata.core.errors import ServerIdentityError, redact_sid
 from arodonata.core.models.common import utc_now
 from arodonata.core.models.rulebase import DomainRulebaseSnapshot
-from arodonata.core.ports import ApiPort, CachePort
+from arodonata.core.ports import ApiPort, RulebaseCachePort, SyncStatePort
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.reports.models import (
     OwnedSession,
@@ -130,12 +130,16 @@ def _apply_snapshot_locations_to_rules(
     rule_changes[:] = [rc for _, rc in indexed]
 
 
+class _PlacementCachePort(RulebaseCachePort, SyncStatePort, Protocol):
+    """Cache capabilities required by rulebase placement numbering."""
+
+
 @traced
 async def apply_session_rule_placement(
     session_report: SessionChangeReport,
     *,
     api: ApiPort,
-    cache: CachePort,
+    cache: _PlacementCachePort,
     owned_session: OwnedSession | None = None,
     warnings: list[ReportWarning],
     now_fn: Callable[[], datetime] = utc_now,

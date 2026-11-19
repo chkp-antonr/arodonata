@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from arodonata.core.errors import REDACTED_PLACEHOLDER
 from arodonata.core.models.common import SyncScope, SyncStatus, to_naive_utc, utc_now
+from arodonata.core.primitives import format_composite_id
 
 
 class DomainInfo(BaseModel):
@@ -31,7 +32,7 @@ class DomainInfo(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
-            self.id = f"{self.mgmt_name}:{self.name}"
+            self.id = format_composite_id(self.mgmt_name, self.name)
         self.updated_at = to_naive_utc(self.updated_at) or utc_now()
 
 
@@ -54,9 +55,9 @@ class SIDCacheEntry(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         if not self.id:
             self.id = (
-                f"{self.mgmt_name}:{self.domain_name}:{self.auth_identity}"
+                format_composite_id(self.mgmt_name, self.domain_name, self.auth_identity)
                 if self.auth_identity
-                else f"{self.mgmt_name}:{self.domain_name}"
+                else format_composite_id(self.mgmt_name, self.domain_name)
             )
         self.created_at = to_naive_utc(self.created_at) or utc_now()
         self.last_used_at = to_naive_utc(self.last_used_at) or utc_now()
@@ -99,7 +100,7 @@ class DomainSyncState(BaseModel):
     @staticmethod
     def make_id(mgmt_name: str, domain_name: str, scope: str, item_type: str = "*") -> str:
         """Build the canonical composite primary key for domain_sync_state."""
-        return f"{mgmt_name}:{domain_name}:{scope}:{item_type}"
+        return format_composite_id(mgmt_name, domain_name, scope, item_type)
 
 
 class RefreshOutcome(BaseModel):

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines the primary composition root and unified developer facade (`ArodonataClient`), hexagonal architectural ports (`ApiPort`, `CachePort`, `LockPort`, `GatewayCliPort`) and adapters (`AMgmtClient`), `contextvars`-aware session and object mutation methods, gateway topology and repository script facades, change-report and API-reference integration, and provider-agnostic OpenTelemetry instrumentation (`@traced`, `span_attrs`).
+Defines the primary composition root and unified developer facade (`ArodonataClient`), hexagonal architectural ports (`ApiPort`, `CachePort` composed of `DomainCachePort`, `SidCachePort`, `SyncStatePort`, `ObjectCachePort`, `ServiceCachePort`, `AssetCachePort`, `TopologyCachePort`, and `RulebaseCachePort`, plus `LockPort`, `AuthProvider`, `GatewayCliPort`, and `RulebaseRefreshPort`), adapters (`AMgmtClient`), shared core primitives and sentinel UIDs, `contextvars`-aware session and object mutation methods, gateway topology and repository script facades, change-report and API-reference integration, and provider-agnostic OpenTelemetry instrumentation (`@traced`, `span_attrs`).
 
 ## Requirements
 
@@ -325,3 +325,29 @@ All major client, transport, login, lock, cache, and CPCRUD entry points SHALL b
 - **WHEN** a caller initializes `ArodonataClient` and inspects its service properties (`db`, `cache`, `lock_port`, `api`, `amgmt`, `cpcrud`, `topology_service`, `script_service`, `api_reference`)
 - **AND** invokes `initialize()`, `user_context()`, `create_dedicated_session()`, `logout_sid()`, `invalidate_domain()`, `refresh_*`/`stream_refresh_*`, `search_objects()`, `get_cache_status()`, `get_layer_rulebase()`, `locate_rules()`, `filter_rulebase()`, `build_change_report_from_plan()`, `render_change_report()`, `publish_staged_session()`, `stream_publish_staged_session()`, `discard_staged_session()`, `set_gateway_cli()`, and `ensure_api_reference()`
 - **THEN** all facade methods and service accessors SHALL resolve cleanly and delegate to their backing ports and services
+
+### Requirement: Hexagonal Layer Boundaries, Segregated Cache Ports, and Shared Core Primitives
+
+**ID**: REQ-CLIENT-018\
+**Intent**: Enforce strict hexagonal import isolation, Interface Segregation on `CachePort`, and DRY core primitives and Check Point sentinel definitions.\
+**Non-goals**: Behavioral changes to Management API pagination or cache schema migrations.
+
+Hexagonal layers (`core`, `cpcrud`, `rulebase`, `reports`) SHALL obey AST-verified import boundaries, `CachePort` SHALL compose eight `@runtime_checkable` ISP sub-protocols matched to service consumers alongside `RulebaseRefreshPort`, and `arodonata.core.primitives` / `arodonata.core.models.sentinels` SHALL provide shared primitives and Check Point sentinel UIDs with backward-compatible re-exports.
+
+#### Scenario: SCN-CLIENT-018-1 — Hexagonal layer import boundaries are enforced via AST across core, cpcrud, rulebase, and reports
+
+- **WHEN** an AST boundary scan inspects every import statement (including relative, lazy, and `TYPE_CHECKING` imports) in `core`, `cpcrud`, `rulebase`, and `reports`
+- **THEN** `core` SHALL have zero imports from `arodonata.adapters`, `arodonata.client`, `arodonata.mcp`, `arodonata.cpcrud`, `arodonata.reports`, `arodonata.rulebase`, `arodonata.testing`, `cpapi`, `aiohttp`, `sqlalchemy`, `sqlmodel`, `asyncpg`, or `aiosqlite`
+- **AND** `cpcrud` SHALL not import `arodonata.adapters` or `arodonata.client`, `rulebase` SHALL not import `arodonata.cpcrud`, `arodonata.adapters`, or `arodonata.client`, and `reports` SHALL not import `arodonata.adapters`, `arodonata.client`, `arodonata.mcp`, or `arodonata.testing`
+
+#### Scenario: SCN-CLIENT-018-2 — CachePort composes eight runtime-checkable ISP sub-protocols and RulebaseRefreshPort decouples TopologyService
+
+- **WHEN** `SqlCacheAdapter`, `RulebaseRefreshService`, and narrowed service consumers (such as `AssetRefreshService`) are inspected at runtime
+- **THEN** `SqlCacheAdapter` SHALL satisfy all eight `@runtime_checkable` sub-protocols (`DomainCachePort`, `SidCachePort`, `SyncStatePort`, `ObjectCachePort`, `ServiceCachePort`, `AssetCachePort`, `TopologyCachePort`, `RulebaseCachePort`) and `CachePort`
+- **AND** `RulebaseRefreshService` SHALL satisfy `RulebaseRefreshPort`, consumers narrowed to a sub-protocol SHALL accept minimal sub-port doubles, and `TopologyService` constructed without `rulebase_refresh` SHALL log a warning and return cold package snapshots without failing
+
+#### Scenario: SCN-CLIENT-018-3 — Canonical Check Point sentinels and core primitives resolve UID c476 as Policy Targets and preserve strict mask validation
+
+- **WHEN** callers evaluate `arodonata.core.models.sentinels`, `arodonata.core.primitives`, legacy re-export paths, and strict CPCRUD `normalize_mask_length(..., strict=True)`
+- **THEN** UID `6c488338-8eec-4103-ad21-cd461ac2c476` SHALL map strictly to `Policy Targets` (`type="Global"`) rather than `Drop`, and all moved helpers (`parse_cp_publish_timestamp`, `update_overlay_from_command`, `extract_policy_packages`, `PolicyPackageInfo`, sentinel normalizers) SHALL retain object identity at legacy import paths
+- **AND** `mask_to_prefix_len` SHALL validate contiguous netmasks (accepting integral floats such as `24.0` and hostmasks only with `allow_hostmask=True`), while desired CPCRUD specs with invalid `mask_length4` or `subnet_mask` SHALL raise `ValidationError`
