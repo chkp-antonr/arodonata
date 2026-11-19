@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import fcntl
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
@@ -47,7 +48,8 @@ class IntegrationRunLock:
 
         fh.seek(0)
         fh.truncate()
-        fh.write(f"pid={os.getpid()} argv={' '.join(os.sys.argv)}\n")
+        started_at = datetime.now(UTC).isoformat()
+        fh.write(f"pid={os.getpid()} started_at={started_at} argv={' '.join(os.sys.argv)}\n")
         fh.flush()
         self._fh = fh
 

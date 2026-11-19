@@ -104,10 +104,6 @@ class ArodonataMCPSettings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("allow_write_api", "ARODONATA_MCP_ALLOW_WRITE_API"),
     )
-    live_compat: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("live_compat", "ARODONATA_MCP_LIVE_COMPAT"),
-    )
     cpcrud: bool = Field(
         default=False,
         validation_alias=AliasChoices("cpcrud", "ARODONATA_MCP_CPCRUD"),

@@ -35,7 +35,6 @@ mcp_settings = ArodonataMCPSettings(
     auth_mode="host",
     port=8000,
     path="/mcp",
-    live_compat=True,
     cpcrud=True,
 )
 

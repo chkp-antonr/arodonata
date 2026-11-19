@@ -444,7 +444,18 @@ class LoginCoordinator:
                     f"Untrusted explicit server_ip {explicit_server_ip!r} for management server {mgmt_name!r}. "
                     f"Known trusted hosts: {sorted(trusted_ips)}."
                 )
-            return cleaned_ip, endpoint.host, endpoint.port
+            resolved_mds_ip = endpoint.host
+            for dom in cached_domains:
+                dom_ips = [
+                    ip
+                    for ip in (dom.active_ip, dom.active_mds_ip, *dom.standby_ips)
+                    if isinstance(ip, str) and ip.strip()
+                ]
+                if any(_canonicalize_host(ip) == canonical_ip for ip in dom_ips):
+                    if dom.active_mds_ip and dom.active_mds_ip.strip():
+                        resolved_mds_ip = dom.active_mds_ip.strip()
+                    break
+            return cleaned_ip, resolved_mds_ip, endpoint.port
 
         dom_key = normalize_domain_key(domain)
         if dom_key != SYSTEM_DOMAIN_SENTINEL:
@@ -541,6 +552,14 @@ class LoginCoordinator:
         dom_key = normalize_domain_key(domain)
         span_attrs(mgmt_name=mgmt_name, domain=dom_key, force_new=force_new)
 
+        validated_ip: str | None = None
+        if server_ip:
+            validated_ip, _, _ = await self.resolve_target_ips(
+                mgmt_name,
+                domain,
+                explicit_server_ip=server_ip,
+            )
+
         auth = await self.resolve_credentials(mgmt_name, domain)
         identity = auth.identity_key
         lock_key = f"{mgmt_name}:{dom_key}:{identity}"
@@ -549,14 +568,14 @@ class LoginCoordinator:
             cached = await self._cache.get_sid(mgmt_name, dom_key, auth_identity=identity)
             if cached is not None and self._is_sid_entry_usable(cached, auth):
                 span_attrs(sid_reused=True)
-                return cached.sid, (server_ip or cached.server_ip)
+                return cached.sid, (validated_ip or cached.server_ip)
 
         async with self._domain_login_locks[lock_key]:
             if not force_new:
                 cached = await self._cache.get_sid(mgmt_name, dom_key, auth_identity=identity)
                 if cached is not None and self._is_sid_entry_usable(cached, auth):
                     span_attrs(sid_reused=True)
-                    return cached.sid, (server_ip or cached.server_ip)
+                    return cached.sid, (validated_ip or cached.server_ip)
 
             self._inflight_logins.add(f"{mgmt_name}:{dom_key}")
             try:
@@ -1110,26 +1129,49 @@ class LoginCoordinator:
             return False
         endpoint = self.get_server_endpoint(mgmt_name)
         dedicated_ip = self._active_dedicated_sids.get((mgmt_name, sid))
-        target_ip = server_ip or dedicated_ip or endpoint.host
+        cached_entries = await self._cache.list_sids(mgmt_name=mgmt_name)
+        matching_entries = [entry for entry in cached_entries if entry.sid == sid]
+
+        if server_ip:
+            target_ip, mds_ip, port = await self.resolve_target_ips(
+                mgmt_name,
+                explicit_server_ip=server_ip,
+            )
+        else:
+            cached_ip = matching_entries[0].server_ip if matching_entries else None
+            target_ip = dedicated_ip or cached_ip or endpoint.host
+            mds_ip = endpoint.host
+            port = endpoint.port
+            if target_ip != endpoint.host:
+                canonical_target = _canonicalize_host(target_ip)
+                for dom in await self._cache.get_domains(mgmt_name, include_global=True):
+                    dom_ips = [
+                        ip
+                        for ip in (dom.active_ip, dom.active_mds_ip, *dom.standby_ips)
+                        if isinstance(ip, str) and ip.strip()
+                    ]
+                    if any(_canonicalize_host(ip) == canonical_target for ip in dom_ips):
+                        if dom.active_mds_ip and dom.active_mds_ip.strip():
+                            mds_ip = dom.active_mds_ip.strip()
+                        break
 
         # Also evict from sid_cache if this sid was cached there
-        for entry in await self._cache.list_sids(mgmt_name=mgmt_name):
-            if entry.sid == sid:
-                await self._cache.evict_sid(
-                    entry.mgmt_name,
-                    entry.domain_name,
-                    auth_identity=entry.auth_identity,
-                )
+        for entry in matching_entries:
+            await self._cache.evict_sid(
+                entry.mgmt_name,
+                entry.domain_name,
+                auth_identity=entry.auth_identity,
+            )
 
         scope = derive_session_pool_scope(sid)
         self._transport.connection_pool.close_session_scope(scope)
         try:
-            async with self._rate_limiter.slot(endpoint.host):
+            async with self._rate_limiter.slot(mds_ip):
                 res = await self._transport.execute(
                     target_ip,
                     "logout",
                     {},
-                    port=endpoint.port,
+                    port=port,
                     sid=sid,
                     timeout=self._settings.api_timeout,
                 )

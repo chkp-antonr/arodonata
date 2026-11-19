@@ -24,7 +24,8 @@ TASK_QUERY_COMMANDS: frozenset[str] = frozenset(
         "show-unused-objects",
         "where-used",
         "show-changes",
-        "show-Gateways-and-servers-task",
+        "show-logs",
+        "show-gateways-and-servers-task",
     }
 )
 

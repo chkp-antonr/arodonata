@@ -25,7 +25,7 @@ async def test_mcp_server_smoke_and_asgi_factory(
     test_domain_a: str,
 ) -> None:
     """Verify ``create_mcp_server`` and ``create_asgi_app`` wire all core tools against the live MDSM."""
-    mcp_settings = ArodonataMCPSettings(auth_mode="host", live_compat=True, cpcrud=True)
+    mcp_settings = ArodonataMCPSettings(auth_mode="host", cpcrud=True)
     server = create_mcp_server(apikey_client, mcp_settings=mcp_settings)
     asgi_app = create_asgi_app(apikey_client, mcp_server=server)
     assert asgi_app.mcp_server is server

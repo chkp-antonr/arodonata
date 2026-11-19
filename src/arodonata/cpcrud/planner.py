@@ -476,6 +476,233 @@ def _build_prior_rule_state(
     return state
 
 
+def _plan_existing_object_diff(
+    *,
+    action_id: str,
+    mgmt_name: str,
+    domain_name: str,
+    verb: str,
+    obj_type: str,
+    display_name: str,
+    spec: Mapping[str, Any],
+    existing: CPObject,
+    policy: ConflictPolicy,
+    reader: HybridStateReader,
+    res_map: dict[str, str],
+) -> PlannedAction:
+    """Compute field diffs, enforce `on_name_conflict`, and update virtual overlay for an existing `CPObject`."""
+    try:
+        diffs, update_payload = compute_object_diff(spec, existing, name_resolutions=res_map)
+    except DiffSafetyError as exc:
+        return _make_error_action(
+            action_id=action_id,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            operation=verb,
+            object_type=obj_type,
+            name=existing.name,
+            requested_name=display_name,
+            resolved_name=existing.name,
+            target_uid=existing.uid,
+            prior_state=_build_prior_object_state(existing),
+            desired_spec=spec,
+            error=str(exc),
+        )
+    if not diffs:
+        return PlannedAction(
+            action_id=action_id,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            operation=verb,
+            object_type=obj_type,
+            name=existing.name,
+            requested_name=display_name,
+            resolved_name=existing.name,
+            target_uid=existing.uid,
+            outcome=Outcome.UNCHANGED,
+            prior_state=_build_prior_object_state(existing),
+            desired_spec=dict(spec),
+            message=f"{obj_type} {existing.name!r} is unchanged.",
+        )
+    if policy.on_name_conflict == "error":
+        diff_keys = ", ".join(sorted(diffs.keys()))
+        err_msg = (
+            f"Name conflict on {obj_type} {existing.name!r}: differs on [{diff_keys}] and on_name_conflict='error'."
+        )
+        return PlannedAction(
+            action_id=action_id,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            operation=verb,
+            object_type=obj_type,
+            name=existing.name,
+            requested_name=display_name,
+            resolved_name=existing.name,
+            target_uid=existing.uid,
+            outcome=Outcome.ERROR,
+            diffs=diffs,
+            prior_state=_build_prior_object_state(existing),
+            desired_spec=dict(spec),
+            message=err_msg,
+            error=err_msg,
+        )
+
+    if existing.uid:
+        update_payload["uid"] = existing.uid
+    else:
+        update_payload["name"] = existing.name
+
+    new_target_name = str(update_payload.get("new-name") or existing.name)
+    updated_model = existing.model_copy(
+        update={
+            "name": new_target_name,
+            "ipv4_address": update_payload.get("ipv4-address", existing.ipv4_address),
+            "ipv6_address": update_payload.get("ipv6-address", existing.ipv6_address),
+            "subnet4": update_payload.get("subnet4", existing.subnet4),
+            "mask_length4": update_payload.get("mask-length4", existing.mask_length4),
+            "ipv4_address_first": update_payload.get("ipv4-address-first", existing.ipv4_address_first),
+            "ipv4_address_last": update_payload.get("ipv4-address-last", existing.ipv4_address_last),
+            "primary_category": update_payload.get("primary-category", existing.primary_category),
+            "url_list": update_payload.get("url-list", existing.url_list),
+            "urls_defined_as_regular_expression": update_payload.get(
+                "urls-defined-as-regular-expression", existing.urls_defined_as_regular_expression
+            ),
+            "description": update_payload.get("description", existing.description),
+            "comments": update_payload.get("comments", existing.comments),
+            "color": update_payload.get("color", existing.color),
+            "tags": update_payload.get("tags", existing.tags),
+        }
+    )
+    reader.record_virtual_object(updated_model, previous_name=existing.name)
+
+    return PlannedAction(
+        action_id=action_id,
+        mgmt_name=mgmt_name,
+        domain_name=domain_name,
+        operation="set",
+        object_type=obj_type,
+        name=existing.name,
+        requested_name=display_name,
+        resolved_name=new_target_name,
+        target_uid=existing.uid,
+        outcome=Outcome.UPDATE,
+        command=f"set-{obj_type}",
+        payload=update_payload,
+        diffs=diffs,
+        prior_state=_build_prior_object_state(existing),
+        desired_spec=dict(spec),
+        message=f"Update {obj_type} {existing.name!r} ({', '.join(sorted(diffs.keys()))}).",
+    )
+
+
+def _plan_existing_service_diff(
+    *,
+    action_id: str,
+    mgmt_name: str,
+    domain_name: str,
+    verb: str,
+    svc_type: str,
+    display_name: str,
+    spec: Mapping[str, Any],
+    existing: CPService,
+    policy: ConflictPolicy,
+    reader: HybridStateReader,
+    res_map: dict[str, str],
+) -> PlannedAction:
+    """Compute field diffs, enforce `on_name_conflict`, and update virtual overlay for an existing `CPService`."""
+    try:
+        diffs, update_payload = compute_service_diff(spec, existing, name_resolutions=res_map)
+    except DiffSafetyError as exc:
+        return _make_error_action(
+            action_id=action_id,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            operation=verb,
+            object_type=svc_type,
+            name=existing.name,
+            requested_name=display_name,
+            resolved_name=existing.name,
+            target_uid=existing.uid,
+            prior_state=_build_prior_service_state(existing),
+            desired_spec=spec,
+            error=str(exc),
+        )
+    if not diffs:
+        return PlannedAction(
+            action_id=action_id,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            operation=verb,
+            object_type=svc_type,
+            name=existing.name,
+            requested_name=display_name,
+            resolved_name=existing.name,
+            target_uid=existing.uid,
+            outcome=Outcome.UNCHANGED,
+            prior_state=_build_prior_service_state(existing),
+            desired_spec=dict(spec),
+            message=f"{svc_type} {existing.name!r} is unchanged.",
+        )
+    if policy.on_name_conflict == "error":
+        diff_keys = ", ".join(sorted(diffs.keys()))
+        err_msg = (
+            f"Name conflict on {svc_type} {existing.name!r}: differs on [{diff_keys}] and on_name_conflict='error'."
+        )
+        return PlannedAction(
+            action_id=action_id,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            operation=verb,
+            object_type=svc_type,
+            name=existing.name,
+            requested_name=display_name,
+            resolved_name=existing.name,
+            target_uid=existing.uid,
+            outcome=Outcome.ERROR,
+            diffs=diffs,
+            prior_state=_build_prior_service_state(existing),
+            desired_spec=dict(spec),
+            message=err_msg,
+            error=err_msg,
+        )
+
+    if existing.uid:
+        update_payload["uid"] = existing.uid
+    else:
+        update_payload["name"] = existing.name
+
+    new_target_name = str(update_payload.get("new-name") or existing.name)
+    updated_svc = existing.model_copy(
+        update={
+            "name": new_target_name,
+            "port": str(update_payload["port"]) if "port" in update_payload else existing.port,
+            "comments": update_payload.get("comments", existing.comments),
+            "color": update_payload.get("color", existing.color),
+            "tags": update_payload.get("tags", existing.tags),
+        }
+    )
+    reader.record_virtual_service(updated_svc, previous_name=existing.name)
+
+    return PlannedAction(
+        action_id=action_id,
+        mgmt_name=mgmt_name,
+        domain_name=domain_name,
+        operation="set",
+        object_type=svc_type,
+        name=existing.name,
+        requested_name=display_name,
+        resolved_name=new_target_name,
+        target_uid=existing.uid,
+        outcome=Outcome.UPDATE,
+        command=f"set-{svc_type}",
+        payload=update_payload,
+        diffs=diffs,
+        prior_state=_build_prior_service_state(existing),
+        desired_spec=dict(spec),
+        message=f"Update {svc_type} {existing.name!r} ({', '.join(sorted(diffs.keys()))}).",
+    )
+
+
 class Planner:
     """Declarative CPCRUD planner producing deterministic, idempotent `Plan` objects."""
 
@@ -989,108 +1216,18 @@ class Planner:
 
             # Case A: Object with requested name/UID already exists
             if existing is not None:
-                try:
-                    diffs, update_payload = compute_object_diff(spec, existing, name_resolutions=res_map)
-                except DiffSafetyError as exc:
-                    return _make_error_action(
-                        action_id=action_id,
-                        mgmt_name=mgmt_name,
-                        domain_name=domain_name,
-                        operation=verb,
-                        object_type=obj_type,
-                        name=existing.name,
-                        requested_name=display_name,
-                        resolved_name=existing.name,
-                        target_uid=existing.uid,
-                        prior_state=_build_prior_object_state(existing),
-                        desired_spec=spec,
-                        error=str(exc),
-                    )
-                if not diffs:
-                    return PlannedAction(
-                        action_id=action_id,
-                        mgmt_name=mgmt_name,
-                        domain_name=domain_name,
-                        operation=verb,
-                        object_type=obj_type,
-                        name=existing.name,
-                        requested_name=display_name,
-                        resolved_name=existing.name,
-                        target_uid=existing.uid,
-                        outcome=Outcome.UNCHANGED,
-                        prior_state=_build_prior_object_state(existing),
-                        desired_spec=dict(spec),
-                        message=f"{obj_type} {existing.name!r} is unchanged.",
-                    )
-                if policy.on_name_conflict == "error":
-                    diff_keys = ", ".join(sorted(diffs.keys()))
-                    err_msg = (
-                        f"Name conflict on {obj_type} {existing.name!r}: "
-                        f"differs on [{diff_keys}] and on_name_conflict='error'."
-                    )
-                    return PlannedAction(
-                        action_id=action_id,
-                        mgmt_name=mgmt_name,
-                        domain_name=domain_name,
-                        operation=verb,
-                        object_type=obj_type,
-                        name=existing.name,
-                        requested_name=display_name,
-                        resolved_name=existing.name,
-                        target_uid=existing.uid,
-                        outcome=Outcome.ERROR,
-                        diffs=diffs,
-                        prior_state=_build_prior_object_state(existing),
-                        desired_spec=dict(spec),
-                        message=err_msg,
-                        error=err_msg,
-                    )
-
-                if existing.uid:
-                    update_payload["uid"] = existing.uid
-                else:
-                    update_payload["name"] = existing.name
-
-                new_target_name = str(update_payload.get("new-name") or existing.name)
-                updated_model = existing.model_copy(
-                    update={
-                        "name": new_target_name,
-                        "ipv4_address": update_payload.get("ipv4-address", existing.ipv4_address),
-                        "ipv6_address": update_payload.get("ipv6-address", existing.ipv6_address),
-                        "subnet4": update_payload.get("subnet4", existing.subnet4),
-                        "mask_length4": update_payload.get("mask-length4", existing.mask_length4),
-                        "ipv4_address_first": update_payload.get("ipv4-address-first", existing.ipv4_address_first),
-                        "ipv4_address_last": update_payload.get("ipv4-address-last", existing.ipv4_address_last),
-                        "primary_category": update_payload.get("primary-category", existing.primary_category),
-                        "url_list": update_payload.get("url-list", existing.url_list),
-                        "urls_defined_as_regular_expression": update_payload.get(
-                            "urls-defined-as-regular-expression", existing.urls_defined_as_regular_expression
-                        ),
-                        "description": update_payload.get("description", existing.description),
-                        "comments": update_payload.get("comments", existing.comments),
-                        "color": update_payload.get("color", existing.color),
-                        "tags": update_payload.get("tags", existing.tags),
-                    }
-                )
-                reader.record_virtual_object(updated_model, previous_name=existing.name)
-
-                return PlannedAction(
+                return _plan_existing_object_diff(
                     action_id=action_id,
                     mgmt_name=mgmt_name,
                     domain_name=domain_name,
-                    operation="set",
-                    object_type=obj_type,
-                    name=existing.name,
-                    requested_name=display_name,
-                    resolved_name=new_target_name,
-                    target_uid=existing.uid,
-                    outcome=Outcome.UPDATE,
-                    command=f"set-{obj_type}",
-                    payload=update_payload,
-                    diffs=diffs,
-                    prior_state=_build_prior_object_state(existing),
-                    desired_spec=dict(spec),
-                    message=f"Update {obj_type} {existing.name!r} ({', '.join(sorted(diffs.keys()))}).",
+                    verb=verb,
+                    obj_type=obj_type,
+                    display_name=display_name,
+                    spec=spec,
+                    existing=existing,
+                    policy=policy,
+                    reader=reader,
+                    res_map=res_map,
                 )
 
             if verb == "set":
@@ -1217,22 +1354,22 @@ class Planner:
                     if auto_name:
                         existing_auto = await reader.get_object_by_name(mgmt_name, domain_name, obj_type, auto_name)
                         if existing_auto is not None:
-                            res_map[req_name] = existing_auto.name
-                            return PlannedAction(
+                            act_auto = _plan_existing_object_diff(
                                 action_id=action_id,
                                 mgmt_name=mgmt_name,
                                 domain_name=domain_name,
-                                operation=verb,
-                                object_type=obj_type,
-                                name=existing_auto.name,
-                                requested_name=req_name,
-                                resolved_name=existing_auto.name,
-                                target_uid=existing_auto.uid,
-                                outcome=Outcome.UNCHANGED,
-                                prior_state=_build_prior_object_state(existing_auto),
-                                desired_spec=dict(spec),
-                                message=f"Auto-named {obj_type} {existing_auto.name!r} already exists.",
+                                verb=verb,
+                                obj_type=obj_type,
+                                display_name=req_name,
+                                spec=spec,
+                                existing=existing_auto,
+                                policy=policy,
+                                reader=reader,
+                                res_map=res_map,
                             )
+                            if act_auto.outcome != Outcome.ERROR:
+                                res_map[req_name] = act_auto.resolved_name or existing_auto.name
+                            return act_auto
 
             # Case C: Plan CREATE
             if obj_type == "application-site":
@@ -1375,97 +1512,18 @@ class Planner:
                 )
 
             if existing is not None:
-                try:
-                    diffs, update_payload = compute_service_diff(spec, existing, name_resolutions=res_map)
-                except DiffSafetyError as exc:
-                    return _make_error_action(
-                        action_id=action_id,
-                        mgmt_name=mgmt_name,
-                        domain_name=domain_name,
-                        operation=verb,
-                        object_type=svc_type,
-                        name=existing.name,
-                        requested_name=display_name,
-                        resolved_name=existing.name,
-                        target_uid=existing.uid,
-                        prior_state=_build_prior_service_state(existing),
-                        desired_spec=spec,
-                        error=str(exc),
-                    )
-                if not diffs:
-                    return PlannedAction(
-                        action_id=action_id,
-                        mgmt_name=mgmt_name,
-                        domain_name=domain_name,
-                        operation=verb,
-                        object_type=svc_type,
-                        name=existing.name,
-                        requested_name=display_name,
-                        resolved_name=existing.name,
-                        target_uid=existing.uid,
-                        outcome=Outcome.UNCHANGED,
-                        prior_state=_build_prior_service_state(existing),
-                        desired_spec=dict(spec),
-                        message=f"{svc_type} {existing.name!r} is unchanged.",
-                    )
-                if policy.on_name_conflict == "error":
-                    diff_keys = ", ".join(sorted(diffs.keys()))
-                    err_msg = (
-                        f"Name conflict on {svc_type} {existing.name!r}: "
-                        f"differs on [{diff_keys}] and on_name_conflict='error'."
-                    )
-                    return PlannedAction(
-                        action_id=action_id,
-                        mgmt_name=mgmt_name,
-                        domain_name=domain_name,
-                        operation=verb,
-                        object_type=svc_type,
-                        name=existing.name,
-                        requested_name=display_name,
-                        resolved_name=existing.name,
-                        target_uid=existing.uid,
-                        outcome=Outcome.ERROR,
-                        diffs=diffs,
-                        prior_state=_build_prior_service_state(existing),
-                        desired_spec=dict(spec),
-                        message=err_msg,
-                        error=err_msg,
-                    )
-
-                if existing.uid:
-                    update_payload["uid"] = existing.uid
-                else:
-                    update_payload["name"] = existing.name
-
-                new_target_name = str(update_payload.get("new-name") or existing.name)
-                updated_svc = existing.model_copy(
-                    update={
-                        "name": new_target_name,
-                        "port": str(update_payload["port"]) if "port" in update_payload else existing.port,
-                        "comments": update_payload.get("comments", existing.comments),
-                        "color": update_payload.get("color", existing.color),
-                        "tags": update_payload.get("tags", existing.tags),
-                    }
-                )
-                reader.record_virtual_service(updated_svc, previous_name=existing.name)
-
-                return PlannedAction(
+                return _plan_existing_service_diff(
                     action_id=action_id,
                     mgmt_name=mgmt_name,
                     domain_name=domain_name,
-                    operation="set",
-                    object_type=svc_type,
-                    name=existing.name,
-                    requested_name=display_name,
-                    resolved_name=new_target_name,
-                    target_uid=existing.uid,
-                    outcome=Outcome.UPDATE,
-                    command=f"set-{svc_type}",
-                    payload=update_payload,
-                    diffs=diffs,
-                    prior_state=_build_prior_service_state(existing),
-                    desired_spec=dict(spec),
-                    message=f"Update {svc_type} {existing.name!r} ({', '.join(sorted(diffs.keys()))}).",
+                    verb=verb,
+                    svc_type=svc_type,
+                    display_name=display_name,
+                    spec=spec,
+                    existing=existing,
+                    policy=policy,
+                    reader=reader,
+                    res_map=res_map,
                 )
 
             if verb == "set":
@@ -1549,22 +1607,22 @@ class Planner:
                     extra_flags["ignore-warnings"] = True
                     existing_auto = await reader.get_service_by_name(mgmt_name, domain_name, svc_type, auto_name)
                     if existing_auto is not None:
-                        res_map[req_name] = existing_auto.name
-                        return PlannedAction(
+                        act_auto = _plan_existing_service_diff(
                             action_id=action_id,
                             mgmt_name=mgmt_name,
                             domain_name=domain_name,
-                            operation=verb,
-                            object_type=svc_type,
-                            name=existing_auto.name,
-                            requested_name=req_name,
-                            resolved_name=existing_auto.name,
-                            target_uid=existing_auto.uid,
-                            outcome=Outcome.UNCHANGED,
-                            prior_state=_build_prior_service_state(existing_auto),
-                            desired_spec=dict(spec),
-                            message=f"Auto-named {svc_type} {existing_auto.name!r} already exists.",
+                            verb=verb,
+                            svc_type=svc_type,
+                            display_name=req_name,
+                            spec=spec,
+                            existing=existing_auto,
+                            policy=policy,
+                            reader=reader,
+                            res_map=res_map,
                         )
+                        if act_auto.outcome != Outcome.ERROR:
+                            res_map[req_name] = act_auto.resolved_name or existing_auto.name
+                        return act_auto
 
             add_payload = _build_add_service_payload(svc_type, target_create_name, spec)
             add_payload.update(extra_flags)

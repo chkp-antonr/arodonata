@@ -37,7 +37,6 @@ def _resolve_mcp_settings(
     allowed_hosts: list[str] | None = None,
     allowed_origins: list[str] | None = None,
     allow_write_api: bool | None = None,
-    live_compat: bool | None = None,
     cpcrud: bool | None = None,
     path: str | None = None,
     host: str | None = None,
@@ -52,8 +51,6 @@ def _resolve_mcp_settings(
         base.allowed_origins = list(allowed_origins)
     if allow_write_api is not None:
         base.allow_write_api = allow_write_api
-    if live_compat is not None:
-        base.live_compat = live_compat
     if cpcrud is not None:
         base.cpcrud = cpcrud
     if path is not None:
@@ -102,7 +99,6 @@ def create_mcp_server(
     allowed_hosts: list[str] | None = None,
     allowed_origins: list[str] | None = None,
     allow_write_api: bool | None = None,
-    live_compat: bool | None = None,
     cpcrud: bool | None = None,
     environ: dict[str, str] | None = None,
 ) -> MCPServer:
@@ -118,7 +114,6 @@ def create_mcp_server(
         allowed_hosts=allowed_hosts,
         allowed_origins=allowed_origins,
         allow_write_api=allow_write_api,
-        live_compat=live_compat,
         cpcrud=cpcrud,
     )
 
@@ -205,7 +200,6 @@ def create_asgi_app(
     allowed_hosts: list[str] | None = None,
     allowed_origins: list[str] | None = None,
     allow_write_api: bool | None = None,
-    live_compat: bool | None = None,
     cpcrud: bool | None = None,
     path: str | None = None,
     json_response: bool | None = None,
@@ -232,7 +226,6 @@ def create_asgi_app(
             allowed_hosts=allowed_hosts,
             allowed_origins=allowed_origins,
             allow_write_api=allow_write_api,
-            live_compat=live_compat,
             cpcrud=cpcrud,
             path=path,
         )
@@ -257,7 +250,6 @@ def create_asgi_app(
             allowed_hosts=allowed_hosts,
             allowed_origins=allowed_origins,
             allow_write_api=allow_write_api,
-            live_compat=live_compat,
             cpcrud=cpcrud,
             path=path,
         )
