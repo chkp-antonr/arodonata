@@ -8,3 +8,4 @@ docs/_build_bundle
 site
 _tmp
 examples/_tmp
+openspec/schemas/*/templates

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
 REDACTED_PLACEHOLDER = "***REDACTED***"
@@ -71,10 +71,12 @@ def _sanitize_sequence(seq: Iterable[Any], known_sids: Iterable[str] | None = No
     """Recursively redact items in a list, tuple, or set."""
     items: list[Any] = []
     for item in seq:
-        if isinstance(item, dict):
+        if isinstance(item, Mapping):
             items.append(sanitize_mapping(item, known_sids=known_sids))
         elif isinstance(item, (list, tuple, set, frozenset)):
             items.append(_sanitize_sequence(item, known_sids=known_sids))
+        elif isinstance(item, bytes):
+            items.append(redact_sid(item.decode("utf-8", errors="replace"), known_sids=known_sids))
         elif isinstance(item, str):
             items.append(redact_sid(item, known_sids=known_sids))
         else:
@@ -82,20 +84,23 @@ def _sanitize_sequence(seq: Iterable[Any], known_sids: Iterable[str] | None = No
     return items
 
 
-def sanitize_mapping(data: dict[str, Any], known_sids: Iterable[str] | None = None) -> dict[str, Any]:
+def sanitize_mapping(data: Mapping[str, Any], known_sids: Iterable[str] | None = None) -> dict[str, Any]:
     """Recursively redact sensitive keys and SID strings from a dictionary."""
     result: dict[str, Any] = {}
     for key, val in data.items():
-        if is_sensitive_key(key):
-            result[key] = REDACTED_PLACEHOLDER if val is not None else None
-        elif isinstance(val, dict):
-            result[key] = sanitize_mapping(val, known_sids=known_sids)
+        key_str = str(key)
+        if is_sensitive_key(key_str):
+            result[key_str] = REDACTED_PLACEHOLDER if val is not None else None
+        elif isinstance(val, Mapping):
+            result[key_str] = sanitize_mapping(val, known_sids=known_sids)
         elif isinstance(val, (list, tuple, set, frozenset)):
-            result[key] = _sanitize_sequence(val, known_sids=known_sids)
+            result[key_str] = _sanitize_sequence(val, known_sids=known_sids)
+        elif isinstance(val, bytes):
+            result[key_str] = redact_sid(val.decode("utf-8", errors="replace"), known_sids=known_sids)
         elif isinstance(val, str):
-            result[key] = redact_sid(val, known_sids=known_sids)
+            result[key_str] = redact_sid(val, known_sids=known_sids)
         else:
-            result[key] = val
+            result[key_str] = val
     return result
 
 

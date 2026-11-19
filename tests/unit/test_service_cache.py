@@ -108,6 +108,7 @@ class ServiceFakeApi:
         return None
 
 
+@pytest.mark.spec("SCN-CACHE-007-1", "SCN-CACHE-007-2")
 @pytest.mark.asyncio
 async def test_service_cache_default_types_and_selective_on_demand_refresh() -> None:
     """`ServiceCacheService` syncs the 4 default service types and syncs `service-other` on demand without wiping `service-tcp`."""

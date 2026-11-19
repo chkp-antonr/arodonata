@@ -283,6 +283,7 @@ class FacadeFakeApi:
         self.close_logout_args.append(logout)
 
 
+@pytest.mark.spec("SCN-CACHE-004-1")
 @pytest.mark.asyncio
 async def test_client_typed_getters_and_no_implicit_warmup_on_get_domains() -> None:
     """`ArodonataClient` exposes typed getters and `get_domains()` never starts implicit object warm-up."""
@@ -358,6 +359,7 @@ async def test_client_typed_getters_and_no_implicit_warmup_on_get_domains() -> N
     assert fake_api.close_logout_args == [True]
 
 
+@pytest.mark.spec("SCN-CLIENT-003-1", "SCN-SESS-002-1")
 @pytest.mark.asyncio
 async def test_client_write_session_overlay_and_publish_invalidation() -> None:
     """`write_session` overlays uncommitted `add_object` / `set_object` / `delete_object` onto reads, auto-publishes on clean exit, invalidates domain memo, and discards on exception."""
@@ -570,6 +572,7 @@ async def test_client_cpcrud_facade_validate_plan_apply_and_inverse() -> None:
         assert inv["operations"][0]["name"] == "host-cpcrud-new"
 
 
+@pytest.mark.spec("SCN-CLIENT-007-2")
 @pytest.mark.asyncio
 async def test_standalone_mutation_helpers_auto_wrap_in_isolated_write_session() -> None:
     """Adversarial test for C8:
@@ -595,6 +598,7 @@ async def test_standalone_mutation_helpers_auto_wrap_in_isolated_write_session()
         assert "ws-sid-123" in fake_api.logged_out_sids
 
 
+@pytest.mark.spec("SCN-CACHE-004-1", "SCN-CLIENT-002-1")
 @pytest.mark.asyncio
 async def test_client_single_flight_warmup_coalescing_and_status_tracking() -> None:
     """Concurrent `start_object_cache_warmup` calls for the same scope coalesce into a single task and report status via `get_warmup_status`."""
@@ -678,6 +682,7 @@ async def test_client_fire_and_forget_warmup_failure_redacts_sid_without_unretri
     assert loop_exceptions == []
 
 
+@pytest.mark.spec("SCN-CLIENT-004-1", "SCN-CLIENT-009-1", "SCN-CLIENT-009-2", "SCN-TOPO-012-3")
 @pytest.mark.asyncio
 async def test_client_lightweight_package_rulebase_and_static_gateway_facade_methods() -> None:
     """`ArodonataClient` exposes `refresh_policy_packages`, `refresh_package_rulebase`, and static-filtered `find_affected_gateways` without full NAT/HTTPS/Threat or `show-hosts` syncs."""

@@ -153,7 +153,7 @@ class CachedRulebaseSource:
             return found
 
         matches = await _find_matches(candidate_domains)
-        if not matches and kind == "package" and cache_mode != "cache" and self._refresh_service is not None:
+        if not matches and cache_mode != "cache" and self._refresh_service is not None:
             await self._refresh_service.refresh_policy_packages(
                 mgmt_name=mgmt_name,
                 include_global=True,
@@ -163,6 +163,14 @@ class CachedRulebaseSource:
             candidate_domains = await self._list_candidate_domains(mgmt_name)
             non_global = [d for d in candidate_domains if d != "Global"]
             matches = await _find_matches(candidate_domains)
+            if not matches and kind == "layer":
+                await self._refresh_service.refresh_rulebases(
+                    mgmt_name=mgmt_name,
+                    include_global=True,
+                    mode=cache_mode,
+                    cache_ttl=cache_ttl,
+                )
+                matches = await _find_matches(candidate_domains)
 
         if len(matches) == 1:
             return matches[0][0]
@@ -377,6 +385,8 @@ class CachedRulebaseSource:
             layer,
             kind="layer",
             rulebase_type=rulebase_type,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
         )
         span_attrs(
             mgmt_name=mgmt_name,
@@ -502,6 +512,8 @@ class CachedRulebaseSource:
                 layer,
                 kind="layer",
                 rulebase_type=rulebase_type,
+                cache_mode=cache_mode,
+                cache_ttl=cache_ttl,
             )
             snap, session_uid, published_at, status, age = await self._ensure_and_load_snapshot(
                 mgmt_name,

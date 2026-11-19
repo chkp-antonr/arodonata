@@ -5,12 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
+import pytest
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from arodonata.adapters.storage import DatabaseLockManager, DatabaseManager, DistributedLockRecord
 
 
+@pytest.mark.spec("SCN-CACHE-003-1")
 async def test_lock_expiration_uses_database_utc_clock_not_skewed_host_clock() -> None:
     """Verify `SqlLockAdapter` evaluates `expires_at` using DB UTC clock rather than skewed local host clock (`W16`)."""
     db = DatabaseManager(engine=None)
@@ -42,6 +44,7 @@ async def test_lock_expiration_uses_database_utc_clock_not_skewed_host_clock() -
         await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-003-1")
 async def test_lock_renew_and_owner_verified_release() -> None:
     """Verify `renew()` extends active locks only for the matching owner, and `release()` refuses wrong owners (`W13`, `I6`)."""
     db = DatabaseManager(engine=None)

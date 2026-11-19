@@ -95,6 +95,7 @@ OBJECT_LIST_REF_FIELDS: tuple[str, ...] = (
     "members",
     "groups",
     "tags",
+    "url-list",
 )
 
 OBJECT_SCALAR_FIELDS: tuple[str, ...] = (
@@ -112,7 +113,13 @@ OBJECT_SCALAR_FIELDS: tuple[str, ...] = (
     "ipv6-address-last",
     "port",
     "protocol",
+    "ip-protocol",
+    "icmp-type",
+    "icmp-code",
     "fqdn",
+    "primary-category",
+    "urls-defined-as-regular-expression",
+    "description",
     "comments",
     "color",
 )
@@ -486,12 +493,25 @@ def _build_object_summary_fields(core: dict[str, Any], members: list[str]) -> di
         "ipv6-address-last",
         "port",
         "protocol",
+        "ip-protocol",
+        "icmp-type",
+        "icmp-code",
         "fqdn",
+        "primary-category",
+        "urls-defined-as-regular-expression",
     ):
         if core.get(key) is not None:
             fields[key] = core[key]
+    raw_urls = core.get("url-list")
+    if isinstance(raw_urls, list):
+        clean_urls = [str(u).strip() for u in raw_urls if str(u).strip()]
+        if clean_urls:
+            fields["url-list"] = clean_urls
     if members:
         fields["members"] = list(members)
+    desc_str = str(core.get("description") or "").strip()
+    if desc_str:
+        fields["description"] = desc_str
     comments_str = str(core.get("comments") or "").strip()
     if comments_str:
         fields["comments"] = comments_str
@@ -525,12 +545,27 @@ def _format_object_summary_from_fields(fields: dict[str, Any]) -> str:
         first6 = fields.get("ipv6-address-first") or ""
         last6 = fields.get("ipv6-address-last") or ""
         summary_parts.append(f"range6={first6}-{last6}")
-    for key in ("port", "protocol", "fqdn"):
+    for key in (
+        "port",
+        "protocol",
+        "ip-protocol",
+        "icmp-type",
+        "icmp-code",
+        "fqdn",
+        "primary-category",
+        "urls-defined-as-regular-expression",
+    ):
         if fields.get(key) is not None:
             summary_parts.append(f"{key}={fields[key]}")
+    url_list = fields.get("url-list")
+    if isinstance(url_list, list) and url_list:
+        summary_parts.append(f"url-list=[{', '.join(str(u) for u in url_list)}]")
     members = fields.get("members")
     if isinstance(members, list) and members:
         summary_parts.append(f"members=[{', '.join(str(m) for m in members)}]")
+    desc_str = str(fields.get("description") or "").strip()
+    if desc_str:
+        summary_parts.append(f"description={desc_str}")
     comments_str = str(fields.get("comments") or "").strip()
     if comments_str:
         summary_parts.append(f"comments={comments_str}")

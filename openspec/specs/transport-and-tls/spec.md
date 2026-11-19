@@ -2,140 +2,177 @@
 
 ## Purpose
 
-Defines the native `asyncio` Check Point Management API transport (`ApiTransport` over `aiohttp`), SHA-256 certificate fingerprint identity verification (`TrustPolicy` and `TrustStore`), verified read-only connection pooling (`VerifiedConnectionPool`), socket-level timeout enforcement, transport-owned asynchronous task polling (`TaskWaiter`), and continuity-verified pagination (`pager.py`).
+Defines the native `asyncio` Check Point Management API HTTPS transport (`AMgmtClient`), pre-request SHA-256 certificate fingerprint identity verification and TOFU persistence, verified keep-alive connection pooling, socket-level connect and read timeout handling without unsafe retries, asynchronous `show-task` polling, and continuity-verified pagination (`api_query`).
 
 ## Requirements
 
+### Requirement: Strict Web API Command Name Validation
+
+**ID**: REQ-TRANS-001\
+**Intent**: Block path traversal, query injection, and malformed API commands on the client before opening connections or touching pools.\
+**Non-goals**: Payload schema validation against Check Point API reference (`REQ-APIREF-004`).
+
+`AMgmtClient` transport execution SHALL validate every Check Point Web API command string against `^[a-z0-9]+(-[a-z0-9]+)*$` before constructing the request URL, rejecting path traversal sequences, slashes, percent-encoding, whitespace, and uppercase characters.
+
+#### Scenario: SCN-TRANS-001-1 — Path traversal or malformed command rejected before network I/O
+
+- **WHEN** a call executes with a command violating `^[a-z0-9]+(-[a-z0-9]+)*$` (such as `"show-hosts/../publish"`, `"show-x/%2e%2e/publish"`, `"../../gaia_api/v1.7/run-script"`, `"show-hosts?x=1"`, or `"SHOW-HOSTS"`)
+- **THEN** the transport SHALL raise `ValidationError` before acquiring a connection or sending any network bytes
+
 ### Requirement: Pre-Request TLS Certificate Fingerprint Verification
 
-The transport SHALL verify the SHA-256 fingerprint of the server certificate presented at `host:port` immediately after the TLS handshake and BEFORE sending any HTTP headers, credentials, API keys, or command payloads, and SHALL protect `TrustStore` persistence with cross-process file locking, atomic read-merge-write, `0600` permission checks, and RFC-compliant IPv6 `[host]:port` address keys while forbidding unverified HTTP proxies (`trust_env=False`).
+**ID**: REQ-TRANS-002\
+**Intent**: Pin and verify management server TLS identities after handshake and prior to sending any secrets, headers, or payloads.\
+**Non-goals**: TOFU known-hosts file locking and IPv6 key syntax (`REQ-TRANS-003`).
 
-#### Scenario: Untrusted certificate refused in pinned mode
+The transport SHALL verify the server certificate SHA-256 fingerprint at `host:port` immediately after the TLS handshake and BEFORE sending HTTP headers, credentials, API keys, or payloads, supporting `tls_trust` `"pinned"`, `"tofu"`, and `ARODONATA_LAB`-gated `"lab-memory"`, forbidding proxies (`trust_env=False`) and unverified test sender hooks, and never retrying `ServerIdentityError`.
 
-- **WHEN** `tls_trust="pinned"` and the server at `host:port` presents a certificate whose SHA-256 fingerprint is neither in the trust store nor in `ARODONATA_TLS_FINGERPRINTS`
-- **THEN** the connection SHALL be closed before any request bytes are sent and `UnknownServerCertificateError` (or `CertificateMismatchError` if another fingerprint was pinned for that address) SHALL be raised with `"No request was sent."` in the message
+#### Scenario: SCN-TRANS-002-1 — Untrusted certificate refused in pinned mode
 
-#### Scenario: First contact learned in TOFU mode
+- **GIVEN** `tls_trust="pinned"` where the server at `host:port` presents a certificate whose SHA-256 fingerprint is absent from both the trust store and `ARODONATA_TLS_FINGERPRINTS`
+- **WHEN** a connection is established
+- **THEN** the connection SHALL close before any request bytes are sent
+- **AND** `UnknownServerCertificateError` (or `CertificateMismatchError` if another fingerprint was pinned) SHALL be raised with `"No request was sent."` in the message
 
-- **WHEN** `tls_trust="tofu"` and `host:port` has no entry in the trust store
-- **THEN** the presented certificate's SHA-256 fingerprint SHALL be persisted atomically to the trust store (`tls_known_hosts.json` with mode `0600`) under an exclusive OS file lock after re-reading and merging on-disk entries so concurrent workers never clobber learned fingerprints, and subsequent connections to `host:port` presenting a different fingerprint SHALL raise `CertificateMismatchError`
+#### Scenario: SCN-TRANS-002-2 — Known MDS member fingerprint accepted on a new domain IP
 
-#### Scenario: Known MDS member fingerprint accepted on a new domain IP
+- **GIVEN** a domain server IP presenting a certificate whose SHA-256 fingerprint is already trusted for another address in the trust store or `ARODONATA_TLS_FINGERPRINTS`
+- **WHEN** the transport connects to that domain IP
+- **THEN** the certificate SHALL be accepted (and recorded as `known-identity` in `"tofu"` mode)
 
-- **WHEN** a domain server IP presents a certificate whose SHA-256 fingerprint is already trusted for another address (either in the trust store or in `ARODONATA_TLS_FINGERPRINTS`)
-- **THEN** the certificate SHALL be accepted for the new address (and recorded as `known-identity` in `tofu` mode)
-
-#### Scenario: Lab-memory mode restricted to lab environment
+#### Scenario: SCN-TRANS-002-3 — Lab-memory mode restricted to lab environment
 
 - **WHEN** `tls_trust="lab-memory"` is configured without `ARODONATA_LAB` set in the environment
-- **THEN** `TrustPolicy` initialization SHALL raise `ConfigurationError`
+- **THEN** trust configuration initialization SHALL raise `ConfigurationError`
 
-#### Scenario: Identity errors are never retried
+#### Scenario: SCN-TRANS-002-4 — Proxy connections and unverified sender seams rejected
+
+- **WHEN** proxy environment variables (`HTTPS_PROXY`, `ALL_PROXY`) are present, a proxy connection is attempted, or a custom sender seam lacks peer certificate verification outside explicit unit test fixtures
+- **THEN** the transport SHALL ignore ambient proxy variables (`trust_env=False`), refuse proxy connections before sending request bytes, and never bypass pre-request certificate verification
+
+#### Scenario: SCN-TRANS-002-5 — Identity errors are never retried
 
 - **WHEN** a connection raises `ServerIdentityError` (`CertificateMismatchError`, `UnknownServerCertificateError`, or `TrustStoreError`)
-- **THEN** login, keepalive, and task-wait loops SHALL NOT retry the request and SHALL propagate the error immediately
+- **THEN** login, keepalive, and task-wait loops SHALL propagate the error immediately without retrying
 
-#### Scenario: IPv6 host and port keys parsed without ambiguity
+### Requirement: Atomic Cross-Process Known-Hosts Persistence and IPv6 Key Normalization
+
+**ID**: REQ-TRANS-003\
+**Intent**: Prevent multi-worker TOFU known-hosts file corruption and support IPv6 literal endpoints reliably.\
+**Non-goals**: TLS trust mode policy enforcement (`REQ-TRANS-002`).
+
+TLS trust-store persistence SHALL write `tls_known_hosts.json` with `0600` permission checks using cross-process file locking and atomic read-merge-write, and SHALL normalize RFC-compliant IPv6 `[host]:port` address keys in both `tls_known_hosts.json` and `ARODONATA_TLS_FINGERPRINTS`.
+
+#### Scenario: SCN-TRANS-003-1 — First contact learned in TOFU mode
+
+- **GIVEN** `tls_trust="tofu"` and `host:port` absent from `tls_known_hosts.json`
+- **WHEN** the first TLS handshake completes
+- **THEN** the SHA-256 fingerprint SHALL be persisted atomically to `tls_known_hosts.json` (mode `0600`) under an exclusive OS lock after re-reading and merging on-disk entries
+- **AND** a subsequent connection to `host:port` presenting a different fingerprint SHALL raise `CertificateMismatchError`
+
+#### Scenario: SCN-TRANS-003-2 — IPv6 host and port keys parsed without ambiguity
 
 - **WHEN** a management server or domain endpoint uses an IPv6 literal (`[2001:db8::1]:443` or `2001:db8::1`)
-- **THEN** `TrustStore` and `ARODONATA_TLS_FINGERPRINTS` SHALL normalize and match the canonical `[ipv6]:port` key without splitting on internal colons
+- **THEN** both `tls_known_hosts.json` and `ARODONATA_TLS_FINGERPRINTS` SHALL normalize and match `[ipv6]:port` without splitting on internal colons
 
-#### Scenario: Proxy connections and unverified sender seams rejected
+### Requirement: Verified Connection Pooling for Read-Only and Session-Scoped Commands
 
-- **WHEN** environment proxy variables (`HTTPS_PROXY`, `ALL_PROXY`) are present or `_create_proxy_connection` is invoked on the connector, or `ApiTransport` is given a `request_sender` without `peer_cert_getter` outside explicit unit test fixtures
-- **THEN** the transport SHALL ignore ambient proxy variables (`trust_env=False`), refuse proxy connections before sending any request bytes, and never skip pre-request certificate verification
+**ID**: REQ-TRANS-004\
+**Intent**: Reduce TLS handshake overhead across sequential read-only and dedicated-session commands without leaking SIDs or violating session-boundary hygiene.\
+**Non-goals**: Socket timeout classification (`REQ-TRANS-007`) or task polling (`REQ-TRANS-005`).
 
-### Requirement: Socket-Level Connect and Read Timeouts Without Automatic Resend
+The HTTPS transport SHALL pool fingerprint-verified keep-alive connections for up to 10 seconds idle and fewer than 95 requests per socket across read-only `show-*` commands and non-boundary dedicated-session commands (`session_scope`), closing idle sockets before non-pooled commands and never exposing raw `sid`s in pool keys or `repr()`.
 
-The native `aiohttp` transport SHALL enforce explicit TCP/TLS connect (`connect_timeout`) and socket read timeouts on every Check Point Web API (`/web_api/<command>`) connection, disable HTTP redirects (`allow_redirects=False`), classify every `TransportError` with an execution phase (`phase="connect"` with `request_sent=False` vs `phase="post-send"` with `request_sent=True`), and NEVER automatically re-send a request after bytes have been written to the socket.
+#### Scenario: SCN-TRANS-004-1 — Consecutive show commands reuse verified keep-alive connection
 
-#### Scenario: Socket connect or handshake timeout
-
-- **WHEN** TCP connection or TLS handshake exceeds `connect_timeout`
-- **THEN** the transport SHALL raise `ApiTimeoutError` (a subclass of `TimeoutError`) with `phase="connect"`, `request_sent=False`, and the target `host` and `port`
-
-#### Scenario: Socket read timeout
-
-- **WHEN** waiting for the server's HTTP response exceeds the call's read timeout
-- **THEN** the transport SHALL raise `ApiTimeoutError` with `phase="read"`, `request_sent=True`, naming the server and command, and warning that the command may still have run on the server
-
-#### Scenario: Connection reset or broken pipe after request transmission never resends
-
-- **WHEN** the peer resets or closes the connection (`ConnectionResetError`, `BrokenPipeError`, `ServerDisconnectedError`, or post-connect `ClientOSError`) after HTTP request bytes were written
-- **THEN** the transport SHALL raise `TransportError` with `phase="post-send"` (`request_sent=True`), and neither `ApiTransport` nor `AMgmtClient` CMA failover recovery SHALL re-execute the request
-
-#### Scenario: HTTP redirects are never followed
-
-- **WHEN** the target server responds with any `3xx` redirect status (`301`, `302`, `303`, `307`, `308`)
-- **THEN** the transport SHALL NOT follow the redirect (`allow_redirects=False`), SHALL NOT transmit `X-chkp-sid` or request bodies to the `Location` target, and SHALL fail the call immediately
-
-### Requirement: Verified Connection Pooling for Read-Only Commands
-
-`ApiTransport` SHALL pool fingerprint-verified keep-alive HTTPS connections (`VerifiedConnectionPool`) for up to 10 seconds idle and fewer than 95 requests per socket across read-only `show-*` commands and non-boundary dedicated-session commands (`session_scope`), closing idle sockets before non-pooled commands and never exposing raw SIDs in pool keys or `repr()`.
-
-#### Scenario: Consecutive show commands reuse verified keep-alive connection
-
-- **WHEN** two `show-*` API calls target the same `(server_ip, port)` within 10 seconds and the pooled socket remains open below 95 requests
+- **WHEN** two `show-*` API calls target the same `(server_ip, port)` within 10 seconds and below 95 requests on that socket
 - **THEN** the second call SHALL reuse the pooled verified connection without repeating the TCP/TLS handshake
 
-#### Scenario: Mutating commands and idle connections bypass reuse
+#### Scenario: SCN-TRANS-004-2 — Mutating commands and idle connections bypass reuse
 
-- **WHEN** a session-boundary command (`login`, `logout`, `keepalive`, `publish`, `discard`, `continue-session`, `switch-session`, `take-over-session`, `disconnect`), an un-scoped non-`show-*` command, or a command after a >10s idle gap executes
-- **THEN** `ApiTransport` SHALL close matching idle pooled sockets before initiating a new handshake, evict closed protocol tracking entries, send `Connection: close`, and open a fresh TLS-verified connection
+- **WHEN** a session-boundary command (`login`, `logout`, `keepalive`, `publish`, `discard`, `continue-session`, `switch-session`, `take-over-session`, `disconnect`), an un-scoped non-`show-*` command, or a call after `> 10s` idle runs
+- **THEN** the transport SHALL close matching idle pooled sockets before connecting, send `Connection: close`, and open a fresh TLS-verified connection
 
-#### Scenario: Sequential commands within a dedicated session reuse session-scoped keep-alive connection
+#### Scenario: SCN-TRANS-004-3 — Sequential commands within a dedicated session reuse session-scoped keep-alive connection
 
-- **WHEN** non-boundary commands (such as `show-session`, `add-*`, `set-*`, `delete-*`, or `show-task`) run with a dedicated `session_scope` on the same `(server_ip, port)` within 10 seconds and fewer than 95 requests
-- **THEN** they SHALL reuse the pooled verified connection isolated to that `session_scope` (without setting `Connection: close`), while concurrent shared read-only calls or distinct `session_scope` values remain isolated
+- **WHEN** non-boundary commands (`show-session`, `add-*`, `set-*`, `delete-*`, `show-task`) run with a dedicated `session_scope` on the same `(server_ip, port)` within 10s and `< 95` requests
+- **THEN** they SHALL reuse the pooled connection isolated to that `session_scope` without setting `Connection: close`, while keeping shared read-only calls and distinct `session_scope`s isolated
 
-#### Scenario: Pooled socket rotates cleanly before server max-keepalive request limit
+#### Scenario: SCN-TRANS-004-4 — Pooled socket rotates cleanly before server max-keepalive request limit
 
-- **WHEN** a pooled socket reaches 95 HTTP requests in `FingerprintTCPConnector` or reports `should_close`
-- **THEN** the transport SHALL close that socket on release instead of re-pooling it, so the next request opens a fresh TLS-verified connection before hitting the server's 100-request keep-alive limit
+- **WHEN** a pooled socket reaches 95 HTTP requests or signals closure (`should_close`)
+- **THEN** the transport SHALL close that socket on release instead of re-pooling it so the next request opens a fresh verified connection before the server's 100-request keep-alive limit
 
 ### Requirement: Self-Managed Asynchronous Task Polling
 
-The native `aiohttp` transport SHALL execute Check Point Web API commands asynchronously without blocking worker threads and poll any returned `task-id` / `tasks` entries via `TaskWaiter` using exponential backoff (`2s` up to `10s`) under the separate `task_timeout` budget.
+**ID**: REQ-TRANS-005\
+**Intent**: Handle long-running Check Point async operations reliably without blocking event loops or misclassifying partial task failures as success.\
+**Non-goals**: Paging over task-based query results (`REQ-TRANS-006`).
 
-#### Scenario: Successful task completion returns final show-task response
+`AMgmtClient` SHALL execute Check Point Web API commands asynchronously without blocking worker threads and poll any returned `task-id` / `tasks` entries via `show-task` using exponential backoff (`2s` up to `10s`) under the separate `task_timeout` budget.
 
-- **WHEN** an API command (such as `publish`, `install-policy`, `revert-to-revision`, or `assign-global-assignment`) returns a task identifier
-- **THEN** `TaskWaiter` SHALL poll `show-task` until all tasks reach a terminal state and return the final `show-task` payload with `success=True` only when every task's status is in the explicit success allowlist (`succeeded`)
+#### Scenario: SCN-TRANS-005-1 — Successful task completion returns final show-task response
 
-#### Scenario: Failed or partially succeeded task returns success=False without raising
+- **WHEN** an API command (`publish`, `install-policy`, `revert-to-revision`, `assign-global-assignment`, etc.) returns a task identifier
+- **THEN** `AMgmtClient` SHALL poll `show-task` until all tasks reach terminal state and return `success=True` only when every task's status is in the explicit success allowlist (`succeeded`)
+
+#### Scenario: SCN-TRANS-005-2 — Failed or partially succeeded task returns success=False without raising
 
 - **WHEN** a polled server task finishes with `failed` or `partially succeeded`
-- **THEN** `api_call` SHALL return `ApiCallResult(success=False, ...)` containing the raw `show-task` data and error message rather than raising an exception
+- **THEN** `api_call` SHALL return `ApiCallResult(success=False, ...)` with the raw `show-task` payload and error message rather than raising an exception
 
-#### Scenario: Tolerance of transient poll failures
+#### Scenario: SCN-TRANS-005-3 — Tolerance of transient poll failures
 
-- **WHEN** individual `show-task` poll calls fail or time out transiently fewer than 5 consecutive times within `task_timeout`
-- **THEN** `TaskWaiter` SHALL continue polling until the task completes or 5 consecutive poll errors occur (raising `TaskPollError`) or `task_timeout` expires (raising `TaskTimeoutError`, a subclass of `TimeoutError`)
+- **WHEN** individual `show-task` polls fail or time out transiently fewer than 5 consecutive times within `task_timeout`
+- **THEN** polling SHALL continue until completion, or raise `TaskPollError` on 5 consecutive poll failures or `TaskTimeoutError` (`TimeoutError` subclass) if `task_timeout` expires
 
 ### Requirement: Continuity-Verified Object Listing Pagination
 
-The `api_query` pager (`pager.py`) SHALL page object listings in chunks (default 300, max 500), acquiring and releasing a `RateLimiter` slot per page so short API calls can interleave between pages, and verifying `from`, `to`, `total`, and object UID uniqueness across pages.
+**ID**: REQ-TRANS-006\
+**Intent**: Guarantee gap-free and duplicate-free multi-page Check Point object listings even under concurrent SmartConsole mutations.\
+**Non-goals**: Rulebase section-merge pagination (`REQ-RULE-001`).
 
-#### Scenario: Boundary swap duplicate UID recovery
+`AMgmtClient.api_query()` SHALL page object listings in chunks (default 300, max 500), acquiring and releasing a per-MDS concurrency slot per page so short API calls can interleave between pages, and verifying `from`, `to`, `total`, and object UID uniqueness across pages.
 
-- **WHEN** Check Point reorders two objects with equal names across a page boundary, causing a duplicate UID on the new page
-- **THEN** the pager SHALL drop the duplicate and re-read a small window (up to 10 objects on each side of the boundary) in a single request to recover the displaced object without restarting the entire listing
+#### Scenario: SCN-TRANS-006-1 — Boundary swap duplicate UID recovery
 
-#### Scenario: Total count change or continuity break triggers single restart
+- **WHEN** Check Point reorders two equal-name objects across a page boundary, producing a duplicate UID on the new page
+- **THEN** `api_query` SHALL drop the duplicate and re-read a small boundary window (up to 10 objects on each side) in one request to recover the displaced object without restarting the full listing
 
-- **WHEN** `total` changes mid-listing, `from`/`to` continuity breaks, or the final distinct object count does not match `total`
-- **THEN** the pager SHALL restart the listing once from the caller's initial offset, and if the second pass also fails continuity checks, return a failed result with `code="paging_inconsistent"` instead of returning silent gaps or duplicates
+#### Scenario: SCN-TRANS-006-2 — Total count change or continuity break triggers single restart
 
-#### Scenario: Task-based query commands paged through TaskWaiter
+- **WHEN** `total` changes mid-listing, `from`/`to` continuity breaks, or the distinct UID count disagrees with `total`
+- **THEN** `api_query` SHALL restart once from the initial offset, and if the second pass also fails continuity checks, return a failed `ApiQueryResult` with `code="paging_inconsistent"` instead of silent gaps or duplicates
 
-- **WHEN** `api_query` is called with a command in `TASK_QUERY_COMMANDS`
-- **THEN** each page SHALL be executed via `api_call` (awaited by `TaskWaiter` and unpacked from `tasks[].task-details[]`) until `to >= total`, failing the entire query if any page fails or fails to advance
+#### Scenario: SCN-TRANS-006-3 — Task-based query commands paged through show-task polling
 
-### Requirement: Strict Web API Command Name Validation
+- **WHEN** `api_query` executes a task-based query command (such as `show-changes` or `show-logs`)
+- **THEN** each page SHALL run via `api_call` (`show-task` polling unpacking `tasks[].task-details[]`) until `to >= total`, failing the entire query if any page fails or stops advancing
 
-`ApiTransport.execute` SHALL validate every Check Point Web API command string against `^[a-z0-9]+(-[a-z0-9]+)*$` before constructing the request URL, rejecting path traversal sequences, slashes, percent-encoding, whitespace, and uppercase characters.
+### Requirement: Socket-Level Connect and Read Timeouts Without Automatic Resend
 
-#### Scenario: Path traversal or malformed command rejected before network I/O
+**ID**: REQ-TRANS-007\
+**Intent**: Enforce unambiguous failure semantics and never double-execute non-idempotent Check Point commands after bytes leave the socket.\
+**Non-goals**: Timeout budget settings resolution (`REQ-CONFIG-004`).
 
-- **WHEN** `ApiTransport.execute` is called with a command that does not match `^[a-z0-9]+(-[a-z0-9]+)*$` (such as `"show-hosts/../publish"`, `"show-x/%2e%2e/publish"`, `"../../gaia_api/v1.7/run-script"`, `"show-hosts?x=1"`, or `"SHOW-HOSTS"`)
-- **THEN** the transport SHALL raise `ValidationError` before acquiring a connection or sending any network bytes
+`AMgmtClient` HTTPS transport SHALL enforce explicit TCP/TLS `connect_timeout` and socket read timeouts on every `/web_api/<command>` call, disable HTTP redirects (`allow_redirects=False`), classify every `TransportError` with `phase` (`"connect"` / `request_sent=False` vs `"read"` / `"post-send"` with `request_sent=True`), and NEVER automatically resend a general API request after `request_sent=True` (except `LoginCoordinator`'s gated single `login` retry under `REQ-SESS-006`).
+
+#### Scenario: SCN-TRANS-007-1 — Socket connect or handshake timeout
+
+- **WHEN** TCP connect or TLS handshake exceeds `connect_timeout`
+- **THEN** the transport SHALL raise `ApiTimeoutError` (`TimeoutError` subclass) with `phase="connect"`, `request_sent=False`, and the target `host` and `port`
+
+#### Scenario: SCN-TRANS-007-2 — Socket read timeout
+
+- **WHEN** waiting for the server's HTTP response exceeds the call's read timeout
+- **THEN** the transport SHALL raise `ApiTimeoutError` with `phase="read"`, `request_sent=True`, naming the server and command and warning that the command may still have executed
+
+#### Scenario: SCN-TRANS-007-3 — Connection reset or broken pipe after request transmission never resends
+
+- **WHEN** the peer resets or closes the connection (`ConnectionResetError`, `BrokenPipeError`, `ServerDisconnectedError`, or post-connect `ClientOSError`) after request bytes were written
+- **THEN** the transport SHALL raise `TransportError` with `phase="post-send"` (`request_sent=True`), and neither the transport nor CMA failover recovery SHALL resend the request
+
+#### Scenario: SCN-TRANS-007-4 — HTTP redirects are never followed
+
+- **WHEN** the server responds with any `3xx` redirect status (`301`, `302`, `303`, `307`, `308`)
+- **THEN** the transport SHALL NOT follow the redirect (`allow_redirects=False`), SHALL NOT transmit `X-chkp-sid` or request bodies to `Location`, and SHALL fail the call immediately

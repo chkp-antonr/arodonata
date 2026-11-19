@@ -95,6 +95,7 @@ def test_classify_search_term_variants() -> None:
     assert classify_search_term("corp-db-primary").kind == "name"
 
 
+@pytest.mark.spec("SCN-CACHE-002-3", "SCN-CACHE-013-1")
 @pytest.mark.asyncio
 async def test_search_objects_ip_containment_and_recursive_group_membership_and_overlay() -> None:
     """`search_objects` resolves direct matches (host, containing network, containing range) and recursive parent groups up to `max_depth`, reflecting active `WriteSession` overlays."""
@@ -521,6 +522,7 @@ async def test_describe_objects_query_objects_and_cache_status() -> None:
     await db.close()
 
 
+@pytest.mark.spec("SCN-CACHE-013-2")
 @pytest.mark.asyncio
 async def test_search_objects_exact_match_and_wildcards() -> None:
     """Verify `exact_match=True` matches `.example.com` without matching `sub.example.com`, while preserving `*` and `?` wildcards and parent group traversal."""
@@ -618,6 +620,7 @@ class CountingSearchApi(SearchFakeApi):
         return await super().api_query(mgmt_name, command, **kwargs)
 
 
+@pytest.mark.spec("SCN-CACHE-013-3", "SCN-CACHE-014-1")
 @pytest.mark.asyncio
 async def test_cross_domain_get_group_members_cache_only_global_visibility_and_ambiguity() -> None:
     """`SearchService.get_group_members` with `domain=None` rejects blank targets, triggers zero remote syncs, includes Global, and raises `AmbiguousObjectError` on multi-domain collisions (`W3`, `I3`)."""

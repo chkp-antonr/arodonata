@@ -753,7 +753,7 @@ class AMgmtClient:
     async def close(self, *, logout: bool | None = None) -> None:
         """Close transport connections, drain startup cleanup tasks, and dispose owned engine."""
         await self._session_cleaner.drain_startup_tasks()
-        is_ephemeral_db = self._owns_engine and ":memory:" in (self._settings.database_url or "")
+        is_ephemeral_db = self._owns_engine and self._db.is_in_memory
         should_logout = is_ephemeral_db if logout is None else bool(logout)
         if self._db.is_initialized:
             await self._login_coordinator.logout_all(include_cached_readonly=should_logout)

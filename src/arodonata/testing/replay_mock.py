@@ -1822,11 +1822,14 @@ class FileReplayApiMock(ApiPort):
                         "mgmt_name": "mds",
                         "domain": dom_name,
                         "command": "show-task",
-                        "payload": show_task_payload,
-                        "payload_summary": summarize_payload("show-task", show_task_payload),
+                        "is_mutating": False,
+                        "mutating": False,
                         "sid_ref": None,
                         "session_uid": None,
-                        "mutating": False,
+                        "read_only_session": False,
+                        "payload": show_task_payload,
+                        "payload_summary": summarize_payload("show-task", show_task_payload),
+                        "status_code": 200,
                         "success": True,
                         "error_code": None,
                     }
@@ -2105,6 +2108,7 @@ class FileReplayApiMock(ApiPort):
                 dom_name=dom_name,
                 all_domains_effective=all_domains,
                 locked_uids_out=locked_uids_out,
+                req=req,
             )
             return cp_ok({"deleted-count": removed, "message": f"Deleted {removed} unused objects"}), None
 
@@ -3051,6 +3055,7 @@ class FileReplayApiMock(ApiPort):
                 dom_files,
                 dom_name=dom_name,
                 all_domains_effective=self._effective_all_domains(binding),
+                req=req,
             )
             return cp_ok(paginate_items(unused, req, collection_key="objects"))
 

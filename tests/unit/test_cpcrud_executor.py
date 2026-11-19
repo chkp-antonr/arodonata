@@ -204,6 +204,7 @@ async def test_executor_aborts_stale_plan_with_zero_writes_when_force_is_false()
     assert invalidated == []
 
 
+@pytest.mark.spec("SCN-CPCRUD-010-4")
 @pytest.mark.asyncio
 async def test_executor_apply_updates_overlay_publishes_and_invalidates_domain() -> None:
     """`Executor` executes write actions inside a `WriteSession`, updates `SessionOverlay` after each command, publishes, and invalidates the domain."""
@@ -264,6 +265,7 @@ async def test_executor_keep_session_staging_mode_and_sid_redaction() -> None:
     assert "secret-ws-sid-999" not in repr(staged_events[0])
 
 
+@pytest.mark.spec("SCN-CPCRUD-010-4")
 @pytest.mark.asyncio
 async def test_executor_retry_remaining_folds_retry_pass_into_cumulative_report() -> None:
     """`retry_remaining > 0` re-runs failed/skipped-dependency write actions and folds the retry results into the cumulative `ApplyReport`."""
@@ -292,6 +294,7 @@ async def test_executor_retry_remaining_folds_retry_pass_into_cumulative_report(
         assert "secret-ws-sid-999" not in (fe.error or "")
 
 
+@pytest.mark.spec("SCN-CPCRUD-011-2", "SCN-CPCRUD-011-3")
 @pytest.mark.asyncio
 async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_failure() -> None:
     """Verify `publish_staged_session`, `stream_publish_staged_session`, and `discard_staged_session`:
@@ -496,6 +499,7 @@ async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_
     assert "secret-ws-sid-999" in api.logged_out_sids
 
 
+@pytest.mark.spec("SCN-CPCRUD-010-2")
 @pytest.mark.asyncio
 async def test_executor_command_allowlist_and_forged_command_rejection() -> None:
     """Adversarial test for C1 & C2: Executor rejects forged PlannedAction.command or unlisted (object_type, outcome) before opening a session."""
@@ -518,6 +522,7 @@ async def test_executor_command_allowlist_and_forged_command_rejection() -> None
     assert api.calls == []
 
 
+@pytest.mark.spec("SCN-CPCRUD-010-3", "SCN-CPCRUD-010-4")
 @pytest.mark.asyncio
 async def test_executor_cancellation_publish_exception_prepublish_stale_and_none_head_drift() -> None:
     """Adversarial test for W8, W10, W11, W12:
@@ -642,6 +647,7 @@ async def test_executor_cancellation_publish_exception_prepublish_stale_and_none
     assert all(r.outcome == Outcome.PLAN_STALE for r in rep_retry_drift.results)
 
 
+@pytest.mark.spec("SCN-CPCRUD-011-2", "SCN-CPCRUD-011-3")
 @pytest.mark.asyncio
 async def test_staged_session_mmp_restart_web_api_provenance_and_adopt_helper_cleanup() -> None:
     """Verify:

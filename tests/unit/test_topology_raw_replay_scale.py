@@ -48,6 +48,18 @@ from arodonata.testing import (
 )
 
 
+@pytest.mark.spec(
+    "SCN-ITEST-006-1",
+    "SCN-ITEST-006-2",
+    "SCN-ITEST-007-1",
+    "SCN-TOPO-003-3",
+    "SCN-TOPO-007-2",
+    "SCN-TOPO-009-1",
+    "SCN-TOPO-010-1",
+    "SCN-TOPO-017-1",
+    "SCN-TOPO-017-2",
+    "SCN-TOPO-017-3",
+)
 @pytest.mark.asyncio
 async def test_enterprise_topology_raw_replay_scale_pipeline(tmp_path: Path) -> None:
     """Execute the 6-step enterprise raw-replay topology pipeline from disk fixtures."""
@@ -527,6 +539,7 @@ async def test_enterprise_topology_raw_replay_scale_pipeline(tmp_path: Path) -> 
         assert updated_flow.match_type == "internal_to_internal"
 
 
+@pytest.mark.spec("SCN-ITEST-006-1", "SCN-ITEST-008-1")
 @pytest.mark.asyncio
 async def test_standalone_https_mock_server_with_real_arodonata_client(tmp_path: Path) -> None:
     """Verify `CheckPointReplayHttpServer` serves `ArodonataClient` (`AMgmtClient` + `ApiTransport`) over real HTTPS."""

@@ -745,6 +745,37 @@ def collect_blocking_references(
                         refs.append(
                             f"NAT rule #{rule.get('rule-number') or idx} in package '{pkg_name}' (domain '{scope_dom}')"
                         )
+
+        for gw_cmd in (_GATEWAY_SHOW_CMD, "show-simple-gateways", "show-simple-clusters"):
+            gws = scope_files.get(gw_cmd, {}).get("objects", [])
+            if not isinstance(gws, list):
+                continue
+            for gw in gws:
+                if not isinstance(gw, Mapping):
+                    continue
+                gw_label = str(gw.get("name") or gw.get("uid") or "gateway")
+                vpn_refs = extract_ref_uids(gw.get("vpn-domain"))
+                vpn_settings = gw.get("vpn-settings")
+                if isinstance(vpn_settings, Mapping):
+                    vpn_refs |= extract_ref_uids(vpn_settings.get("vpn-domain"))
+                if target_uid in vpn_refs:
+                    refs.append(f"Gateway '{gw_label}' VPN domain in domain '{scope_dom}'")
+
+                raw_ifaces = gw.get("interfaces")
+                iface_items = raw_ifaces.get("objects", []) if isinstance(raw_ifaces, Mapping) else raw_ifaces
+                if isinstance(iface_items, list):
+                    for iface in iface_items:
+                        if not isinstance(iface, Mapping):
+                            continue
+                        topo_refs = extract_ref_uids(iface.get("specific-network"))
+                        topo_settings = iface.get("topology-settings")
+                        if isinstance(topo_settings, Mapping):
+                            topo_refs |= extract_ref_uids(topo_settings.get("specific-network"))
+                        if target_uid in topo_refs:
+                            iface_name = str(iface.get("name") or "interface")
+                            refs.append(
+                                f"Gateway '{gw_label}' interface '{iface_name}' topology in domain '{scope_dom}'"
+                            )
     return refs
 
 
@@ -1377,13 +1408,92 @@ def handle_entity_crud(
     return None
 
 
+def _build_unused_filter_predicate(
+    dom_files: Mapping[str, Any],
+    req: Mapping[str, Any] | None,
+) -> Callable[[dict[str, Any]], bool]:
+    """Build an optional predicate for `show-unused-objects` and `delete-unused-objects` filters."""
+    if not req:
+        return lambda _obj: True
+
+    def _to_str_list(val: Any) -> list[str]:
+        if isinstance(val, str) and val.strip():
+            return [val.strip()]
+        if isinstance(val, (list, tuple, set)):
+            return [str(x).strip() for x in val if str(x).strip()]
+        return []
+
+    req_types = {t.lower() for t in (*_to_str_list(req.get("type")), *_to_str_list(req.get("types")))}
+    req_objects = {o.lower() for o in (*_to_str_list(req.get("object")), *_to_str_list(req.get("objects")))}
+    req_groups = {g.lower() for g in (*_to_str_list(req.get("group")), *_to_str_list(req.get("groups")))}
+    raw_filter = req.get("filter")
+    filter_needle = str(raw_filter).strip().lower() if raw_filter is not None else ""
+
+    allowed_group_member_uids: set[str] | None = None
+    if req_groups:
+        allowed_group_member_uids = set()
+        group_by_uid: dict[str, set[str]] = {}
+        seed_uids: list[str] = []
+        for cmd in ("show-groups", "show-groups-with-exclusion", "show-service-groups"):
+            for grp in dom_files.get(cmd, {}).get("objects", []):
+                if not isinstance(grp, Mapping) or not grp.get("uid"):
+                    continue
+                g_uid = str(grp["uid"])
+                g_name = str(grp.get("name") or "")
+                members = (
+                    extract_ref_uids(grp.get("members"))
+                    | extract_ref_uids(grp.get("include"))
+                    | extract_ref_uids(grp.get("except"))
+                )
+                group_by_uid[g_uid] = members
+                if g_uid.lower() in req_groups or g_name.lower() in req_groups:
+                    seed_uids.append(g_uid)
+        visited: set[str] = set()
+        stack = list(seed_uids)
+        while stack:
+            curr = stack.pop()
+            if curr in visited:
+                continue
+            visited.add(curr)
+            for member_uid in group_by_uid.get(curr, ()):
+                allowed_group_member_uids.add(member_uid)
+                if member_uid in group_by_uid and member_uid not in visited:
+                    stack.append(member_uid)
+
+    def _matches(obj: dict[str, Any]) -> bool:
+        obj_uid = str(obj.get("uid") or "")
+        obj_name = str(obj.get("name") or "")
+        obj_type = str(obj.get("type") or "").lower()
+        if req_types and obj_type not in req_types:
+            return False
+        if req_objects and obj_uid.lower() not in req_objects and obj_name.lower() not in req_objects:
+            return False
+        if allowed_group_member_uids is not None and obj_uid not in allowed_group_member_uids:
+            return False
+        if filter_needle:
+            haystacks = (
+                obj_name.lower(),
+                str(obj.get("ipv4-address") or "").lower(),
+                str(obj.get("subnet4") or "").lower(),
+                str(obj.get("fqdn") or "").lower(),
+                str(obj.get("comments") or "").lower(),
+            )
+            if not any(filter_needle in h for h in haystacks):
+                return False
+        return True
+
+    return _matches
+
+
 def find_unused_objects(
     dom_files: Mapping[str, Any],
     *,
     dom_name: str,
     all_domains_effective: Mapping[str, Mapping[str, Any]],
+    req: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Return all local `ENTITY_SPECS` objects with zero incoming group or rule references."""
+    """Return all local `ENTITY_SPECS` objects with zero incoming group, rule, or gateway references."""
+    matches_filter = _build_unused_filter_predicate(dom_files, req)
     unused: list[dict[str, Any]] = []
     for spec in ENTITY_SPECS:
         items = dom_files.get(spec.plural_show, {}).get("objects", [])
@@ -1391,6 +1501,8 @@ def find_unused_objects(
             continue
         for obj in items:
             if not isinstance(obj, dict) or not obj.get("uid"):
+                continue
+            if not matches_filter(obj):
                 continue
             refs = collect_blocking_references(
                 str(obj["uid"]),
@@ -1409,8 +1521,10 @@ def delete_unused_objects(
     dom_name: str,
     all_domains_effective: Mapping[str, Mapping[str, Any]],
     locked_uids_out: set[str],
+    req: Mapping[str, Any] | None = None,
 ) -> int:
-    """Iteratively delete unreferenced local objects and return the number removed."""
+    """Iteratively delete unreferenced local objects matching optional filters and return the number removed."""
+    matches_filter = _build_unused_filter_predicate(dom_files, req)
     removed_total = 0
     while True:
         removed_pass = 0
@@ -1421,6 +1535,9 @@ def delete_unused_objects(
             kept: list[dict[str, Any]] = []
             for obj in items:
                 if not isinstance(obj, dict) or not obj.get("uid"):
+                    kept.append(obj)
+                    continue
+                if not matches_filter(obj):
                     kept.append(obj)
                     continue
                 uid = str(obj["uid"])

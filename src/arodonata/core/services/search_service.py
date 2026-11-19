@@ -944,6 +944,8 @@ class SearchService:
         port: str | None = None,
         protocol: str | None = None,
         tags: Sequence[str] | None = None,
+        parent_id: str | None = None,
+        parent_asset_id: str | None = None,
         include_global: bool = False,
         group_by: Sequence[str] | None = None,
         aggregate: Literal["count", "list", "describe"] = "list",
@@ -1018,6 +1020,9 @@ class SearchService:
         want_assets = requested_types is not None and any(t in canonical_asset_types_lower for t in requested_types)
         if requested_types is None and (port is not None or protocol is not None):
             want_services = True
+        if requested_types is None and (parent_id is not None or parent_asset_id is not None):
+            want_objects = False
+            want_assets = True
 
         if cache_mode != "cache":
             if want_objects:
@@ -1151,13 +1156,34 @@ class SearchService:
                 item for item in combined_items if any(t.lower() in tag_set for t in getattr(item, "tags", ()))
             ]
 
+        if parent_id:
+            pid_pat = parent_id.strip().lower()
+            pid_wild = "*" in pid_pat or "?" in pid_pat
+            combined_items = [
+                item
+                for item in combined_items
+                if (val := getattr(item, "parent_id", None)) is not None
+                and (fnmatchcase(str(val).lower(), pid_pat) if pid_wild else str(val).lower() == pid_pat)
+            ]
+
+        if parent_asset_id:
+            paid_pat = parent_asset_id.strip().lower()
+            paid_wild = "*" in paid_pat or "?" in paid_pat
+            combined_items = [
+                item
+                for item in combined_items
+                if (val := getattr(item, "parent_asset_id", None)) is not None
+                and (fnmatchcase(str(val).lower(), paid_pat) if paid_wild else str(val).lower() == paid_pat)
+            ]
+
         # Grouping
         if group_by:
             raw_group_fields = [g.strip() for g in group_by if g and g.strip()]
             group_specs: list[tuple[str, list[str]]] = []
             canonical_idx: dict[str, int] = {}
             for req_field in raw_group_fields:
-                canonical_attr = QUERY_GROUP_BY_ALIASES.get(req_field.lower(), req_field)
+                lowered = req_field.lower()
+                canonical_attr = QUERY_GROUP_BY_ALIASES.get(lowered, lowered)
                 if canonical_attr not in canonical_idx:
                     canonical_idx[canonical_attr] = len(group_specs)
                     group_specs.append((canonical_attr, [req_field]))

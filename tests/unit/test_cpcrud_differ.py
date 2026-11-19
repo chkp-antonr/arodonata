@@ -15,6 +15,7 @@ from arodonata.cpcrud.differ import DiffSafetyError, compute_object_diff, comput
 from arodonata.cpcrud.rule_identity import NAT_ANY_OBJECT_UID
 
 
+@pytest.mark.spec("SCN-CPCRUD-007-1", "SCN-CPCRUD-007-2")
 def test_compute_object_diff_application_site_incremental_url_list_and_empty_guard() -> None:
     """`application-site.url-list` computes merged post-delta payloads and blocks empty removal without signature."""
     site = CPObject.from_cp_dict(
@@ -202,6 +203,7 @@ def test_compute_rule_diff_incremental_cells_and_name_resolutions() -> None:
     assert n_diffs["install-on"].added_items == ["gw-2"]
 
 
+@pytest.mark.spec("SCN-CPCRUD-009-2", "SCN-CPCRUD-009-3", "SCN-CPCRUD-009-4")
 def test_compute_rule_diff_anti_any_widening_and_any_collision_guards() -> None:
     """Removing every item raises `DiffSafetyError`; adding to `"Any"` requires explicit `"remove": ["Any"]`."""
     rule_with_specifics = AccessRuleEntry(

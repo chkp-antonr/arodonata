@@ -598,6 +598,7 @@ async def test_consolidated_tool_count_and_cached_list_tools_envelopes() -> None
         assert [m["name"] for m in cl_members_data["objects"]] == ["corp-cluster-01-m1", "corp-cluster-01-m2"]
 
 
+@pytest.mark.spec("SCN-MCP-002-2")
 @pytest.mark.asyncio
 async def test_show_object_three_tier_matching_and_pagination() -> None:
     """Verify `show_object` resolves across objects, services, assets, and layers with:
@@ -685,6 +686,7 @@ async def test_show_object_three_tier_matching_and_pagination() -> None:
         assert "hint" in sub_data
 
 
+@pytest.mark.spec("SCN-MCP-004-1", "SCN-MCP-005-1")
 @pytest.mark.asyncio
 async def test_query_objects_describe_and_cache_control_tools() -> None:
     """Scenario: Aggregate object counts across domains in a single tool call (`query_objects` supporting
@@ -945,6 +947,7 @@ async def test_show_rulebase_catalog_discovery_local_filter_and_live_parameters(
         assert any(c[1] == "show-access-rulebase" and c[2] and c[2].get("show-hits") is True for c in fake_api.calls)
 
 
+@pytest.mark.spec("SCN-MCP-010-1")
 @pytest.mark.asyncio
 async def test_unknown_domain_prevalidation_and_invalid_credentials_tool_failure(
     monkeypatch: pytest.MonkeyPatch,
@@ -1008,6 +1011,7 @@ async def test_unknown_domain_prevalidation_and_invalid_credentials_tool_failure
         assert "Branch" in cred_text
 
 
+@pytest.mark.spec("SCN-MCP-010-2")
 @pytest.mark.asyncio
 async def test_write_api_protection_sid_masking_and_unexpected_exception_handling() -> None:
     """Scenario: `api_call` rejects non-read-only commands when `ARODONATA_MCP_ALLOW_WRITE_API=false`,
@@ -1124,6 +1128,7 @@ async def test_write_api_protection_sid_masking_and_unexpected_exception_handlin
         assert inv_dict["operations"][0]["operation"] == "delete"
 
 
+@pytest.mark.spec("SCN-MCP-009-1", "SCN-MCP-009-2", "SCN-MCP-009-3", "SCN-MCP-010-2")
 @pytest.mark.asyncio
 async def test_mcp_cpcrud_tamper_resistance_staged_sessions_and_api_call_hardening() -> None:
     """Adversarial tests for C1, C2, W12, W25, W27, W28:
@@ -1271,6 +1276,7 @@ async def test_mcp_cpcrud_tamper_resistance_staged_sessions_and_api_call_hardeni
         assert ("mds1", "dedicated-sid-999") in fake_api.logged_out_sids
 
 
+@pytest.mark.spec("SCN-MCP-002-2", "SCN-MCP-003-1")
 @pytest.mark.asyncio
 async def test_mcp_cross_domain_show_object_and_get_group_members_ambiguity_and_zero_login() -> None:
     """Scenario (`W3`, `I3`):
@@ -1543,6 +1549,7 @@ async def test_single_domain_smc_implicit_domain_refresh_and_async_api_reference
         assert grp_data["total"] == 1
 
 
+@pytest.mark.spec("SCN-CACHE-013-2", "SCN-CACHE-013-3")
 @pytest.mark.asyncio
 async def test_cold_cache_search_and_query_objects_gateway_types_multiserver_and_exact_cidr() -> None:
     """Verify cold-cache search/query behavior after domain-only discovery (e.g. Build Inventory):
@@ -1722,6 +1729,7 @@ async def test_cold_cache_search_and_query_objects_gateway_types_multiserver_and
         assert "web-srv-1" in returned_names
 
 
+@pytest.mark.spec("SCN-MCP-004-1")
 @pytest.mark.asyncio
 async def test_list_assets_and_query_objects_cpmi_aliases() -> None:
     """`list_assets` and `query_objects` match Check Point `Cpmi*` asset classes via short aliases case-insensitively."""

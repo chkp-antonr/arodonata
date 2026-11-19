@@ -1,4 +1,4 @@
-schema: spec-driven
+schema: arodonata
 
 context: |
   Arodonata is an async-first Python 3.13+ library and SDK for Check Point Security Management and Multi-Domain Security Management (MDSM) operations.

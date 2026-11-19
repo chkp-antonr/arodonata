@@ -175,6 +175,7 @@ def _build_client(
     )
 
 
+@pytest.mark.spec("SCN-SESS-003-2")
 async def test_sid_cache_reuse_transparent_relogin_and_keepalive_eviction(tmp_path: Path) -> None:
     """Scenarios:
     - Reuse of unexpired cached session
@@ -225,6 +226,7 @@ async def test_sid_cache_reuse_transparent_relogin_and_keepalive_eviction(tmp_pa
     await client.close()
 
 
+@pytest.mark.spec("SCN-SESS-002-1")
 async def test_dedicated_write_session_bypasses_sid_cache_and_updates_overlay(tmp_path: Path) -> None:
     """Scenarios:
     - Dedicated write sessions bypass global SID cache and call logout_sid when finished
@@ -353,6 +355,7 @@ async def test_dedicated_write_session_bypasses_sid_cache_and_updates_overlay(tm
     await client.close()
 
 
+@pytest.mark.spec("SCN-SESS-002-2", "SCN-SESS-004-3", "SCN-SESS-006-2")
 async def test_dynamic_authentication_and_fast_fail_on_invalid_credentials(tmp_path: Path) -> None:
     """Scenarios:
     - Cold startup in dynamic auth mode skips network cleanup without error
@@ -447,6 +450,7 @@ async def test_throttled_login_waits_70s_and_transient_revision_retries(tmp_path
     await client.close()
 
 
+@pytest.mark.spec("SCN-SESS-004-1")
 async def test_startup_cleanup_seeds_system_domain_sid_when_cache_empty(tmp_path: Path) -> None:
     """Scenario: Startup cleanup seeds system domain SID when cache is empty."""
     server = FakeCheckpointServer()
@@ -492,6 +496,7 @@ async def test_startup_cleanup_seeds_system_domain_sid_when_cache_empty(tmp_path
     await client.close()
 
 
+@pytest.mark.spec("SCN-SESS-005-1")
 async def test_active_domain_server_failover_re_resolution(tmp_path: Path) -> None:
     """Scenario: Active domain server failover re-resolution."""
     der, fp = _make_der()
@@ -606,6 +611,7 @@ async def test_identity_errors_are_never_retried_in_login_or_keepalive(tmp_path:
     await client.close()
 
 
+@pytest.mark.spec("SCN-SESS-003-1")
 async def test_sid_cache_credential_binding_and_no_none_wildcard(tmp_path: Path) -> None:
     """Adversarial test for C4:
     - Two AuthContexts with same username/user_id but different passwords or api_keys NEVER share a cached SID.
@@ -659,6 +665,7 @@ async def test_sid_cache_credential_binding_and_no_none_wildcard(tmp_path: Path)
     await client.close()
 
 
+@pytest.mark.spec("SCN-SESS-004-2")
 async def test_session_cleaner_preserves_smartconsole_and_non_arodonata_sessions(tmp_path: Path) -> None:
     """Adversarial test for W9:
     - SessionCleaner only discards sessions owned by Arodonata (application=='arodonata' or session-name starting with 'arodonata')
@@ -724,6 +731,7 @@ async def test_session_cleaner_preserves_smartconsole_and_non_arodonata_sessions
     await client.close()
 
 
+@pytest.mark.spec("SCN-SESS-003-4")
 async def test_write_session_publish_failure_discards_and_shielded_logout_retains_failed_sid(
     tmp_path: Path,
 ) -> None:
@@ -763,6 +771,7 @@ async def test_write_session_publish_failure_discards_and_shielded_logout_retain
     assert ("mds1", "sid_ws_pubfail") not in client.login_coordinator.active_dedicated_sids
 
 
+@pytest.mark.spec("SCN-SESS-003-1")
 async def test_sid_cache_entry_excludes_sid_on_dump_and_includes_auth_identity_in_id(
     tmp_path: Path,
 ) -> None:
@@ -797,6 +806,7 @@ async def test_sid_cache_entry_excludes_sid_on_dump_and_includes_auth_identity_i
     await client.close()
 
 
+@pytest.mark.spec("SCN-SESS-003-1", "SCN-SESS-003-2")
 async def test_readonly_login_payload_and_identity_scoped_sid_eviction(
     tmp_path: Path,
 ) -> None:
@@ -1046,6 +1056,7 @@ async def test_unreachable_server_fails_fast_and_startup_cleanup_handles_error_c
     await client.close()
 
 
+@pytest.mark.spec("SCN-TRANS-004-3")
 async def test_write_session_reuses_keepalive_connection_and_closes_on_publish_and_logout(tmp_path: Path) -> None:
     """Verify WriteSession reuses a dedicated keep-alive socket across mutations and closes on publish/logout."""
     server = FakeCheckpointServer()

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
+
 from arodonata import NamingPrefixes as RootNamingPrefixes
 from arodonata.cpcrud import NamingPrefixes, validate_template
 from arodonata.cpcrud.models import NamingPrefixes as ModelsNamingPrefixes
 
 
+@pytest.mark.spec("SCN-CPCRUD-002-2")
 def test_naming_prefixes_legacy_defaults_preserved() -> None:
     """Default `NamingPrefixes()` preserves all backward-compatible formatting outputs."""
     assert NamingPrefixes is ModelsNamingPrefixes
@@ -26,6 +29,7 @@ def test_naming_prefixes_legacy_defaults_preserved() -> None:
     assert prefixes.format_app_site("chinacloudapi.cn", is_wildcard=True) == "Site__chinacloudapi.cn"
 
 
+@pytest.mark.spec("SCN-CPCRUD-002-1", "SCN-CPCRUD-002-3", "SCN-CPCRUD-002-4")
 def test_naming_prefixes_customer_profile_range_group_and_app_site() -> None:
     """Customer profile supports compressed same-/24 ranges, group suffixes, and wildcard markers."""
     profile = NamingPrefixes(

@@ -2,193 +2,295 @@
 
 ## Purpose
 
-Defines the database-backed cache layer (`DatabaseManager`, `SqlCacheAdapter`, `SqlLockAdapter`), schema hash auto-migration (`arodonata_schema_version`), distributed locks (`distributed_locks`), selective object and service synchronization (`ObjectService`, `ServiceCacheService`, `AssetRefreshService`, `DomainSyncCoordinator`), and recursive object/group search (`SearchService`).
+Defines the database-backed cache and distributed locking layer (`CachePort`, `LockPort`, `arodonata_*` tables) with schema hash auto-migration (`arodonata_schema_version`), selective object, service, asset, and topology synchronization (`ObjectService`, `ServiceCacheService`, `AssetRefreshService`, `TopologyService`, `DomainSyncCoordinator`), cross-domain VSX enrichment, and recursive object/group search (`SearchService`).
 
 ## Requirements
 
 ### Requirement: Schema Hash Auto-Migration and Multi-Backend Persistence
 
-`DatabaseManager.initialize()` SHALL support PostgreSQL (`asyncpg`) and SQLite (`aiosqlite`), prefix all Arodonata tables with `arodonata_` (`ARODONATA_TABLE_NAMES`), serialize schema migration across workers (`pg_advisory_xact_lock` on PostgreSQL, `BEGIN IMMEDIATE` on SQLite) with double-checked `schema_hash` and table-existence verification, and drop legacy unprefixed v1 tables ONLY when a positive v1 column fingerprint (`mdm_dmn` or `mgmt_dmn_key`) is present.
+**ID**: REQ-CACHE-001\
+**Intent**: Initialize and evolve Arodonata SQL tables safely across concurrent workers sharing a host PostgreSQL or SQLite database.\
+**Non-goals**: Cache synchronization policies (`REQ-CACHE-004`, `REQ-CACHE-005`) or distributed work locks (`REQ-CACHE-003`).
 
-#### Scenario: Unchanged schema hash skips table inspection
+The SQL persistence layer SHALL support PostgreSQL (`asyncpg`) and SQLite (`aiosqlite`), prefix all Arodonata tables with `arodonata_` (`ARODONATA_TABLE_NAMES`), serialize migration across workers (`pg_advisory_xact_lock` / `BEGIN IMMEDIATE`) with double-checked `schema_hash` and table verification, and drop legacy unprefixed v1 tables ONLY when a positive v1 column fingerprint (`mdm_dmn` or `mgmt_dmn_key`) exists.
 
-- **WHEN** `DatabaseManager.initialize()` runs and, after acquiring the cross-worker initialization lock (`pg_advisory_xact_lock` or `BEGIN IMMEDIATE`), a row with the current `schema_hash` already exists in `arodonata_schema_version` and all tables in `ARODONATA_TABLE_NAMES` exist
-- **THEN** the database manager SHALL skip per-table column/index migration inspection and mark the database initialized immediately; if any table in `ARODONATA_TABLE_NAMES` was dropped out-of-band, it SHALL re-run table creation even when `schema_hash` matched
+#### Scenario: SCN-CACHE-001-1 — Unchanged schema hash skips table inspection
 
-#### Scenario: Schema evolution applies missing columns and records new hash
+- **GIVEN** the cross-worker initialization lock (`pg_advisory_xact_lock` or `BEGIN IMMEDIATE`) is acquired
+- **WHEN** `arodonata_schema_version` already contains the current `schema_hash` and all tables in `ARODONATA_TABLE_NAMES` exist
+- **THEN** schema initialization SHALL skip per-table column/index migration inspection and mark the cache initialized immediately
+- **AND** if any table in `ARODONATA_TABLE_NAMES` was dropped out-of-band, it SHALL re-run table creation even when `schema_hash` matched
 
-- **WHEN** the Arodonata SQLModel metadata changes (producing a new `schema_hash` not in `arodonata_schema_version`) on a database shared with host application tables in `SQLModel.metadata`
-- **THEN** `DatabaseManager.initialize()` SHALL inspect only `arodonata_*` tables in `ARODONATA_TABLE_NAMES`, create any new Arodonata tables with naive UTC timestamp columns, add any missing columns/indexes (or recreate `arodonata_*` cache tables if column types or `NOT NULL` constraints changed) safely inside the serialized migration lock, and insert the new `schema_hash` row into `arodonata_schema_version`
+#### Scenario: SCN-CACHE-001-2 — Schema evolution applies missing columns and records new hash
 
-#### Scenario: Legacy v1 cache table with incompatible primary key is dropped and recreated
+- **GIVEN** a database shared with host application tables (`SQLModel.metadata`) where Arodonata's schema hash is absent from `arodonata_schema_version`
+- **WHEN** database initialization runs inside the serialized migration lock
+- **THEN** it SHALL inspect only `arodonata_*` tables in `ARODONATA_TABLE_NAMES`, create new Arodonata tables with naive UTC timestamp columns, and apply missing columns/indexes (or recreate `arodonata_*` tables when column types or `NOT NULL` constraints change)
+- **AND** it SHALL insert the new `schema_hash` row into `arodonata_schema_version`
 
-- **WHEN** `DatabaseManager.initialize()` encounters an existing Arodonata table (such as `arodonata_*` with an incompatible schema or a legacy v1 `domains` / `sid_cache` table positively matching the v1 column fingerprint `mdm_dmn` or `mgmt_dmn_key`), or encounters an unprefixed host table (`domains`, `sid_cache`, `distributed_locks`, `domain_sync_state`) without the v1 column fingerprint
-- **THEN** `DatabaseManager.initialize()` SHALL drop only positively fingerprinted legacy v1 tables and recreate incompatible `arodonata_*` tables while leaving unprefixed host tables completely untouched (neither dropping nor altering them)
+#### Scenario: SCN-CACHE-001-3 — Legacy v1 cache table with incompatible primary key is dropped and recreated
+
+- **GIVEN** an incompatible `arodonata_*` table or a legacy v1 table (`domains` / `sid_cache`) matching `mdm_dmn` or `mgmt_dmn_key`
+- **AND** an unprefixed host table (`domains`, `sid_cache`, `distributed_locks`, `domain_sync_state`) lacking that v1 fingerprint
+- **WHEN** database initialization runs
+- **THEN** it SHALL drop only positively fingerprinted legacy v1 tables and recreate incompatible `arodonata_*` tables
+- **AND** it SHALL leave unprefixed host tables completely untouched
+
+### Requirement: Human-Readable Composite Identifiers Across Cached Entities
+
+**ID**: REQ-CACHE-002\
+**Intent**: Allow duplicate-named Check Point entities to coexist cleanly under UID primary keys while exposing human-readable lookup keys.\
+**Non-goals**: Resolving cross-domain ambiguity at query time (`REQ-CACHE-014`).
+
+`CPObject` (`arodonata_objects`), `CPService` (`arodonata_services`), and `Asset` (`arodonata_assets`) SHALL keep `id = "{mgmt_name}:{domain_name}:{uid}"` as primary key while persisting non-unique indexed human-readable keys (`object_id`, `service_id`, `asset_id` formatted as `"{mgmt_name}:{domain_name}:{name}"`) and dual UID/human-readable links on `GroupMembershipNode`.
+
+#### Scenario: SCN-CACHE-002-1 — Duplicate-named objects with distinct UIDs coexist with identical human-readable IDs
+
+- **GIVEN** a domain containing two Check Point objects or services with the same `name` (such as `email`) and distinct `uid` values
+- **WHEN** both entities are cached
+- **THEN** both rows SHALL be stored without collision under distinct `id` primary keys (`"{mgmt_name}:{domain_name}:{uid}"`)
+- **AND** both rows SHALL expose the same indexed `object_id` or `service_id` (`"{mgmt_name}:{domain_name}:{name}"`)
+
+#### Scenario: SCN-CACHE-002-2 — Object rename during incremental sync updates object_id in place
+
+- **GIVEN** a cached Check Point object renamed on the management server
+- **WHEN** `"smart-fast"` (`show-changes`) or a full refresh synchronizes the domain
+- **THEN** the existing row keyed by `id = "{mgmt_name}:{domain_name}:{uid}"` SHALL update in place with the new `name` and recomputed `object_id = "{mgmt_name}:{domain_name}:{new_name}"`
+- **AND** no orphaned row under the old name SHALL remain
+
+#### Scenario: SCN-CACHE-002-3 — Group membership traversal includes human-readable group composite IDs
+
+- **WHEN** `SearchService.search_objects()` resolves containing parent groups for matched objects
+- **THEN** each `GroupMembershipNode` in `SearchResult.memberships` SHALL populate `id` (`"{mgmt_name}:{domain_name}:{uid}"`), `object_id` (`"{mgmt_name}:{domain_name}:{name}"`), `parent_uids`, and `parent_object_ids`
 
 ### Requirement: Database-Backed Distributed Locks
 
-`DatabaseLockManager` (`SqlLockAdapter`) SHALL coordinate cross-process critical sections using the `arodonata_distributed_locks` table with explicit lock expiration (`expires_at`) evaluated against the database server's UTC clock, owner-verified lock renewal (`renew` / heartbeat) and `release`, and retry resilience against transient database serialization/deadlock errors.
+**ID**: REQ-CACHE-003\
+**Intent**: Serialize critical domain sync operations across processes without stale locks outliving crashed workers.\
+**Non-goals**: Per-MDS-member API concurrency semaphores (`REQ-SESS-007`).
 
-#### Scenario: Expired lock reclamation
+`LockPort` SHALL coordinate cross-process critical sections using `arodonata_distributed_locks` with explicit lock expiration (`expires_at`) evaluated against the database server's UTC clock, owner-verified lock renewal (`renew` / heartbeat) and `release`, and retry resilience against transient database serialization/deadlock errors.
 
-- **WHEN** a worker requests a `lock_key` whose existing row in `arodonata_distributed_locks` has `expires_at` in the past according to the database server's current UTC timestamp
-- **THEN** `DatabaseLockManager` SHALL atomically reclaim the expired lock for the new `owner_id`, and `release(lock_key, owner_id)` SHALL delete the row ONLY when `owner_id` matches the active holder
+#### Scenario: SCN-CACHE-003-1 — Expired lock reclamation
 
-#### Scenario: Active sync renews distributed lock before TTL expiration
+- **GIVEN** a `lock_key` row in `arodonata_distributed_locks` whose `expires_at` is in the past according to the database server's UTC clock
+- **WHEN** a worker acquires `lock_key`
+- **THEN** the lock adapter SHALL atomically reclaim the expired lock for the new `owner_id`
+- **AND** `release(lock_key, owner_id)` SHALL delete the row ONLY when `owner_id` matches the active holder
 
-- **WHEN** a domain object, service, asset, or rulebase refresh holds a per-domain lock in `arodonata_distributed_locks`
-- **THEN** the coordinator SHALL periodically renew `expires_at` via a background heartbeat while the refresh is active so long-running domain syncs never expire mid-flight
+#### Scenario: SCN-CACHE-003-2 — Active sync renews distributed lock before TTL expiration
+
+- **GIVEN** a long-running domain object, service, asset, or rulebase refresh holding a lock in `arodonata_distributed_locks`
+- **WHEN** synchronization remains active across renewal intervals
+- **THEN** `DomainSyncCoordinator` SHALL periodically renew `expires_at` via a background heartbeat so active syncs never lose their lock mid-flight
+
+### Requirement: Concurrent Multi-Domain Sync Coordination and Failure Isolation
+
+**ID**: REQ-CACHE-004\
+**Intent**: Maximize multi-domain refresh throughput per MDS without overwhelming endpoints, duplicating in-flight syncs, or masking real failures.\
+**Non-goals**: Type-specific object, service, asset, or rulebase refresh logic (`REQ-CACHE-005`..`REQ-CACHE-012`).
+
+`DomainSyncCoordinator` SHALL refresh domains concurrently per MDS member (`active_mds_ip`, up to `settings.domain_sync_concurrency`) via `asyncio.TaskGroup` while coalescing concurrent same-scope syncs, emit structured `arlogi` progress logs (`DEBUG` on start/completion/skip/batch; `WARNING` on failure), record `sid`-redacted errors without falsely failing `LockAcquisitionError`, and avoid implicit warm-up on `get_domains()`.
+
+#### Scenario: SCN-CACHE-004-1 — Parallel domain refresh per MDS member and background first-use warm-up
+
+- **GIVEN** multiple domains hosted across one or more MDS members
+- **WHEN** `DomainSyncCoordinator.ensure()` refreshes domains and `get_domains()` runs
+- **THEN** domains SHALL refresh concurrently up to `settings.domain_sync_concurrency` (default `min(2, max(1, concurrent_limit - 1))`) per `active_mds_ip`, reusing the caller's active MDS permit on re-entrant coordinator calls
+- **AND** concurrent in-process syncs for the same `(mgmt_name, domain_name, scope)` SHALL coalesce, writes SHALL batch safely, and a fatal `ServerIdentityError` SHALL cancel sibling tasks immediately
+- **AND** `get_domains()` SHALL return domains without implicitly triggering background object-cache warm-up (`start_object_cache_warmup` is invoked explicitly)
+
+#### Scenario: SCN-CACHE-004-2 — Refresh failure visibility, unreachable server resilience, and InvalidCredentialsError handling
+
+- **GIVEN** a domain staleness probe or refresh failing with an API/auth error (`InvalidCredentialsError`, etc.), a server failing `get_domains()` during `mgmt_name=None` refresh, or a domain hitting `LockAcquisitionError`
+- **WHEN** a multi-domain or multi-server refresh executes
+- **THEN** genuine errors (including failed server domain discovery) SHALL be recorded in `RefreshOutcome.failed_domains`, `arodonata_domain_sync_state.last_error`, and `DomainSyncFailedEvent` (`WARNING` log) with `sid`s redacted
+- **AND** previously cached objects SHALL remain intact and synchronization SHALL continue on all reachable servers
+- **AND** `LockAcquisitionError` SHALL NOT overwrite `arodonata_domain_sync_state.status` as `"failed"` or emit a false failure event
 
 ### Requirement: Object Cache Refresh Modes and Incremental Sync
 
-`ObjectService` and `DomainSyncCoordinator` SHALL support four `CacheMode` values (`"cache"`, `"smart"`, `"smart-fast"`, and `"force"`), default to syncing `("host", "network", "address-range", "group", "dns-domain")` into `arodonata_objects`, track revision state per `(mgmt_name, domain_name, scope, item_type)` in `arodonata_domain_sync_state` within the same atomic transaction as data writes using dialect `ON CONFLICT` upserts, expose `refresh_objects` and `stream_refresh_objects`, and emit structured `arlogi` log messages for domain sync progress (`DEBUG` on domain sync start, completion, skip, and batch summary; `WARNING` on domain sync failure).
+**ID**: REQ-CACHE-005\
+**Intent**: Synchronize network objects accurately using head-stamp comparisons and incremental diffs without leaving partial state on error.\
+**Non-goals**: On-demand `application-site` objects (`REQ-CACHE-006`) or service tables (`REQ-CACHE-007`).
 
-#### Scenario: Smart/Check refresh reloads only stale domains atomically and handles never-published domains
+`ObjectService` SHALL support four `CacheMode` values (`"cache"`, `"smart"`, `"smart-fast"`, and `"force"`), default to syncing `("host", "network", "address-range", "group", "dns-domain")` into `arodonata_objects`, track revision state per `(mgmt_name, domain_name, scope, item_type)` in `arodonata_domain_sync_state` within the same atomic transaction using dialect `ON CONFLICT` upserts, and expose `refresh_objects` and `stream_refresh_objects`.
 
+#### Scenario: SCN-CACHE-005-1 — Smart/Check refresh reloads only stale domains atomically and handles never-published domains
+
+- **GIVEN** domains with differing `show-last-published-session` timestamps/UIDs or never-published domains (`last_published_at=None`)
 - **WHEN** `await client.refresh_objects(mode="smart")` or a read helper with `cache_mode="smart"` runs
-- **THEN** the coordinator SHALL compare each domain's `show-last-published-session` publish timestamp (`last_published_at`) and UID (`last_session_uid`, when timestamps match) against the requested `item_type` rows in `arodonata_domain_sync_state` (preserving `last_published_at=None` for never-published domains rather than fabricating `now`), verify the shared session is clean (failing closed if `show-session` fails), reload only missing or stale `item_type` slices and their `arodonata_domain_sync_state` rows in a single atomic transaction under a renewed per-domain distributed lock, and log `DEBUG` entries for domain sync progress (`DomainSyncStartedEvent`, `DomainSyncCompletedEvent`, `DomainSyncSkippedEvent`, and `SyncCompletedEvent`)
+- **THEN** the coordinator SHALL compare `show-last-published-session` (`last_published_at` and `last_session_uid`, preserving `None` for never-published domains) against `arodonata_domain_sync_state`
+- **AND** it SHALL verify the shared session is clean (failing closed if `show-session` fails) and reload only missing or stale `item_type` slices and sync-state rows in one atomic transaction under a renewed domain lock
+- **AND** it SHALL emit `DomainSyncStartedEvent`, `DomainSyncCompletedEvent`, `DomainSyncSkippedEvent`, and `SyncCompletedEvent` alongside `DEBUG` progress logs
 
-#### Scenario: Incremental refresh applies show-changes diff or falls back safely
+#### Scenario: SCN-CACHE-005-2 — Incremental refresh applies show-changes diff or falls back safely
 
-- **WHEN** `await client.refresh_objects(mode="smart-fast")` or a read helper with `cache_mode="smart-fast"` detects stale `item_type` rows with a known baseline in `arodonata_domain_sync_state`
-- **THEN** the service SHALL query `show-changes` preferring `from-session` (`last_session_uid`) over `from-date` (formatting `from-date` as an explicit UTC ISO-8601 string with `Z` suffix when used), unwrap `new-object` / `old-object` change entries, delete removed objects, upsert added/modified objects via dialect `ON CONFLICT`, and update `arodonata_domain_sync_state` atomically; if changes exceed `max_incremental_changes` (default 500) or any error occurs, it SHALL fall back automatically to an atomic type-scoped reload
-
-#### Scenario: Refresh failure visibility, unreachable server resilience, and InvalidCredentialsError handling
-
-- **WHEN** a domain's staleness probe or refresh fails with an API/authentication error (`InvalidCredentialsError`, etc.), when one management server in a multi-server refresh (`mgmt_name=None`) fails during domain discovery (`get_domains`), or when a domain encounters `LockAcquisitionError` because another worker is actively refreshing that domain
-- **THEN** genuine errors (including a server whose domain discovery failed) SHALL be recorded in `RefreshOutcome.failed_domains`, `arodonata_domain_sync_state.last_error` (where applicable), and `DomainSyncFailedEvent` (logged at `WARNING` level) with `redact_sid(..., known_sids=...)` applied while keeping previously cached objects intact and continuing synchronization on all reachable servers, whereas `LockAcquisitionError` SHALL NOT overwrite `arodonata_domain_sync_state.status` as `"failed"` or emit a false failure event over the active worker's sync
-
-#### Scenario: Parallel domain refresh per MDS member and background first-use warm-up
-
-- **WHEN** `DomainSyncCoordinator.ensure()` refreshes multiple domains
-- **THEN** domains SHALL be refreshed concurrently via `asyncio.TaskGroup` at up to `settings.domain_sync_concurrency` (default `min(2, max(1, concurrent_limit - 1))`) domains at once per MDS member (`active_mds_ip`, shared process-wide across coordinators attached to the same database engine while reusing the caller's active MDS permit on nested re-entrant coordinator calls, coalescing concurrent in-process syncs of the same `(mgmt_name, domain_name, scope)`, writing cached rows in bounded Core batches, and cancelling sibling tasks immediately if a fatal `ServerIdentityError` occurs), while `get_domains()` SHALL return the domain list without implicitly starting background object-cache warm-up (warm-up is invoked explicitly via `start_object_cache_warmup`)
-
-### Requirement: Dedicated Service Cache Table and Selective Refresh
-
-`ServiceCacheService` and `SqlCacheAdapter` SHALL persist service objects in `arodonata_services` (`CPService`) tracked per `(mgmt_name, domain_name, "services", item_type)` in `arodonata_domain_sync_state` in a single atomic transaction (preferring `from-session` over UTC `Z`-suffixed `from-date` in `"smart-fast"` mode), refreshing `("service-tcp", "service-udp", "service-icmp", "service-group")` by default and fetching other types only when requested in `types`.
-
-#### Scenario: Default service refresh loads core variable service types
-
-- **WHEN** `await client.refresh_services(mode="smart")` runs without an explicit `types` list
-- **THEN** the service SHALL synchronize `service-tcp`, `service-udp`, `service-icmp`, and `service-group` rows into `arodonata_services` and record each type's `last_published_at`, `last_session_uid`, and `synced_at` in `arodonata_domain_sync_state` within the same atomic database transaction
-
-#### Scenario: Explicit service types sync on demand without wiping other cached service types
-
-- **WHEN** `await client.refresh_services(types=["service-other"])` is called on a domain that already has `service-tcp` cached
-- **THEN** only `service-other` rows SHALL be fetched and replaced in `arodonata_services` (preserving existing `service-tcp` rows), and `arodonata_domain_sync_state` SHALL record the sync state for `item_type="service-other"`
-
-### Requirement: Asset and Gateway Cache with Cluster and VSX Relationships
-
-`AssetRefreshService` (`refresh_assets`, `stream_refresh_assets`) and `SqlCacheAdapter` SHALL persist gateways, clusters, cluster members, VSX gateways/clusters (via encapsulated `generic-object` topology queries), and management servers in `arodonata_assets` concurrently across domains via `DomainSyncCoordinator` (`scope="assets"`, `item_type="*"`) with UID primary keys (`id`) and indexed composite identifiers (`asset_id`).
-
-#### Scenario: Concurrent domain asset collection with interleaved SSE events
-
-- **WHEN** `stream_refresh_assets()` runs across multiple servers and domains
-- **THEN** it SHALL collect domains concurrently per MDS member (`settings.domain_sync_concurrency`, default `min(2, max(1, concurrent_limit - 1))`), persist rows in `arodonata_assets` (avoiding collision with host application `assets` tables), emit typed `SyncProgressEvent` items (convertible to `SSEEvent` via `adapters.sse`) tagged with `mgmt_name` and `domain`, link cluster members and VSX virtual systems to their parent asset UIDs and composite IDs (`parent_id`, `parent_asset_id`, `member_asset_ids`, `virtual_system_asset_ids`), and update `domain_sync_state` (`scope="assets"`, `item_type="*"`)
-
-#### Scenario: Cross-domain VSX gateway and Virtual System topology reconciliation
-
-- **WHEN** a VSX gateway (`vsx_gateway` or `vsx_cluster`) is cached in one domain (e.g., `"VSX"`) and its Virtual System (`virtual_system`) is cached in another domain (e.g., `"Domain4"`) on the same management server (`mgmt_name`)
-- **THEN** asset relationship reconciliation SHALL populate the Virtual System's `parent_uid`, `parent_name`, `parent_id` (`"mds:VSX:<vsx-uid>"`), and `parent_asset_id` (`"mds:VSX:<vsx-name>"`), and populate the parent VSX asset's `virtual_system_uids` and `virtual_system_asset_ids` (`["mds:Domain4:<vs-name>"]`)
-
-### Requirement: Human-Readable Composite Identifiers and Dual Topology Links
-
-`CPObject` (`arodonata_objects`), `CPService` (`arodonata_services`), and `Asset` (`arodonata_assets`) SHALL keep `id = "{mgmt_name}:{domain_name}:{uid}"` as primary key while persisting non-unique indexed human-readable keys (`object_id`, `service_id`, `asset_id` formatted as `"{mgmt_name}:{domain_name}:{name}"`) and dual UID/human-readable parent-child links on `Asset` and `GroupMembershipNode`.
-
-#### Scenario: Duplicate-named objects with distinct UIDs coexist with identical human-readable IDs
-
-- **WHEN** a domain contains two Check Point objects or services with the same `name` (such as `email`) and different `uid` values
-- **THEN** both rows SHALL be stored without collision under their distinct `id` primary keys (`"{mgmt_name}:{domain_name}:{uid}"`) while both expose the same indexed `object_id` or `service_id` (`"{mgmt_name}:{domain_name}:{name}"`)
-
-#### Scenario: Object rename during incremental sync updates object_id in place
-
-- **WHEN** an existing Check Point object is renamed and synchronized via `"smart-fast"` (`show-changes`) or full refresh
-- **THEN** the existing database row identified by `id = "{mgmt_name}:{domain_name}:{uid}"` SHALL be updated in place with the new `name` and recomputed `object_id = "{mgmt_name}:{domain_name}:{new_name}"` without leaving an orphaned row under the old name
-
-#### Scenario: Cluster and cross-domain VSX assets populate both UID and human-readable parent/child links
-
-- **WHEN** `ClusterRelationshipManager` and `VSXRelationshipManager` enrich gateway, cluster, cluster-member, VSX, and virtual-system assets (including a virtual system in a tenant domain hosted on a VSX gateway/cluster in another domain on the same `mgmt_name`)
-- **THEN** child assets SHALL populate `parent_uid`, `parent_name`, `parent_id` (`"{mgmt_name}:{parent_domain}:{parent_uid}"`), and `parent_asset_id` (`"{mgmt_name}:{parent_domain}:{parent_name}"`), and parent cluster/VSX assets SHALL populate `member_uids`, `member_asset_ids`, `virtual_system_uids`, and `virtual_system_asset_ids`
-
-#### Scenario: Group membership traversal includes human-readable group composite IDs
-
-- **WHEN** `search_objects()` resolves containing parent groups for matched objects
-- **THEN** each `GroupMembershipNode` in `SearchResult.memberships` SHALL include `id` (`"{mgmt_name}:{domain_name}:{uid}"`), `object_id` (`"{mgmt_name}:{domain_name}:{name}"`), `parent_uids`, and `parent_object_ids`
-
-### Requirement: Cache-First Object Search with Recursive Group Membership Resolution
-
-`SearchService.search_objects()` SHALL classify comma-separated search terms (IPv4, CIDR, address range, wildcard, UID, composite ID, or name), support `exact_match: bool = False`, query cached objects with active `WriteSession` `contextvars` overlays across target servers/domains, and resolve parent group memberships up to `max_depth` (default 2) into `SearchResult` with dual UID and composite group links.
-
-#### Scenario: Search resolves direct matches and containing groups with human-readable composite IDs
-
-- **WHEN** `await client.search_objects("10.1.10.50", max_depth=2)` or `await client.search_objects("mds:General:hWebHost", max_depth=2)` is called
-- **THEN** it SHALL return a `SearchResult` containing both the matching host/network objects (reflecting any uncommitted `WriteSession` overlay in the current context) and the hierarchy of groups (`memberships`) that directly or transitively contain those objects, with each `GroupMembershipNode` populated with `id`, `object_id`, `parent_uids`, and `parent_object_ids`
-
-#### Scenario: Exact-match search avoids partial name matches and wider supernets
-
-- **WHEN** `await client.search_objects(".example.com", exact_match=True)` is called on a domain containing `.example.com` and `sub.example.com`, or `await client.search_objects("10.192.13.0/24, 192.168.1.10", exact_match=True)` is called on a domain also containing a wider supernet (`10.0.0.0/8`)
-- **THEN** name search SHALL return only `.example.com` without matching `sub.example.com` (while wildcard terms `*.example.com` continue to match via anchored `fnmatchcase`), and IPv4/CIDR search SHALL match only exact hosts/subnets (or narrower subnets contained within a CIDR query) while excluding wider containing supernets such as `10.0.0.0/8`
-
-#### Scenario: Mixed object and gateway type filters partition cleanly between objects and assets
-
-- **WHEN** `await client.search_objects(query, types=["host", "network", "gateway"], cache_mode="smart")` is called
-- **THEN** `ObjectService` SHALL strip asset/service types (`"gateway"`, etc.) before calling Check Point `show-*` object endpoints so `arodonata_objects` refreshes cleanly without `Requested API type: not found`, and `SearchService.search_objects()` SHALL additionally refresh and match gateway/cluster/VSX assets (both primary `ipv4_address` and interface IPv4 addresses) from `arodonata_assets`
-
-### Requirement: Cluster and Cross-Domain VSX Parent-Child Topology Enrichment
-
-`ClusterRelationshipManager` and `VSXRelationshipManager` SHALL enrich cached `arodonata_assets` rows with bidirectional parent-child topology attributes (`parent_uid`, `parent_name`, `parent_id`, `parent_asset_id`, `member_uids`, `member_asset_ids`, `virtual_system_uids`, and `virtual_system_asset_ids`), including cross-domain VSX parent/child links on the same management server.
-
-#### Scenario: Cluster members and VSX virtual systems link bidirectionally to parent containers
-
-- **WHEN** asset refresh reconciles cluster members and VSX virtual systems on `mgmt_name`
-- **THEN** each child member or virtual system SHALL reference its parent's UID and composite `asset_id`, and each parent cluster or VSX container SHALL list all child UIDs and composite `asset_id`s across domains on `mgmt_name`
-
-### Requirement: Exclusive Coordinator-Synchronized Rulebase Cache Writes
-
-Shared `arodonata_rulebase_*` cache tables SHALL be written exclusively under `DomainSyncCoordinator` per-domain distributed locks after `verify_session_clean` succeeds and within an atomic transaction that updates `arodonata_domain_sync_state` (`scope="rulebase"`, `item_type="*"`); read-only consumers (including `arodonata.reports`) SHALL NEVER invoke `CachePort.replace_domain_rulebase` directly out-of-band.
-
-#### Scenario: Concurrent report generation cannot overwrite a newer stamped rulebase snapshot
-
-- **WHEN** `refresh_rulebases` updates `arodonata_rulebase_*` and `arodonata_domain_sync_state` while a concurrent `collect_change_report` call numbers rule changes
-- **THEN** `collect_change_report` SHALL NOT perform unlocked `replace_domain_rulebase` writes that could replace the newer cached rulebase under a fresh `DomainSyncState` stamp
-
-### Requirement: Cross-Domain Group Member Resolution with Ambiguity Detection
-
-`SearchService.get_group_members()` SHALL reject empty or whitespace-only `group_name_or_uid` inputs with `ValidationError`, and when `domain` is `None` (and not encoded in a `mgmt:domain:name` composite ID) SHALL resolve the target container across cached domains including `"Global"` using `cache_mode="cache"`, raising `AmbiguousObjectError` if matching containers exist in more than one domain.
-
-#### Scenario: Cross-domain group member lookup detects multi-domain name collision without whole-MDS sync
-
-- **WHEN** `SearchService.get_group_members(mgmt_name, None, "SharedGroup")` runs against a cache where `"SharedGroup"` exists in two distinct domains
-- **THEN** it SHALL execute zero remote domain refreshes (`cache_mode="cache"`) and raise `AmbiguousObjectError` enumerating the matching domains and composite identifiers
+- **GIVEN** stale `item_type` rows with a known baseline in `arodonata_domain_sync_state`
+- **WHEN** `await client.refresh_objects(mode="smart-fast")` or a read helper with `cache_mode="smart-fast"` runs
+- **THEN** the service SHALL query `show-changes` preferring `from-session` (`last_session_uid`) over UTC `Z`-suffixed `from-date`, unwrap `new-object`/`old-object`, delete removed objects, upsert changes via `ON CONFLICT`, and update sync state atomically
+- **AND** if changes exceed `max_incremental_changes` (default `500`) or any error occurs, it SHALL fall back automatically to an atomic type-scoped reload
 
 ### Requirement: On-Demand Application-Site Object Model and Synchronization
 
-`CPObject` and `ObjectService` SHALL support Check Point `application-site` objects on demand via `show-application-site` and `show-application-sites`, hydrating `primary_category`, `url_list`, and `urls_defined_as_regular_expression` fields from Check Point API responses and cached `raw_data`.
+**ID**: REQ-CACHE-006\
+**Intent**: Cache Check Point `application-site` URL lists and regex flags on demand without bloating default network-object syncs.\
+**Non-goals**: Declarative CPCRUD `application-site` planning and patching (`REQ-CPCRUD-006`, `REQ-CPCRUD-007`).
 
-#### Scenario: CPObject hydrates application-site URL list and regex flag from Check Point dict and DB cache
+`CPObject` and `ObjectService` SHALL support Check Point `application-site` objects on demand via `show-application-sites` (bulk sync) and universal `show-object` (single-UID incremental sync), while `HybridStateReader` queries `show-application-site`, hydrating `primary_category`, `url_list`, and `urls_defined_as_regular_expression`.
 
-- **WHEN** `CPObject.from_cp_dict()` or `SqlCacheAdapter` hydrates a Check Point `application-site` payload containing `primary-category`, `url-list`, and `urls-defined-as-regular-expression`
-- **THEN** the resulting `CPObject` instance SHALL expose `type == "application-site"`, `primary_category`, `url_list` as `list[str]`, and `urls_defined_as_regular_expression` as `bool | None`
+#### Scenario: SCN-CACHE-006-1 — CPObject hydrates application-site URL list and regex flag from Check Point dict and DB cache
 
-#### Scenario: On-demand refresh and query of application-site objects
+- **GIVEN** a Check Point `application-site` payload containing `primary-category`, `url-list`, and `urls-defined-as-regular-expression`
+- **WHEN** `CPObject.from_cp_dict()` or `CachePort` hydrates the object
+- **THEN** `CPObject` SHALL expose `type == "application-site"`, `primary_category`, `url_list` as `list[str]`, and `urls_defined_as_regular_expression` as `bool | None`
 
-- **WHEN** `refresh_objects(types=["application-site"])` or `get_objects(types=["application-site"])` is invoked
-- **THEN** `ObjectService` SHALL query Check Point using `show-application-sites` (and `show-application-site` for single-item lookups), persist the rows in `arodonata_objects` with `item_type="application-site"` in `arodonata_domain_sync_state`, and return the hydrated `CPObject` entries
+#### Scenario: SCN-CACHE-006-2 — On-demand refresh and incremental update of application-site objects
 
-### Requirement: Gateway Interface Topology Persistence and Coordinator Synchronization
+- **WHEN** `refresh_objects(types=["application-site"])`, `get_objects(types=["application-site"])`, or incremental `smart-fast` refresh runs
+- **THEN** `ObjectService` SHALL use `show-application-sites` for full reload and `show-object` for single-UID incremental `smart-fast` updates
+- **AND** it SHALL persist rows in `arodonata_objects` with `item_type="application-site"` in `arodonata_domain_sync_state` and return hydrated `CPObject` entries
 
-`SqlCacheAdapter` and `DatabaseManager` SHALL persist normalized gateway topology intervals in `arodonata_gateway_topology` (registered in `ARODONATA_TABLE_NAMES`), and `TopologyService` (`refresh_topology`, `stream_refresh_topology`) SHALL synchronize domain topology under `DomainSyncCoordinator` (`scope="topology"`, `item_type="*"`) with atomic per-domain replacement (`replace_domain_topology`).
+### Requirement: Dedicated Service Cache Table and Selective Refresh
 
-#### Scenario: Atomic domain topology replacement and sync state recording
+**ID**: REQ-CACHE-007\
+**Intent**: Keep service synchronization modular and avoid overwriting cached service slices during targeted refreshes.\
+**Non-goals**: Network object caching (`REQ-CACHE-005`) or gateway topology extraction (`REQ-CACHE-011`).
 
-- **WHEN** `await client.refresh_topology(mgmt_name="mds1", domains=["Domain4"], mode="force")` completes
-- **THEN** `TopologyService` SHALL ensure domain assets and network objects are fresh, compute all `GatewayTopologyEntry` rows for `"Domain4"`, atomically replace existing `"Domain4"` rows in `arodonata_gateway_topology` alongside the updated `arodonata_domain_sync_state` row (`scope="topology"`, `item_type="*"`), and expose `"topology"` freshness in `SearchService.get_cache_status()`
+`ServiceCacheService` and `CachePort` SHALL persist service objects in `arodonata_services` (`CPService`), tracking `(mgmt_name, domain_name, "services", item_type)` in `arodonata_domain_sync_state` atomically (preferring `from-session` over UTC `Z`-suffixed `from-date` in `"smart-fast"` mode), refreshing `("service-tcp", "service-udp", "service-icmp", "service-group")` by default and other types on demand via `types`.
+
+#### Scenario: SCN-CACHE-007-1 — Default service refresh loads core variable service types
+
+- **WHEN** `await client.refresh_services(mode="smart")` runs without an explicit `types` list
+- **THEN** the service SHALL synchronize `service-tcp`, `service-udp`, `service-icmp`, and `service-group` rows into `arodonata_services`
+- **AND** it SHALL record each type's `last_published_at`, `last_session_uid`, and `synced_at` in `arodonata_domain_sync_state` in the same atomic transaction
+
+#### Scenario: SCN-CACHE-007-2 — Explicit service types sync on demand without wiping other cached service types
+
+- **GIVEN** a domain with `service-tcp` already cached in `arodonata_services`
+- **WHEN** `await client.refresh_services(types=["service-other"])` is called
+- **THEN** only `service-other` rows SHALL be fetched and replaced in `arodonata_services` (preserving existing `service-tcp` rows)
+- **AND** `arodonata_domain_sync_state` SHALL record the sync state for `item_type="service-other"`
+
+### Requirement: Asset and Gateway Cache Synchronization
+
+**ID**: REQ-CACHE-008\
+**Intent**: Cache gateway, cluster, VSX, and management assets safely in `arodonata_assets` with real-time progress streaming.\
+**Non-goals**: Parent-child relationship enrichment across domains (`REQ-CACHE-009`, `REQ-CACHE-010`).
+
+`AssetRefreshService` (`refresh_assets`, `stream_refresh_assets`) and `CachePort` SHALL persist gateways, clusters, cluster members, VSX gateways/clusters (via encapsulated `generic-object` topology queries), and management servers in `arodonata_assets` concurrently via `DomainSyncCoordinator` (`scope="assets"`, `item_type="*"`) with UID primary keys (`id`) and indexed composite identifiers (`asset_id`).
+
+#### Scenario: SCN-CACHE-008-1 — Concurrent domain asset collection with interleaved SSE events
+
+- **WHEN** `stream_refresh_assets()` runs across multiple servers and domains
+- **THEN** it SHALL collect domains concurrently per MDS member (`settings.domain_sync_concurrency`) and persist rows in `arodonata_assets` (avoiding collision with host `assets` tables)
+- **AND** it SHALL emit typed `SyncProgressEvent` items (convertible to SSE events) tagged with `mgmt_name` and `domain`
+- **AND** it SHALL link cluster members and VSX virtual systems (`parent_id`, `parent_asset_id`, `member_asset_ids`, `virtual_system_asset_ids`) and update `arodonata_domain_sync_state` (`scope="assets"`, `item_type="*"`)
+
+### Requirement: Cluster and Cross-Domain VSX Parent-Child Topology Enrichment
+
+**ID**: REQ-CACHE-009\
+**Intent**: Reconcile parent-child links across clusters and cross-domain VSX Virtual Systems on the same management server.\
+**Non-goals**: VSX slot object metadata retrieval (`REQ-CACHE-010`).
+
+`ClusterRelationshipManager` and `VSXRelationshipManager` SHALL enrich cached `arodonata_assets` rows with bidirectional parent-child topology attributes (`parent_uid`, `parent_name`, `parent_id`, `parent_asset_id`, `member_uids`, `member_asset_ids`, `virtual_system_uids`, and `virtual_system_asset_ids`), including cross-domain VSX parent/child links on the same `mgmt_name`.
+
+#### Scenario: SCN-CACHE-009-1 — Cluster members and VSX virtual systems link bidirectionally to parent containers
+
+- **WHEN** `ClusterRelationshipManager` and `VSXRelationshipManager` enrich gateway, cluster, cluster-member, VSX, and virtual-system assets on `mgmt_name`
+- **THEN** child assets SHALL populate `parent_uid`, `parent_name`, `parent_id` (`"{mgmt_name}:{parent_domain}:{parent_uid}"`), and `parent_asset_id` (`"{mgmt_name}:{parent_domain}:{parent_name}"`)
+- **AND** parent cluster or VSX containers SHALL list all child `member_uids`, `member_asset_ids`, `virtual_system_uids`, and `virtual_system_asset_ids` across domains on `mgmt_name`
+
+#### Scenario: SCN-CACHE-009-2 — Cross-domain VSX gateway and Virtual System topology reconciliation
+
+- **GIVEN** a VSX gateway (`vsx_gateway` or `vsx_cluster`) cached in domain `"VSX"` and its Virtual System (`virtual_system`) cached in `"Domain4"` on `"mds"`
+- **WHEN** asset relationship reconciliation runs across `mgmt_name`
+- **THEN** the Virtual System SHALL populate `parent_uid`, `parent_name`, `parent_id` (`"mds:VSX:<vsx-uid>"`), and `parent_asset_id` (`"mds:VSX:<vsx-name>"`)
+- **AND** the parent VSX asset SHALL populate `virtual_system_uids` and `virtual_system_asset_ids` (`["mds:Domain4:<vs-name>"]`)
 
 ### Requirement: VSX Slot Generic Object Enrichment for Cross-Domain Virtual Systems
 
-`VSXRelationshipManager` SHALL query `com.checkpoint.objects.vsx_classes.dummy.CpmiVsxSlotObj` (`vsid == 0`) and `com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj` (`vsid > 0`) in addition to `CpmiVsxNetobj`, `CpmiVsxClusterNetobj`, `CpmiVsNetobj`, and `CpmiVsClusterNetobj`, linking cross-domain Virtual Systems via `targetCustomer` and `vsxGateway` and preserving slot `interfaces`, `interfaces_installed`, `routes`, and `routes_installed` on the Virtual System asset.
+**ID**: REQ-CACHE-010\
+**Intent**: Recover missing VSX parent links and slot route/interface metadata stored in Check Point VSX slot generic objects.\
+**Non-goals**: Translating slot routes into `GatewayTopologyEntry` intervals (`REQ-TOPO-006`).
 
-#### Scenario: VSX slot objects in the VSX domain link a Virtual System in a tenant domain and attach VS routes
+`VSXRelationshipManager` SHALL query `com.checkpoint.objects.vsx_classes.dummy.CpmiVsxSlotObj` (`vsid == 0`) and `com.checkpoint.objects.vsx_classes.dummy.CpmiVsSlotObj` (`vsid > 0`) alongside `CpmiVsxNetobj`, `CpmiVsxClusterNetobj`, `CpmiVsNetobj`, and `CpmiVsClusterNetobj`, linking cross-domain Virtual Systems via `targetCustomer` and `vsxGateway` and preserving slot `interfaces`, `interfaces_installed`, `routes`, and `routes_installed`.
 
-- **WHEN** a VSX gateway's domain stores a `CpmiVsxSlotObj` (`vsid=0`, `vsxGateway="vsx-uid"`) and a `CpmiVsSlotObj` (`vsid=1`, `name="VS_Tenant"`, `targetCustomer="TenantDomain"`, `vsxGateway="vsx-uid"`, `routes=[...]`), while the `CpmiVsNetobj` asset `"VS_Tenant"` lives in `"TenantDomain"` without a direct `vsx-gateway` field
-- **THEN** `VSXRelationshipManager` SHALL link `" mds1:TenantDomain:VS_Tenant"` to parent `"mds1:VSXDomain:<vsx-name>"` and merge the slot's `routes` and `interfaces` metadata onto the `"VS_Tenant"` asset's `raw_data`
+#### Scenario: SCN-CACHE-010-1 — VSX slot objects in the VSX domain link a Virtual System in a tenant domain and attach VS routes
+
+- **GIVEN** a VSX domain storing `CpmiVsxSlotObj` (`vsid=0`, `vsxGateway="vsx-uid"`) and `CpmiVsSlotObj` (`vsid=1`, `name="VS_Tenant"`, `targetCustomer="TenantDomain"`, `vsxGateway="vsx-uid"`, `routes=[...]`)
+- **AND** `"VS_Tenant"` (`CpmiVsNetobj`) in `"TenantDomain"` lacking a direct `vsx-gateway` field
+- **WHEN** `VSXRelationshipManager` reconciles VSX relationships on `"mds1"`
+- **THEN** it SHALL link `"mds1:TenantDomain:VS_Tenant"` to parent `"mds1:VSXDomain:<vsx-name>"`
+- **AND** it SHALL merge the slot's `routes` and `interfaces` metadata onto `"VS_Tenant"`'s `raw_data`
+
+### Requirement: Gateway Interface Topology Persistence and Coordinator Synchronization
+
+**ID**: REQ-CACHE-011\
+**Intent**: Store normalized gateway IPv4 intervals persistently and refresh them safely under domain sync coordination.\
+**Non-goals**: Detailed interface extraction, route collection, and candidate matching logic (`REQ-TOPO-001`..`REQ-TOPO-018`).
+
+`CachePort` and the SQL persistence layer SHALL persist normalized gateway topology intervals in `arodonata_gateway_topology` (registered in `ARODONATA_TABLE_NAMES`), and `TopologyService` (`refresh_topology`, `stream_refresh_topology`) SHALL synchronize domain topology under `DomainSyncCoordinator` (`scope="topology"`, `item_type="*"`) with atomic per-domain replacement (`replace_domain_topology`).
+
+#### Scenario: SCN-CACHE-011-1 — Atomic domain topology replacement and sync state recording
+
+- **WHEN** `await client.refresh_topology(mgmt_name="mds1", domains=["Domain4"], mode="force")` completes
+- **THEN** `TopologyService` SHALL ensure domain assets and network objects are fresh and compute all `GatewayTopologyEntry` rows for `"Domain4"`
+- **AND** it SHALL atomically replace existing `"Domain4"` rows in `arodonata_gateway_topology` alongside `arodonata_domain_sync_state` (`scope="topology"`, `item_type="*"`)
+- **AND** `SearchService.get_cache_status()` SHALL expose `"topology"` freshness
+
+### Requirement: Exclusive Coordinator-Synchronized Rulebase Cache Writes
+
+**ID**: REQ-CACHE-012\
+**Intent**: Prevent read-only report consumers from overwriting newer rulebase snapshots outside distributed lock and sync-state coordination.\
+**Non-goals**: Rulebase package/layer fetching and numbering semantics (`REQ-RULE-001`..`REQ-RULE-004`).
+
+Shared `arodonata_rulebase_*` cache tables SHALL be written exclusively under `DomainSyncCoordinator` per-domain distributed locks after `verify_session_clean` succeeds and within an atomic transaction that updates `arodonata_domain_sync_state` (`scope="rulebase"`, `item_type="*"`); read-only consumers (including `arodonata.reports`) SHALL NEVER invoke `CachePort.replace_domain_rulebase` directly out-of-band.
+
+#### Scenario: SCN-CACHE-012-1 — Concurrent report generation cannot overwrite a newer stamped rulebase snapshot
+
+- **GIVEN** `refresh_rulebases` updating `arodonata_rulebase_*` and `arodonata_domain_sync_state` concurrently with `collect_change_report`
+- **WHEN** `collect_change_report` performs rule placement numbering
+- **THEN** `collect_change_report` SHALL NOT perform unlocked `replace_domain_rulebase` writes that could clobber the newer stamped rulebase snapshot
+
+### Requirement: Cache-First Object Search with Recursive Group Membership Resolution
+
+**ID**: REQ-CACHE-013\
+**Intent**: Search cached objects, assets, and active write overlays cleanly across IP, CIDR, range, wildcard, and exact selectors with parent group chains.\
+**Non-goals**: Cross-domain ambiguity errors when looking up a single named container (`REQ-CACHE-014`).
+
+`SearchService.search_objects()` SHALL classify comma-separated search terms (IPv4, CIDR, address range, wildcard, UID, composite ID, or name), support `exact_match: bool = False`, query cached objects with active `WriteSession` `contextvars` overlays across target servers/domains, and resolve parent group memberships up to `max_depth` (default 2) into `SearchResult` with dual UID and composite group links.
+
+#### Scenario: SCN-CACHE-013-1 — Search resolves direct matches and containing groups with human-readable composite IDs
+
+- **WHEN** `await client.search_objects("10.1.10.50", max_depth=2)` or `await client.search_objects("mds:General:hWebHost", max_depth=2)` is called
+- **THEN** it SHALL return a `SearchResult` containing matching objects (reflecting any uncommitted `WriteSession` overlay in the current context)
+- **AND** `SearchResult.memberships` SHALL contain direct and transitive parent `GroupMembershipNode` entries with `id`, `object_id`, `parent_uids`, and `parent_object_ids`
+
+#### Scenario: SCN-CACHE-013-2 — Exact-match search avoids partial name matches and wider supernets
+
+- **GIVEN** a domain containing `.example.com`, `sub.example.com`, and a wider `10.0.0.0/8` supernet alongside `10.192.13.0/24`
+- **WHEN** `search_objects(".example.com", exact_match=True)` or `search_objects("10.192.13.0/24, 192.168.1.10", exact_match=True)` is called
+- **THEN** name search SHALL match only `.example.com` without matching `sub.example.com` (while wildcard terms `*.example.com` use anchored `fnmatchcase`)
+- **AND** IPv4/CIDR search SHALL match only exact hosts/subnets or narrower contained subnets, excluding wider containing supernets such as `10.0.0.0/8`
+
+#### Scenario: SCN-CACHE-013-3 — Mixed object and gateway type filters partition cleanly between objects and assets
+
+- **WHEN** `await client.search_objects(query, types=["host", "network", "gateway"], cache_mode="smart")` is called
+- **THEN** `ObjectService` SHALL strip asset/service types (`"gateway"`, etc.) before calling Check Point `show-*` object endpoints so `arodonata_objects` refreshes without `"Requested API type: not found"`
+- **AND** `SearchService.search_objects()` SHALL refresh and match gateway/cluster/VSX assets (primary `ipv4_address` and interface IPs) from `arodonata_assets`
+
+### Requirement: Cross-Domain Group Member Resolution with Ambiguity Detection
+
+**ID**: REQ-CACHE-014\
+**Intent**: Prevent non-deterministic group member expansion when an unqualified group name exists in multiple cached domains.\
+**Non-goals**: Multi-domain search queries (`REQ-CACHE-013`) or MCP response envelope formatting (`REQ-MCP-003`).
+
+`SearchService.get_group_members()` SHALL reject blank `group_name_or_uid` inputs with `ValidationError`, and when `domain` is `None` (not a `mgmt:domain:name` composite ID) SHALL enforce `cache_mode="cache"` (`include_global=True`) on multi-domain MDS (`> 1` non-global cached domains) while permitting single-domain SMC or cold caches to probe `show-domains` when `cache_mode != "cache"`, raising `AmbiguousObjectError` if multiple domains match.
+
+#### Scenario: SCN-CACHE-014-1 — Cross-domain group member lookup enforces MDS cache-only guard without whole-MDS sync
+
+- **GIVEN** a multi-domain MDS cache where `"SharedGroup"` exists in two distinct domains under `mgmt_name`
+- **WHEN** `SearchService.get_group_members(mgmt_name, None, "SharedGroup")` is called
+- **THEN** it SHALL execute zero remote domain refreshes (`cache_mode="cache"`, while single-domain SMC or cold caches MAY probe `show-domains` when `cache_mode != "cache"`)
+- **AND** it SHALL raise `AmbiguousObjectError` enumerating the matching domains and composite identifiers

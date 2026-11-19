@@ -5,14 +5,15 @@ from __future__ import annotations
 import contextlib
 import functools
 import inspect
-from collections.abc import Callable, Sequence
+import json
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any, overload
 
 from arlogi.otel import set_trace_modules
 from arlogi.otel import traced as _arlogi_traced
 from opentelemetry import trace
 
-from arodonata.core.errors import ConfigurationError, is_sensitive_key, redact_sid
+from arodonata.core.errors import ConfigurationError, is_sensitive_key, redact_sid, sanitize_mapping
 
 __all__ = [
     "apply_trace_modules",
@@ -75,19 +76,46 @@ def apply_trace_modules(spec_or_rules: str | dict[str, bool] | None) -> dict[str
     return rules
 
 
-def _coerce_span_value(value: Any) -> bool | str | bytes | int | float | Sequence[bool | str | bytes | int | float]:
-    """Coerce an attribute value into an OpenTelemetry-compatible primitive or sequence."""
-    if isinstance(value, (bool, int, float, bytes)):
+def _sanitize_span_sequence(items: Iterable[Any]) -> list[Any]:
+    """Recursively redact sensitive keys, SIDs, and raw bytes inside sequences."""
+    sanitized: list[Any] = []
+    for item in items:
+        if isinstance(item, Mapping):
+            sanitized.append(sanitize_mapping(item))
+        elif isinstance(item, (list, tuple, set, frozenset)):
+            sanitized.append(_sanitize_span_sequence(item))
+        elif isinstance(item, bytes):
+            sanitized.append(redact_sid(item.decode("utf-8", errors="replace")))
+        elif isinstance(item, str):
+            sanitized.append(redact_sid(item))
+        elif isinstance(item, (bool, int, float)):
+            sanitized.append(item)
+        else:
+            sanitized.append(redact_sid(str(item)))
+    return sanitized
+
+
+def _coerce_span_value(value: Any) -> bool | str | int | float | Sequence[bool | str | int | float]:
+    """Coerce an attribute value into a sanitized OpenTelemetry-compatible primitive or sequence."""
+    if isinstance(value, (bool, int, float)):
         return value
+    if isinstance(value, bytes):
+        return redact_sid(value.decode("utf-8", errors="replace"))
     if isinstance(value, str):
         return redact_sid(value)
+    if isinstance(value, Mapping):
+        return json.dumps(sanitize_mapping(value), default=str, ensure_ascii=False)
     if isinstance(value, (list, tuple, set, frozenset)):
-        coerced_items: list[bool | str | bytes | int | float] = []
-        for item in value:
-            if isinstance(item, (bool, int, float, bytes)):
+        coerced_items: list[bool | str | int | float] = []
+        for item in _sanitize_span_sequence(value):
+            if isinstance(item, (bool, int, float, str)):
                 coerced_items.append(item)
             else:
-                coerced_items.append(redact_sid(str(item)))
+                coerced_items.append(json.dumps(item, default=str, ensure_ascii=False))
+        # OpenTelemetry sequences must be homogeneous; stringify mixed element types cleanly.
+        elem_types = {type(x) for x in coerced_items}
+        if len(elem_types) > 1:
+            return [str(x) for x in coerced_items]
         return coerced_items
     return redact_sid(str(value))
 

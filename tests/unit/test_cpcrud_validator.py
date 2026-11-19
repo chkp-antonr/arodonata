@@ -113,6 +113,7 @@ targets:
     assert validate_template(multi_yaml) == []
 
 
+@pytest.mark.spec("SCN-CPCRUD-001-1")
 def test_validate_template_offline_errors_and_service_method(tmp_path: Path) -> None:
     """`CPCRUDService.validate` returns structured errors on invalid templates without touching API or DB."""
     settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")

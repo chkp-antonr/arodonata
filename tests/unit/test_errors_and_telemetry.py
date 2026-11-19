@@ -91,6 +91,7 @@ def test_exception_redacts_message_and_preserves_hierarchy() -> None:
     assert is_sensitive_key("client_api_key")
 
 
+@pytest.mark.spec("SCN-CONFIG-007-2")
 def test_parse_and_apply_trace_modules() -> None:
     """Verify trace_modules parsing and host rule preservation when trace_modules is empty."""
     import arlogi.otel.decorator as otel_dec
@@ -158,6 +159,7 @@ async def test_span_attrs_and_traced_recording(monkeypatch: pytest.MonkeyPatch) 
     assert "arodonata.empty_field" not in recorded
 
 
+@pytest.mark.spec("SCN-CLIENT-007-2")
 async def test_nested_list_sanitization_api_call_result_repr_overlay_and_chained_traced_exceptions() -> None:
     """Adversarial test for W23, W25, I13:
     - sanitize_mapping recurses into nested lists/tuples

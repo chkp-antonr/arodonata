@@ -15,6 +15,7 @@ from arodonata.core.errors import (
 from arodonata.core.telemetry import set_trace_modules
 
 
+@pytest.mark.spec("SCN-CONFIG-001-1")
 def test_constructor_kwarg_overrides_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
     """Constructor keyword argument must override ARODONATA_* environment variable."""
     monkeypatch.setenv("ARODONATA_CONCURRENT_LIMIT", "4")
@@ -44,6 +45,7 @@ def test_constructor_kwarg_overrides_env_var(monkeypatch: pytest.MonkeyPatch) ->
     assert route_env_settings.max_routes_per_gateway == 25000
 
 
+@pytest.mark.spec("SCN-CONFIG-001-2")
 def test_env_var_populates_field_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """Environment variable populates field when omitted from constructor."""
     monkeypatch.setenv("ARODONATA_SESSION_TIMEOUT", "900")
@@ -51,6 +53,7 @@ def test_env_var_populates_field_by_default(monkeypatch: pytest.MonkeyPatch) -> 
     assert settings.session_timeout == 900
 
 
+@pytest.mark.spec("SCN-CONFIG-002-1")
 def test_positional_topology_via_api_key_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     """Positional MGMT_NAMES, MGMT_SERVERS, and API_KEY_VARS resolve and pair by index."""
     monkeypatch.setenv("MGMT_NAMES", "mds1,sms2")
@@ -95,6 +98,7 @@ def test_api_keys_precedence_over_api_key_vars(monkeypatch: pytest.MonkeyPatch) 
     assert settings.servers["sms2"].api_key == "explicit_k2"
 
 
+@pytest.mark.spec("SCN-CONFIG-002-3")
 def test_mismatched_server_and_key_counts_raises() -> None:
     """Mismatched counts across mgmt_names, mgmt_servers, and api_keys raise ConfigurationError."""
     with pytest.raises(ConfigurationError, match="Mismatched"):
@@ -111,6 +115,7 @@ def test_mismatched_server_and_key_counts_raises() -> None:
         )
 
 
+@pytest.mark.spec("SCN-CONFIG-003-1", "SCN-CONFIG-008-1")
 def test_credential_mode_validation() -> None:
     """Credential mode requires target server IP/topology and both username and password."""
     with pytest.raises(MissingConfigurationError, match="management server address"):
@@ -126,6 +131,7 @@ def test_credential_mode_validation() -> None:
     assert "secret_password" not in repr(settings)
 
 
+@pytest.mark.spec("SCN-CONFIG-003-3")
 def test_dynamic_mode_initializes_without_static_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     """Servers configured without static API keys or credentials resolve auth_mode == 'dynamic'."""
     monkeypatch.setenv("MGMT_NAMES", "mds1")
@@ -153,6 +159,7 @@ def test_timeout_budgets_and_read_timeout_calculation() -> None:
     assert settings.resolve_read_timeout(None) == 125.0
 
 
+@pytest.mark.spec("SCN-CONFIG-007-1", "SCN-CONFIG-007-2")
 def test_trace_modules_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify ARODONATA_TRACE_MODULES parsing and host tracing rule preservation."""
     import arlogi.otel.decorator as otel_dec
@@ -181,6 +188,7 @@ def test_trace_modules_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
         set_trace_modules(None)
 
 
+@pytest.mark.spec("SCN-CONFIG-001-3", "SCN-CONFIG-008-1")
 def test_secret_masking_in_dump_repr_database_url_and_cwd_independent_known_hosts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -229,6 +237,7 @@ def test_secret_masking_in_dump_repr_database_url_and_cwd_independent_known_host
     assert Path(path_a).is_absolute()
 
 
+@pytest.mark.spec("SCN-CONFIG-006-1", "SCN-CONFIG-006-2")
 def test_cpcrud_naming_prefixes_from_arodonata_env_and_no_dotenv(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -262,6 +271,7 @@ def test_cpcrud_naming_prefixes_from_arodonata_env_and_no_dotenv(
     assert prefixes.format_app_site("*chinacloudapi.cn") == "Site__chinacloudapi.cn"
 
 
+@pytest.mark.spec("SCN-CONFIG-006-2")
 def test_cpcrud_naming_prefixes_secondary_cpcrud_fallback_and_constructor_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -291,6 +301,7 @@ def test_cpcrud_naming_prefixes_secondary_cpcrud_fallback_and_constructor_overri
         ArodonataSettings()
 
 
+@pytest.mark.spec("SCN-CONFIG-005-1", "SCN-CONFIG-005-2", "SCN-CONFIG-005-3")
 def test_cprid_repository_script_settings_precedence_and_validation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

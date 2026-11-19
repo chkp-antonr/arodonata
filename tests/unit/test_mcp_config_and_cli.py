@@ -37,6 +37,7 @@ def test_mcp_settings_defaults_and_token_redaction() -> None:
     assert REDACTED_PLACEHOLDER in rep
 
 
+@pytest.mark.spec("SCN-MCP-001-2")
 def test_mcp_settings_resolve_static_tokens() -> None:
     """`resolve_static_tokens` maps env var names in `ARODONATA_MCP_TOKEN_VARS` to `client_id`
     and preserves base64 tokens with `=` padding under generated non-secret `token_<idx>` IDs (`C3`, `W26`).

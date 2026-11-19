@@ -198,6 +198,7 @@ class ReaderFakeApi:
         return None
 
 
+@pytest.mark.spec("SCN-CPCRUD-003-4")
 @pytest.mark.asyncio
 async def test_hybrid_state_reader_uses_cache_when_stamp_matches_and_falls_back_when_stale() -> None:
     """`HybridStateReader` reads from `arodonata_objects` / `arodonata_services` when `domain_sync_state` matches `DomainStamp`, and falls back to live API calls otherwise."""
@@ -287,6 +288,7 @@ async def test_hybrid_state_reader_uses_cache_when_stamp_matches_and_falls_back_
     await db.close()
 
 
+@pytest.mark.spec("SCN-CPCRUD-004-3")
 @pytest.mark.asyncio
 async def test_hybrid_state_reader_raises_state_lookup_error_on_api_or_paging_failure() -> None:
     """`HybridStateReader` raises `StateLookupError` on API errors or `paging_inconsistent`."""
@@ -369,6 +371,7 @@ async def test_hybrid_state_reader_application_site_lookup_and_find_objects_by_v
     await db.close()
 
 
+@pytest.mark.spec("SCN-CPCRUD-004-1", "SCN-CPCRUD-004-3")
 @pytest.mark.asyncio
 async def test_hybrid_state_reader_cold_show_objects_overlay_and_unrecognized_fallback() -> None:
     """Cold-cache value lookups merge intra-plan virtual overlays and fall back cleanly on `generic_err_command_not_recognized`."""

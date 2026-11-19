@@ -89,6 +89,7 @@ class FakeApiPort:
         return None
 
 
+@pytest.mark.spec("SCN-SESS-001-1")
 @pytest.mark.asyncio
 async def test_domain_discovery_global_synthesis_and_opt_in_visibility() -> None:
     """`get_domains` discovers MDS domains, synthesizes `Global`, and filters `Global` unless `include_global=True`."""
@@ -184,6 +185,7 @@ async def test_domain_discovery_global_synthesis_and_opt_in_visibility() -> None
     await db.close()
 
 
+@pytest.mark.spec("SCN-SESS-001-2")
 @pytest.mark.asyncio
 async def test_domain_list_refresh_tracker_1_hour_ttl_and_force() -> None:
     """`DomainListRefreshTracker` skips re-fetching within 1 hour and re-fetches after 3600s or on `mode='force'`."""
@@ -369,6 +371,7 @@ async def test_domain_service_paginates_show_domains_across_multiple_pages() -> 
     await db.close()
 
 
+@pytest.mark.spec("SCN-SESS-001-2")
 @pytest.mark.asyncio
 async def test_domain_service_falls_back_to_standard_details_level_on_rbac_rejection_and_preserves_cached_cma_ips(
     monkeypatch: pytest.MonkeyPatch,

@@ -10,6 +10,7 @@ from arodonata.core.models.objects import CPObject
 from tests.unit.test_client import FacadeFakeApi
 
 
+@pytest.mark.spec("SCN-CLIENT-006-1")
 @pytest.mark.asyncio
 async def test_client_facade_composite_identifier_resolution() -> None:
     """`ArodonataClient.find_object` and `get_group_members` resolve objects, services, and assets by `object_id`, `service_id`, `asset_id`, and `id`."""
@@ -71,6 +72,7 @@ async def test_client_facade_composite_identifier_resolution() -> None:
         assert len(fake_api.calls) == calls_before
 
 
+@pytest.mark.spec("SCN-CLIENT-008-3", "SCN-CLIENT-009-1", "SCN-TOPO-011-2")
 @pytest.mark.asyncio
 async def test_client_facade_topology_and_find_affected_gateways() -> None:
     """`ArodonataClient` exposes `topology_service`, `refresh_topology`, `stream_refresh_topology`, `get_gateway_topology`, and `find_affected_gateways`."""

@@ -42,12 +42,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Allow non-show-* commands in api_call",
     )
     parser.add_argument(
-        "--live-compat",
-        action="store_true",
-        default=None,
-        help="Enable live-compatibility MCP tools",
-    )
-    parser.add_argument(
         "--cpcrud",
         action="store_true",
         default=None,
@@ -86,8 +80,6 @@ def run_cli(
             mcp_kwargs["auth_mode"] = args.auth_mode
         if args.allow_write_api is True:
             mcp_kwargs["allow_write_api"] = True
-        if args.live_compat is True:
-            mcp_kwargs["live_compat"] = True
         if args.cpcrud is True:
             mcp_kwargs["cpcrud"] = True
 

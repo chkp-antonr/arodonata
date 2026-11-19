@@ -1040,18 +1040,11 @@ def _render_markdown_document(
             if options.include_field_diffs:
                 for rc in s.rule_changes:
                     if rc.field_diffs:
-                        lines.append(
-                            f"#### Field Diffs for Rule #{_esc_md(rc.rule_number or rc.uid)} ({_esc_md(rc.name or rc.uid)})"
+                        _append_field_diffs_markdown(
+                            lines,
+                            f"#### Field Diffs for Rule #{_esc_md(rc.rule_number or rc.uid)} ({_esc_md(rc.name or rc.uid)})",
+                            rc.field_diffs,
                         )
-                        lines.append("")
-                        lines.append("| Field | Before | After | Added | Removed |")
-                        lines.append("| --- | --- | --- | --- | --- |")
-                        for d in rc.field_diffs:
-                            lines.append(
-                                f"| {_esc_md(d.field_name)} | {_esc_md(d.old_value)} | {_esc_md(d.new_value)} | "
-                                f"{_esc_md(d.added_items)} | {_esc_md(d.removed_items)} |"
-                            )
-                        lines.append("")
 
         if options.include_object_changes and s.object_changes:
             lines.append("### Object Changes")
@@ -1069,8 +1062,30 @@ def _render_markdown_document(
                     f"`{_esc_md(oc.uid)}` | {_render_object_details(oc, _MD_FMT)} |"
                 )
             lines.append("")
+            if options.include_field_diffs:
+                for oc in s.object_changes:
+                    if oc.field_diffs:
+                        _append_field_diffs_markdown(
+                            lines,
+                            f"#### Field Diffs for Object {_esc_md(oc.name or oc.uid)} ({_esc_md(oc.object_type)})",
+                            oc.field_diffs,
+                        )
 
     return "\n".join(lines)
+
+
+def _append_field_diffs_markdown(lines: list[str], heading: str, diffs: Sequence[FieldDiff]) -> None:
+    """Append a Markdown `Field Diffs` table for a rule or object change entry."""
+    lines.append(heading)
+    lines.append("")
+    lines.append("| Field | Before | After | Added | Removed |")
+    lines.append("| --- | --- | --- | --- | --- |")
+    for d in diffs:
+        lines.append(
+            f"| {_esc_md(d.field_name)} | {_esc_md(d.old_value)} | {_esc_md(d.new_value)} | "
+            f"{_esc_md(d.added_items)} | {_esc_md(d.removed_items)} |"
+        )
+    lines.append("")
 
 
 @traced

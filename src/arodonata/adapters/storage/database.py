@@ -269,6 +269,15 @@ class DatabaseManager:
         return self._owns_engine
 
     @property
+    def is_in_memory(self) -> bool:
+        """Return `True` when the bound `AsyncEngine` uses an ephemeral in-memory SQLite database."""
+        if self._engine.dialect.name != "sqlite":
+            return False
+        db_part = (self._engine.url.database or "").strip()
+        query_mode = str(self._engine.url.query.get("mode", "")).lower()
+        return db_part in ("", ":memory:") or query_mode == "memory"
+
+    @property
     def is_initialized(self) -> bool:
         """Return `True` after `initialize()` has completed."""
         return self._initialized

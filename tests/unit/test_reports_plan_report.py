@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from arodonata import ArodonataClient, ArodonataSettings
 from arodonata.cpcrud.models import FieldChange, Outcome, Plan, PlannedAction
 from arodonata.reports import ChangeReport, build_change_report_from_plan, render_change_report
@@ -26,6 +28,7 @@ class _NeverCalledApi:
         return None
 
 
+@pytest.mark.spec("SCN-REPORT-004-1")
 def test_build_change_report_from_plan_renders_html_markdown_and_json_offline() -> None:
     """Dry-run `Plan` synthesizes `ChangeReport` offline and renders SmartConsole HTML, Markdown, and JSON."""
     plan = Plan(

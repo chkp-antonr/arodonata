@@ -447,7 +447,7 @@ class ArodonataClient:
         self._warmup_flights.clear()
 
         # 2. Determine automatic logout policy: True if client auto-created in-memory DB, False if persistent DB or external engine
-        is_ephemeral_db = self._owns_engine and ":memory:" in (self._settings.database_url or "")
+        is_ephemeral_db = self._owns_engine and self._db.is_in_memory
         should_logout = is_ephemeral_db if logout is None else bool(logout)
 
         # 3. Close AMgmtClient / ApiPort (drains startup cleanup tasks & logs out according to policy)
@@ -2037,6 +2037,8 @@ class ArodonataClient:
         port: str | None = None,
         protocol: str | None = None,
         tags: Sequence[str] | None = None,
+        parent_id: str | None = None,
+        parent_asset_id: str | None = None,
         include_global: bool = False,
         group_by: Sequence[str] | None = None,
         aggregate: Literal["count", "list", "describe"] = "list",
@@ -2059,6 +2061,8 @@ class ArodonataClient:
             port=port,
             protocol=protocol,
             tags=tags,
+            parent_id=parent_id,
+            parent_asset_id=parent_asset_id,
             include_global=include_global,
             group_by=group_by,
             aggregate=aggregate,

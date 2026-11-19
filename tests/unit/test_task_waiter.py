@@ -29,6 +29,7 @@ class FakeClockAndSleep:
         self.now += duration
 
 
+@pytest.mark.spec("SCN-TRANS-005-1")
 async def test_successful_task_completion_returns_final_show_task_response() -> None:
     """Scenario: Successful task completion returns final show-task response."""
     clock = FakeClockAndSleep()
@@ -82,6 +83,7 @@ async def test_successful_task_completion_returns_final_show_task_response() -> 
     assert clock.sleeps == [2.0, 4.0, 8.0]
 
 
+@pytest.mark.spec("SCN-TRANS-005-2")
 async def test_failed_or_partially_succeeded_task_returns_success_false_without_raising() -> None:
     """Scenario: Failed or partially succeeded task returns success=False without raising."""
     clock = FakeClockAndSleep()
@@ -115,6 +117,7 @@ async def test_failed_or_partially_succeeded_task_returns_success_false_without_
         assert "Gateway unreachable" in res.error_message
 
 
+@pytest.mark.spec("SCN-TRANS-005-3")
 async def test_tolerance_of_transient_poll_failures_and_limits() -> None:
     """Scenario: Tolerance of transient poll failures (< 5 succeeds, 5 raises TaskPollError, timeout raises TaskTimeoutError)."""
     # 1. 4 consecutive transient errors followed by success -> succeeds!

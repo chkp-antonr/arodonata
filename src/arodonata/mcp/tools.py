@@ -143,7 +143,7 @@ async def _upgrade_uninitialized_cache_mode(
     client: ArodonataClient,
     mgmt_name: str | None,
     domain: str | None,
-    scope: Literal["objects", "services", "assets"],
+    scope: Literal["domains", "objects", "services", "assets"],
     mode: CacheMode,
 ) -> CacheMode:
     """Upgrade `cache_mode='cache'` to `'smart'` when `scope` has never been synced and holds zero rows."""
@@ -157,6 +157,9 @@ async def _upgrade_uninitialized_cache_mode(
     )
     if states:
         return mode
+    if scope == "domains":
+        existing_domains = await v2_cache.get_domains(mgmt_name=mgmt_name, include_global=True)
+        return mode if existing_domains else "smart"
     if scope == "objects":
         topo_states = await v2_cache.list_sync_states(
             mgmt_name=mgmt_name,
@@ -491,6 +494,8 @@ def register_mcp_tools(
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
         mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
+        if not is_live:
+            mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, None, "domains", mode)
         domains = await client.get_domains(
             mgmt_name=eff_mgmt,
             include_global=include_global,
@@ -1391,6 +1396,8 @@ def register_mcp_tools(
         port: str | None = None,
         protocol: str | None = None,
         tags: list[str] | None = None,
+        parent_id: str | None = None,
+        parent_asset_id: str | None = None,
         include_global: bool = False,
         group_by: list[str] | None = None,
         aggregate: Literal["count", "list", "describe"] = "list",
@@ -1422,6 +1429,8 @@ def register_mcp_tools(
             port=port,
             protocol=protocol,
             tags=tags,
+            parent_id=parent_id,
+            parent_asset_id=parent_asset_id,
             include_global=include_global,
             group_by=group_by,
             aggregate=aggregate,
@@ -1612,7 +1621,7 @@ def register_mcp_tools(
                 "to": len(packages) if packages else len(layers),
                 "total": len(packages) if packages else len(layers),
                 "source": "cache",
-                "cache_age_seconds": round(snap_age, 3) if snap_age is not None else 0.0,
+                "cache_age_seconds": round(snap_age, 3) if snap_age is not None else None,
                 "mgmt_name": eff_mgmt,
                 "domain": target_domain,
                 "rulebase_type": rulebase_type,
@@ -1760,7 +1769,7 @@ def register_mcp_tools(
             "total_unfiltered": filtered_res.total_rules,
             "source": "cache",
             "cache_age_seconds": (
-                round(filtered_res.cache_age_seconds, 3) if filtered_res.cache_age_seconds is not None else 0.0
+                round(filtered_res.cache_age_seconds, 3) if filtered_res.cache_age_seconds is not None else None
             ),
             "mgmt_name": filtered_res.mgmt_name,
             "domain": filtered_res.domain_name,

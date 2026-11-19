@@ -7,6 +7,7 @@ import pytest
 from arodonata.testing.replay_mock import FileReplayApiMock
 
 
+@pytest.mark.spec("SCN-ITEST-007-1", "SCN-ITEST-007-2")
 @pytest.mark.asyncio
 async def test_file_replay_mock_show_objects_ip_subnet_range_port_and_pagination() -> None:
     """`show-objects` supports `type`, `filter`, `ip-only`, pagination, and `details-level` projection."""

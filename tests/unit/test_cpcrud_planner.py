@@ -194,6 +194,7 @@ async def _seed_fresh_cache(
         )
 
 
+@pytest.mark.spec("SCN-CPCRUD-003-1")
 @pytest.mark.asyncio
 async def test_planner_idempotent_replan_yields_unchanged_or_reuse_with_zero_writes() -> None:
     """Re-planning an already-applied template produces `Outcome.UNCHANGED` or `Outcome.REUSE` and zero write actions."""
@@ -512,6 +513,7 @@ async def test_planner_failed_lookup_emits_error_and_skips_dependents_never_fals
     await db.close()
 
 
+@pytest.mark.spec("SCN-CPCRUD-008-1")
 @pytest.mark.asyncio
 async def test_planner_cleanup_rule_aware_bottom_positioning() -> None:
     """`Planner` anchors `position="bottom"` and `position={"bottom": "App Section"}` at `{"above": "<cleanup_rule_uid>"}`."""
@@ -560,6 +562,7 @@ async def test_planner_cleanup_rule_aware_bottom_positioning() -> None:
     await db.close()
 
 
+@pytest.mark.spec("SCN-CPCRUD-003-5")
 @pytest.mark.asyncio
 async def test_planner_rejects_unknown_object_types_duplicate_ids_wraps_dns_dot_retry_and_redacts_sids() -> None:
     """Adversarial test for C1, C2, W22, I17: validate object_type allowlist, reject duplicate operation IDs, wrap dns-domain dot-retry exceptions in StateLookupError, and redact SIDs in DomainStamp.error."""
@@ -665,6 +668,7 @@ async def test_planner_rejects_unknown_object_types_duplicate_ids_wraps_dns_dot_
     await db.close()
 
 
+@pytest.mark.spec("SCN-CPCRUD-006-2", "SCN-CPCRUD-006-3", "SCN-CPCRUD-006-4")
 @pytest.mark.asyncio
 async def test_planner_application_site_create_unchanged_update_delete_and_error() -> None:
     """`Planner` handles `application-site` in `objects:`, `services:`, and `operations:` across CREATE, UNCHANGED, UPDATE, DELETE, and ERROR outcomes."""
@@ -887,6 +891,7 @@ async def test_planner_application_site_create_unchanged_update_delete_and_error
     await db.close()
 
 
+@pytest.mark.spec("SCN-CPCRUD-004-1", "SCN-CPCRUD-004-2", "SCN-CPCRUD-005-1")
 @pytest.mark.asyncio
 async def test_planner_cold_cache_uses_show_objects_without_full_show_hosts_or_services() -> None:
     """Cold-cache `Planner.decide()` queries `show-objects` with exact candidate verification and zero `show-hosts` / `show-services-*` calls."""
@@ -1025,6 +1030,7 @@ async def test_planner_cold_cache_uses_show_objects_without_full_show_hosts_or_s
     await db.close()
 
 
+@pytest.mark.spec("SCN-CONFIG-006-3")
 @pytest.mark.asyncio
 async def test_cpcrud_service_plan_uses_settings_naming_prefixes_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """`CPCRUDService.plan()` uses `settings.cpcrud_naming_prefixes` by default and honors template/arg overrides."""
@@ -1090,6 +1096,7 @@ async def test_cpcrud_service_plan_uses_settings_naming_prefixes_by_default(monk
         assert plan_arg_override.actions[0].resolved_name == "ArgRng_10.1.1.1_9"
 
 
+@pytest.mark.spec("SCN-CPCRUD-009-5", "SCN-CPCRUD-009-6")
 @pytest.mark.asyncio
 async def test_planner_strict_set_missing_targets_fail_closed() -> None:
     """`operation='set'` or `'update'` targeting absent object, service, group, or rule fails closed with `Outcome.ERROR`."""
@@ -1139,6 +1146,15 @@ async def test_planner_strict_set_missing_targets_fail_closed() -> None:
     await db.close()
 
 
+@pytest.mark.spec(
+    "SCN-CPCRUD-007-1",
+    "SCN-CPCRUD-007-2",
+    "SCN-CPCRUD-007-3",
+    "SCN-CPCRUD-009-1",
+    "SCN-CPCRUD-009-2",
+    "SCN-CPCRUD-009-3",
+    "SCN-CPCRUD-009-5",
+)
 @pytest.mark.asyncio
 async def test_planner_incremental_url_list_and_rule_cell_updates_with_depends_on_and_guards() -> None:
     """`Planner` handles incremental `url-list` and rule cell `{add, remove}` patches, `depends_on`, UID dereferencing, and safety errors."""
