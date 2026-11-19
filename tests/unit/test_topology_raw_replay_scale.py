@@ -57,6 +57,7 @@ from arodonata.testing import (
     "SCN-TOPO-009-1",
     "SCN-TOPO-010-1",
     "SCN-TOPO-017-1",
+    "SCN-TOPO-017-2",
     "SCN-TOPO-017-3",
 )
 @pytest.mark.asyncio

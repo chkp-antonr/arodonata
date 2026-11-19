@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **openspec,tests**: Forked minimal `arodonata` OpenSpec schema (`openspec/schemas/arodonata/`) enforcing `REQ-<DOM>-<NNN>` and `SCN-<DOM>-<NNN>-<K>` scenario traceability across all 12 domain specifications (`132` requirements, `284` scenarios), registered `@pytest.mark.spec(...)` in `pyproject.toml`, added `scripts/check_spec_traceability.py` with `tests/unit/test_check_spec_traceability.py` and `.github/workflows/specs.yml`, and achieved 100% scenario test coverage (`0` untested baseline scenarios) via `tests/spec/`.
+- **reports**: Added symmetric per-object `Field Diffs` Markdown column support alongside rule `Field Diffs` in `render_change_report()`.
+- **docs**: Synchronized `docs/architecture/` documentation with `v2.6.5`, added `docs/examples/13-gateway-topology-matching.md`, and documented Check Point Management Web API quirks and workarounds in `docs/troubleshooting/checkpoint-api-quirks.md`.
+
+### Fixed
+
+- **security,sessions,telemetry**: Validated explicit `server_ip` via `resolve_target_ips()` and enforced resolved MDS rate-limit slots in `LoginCoordinator.logout_sid()` and cache-hit `get_readonly_session()` (`FC-01`), and added recursive `sanitize_mapping` / sequence / `bytes` redaction in `core/telemetry.py` (`span_attrs`, `_coerce_span_value`) so credentials and session tokens never leak into OpenTelemetry spans (`FC-02`).
+- **client,mcp,search,cpcrud,topology,testing**: Determined ephemeral database cleanup on close from the actual SQLAlchemy engine URL in `ArodonataClient.close()` and `AMgmtClient.close()` (`FC-03`), auto-upgraded cold `list_domains(cache_mode="cache")` (`FC-04`), normalized mixed-case canonical `group_by` fields in `SearchService.query_objects()` (`FC-05`), diffed existing auto-named entities under `on_ip_conflict="create_new"` in `Planner` (`FC-06`), completed audit findings `FC-07`–`FC-12` (including synthetic `show-task` log status codes in `FileReplayApiMock`), and removed the dead `live_compat` configuration flag.
+
 ## v2.6.5 (2026-11-18)
 
 ### Feat
