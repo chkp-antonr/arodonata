@@ -130,7 +130,7 @@ The client SHALL enforce a shared per-MDS throttle cooldown inside the login gat
 #### Scenario: SCN-SESS-006-1 — Throttled login waits out Check Point throttle window
 
 - **WHEN** a login attempt is rejected for Check Point login throttling or times out during the read phase
-- **THEN** the per-MDS login gate SHALL record the cooldown (`login_throttle_window`, default `70s`, or exponential read-timeout backoff) and log a `WARNING` with server IP and cooldown duration
+- **THEN** the per-MDS login gate SHALL record the cooldown (`login_throttle_window`, default `70s`, or exponential read-timeout backoff) and log a `WARNING` with server IP, non-secret administrator principal (resolved from credentials or Check Point login response `'user-name'`, falling back to `'api_key'`), and cooldown duration
 - **AND** queued callers SHALL wait out the cooldown, and the caller SHALL release the gate before sleeping and retrying within `login_max_wait` (default `900s`)
 
 #### Scenario: SCN-SESS-006-2 — Credential rejection or locked account fails fast with InvalidCredentialsError

@@ -117,9 +117,28 @@ class LoginCoordinator:
         self._domain_login_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._inflight_logins: set[str] = set()
         self._evicted_auth_identities: set[tuple[str, str]] = set()
+        self._resolved_principals: dict[tuple[str, str], str] = {}
         self._active_dedicated_sids: dict[tuple[str, str], str] = {}
         self._known_mds_ips: dict[str, set[str]] = defaultdict(set)
         self._cleaning_max_sessions: set[str] = set()
+
+    @staticmethod
+    def _nonsecret_auth_fallback(auth: AuthContext) -> str:
+        """Return non-secret fallback label when no username has been resolved yet."""
+        if auth.user_id and auth.user_id.strip():
+            uid = auth.user_id.strip()
+            if not (auth.api_key and uid.startswith("static:")):
+                return uid
+        return "api_key"
+
+    def _resolve_principal_label(self, mgmt_name: str, auth: AuthContext) -> str:
+        """Return non-secret administrator name (or 'api_key' before first login) for logs; never returns secrets."""
+        if auth.username and auth.username.strip():
+            return auth.username.strip()
+        cached_name = self._resolved_principals.get((mgmt_name, auth.identity_key))
+        if cached_name:
+            return cached_name
+        return self._nonsecret_auth_fallback(auth)
 
     @property
     def active_dedicated_sids(self) -> dict[tuple[str, str], str]:
@@ -423,13 +442,15 @@ class LoginCoordinator:
                         transient_delay = 2.0
                         continue
                 if isinstance(transport_exc, ApiTimeoutError) and transport_exc.phase == "read":
-                    self._login_gate.record_cooldown(mds_ip, transient_delay)
+                    principal = self._resolve_principal_label(mgmt_name, auth)
+                    self._login_gate.record_cooldown(mds_ip, transient_delay, principal=principal)
                     logger.warning(
-                        f"Login to '{mgmt_name}:{dom_key}' ({mds_ip}) timed out during read phase; "
+                        f"Login to '{mgmt_name}:{dom_key}' ({mds_ip}, user='{principal}') timed out during read phase; "
                         f"applying {transient_delay:.1f}s cooldown before retry.",
                         mgmt_name=mgmt_name,
                         domain=dom_key,
                         mds_ip=mds_ip,
+                        user=principal,
                         cooldown_seconds=transient_delay,
                     )
                 if transport_retries >= max_transport_retries or self._monotonic() + transient_delay >= deadline:
@@ -462,6 +483,9 @@ class LoginCoordinator:
                     raise AuthenticationError(
                         f"Login to {mgmt_name!r} ({dom_key!r}) succeeded without returning a 'sid'."
                     )
+                resolved_user = res.data.get("user-name")
+                if isinstance(resolved_user, str) and resolved_user.strip():
+                    self._resolved_principals[(mgmt_name, auth.identity_key)] = resolved_user.strip()
                 session_uid = res.data.get("uid")
                 self._evicted_auth_identities.discard((mgmt_name, auth.identity_key))
                 return sid, target_ip, (str(session_uid) if session_uid else None)
@@ -473,18 +497,20 @@ class LoginCoordinator:
             # 2. Check Point per-IP login rate limit / throttling -> record shared gate cooldown & wait (W4)
             if is_login_throttled_result(res):
                 wait_sec = float(self._settings.login_throttle_window)
-                self._login_gate.record_cooldown(mds_ip, wait_sec)
+                principal = self._resolve_principal_label(mgmt_name, auth)
+                self._login_gate.record_cooldown(mds_ip, wait_sec, principal=principal)
                 if self._monotonic() + wait_sec > deadline:
                     raise AuthenticationError(
                         f"Login to {mgmt_name!r} ({dom_key!r}) throttled and exceeded login_max_wait="
                         f"{self._settings.login_max_wait}s: {res.error_message}"
                     )
                 logger.warning(
-                    f"Login to '{mgmt_name}:{dom_key}' ({mds_ip}) throttled by server; "
+                    f"Login to '{mgmt_name}:{dom_key}' ({mds_ip}, user='{principal}') throttled by server; "
                     f"waiting {wait_sec:.0f}s before retry.",
                     mgmt_name=mgmt_name,
                     domain=dom_key,
                     mds_ip=mds_ip,
+                    user=principal,
                     cooldown_seconds=wait_sec,
                 )
                 await self._sleep(wait_sec)

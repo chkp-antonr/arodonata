@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from arodonata import ArodonataClient
+from arodonata.adapters.checkpoint import rate_limiter as rate_limiter_mod
 from arodonata.adapters.checkpoint import sessions as sessions_mod
 from arodonata.adapters.checkpoint.client import AMgmtClient
 from arodonata.adapters.checkpoint.rate_limiter import RateLimiter
@@ -234,11 +235,16 @@ async def test_throttled_login_logs_warning_and_read_timeout_records_backoff_coo
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SCN-SESS-006-1: Throttled login logs WARNING with IP+cooldown; read timeout applies backoff cooldown."""
+    """SCN-SESS-006-1: Throttled login logs WARNING with IP+principal+cooldown without exposing secrets."""
     server = _ScriptedServer()
     rig = _FakeTimeRig()
     warnings: list[str] = []
+    gate_warnings: list[str] = []
     monkeypatch.setattr(sessions_mod.logger, "warning", lambda msg, *_a, **_kw: warnings.append(str(msg)))
+    monkeypatch.setattr(rate_limiter_mod.logger, "warning", lambda msg, *_a, **_kw: gate_warnings.append(str(msg)))
+
+    secret_api_key = "super-secret-api-key-never-log"
+    secret_password = "super-secret-password-never-log"
 
     amgmt = _build_amgmt(
         tmp_path,
@@ -247,35 +253,74 @@ async def test_throttled_login_logs_warning_and_read_timeout_records_backoff_coo
         settings=ArodonataSettings(
             mgmt_name="mds1",
             mgmt_ip="10.0.0.1",
-            api_key="key",
+            api_key=secret_api_key,
+            login_throttle_window=70.0,
+            login_max_wait=600.0,
+        ),
+    )
+    try:
+        # 1. API-key login throttled before first login succeeds -> falls back to non-secret 'api_key', never exposes key
+        server.handlers = [
+            (429, {"code": "err_too_many_requests", "message": "Too many requests in a given amount of time"}),
+            (200, {"sid": "sid_ok_1", "uid": "u-1", "user-name": "fpcr_ro"}),
+        ]
+        sid, _ip = await amgmt.create_dedicated_session("mds1", domain=None)
+        assert sid == "sid_ok_1"
+        assert rig.sleeps == [70.0]
+        assert any("10.0.0.1" in w and "70s" in w and "user='api_key'" in w for w in warnings)
+        assert any("10.0.0.1" in w and "user='api_key'" in w for w in gate_warnings)
+        assert all(secret_api_key not in w for w in warnings + gate_warnings)
+
+        # 2. Subsequent read-phase ApiTimeoutError and second throttle log resolved Check Point 'fpcr_ro'
+        warnings.clear()
+        gate_warnings.clear()
+        rig.sleeps.clear()
+        server.handlers = [
+            ApiTimeoutError("read timed out", host="10.0.0.1", command="login", phase="read", request_sent=True),
+            (429, {"code": "err_too_many_requests", "message": "Too many requests in a given amount of time"}),
+            (200, {"sid": "sid_ok_2", "uid": "u-2", "user-name": "fpcr_ro"}),
+        ]
+        sid2, _ip2 = await amgmt.create_dedicated_session("mds1", domain=None)
+        assert sid2 == "sid_ok_2"
+        assert rig.sleeps == [2.0, 70.0]
+        assert any("10.0.0.1" in w and "2.0s cooldown" in w and "user='fpcr_ro'" in w for w in warnings)
+        assert any("10.0.0.1" in w and "70s" in w and "user='fpcr_ro'" in w for w in warnings)
+        assert any("10.0.0.1" in w and "user='fpcr_ro'" in w for w in gate_warnings)
+        assert all(secret_api_key not in w for w in warnings + gate_warnings)
+    finally:
+        await amgmt.close(logout=False)
+
+    # 3. Credential auth throttling logs engineer username directly without exposing password
+    warnings.clear()
+    gate_warnings.clear()
+    cred_server = _ScriptedServer()
+    cred_rig = _FakeTimeRig()
+    cred_amgmt = _build_amgmt(
+        tmp_path,
+        cred_server,
+        cred_rig,
+        settings=ArodonataSettings(
+            mgmt_name="mds1",
+            mgmt_ip="10.0.0.1",
+            auth_mode="credential",
+            username="AntonR",
+            password=secret_password,
             login_throttle_window=70.0,
             login_max_wait=300.0,
         ),
     )
     try:
-        # 1. Login throttled -> logs WARNING with 10.0.0.1 and 70s, sleeps 70s, retries and succeeds
-        server.handlers = [
-            (403, {"code": "err_login_failed", "message": "Too many login requests (rate limit)"}),
-            (200, {"sid": "sid_ok_1", "uid": "u-1"}),
+        cred_server.handlers = [
+            (429, {"code": "err_too_many_requests", "message": "Too many requests in a given amount of time"}),
+            (200, {"sid": "sid_ok_3", "uid": "u-3", "user-name": "AntonR"}),
         ]
-        sid, _ip = await amgmt.create_dedicated_session("mds1", domain=None)
-        assert sid == "sid_ok_1"
-        assert rig.sleeps == [70.0]
-        assert any("10.0.0.1" in w and "70s" in w for w in warnings)
-
-        # 2. Read-phase ApiTimeoutError -> records 2.0s cooldown and logs WARNING before retrying
-        warnings.clear()
-        rig.sleeps.clear()
-        server.handlers = [
-            ApiTimeoutError("read timed out", host="10.0.0.1", command="login", phase="read", request_sent=True),
-            (200, {"sid": "sid_ok_2", "uid": "u-2"}),
-        ]
-        sid2, _ip2 = await amgmt.create_dedicated_session("mds1", domain=None)
-        assert sid2 == "sid_ok_2"
-        assert 2.0 in rig.sleeps
-        assert any("10.0.0.1" in w and "2.0s cooldown" in w for w in warnings)
+        sid3, _ip3 = await cred_amgmt.create_dedicated_session("mds1", domain=None)
+        assert sid3 == "sid_ok_3"
+        assert any("10.0.0.1" in w and "70s" in w and "user='AntonR'" in w for w in warnings)
+        assert any("10.0.0.1" in w and "user='AntonR'" in w for w in gate_warnings)
+        assert all(secret_password not in w for w in warnings + gate_warnings)
     finally:
-        await amgmt.close(logout=False)
+        await cred_amgmt.close(logout=False)
 
 
 @pytest.mark.spec("SCN-SESS-007-1")

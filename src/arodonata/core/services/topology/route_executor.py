@@ -22,11 +22,11 @@ from arodonata.core.models.topology import GatewayCliResult, GatewayCliTarget
 from arodonata.core.ports import ApiPort, GatewayCliCallable, GatewayCliPort
 from arodonata.core.services.script_service import ScriptRepositoryService
 from arodonata.core.services.topology._shared import RepositoryScriptArgsCallable
-from arodonata.core.services.topology.route_parsers import decode_cprid_task_output
+from arodonata.core.services.topology.route_parsers import decode_cprid_task_output, extract_vs_slice_from_bundle
 from arodonata.core.services.topology.route_scripts import (
     DEFAULT_ROUTE_COLLECT_REPOSITORY_SCRIPT_NAME,
+    VSX_BUNDLE_START_MARKER,
     AutoScriptModeResolver,
-    format_route_collection_repository_args,
 )
 
 
@@ -315,11 +315,7 @@ async def _run_repository_cprid(
     """Execute pre-approved repository `run-script` via `ScriptRepositoryService`."""
     eff_service = script_service or ScriptRepositoryService(api=api)
     try:
-        args_val = (
-            repository_script_args_fn(target, max_routes)
-            if repository_script_args_fn is not None
-            else format_route_collection_repository_args(target, max_routes=max_routes)
-        )
+        args_val = repository_script_args_fn(target, max_routes) if repository_script_args_fn is not None else None
     except ServerIdentityError:
         raise
     except Exception as exc:
@@ -412,10 +408,61 @@ async def _run_repository_cprid(
     known = used_sids or None
     stdout_str = outcome.stdout
     stderr_str = _scrub_known_sids(outcome.stderr, known)
+    is_vs = (target.vsid is not None and int(target.vsid) > 0) or bool(target.vs_name and target.vs_name.strip())
+    is_bundle = VSX_BUNDLE_START_MARKER in stdout_str
+
+    if is_bundle:
+        overall_ok = outcome.success
+        err_out: str | None = None
+        if not overall_ok:
+            raw_err_out = (
+                stderr_str or _scrub_known_sids(outcome.error_message or "", known) or "run-script task did not succeed"
+            )
+            err_out = _format_cli_error(ssh_error, raw_err_out, known_sids=known)
+
+        base_res = GatewayCliResult(
+            success=overall_ok,
+            stdout=stdout_str,
+            stderr=stderr_str,
+            exit_code=0 if overall_ok else 1,
+            executor="cprid",
+            error_code=None if overall_ok else outcome.error_code,
+            error_message=err_out,
+            bundle_stdout=stdout_str,
+        )
+        if is_vs:
+            slice_res = extract_vs_slice_from_bundle(
+                stdout_str,
+                vsid=target.vsid,
+                vs_name=target.vs_name,
+                executor="cprid",
+                base_result=base_res,
+            )
+            return slice_res.model_copy(update={"bundle_stdout": stdout_str})
+        return base_res
+
+    # Non-bundle output:
+    if args_val is None and is_vs:
+        err_msg = _format_cli_error(
+            ssh_error,
+            f"Virtual System {target.vs_name or target.vsid} expected VSX bundle output, but no "
+            "bundle markers were found in repository script output. The repository script may be outdated.",
+            known_sids=known,
+        )
+        return GatewayCliResult(
+            success=False,
+            stdout="",
+            stderr=stderr_str,
+            exit_code=1,
+            executor="cprid",
+            error_code="vsx_bundle_missing",
+            error_message=err_msg,
+        )
+
     has_vs_err = "_vs_error=" in stdout_str
     missing_vsid_res = bool(target.vs_name and target.vsid is None and "===ARODONATA_VSID_RESOLVED=" not in stdout_str)
     overall_ok = outcome.success and not has_vs_err and not missing_vsid_res
-    err_out: str | None = None
+    err_out = None
     if not overall_ok:
         raw_err_out = (
             (stdout_str.strip() if has_vs_err else None)

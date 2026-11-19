@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -260,6 +260,7 @@ dev = [
     { name = "arlogi", extra = ["otel"] },
     { name = "asyncpg" },
     { name = "commitizen" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "mcp" },
     { name = "mkdocs-gen-files" },
@@ -312,6 +313,7 @@ dev = [
     { name = "arlogi", extras = ["otel"], specifier = ">=0.1.0" },
     { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "commitizen", specifier = ">=4.1.0" },
+    { name = "cryptography", specifier = ">=44.0.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "mcp", specifier = ">=1.2.0" },
     { name = "mkdocs-gen-files", specifier = ">=0.5.0,<0.6.1" },

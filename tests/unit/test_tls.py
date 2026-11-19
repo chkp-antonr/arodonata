@@ -86,9 +86,10 @@ def test_first_contact_learned_in_tofu_mode_and_0600_mode(tmp_path: Path) -> Non
     assert learned == fp1
     assert known_hosts.exists()
 
-    # Check 0600 file permissions
-    file_mode = stat.S_IMODE(os.stat(known_hosts).st_mode)
-    assert file_mode == 0o600
+    # Check 0600 file permissions (POSIX only)
+    if os.name != "nt":
+        file_mode = stat.S_IMODE(os.stat(known_hosts).st_mode)
+        assert file_mode == 0o600
 
     # Reload in a fresh TrustPolicy in pinned or tofu mode and verify persistence
     policy_reloaded = TrustPolicy(mode="tofu", known_hosts_path=known_hosts)
@@ -205,12 +206,13 @@ def test_trust_store_concurrent_tofu_merge_permission_check_and_ipv6(tmp_path: P
     with pytest.raises(CertificateMismatchError):
         stale_store.record("10.0.0.1", 443, compute_der_fingerprint(der_conflict))
 
-    # Unsafe file permissions (0666 / world-writable) must be rejected on load
-    os.chmod(known_hosts, 0o666)
-    unsafe_store = TrustStore(path=known_hosts)
-    with pytest.raises(TrustStoreError, match="Unsafe permissions"):
-        unsafe_store.load()
-    os.chmod(known_hosts, 0o600)
+    # Unsafe file permissions (0666 / world-writable) must be rejected on load (POSIX only)
+    if os.name != "nt":
+        os.chmod(known_hosts, 0o666)
+        unsafe_store = TrustStore(path=known_hosts)
+        with pytest.raises(TrustStoreError, match="Unsafe permissions"):
+            unsafe_store.load()
+        os.chmod(known_hosts, 0o600)
 
     # IPv6 key formatting and pin parsing
     assert format_host_port("2001:db8::1", 443) == "[2001:db8::1]:443"

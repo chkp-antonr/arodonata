@@ -329,6 +329,7 @@ class ReplayStateSnapshot:
     allow_one_time_script: bool = True
     allow_repository_script: bool = True
     manage_repository_scripts: str = "write"
+    encode_repository_script_body_base64: bool = False
 
 
 def sanitize_call_payload(

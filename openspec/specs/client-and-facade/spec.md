@@ -195,7 +195,7 @@ Defines the primary composition root and unified developer facade (`ArodonataCli
 **Intent**: Manage Check Point repository scripts idempotently across read-only checks and isolated write provisioning.\
 **Non-goals**: Executing repository scripts against gateway targets (`REQ-CLIENT-012`) or route-script defaults (`REQ-CLIENT-011`).
 
-`ArodonataClient` SHALL expose traced async methods `get_repository_script`, `list_repository_scripts`, `check_repository_script`, `ensure_repository_script`, and `delete_repository_script` using shared read-only sessions for reads/checks and isolated write sessions (omitting `"repository-script"` from `SessionOverlay`) only when creation, modification, or deletion is required.
+`ArodonataClient` SHALL expose traced async methods `get_repository_script`, `list_repository_scripts`, `check_repository_script`, `ensure_repository_script`, and `delete_repository_script`—decoding plaintext or Base64 `"script-body"` payloads—using shared read-only sessions for reads/checks and isolated write sessions (omitting `"repository-script"` from `SessionOverlay`) only when creation, modification, or deletion is required.
 
 #### Scenario: SCN-CLIENT-010-1 — Read-only script check and zero-write fast path in ensure_repository_script
 
@@ -217,6 +217,13 @@ Defines the primary composition root and unified developer facade (`ArodonataCli
 - **WHEN** `ensure_repository_script` or `delete_repository_script` is invoked
 - **THEN** `ArodonataClient` SHALL discard any uncommitted session cleanly
 - **AND** it SHALL raise `RepositoryScriptPermissionError` carrying `mgmt_name`, `domain_name`, `script_ref`, and `operation` without exposing `sid` or credentials
+
+#### Scenario: SCN-CLIENT-010-4 — Base64-encoded script-body from Check Point R82 show-repository-script decodes cleanly without false outdated drift
+
+- **GIVEN** Check Point `show-repository-script` returns Base64-encoded script text inside the `"script-body"` field (rather than `"script-body-base64"`) for an up-to-date repository script
+- **WHEN** `get_repository_script`, `check_repository_script`, or `ensure_repository_script` inspects that script
+- **THEN** `RepositoryScript.script_body` SHALL decode the Base64 payload to UTF-8 text without corrupting plaintext scripts
+- **AND** `check_repository_script` SHALL report `matches_expected=True` and `ensure_repository_script` SHALL return `action="unchanged"` without opening a `WriteSession`
 
 ### Requirement: Route-Collection Repository Script Convenience Helpers
 

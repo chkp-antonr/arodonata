@@ -243,18 +243,27 @@ class LoginGate:
         self._next_allowed_at: dict[str, float] = defaultdict(float)
         self._owner_prefix = f"lg-{uuid.uuid4().hex[:8]}"
 
-    def record_cooldown(self, mds_ip: str, cooldown_seconds: float) -> None:
+    def record_cooldown(self, mds_ip: str, cooldown_seconds: float, *, principal: str | None = None) -> None:
         """Record a shared throttle or backoff cooldown window for `mds_ip` (`W4`)."""
         target_ip = (mds_ip or "default").strip()
         wait_sec = max(0.0, float(cooldown_seconds))
+        clean_principal = principal.strip() if isinstance(principal, str) and principal.strip() else None
         candidate = self._monotonic() + wait_sec
         if candidate > self._next_allowed_at[target_ip]:
             self._next_allowed_at[target_ip] = candidate
-            logger.warning(
-                f"LoginGate entering cooldown for MDS '{target_ip}' ({wait_sec:.1f}s).",
-                mds_ip=target_ip,
-                cooldown_seconds=wait_sec,
-            )
+            if clean_principal:
+                logger.warning(
+                    f"LoginGate entering cooldown for MDS '{target_ip}' ({wait_sec:.1f}s, user='{clean_principal}').",
+                    mds_ip=target_ip,
+                    cooldown_seconds=wait_sec,
+                    user=clean_principal,
+                )
+            else:
+                logger.warning(
+                    f"LoginGate entering cooldown for MDS '{target_ip}' ({wait_sec:.1f}s).",
+                    mds_ip=target_ip,
+                    cooldown_seconds=wait_sec,
+                )
 
     @asynccontextmanager
     async def acquire(

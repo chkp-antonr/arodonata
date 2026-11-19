@@ -15,9 +15,12 @@ import argparse
 import asyncio
 import contextlib
 import copy
+import datetime
 import hmac
+import ipaddress
 import json
 import secrets
+import shutil
 import ssl
 import subprocess
 import tempfile
@@ -27,6 +30,16 @@ from typing import Any
 from aiohttp import web
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+
+try:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    _HAVE_CRYPTOGRAPHY = True
+except ImportError:
+    _HAVE_CRYPTOGRAPHY = False
 
 from arodonata.adapters.checkpoint.tls import compute_der_fingerprint
 from arodonata.core.telemetry import span_attrs, traced
@@ -40,48 +53,94 @@ def _generate_self_signed_cert(cert_dir: Path, host: str = "127.0.0.1") -> tuple
     key_path = cert_dir / "server.key"
     der_path = cert_dir / "server.der"
 
-    san = (
-        f"DNS:localhost,IP:127.0.0.1,IP:{host}"
-        if host not in ("localhost", "127.0.0.1", "0.0.0.0")
-        else "DNS:localhost,IP:127.0.0.1"
-    )
-    subprocess.run(
+    if shutil.which("openssl") is not None:
+        san = (
+            f"DNS:localhost,IP:127.0.0.1,IP:{host}"
+            if host not in ("localhost", "127.0.0.1", "0.0.0.0")
+            else "DNS:localhost,IP:127.0.0.1"
+        )
+        try:
+            subprocess.run(
+                [
+                    "openssl",
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:2048",
+                    "-nodes",
+                    "-keyout",
+                    str(key_path),
+                    "-out",
+                    str(cert_path),
+                    "-days",
+                    "365",
+                    "-subj",
+                    "/CN=checkpoint-replay-mock.local",
+                    "-addext",
+                    f"subjectAltName={san}",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    "openssl",
+                    "x509",
+                    "-in",
+                    str(cert_path),
+                    "-outform",
+                    "DER",
+                    "-out",
+                    str(der_path),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            fp = compute_der_fingerprint(der_path.read_bytes())
+            return cert_path, key_path, fp
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+            pass
+
+    if not _HAVE_CRYPTOGRAPHY:
+        raise RuntimeError(
+            "Neither 'openssl' CLI nor 'cryptography' library is available to generate self-signed TLS certificate."
+        )
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = issuer = x509.Name(
         [
-            "openssl",
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-keyout",
-            str(key_path),
-            "-out",
-            str(cert_path),
-            "-days",
-            "365",
-            "-subj",
-            "/CN=checkpoint-replay-mock.local",
-            "-addext",
-            f"subjectAltName={san}",
-        ],
-        check=True,
-        capture_output=True,
+            x509.NameAttribute(NameOID.COMMON_NAME, "checkpoint-replay-mock.local"),
+        ]
     )
-    subprocess.run(
-        [
-            "openssl",
-            "x509",
-            "-in",
-            str(cert_path),
-            "-outform",
-            "DER",
-            "-out",
-            str(der_path),
-        ],
-        check=True,
-        capture_output=True,
+    san_names: list[x509.GeneralName] = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.IPv4Address("127.0.0.1"))]
+    if host not in ("localhost", "127.0.0.1", "0.0.0.0"):
+        try:
+            san_names.append(x509.IPAddress(ipaddress.ip_address(host)))
+        except ValueError:
+            san_names.append(x509.DNSName(host))
+
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.now(datetime.UTC))
+        .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365))
+        .add_extension(x509.SubjectAlternativeName(san_names), critical=False)
+        .sign(key, hashes.SHA256())
     )
-    fp = compute_der_fingerprint(der_path.read_bytes())
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    der_bytes = cert.public_bytes(serialization.Encoding.DER)
+    der_path.write_bytes(der_bytes)
+    fp = compute_der_fingerprint(der_bytes)
     return cert_path, key_path, fp
 
 

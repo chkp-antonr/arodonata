@@ -5,15 +5,22 @@ from __future__ import annotations
 import ipaddress
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import utc_now
 from arodonata.core.models.scripts import decode_base64_task_message
-from arodonata.core.models.topology import GatewayTopologyEntry, TopologySourceType, TopologyZone
+from arodonata.core.models.topology import GatewayCliResult, GatewayTopologyEntry, TopologySourceType, TopologyZone
 from arodonata.core.primitives import MAX_IPV4_INT
-from arodonata.core.services.topology.route_scripts import ROUTE_LIMIT_MARKER, ParsedCliRoute
+from arodonata.core.services.topology.route_scripts import (
+    ROUTE_LIMIT_MARKER,
+    VS_END_MARKER,
+    VSX_BUNDLE_END_MARKER,
+    VSX_BUNDLE_START_MARKER,
+    ParsedCliRoute,
+)
 
 _CLISH_PROTOCOL_MAP: dict[str, TopologySourceType] = {
     "C": "connected_route",
@@ -59,6 +66,207 @@ _CLISH_ROUTE_RE = re.compile(
     r"|via\s+(?P<nh>\d+\.\d+\.\d+\.\d+),\s*(?P<via_if>[^,\s]+))",
     re.IGNORECASE,
 )
+
+
+_VS_START_RE = re.compile(r"^===ARODONATA_VS_START\s+vsid=(?P<vsid>\d+)\s+name=(?P<name>.*?)===$")
+_VS_ERROR_RE = re.compile(r"^===ARODONATA_VS_ERROR\s+vsid=\d+\s+name=\S+\s+error=(?P<err>.*?)===$")
+
+
+@dataclass(slots=True)
+class VsxBundleSlice:
+    """Parsed Virtual System slice from a zero-argument VSX repository bundle."""
+
+    vsid: int
+    vs_name: str
+    raw_output: str
+    error: str | None = None
+
+
+def parse_vsx_bundle_output(stdout: str) -> list[VsxBundleSlice]:
+    """Parse a multi-VS text bundle emitted by zero-argument `arodonata-collect-routes-v1`."""
+    if VSX_BUNDLE_START_MARKER not in stdout:
+        return []
+
+    slices: list[VsxBundleSlice] = []
+    in_bundle = False
+    in_slice = False
+    cur_vsid: int = 0
+    cur_name: str = ""
+    cur_error: str | None = None
+    cur_lines: list[str] = []
+
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if line == VSX_BUNDLE_START_MARKER:
+            in_bundle = True
+            continue
+        if not in_bundle:
+            continue
+        if line == VSX_BUNDLE_END_MARKER:
+            if in_slice:
+                slices.append(
+                    VsxBundleSlice(
+                        vsid=cur_vsid,
+                        vs_name=cur_name,
+                        raw_output="\n".join(cur_lines).strip(),
+                        error=cur_error,
+                    )
+                )
+                in_slice = False
+            break
+
+        start_match = _VS_START_RE.match(line)
+        if start_match:
+            if in_slice:
+                slices.append(
+                    VsxBundleSlice(
+                        vsid=cur_vsid,
+                        vs_name=cur_name,
+                        raw_output="\n".join(cur_lines).strip(),
+                        error=cur_error,
+                    )
+                )
+            in_slice = True
+            cur_vsid = int(start_match.group("vsid"))
+            cur_name = start_match.group("name").strip()
+            cur_error = None
+            cur_lines = []
+            continue
+
+        if line == VS_END_MARKER:
+            if in_slice:
+                slices.append(
+                    VsxBundleSlice(
+                        vsid=cur_vsid,
+                        vs_name=cur_name,
+                        raw_output="\n".join(cur_lines).strip(),
+                        error=cur_error,
+                    )
+                )
+                in_slice = False
+                cur_vsid = 0
+                cur_name = ""
+                cur_error = None
+                cur_lines = []
+            continue
+
+        if in_slice:
+            err_match = _VS_ERROR_RE.match(line)
+            if err_match:
+                cur_error = err_match.group("err").strip()
+            cur_lines.append(raw_line)
+
+    return slices
+
+
+def extract_vs_slice_from_bundle(
+    stdout: str,
+    *,
+    vsid: int | None = None,
+    vs_name: str | None = None,
+    executor: Literal["ssh", "cprid"] = "cprid",
+    base_result: GatewayCliResult | None = None,
+) -> GatewayCliResult:
+    """Extract a specific Virtual System slice from VSX bundle output, or return original output if not bundled."""
+    is_vs = (vsid is not None and int(vsid) > 0) or bool(vs_name and vs_name.strip())
+    if VSX_BUNDLE_START_MARKER not in stdout:
+        if is_vs:
+            return GatewayCliResult(
+                success=False,
+                stdout="",
+                stderr=base_result.stderr if base_result else "",
+                exit_code=base_result.exit_code if base_result and base_result.exit_code else 1,
+                executor=executor,
+                error_code="vsx_bundle_missing",
+                error_message=(
+                    f"Virtual System vsid={vsid} vs_name={vs_name!r} expected VSX bundle output "
+                    f"from {executor}, but no VSX bundle start marker was found. The repository script "
+                    "may be outdated or failed to detect VSX."
+                ),
+            )
+        if base_result is not None and not base_result.success:
+            return base_result
+        return GatewayCliResult(success=True, stdout=stdout, executor=executor)
+
+    if VSX_BUNDLE_END_MARKER not in stdout:
+        return GatewayCliResult(
+            success=False,
+            stdout="",
+            stderr=base_result.stderr if base_result else "",
+            exit_code=base_result.exit_code if base_result and base_result.exit_code else 1,
+            executor=executor,
+            error_code="vsx_bundle_truncated",
+            error_message=f"VSX bundle output from {executor} is truncated (missing bundle end marker)",
+        )
+
+    slices = parse_vsx_bundle_output(stdout)
+
+    matched: VsxBundleSlice | None = None
+    if vsid is not None and int(vsid) > 0:
+        target_vsid = int(vsid)
+        for s in slices:
+            if s.vsid == target_vsid:
+                matched = s
+                break
+
+    if matched is None and vs_name is not None and vs_name.strip():
+        norm_name = vs_name.strip().lower()
+        for s in slices:
+            if s.vs_name.lower() == norm_name:
+                matched = s
+                break
+        if matched is None and norm_name.startswith("vs_"):
+            short_name = norm_name[3:]
+            for s in slices:
+                if s.vs_name.lower() == short_name:
+                    matched = s
+                    break
+
+    if matched is None:
+        avail = [f"{s.vsid}:{s.vs_name}" for s in slices]
+        return GatewayCliResult(
+            success=False,
+            stdout="",
+            stderr=base_result.stderr if base_result else "",
+            exit_code=base_result.exit_code if base_result and base_result.exit_code else 1,
+            executor=executor,
+            error_code="vs_not_found_in_bundle",
+            error_message=(
+                f"Virtual System vsid={vsid} vs_name={vs_name!r} not found in VSX bundle (available: {avail})"
+            ),
+        )
+
+    if base_result is not None and not base_result.success:
+        err_code = base_result.error_code or (matched.error and "vs_context_error") or "vsx_bundle_run_failed"
+        err_msg = base_result.error_message or (matched.error if matched else "") or "Underlying run-script task failed"
+        return GatewayCliResult(
+            success=False,
+            stdout=matched.raw_output,
+            stderr=base_result.stderr or matched.error or "",
+            exit_code=base_result.exit_code or 1,
+            executor=executor,
+            error_code=err_code,
+            error_message=err_msg,
+        )
+
+    if matched.error:
+        return GatewayCliResult(
+            success=False,
+            stdout=matched.raw_output,
+            stderr=matched.error,
+            exit_code=1,
+            executor=executor,
+            error_code="vs_context_error",
+            error_message=f"Virtual System vsid={matched.vsid} ({matched.vs_name}) error: {matched.error}",
+        )
+
+    return GatewayCliResult(
+        success=True,
+        stdout=matched.raw_output,
+        stderr="",
+        exit_code=0,
+        executor=executor,
+    )
 
 
 def decode_cprid_task_output(data: dict[str, Any]) -> tuple[bool, str, str]:
@@ -411,10 +619,13 @@ def routes_to_topology_entries(
 
 
 __all__ = [
+    "VsxBundleSlice",
     "decode_cprid_task_output",
+    "extract_vs_slice_from_bundle",
     "parse_clish_show_route",
     "parse_combined_cli_routes",
     "parse_combined_cli_routes_with_status",
     "parse_ip_route_show",
+    "parse_vsx_bundle_output",
     "routes_to_topology_entries",
 ]

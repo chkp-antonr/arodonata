@@ -12,11 +12,20 @@ process exits (including ``SIGKILL``).
 
 from __future__ import annotations
 
-import fcntl
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None  # type: ignore[assignment]
 
 
 class IntegrationRunLocked(RuntimeError):
@@ -35,16 +44,29 @@ class IntegrationRunLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # "a+" so we never truncate the holder's PID before knowing we own the lock.
         fh = self.path.open("a+", encoding="utf-8")
-        try:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as err:
-            fh.seek(0)
-            holder = fh.read().strip() or "unknown holder"
-            fh.close()
-            raise IntegrationRunLocked(
-                f"Another integration run holds {self.path} ({holder}). "
-                f"Wait for it to finish before starting a second run."
-            ) from err
+        if fcntl is not None:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as err:
+                fh.seek(0)
+                holder = fh.read().strip() or "unknown holder"
+                fh.close()
+                raise IntegrationRunLocked(
+                    f"Another integration run holds {self.path} ({holder}). "
+                    f"Wait for it to finish before starting a second run."
+                ) from err
+        elif msvcrt is not None:
+            try:
+                fh.seek(1_000_000)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as err:
+                fh.seek(0)
+                holder = fh.read().strip() or "unknown holder"
+                fh.close()
+                raise IntegrationRunLocked(
+                    f"Another integration run holds {self.path} ({holder}). "
+                    f"Wait for it to finish before starting a second run."
+                ) from err
 
         fh.seek(0)
         fh.truncate()
@@ -58,7 +80,14 @@ class IntegrationRunLock:
         if self._fh is None:
             return
         try:
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+            if fcntl is not None:
+                fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+            elif msvcrt is not None:
+                try:
+                    self._fh.seek(1_000_000)
+                    msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
         finally:
             self._fh.close()
             self._fh = None

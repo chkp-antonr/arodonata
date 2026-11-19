@@ -941,3 +941,32 @@ async def test_audit_regression_fixes_decoding_targets_metadata_and_permissions(
     assert new_comment.script.comments == "Managed by FPCR"
     assert new_comment.script.color == "red"
     assert sorted(new_comment.script.tags) == ["t1", "t2"]
+
+
+def test_repository_script_body_base64_decoding_and_short_token_regressions() -> None:
+    """Verify _decode_repository_script_body and RepositoryScript.from_cp_dict handle R82 base64 and preserve short tokens."""
+    import base64
+
+    from arodonata.core.models.scripts import RepositoryScript, _decode_repository_script_body
+
+    # 1. Short plaintext tokens that must never be decoded as Base64
+    for short_token in ("ls", "date", "show", "test", "hostname", "exit 0", "echo ok\n"):
+        assert _decode_repository_script_body(short_token) == short_token
+        script = RepositoryScript.from_cp_dict("mds1", "Corp", {"name": "s1", "script-body": short_token})
+        assert script.script_body == short_token
+
+    # 2. Multiline bash script passed in plaintext remains unchanged
+    bash_script = "#!/bin/bash\necho 'hello world'\nexit 0\n"
+    assert _decode_repository_script_body(bash_script) == bash_script
+    script = RepositoryScript.from_cp_dict("mds1", "Corp", {"name": "s1", "script-body": bash_script})
+    assert script.script_body == bash_script
+
+    # 3. Check Point R82 Base64-encoded script-body decodes cleanly to UTF-8
+    b64_payload = base64.b64encode(bash_script.encode("utf-8")).decode("ascii")
+    assert _decode_repository_script_body(b64_payload) == bash_script
+    r82_script = RepositoryScript.from_cp_dict("mds1", "Corp", {"name": "r82_script", "script-body": b64_payload})
+    assert r82_script.script_body == bash_script
+
+    # 4. Check Point legacy script-body-base64 continues to work when script-body is absent
+    b64_legacy = RepositoryScript.from_cp_dict("mds1", "Corp", {"name": "legacy_s1", "script-body-base64": b64_payload})
+    assert b64_legacy.script_body == bash_script

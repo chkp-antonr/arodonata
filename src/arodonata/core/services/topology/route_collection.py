@@ -42,6 +42,7 @@ from arodonata.core.services.topology.policy_rules import (
 )
 from arodonata.core.services.topology.route_executor import execute_gateway_cli
 from arodonata.core.services.topology.route_parsers import (
+    extract_vs_slice_from_bundle,
     parse_combined_cli_routes_with_status,
     routes_to_topology_entries,
 )
@@ -240,6 +241,8 @@ async def _collect_gateway_routes_impl(
             return cprid_sessions[key]
 
     auto_mode_resolver = AutoScriptModeResolver()
+    repo_node_flights: dict[tuple[str, str], asyncio.Future[GatewayCliResult]] = {}
+    repo_node_locks: dict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def _run_target(target: GatewayCliTarget) -> tuple[GatewayCliTarget, GatewayCliResult]:
         preclaimed = False
@@ -247,8 +250,68 @@ async def _collect_gateway_routes_impl(
             preclaimed = await auto_mode_resolver.acquire_probe_turn(target.mgmt_name, target.domain_name)
 
         probe_exc: BaseException | None = None
+        node_key = str(target.node_uid or target.node_ipv4 or target.node_name or target.gateway_uid)
+        coalesce_key = (target.mgmt_name, node_key)
+
+        should_coalesce = (
+            eff_cli is None
+            and repository_script_args_fn is None
+            and (
+                eff_script_mode == "repository"
+                or (
+                    eff_script_mode == "auto"
+                    and auto_mode_resolver.get_resolved(target.mgmt_name, target.domain_name) == "repository"
+                )
+            )
+        )
+
+        flight_fut: asyncio.Future[GatewayCliResult] | None = None
+        is_leader = False
+        if should_coalesce:
+            async with repo_node_locks[coalesce_key]:
+                existing_fut = repo_node_flights.get(coalesce_key)
+                if existing_fut is None:
+                    flight_fut = asyncio.get_running_loop().create_future()
+                    repo_node_flights[coalesce_key] = flight_fut
+                    is_leader = True
+                else:
+                    flight_fut = existing_fut
+                    is_leader = False
+
+            if not is_leader:
+                try:
+                    bundle_res = await asyncio.shield(flight_fut)
+                except ServerIdentityError:
+                    raise
+                except asyncio.CancelledError:
+                    cur_task = asyncio.current_task()
+                    if cur_task is not None and cur_task.cancelling() > 0:
+                        raise
+                    bundle_res = GatewayCliResult(
+                        success=False,
+                        error_code="leader_cancelled",
+                        error_message="Coalescing leader flight was cancelled",
+                        executor="cprid",
+                    )
+                except Exception as exc:
+                    bundle_res = GatewayCliResult(
+                        success=False,
+                        error_code="coalesce_leader_failed",
+                        error_message=f"Coalescing leader flight failed: {exc}",
+                        executor="cprid",
+                    )
+
+                raw_bundle = bundle_res.bundle_stdout or bundle_res.stdout
+                res = extract_vs_slice_from_bundle(
+                    raw_bundle,
+                    vsid=target.vsid,
+                    vs_name=target.vs_name,
+                    executor=bundle_res.executor,
+                    base_result=bundle_res,
+                )
+                return target, res
+
         try:
-            node_key = str(target.node_uid or target.node_ipv4 or target.node_name or target.gateway_uid)
             node_lock = get_node_lock(target.mgmt_name, node_key)
             mgmt_sem = get_semaphore(target.mgmt_name, eff_concurrency)
             # Acquire per-node lock BEFORE management concurrency slot so multiple VSX Virtual Systems
@@ -275,9 +338,16 @@ async def _collect_gateway_routes_impl(
                     auto_mode_resolver=auto_mode_resolver,
                     preclaimed_auto_probe=preclaimed,
                 )
+                if should_coalesce and is_leader and flight_fut is not None and not flight_fut.done():
+                    flight_fut.set_result(res)
                 return target, res
         except BaseException as exc:
             probe_exc = exc
+            if should_coalesce and is_leader and flight_fut is not None and not flight_fut.done():
+                if isinstance(exc, asyncio.CancelledError):
+                    flight_fut.set_exception(RuntimeError("Coalescing leader flight was cancelled"))
+                else:
+                    flight_fut.set_exception(exc)
             raise
         finally:
             if preclaimed:
