@@ -458,7 +458,7 @@ class ClientRulebaseReportsMixin(ClientBase):
             self._api_reference = await ApiReferenceEngine.async_default()
         return self._api_reference
 
-    def _resolve_api_version(
+    def resolve_api_version(
         self,
         version: str | None = None,
         mgmt_name: str | None = None,
@@ -484,6 +484,13 @@ class ClientRulebaseReportsMixin(ClientBase):
             return normalize_api_version(self._settings.api_version, default=latest)
         return latest
 
+    def _resolve_api_version(
+        self,
+        version: str | None = None,
+        mgmt_name: str | None = None,
+    ) -> str:
+        return self.resolve_api_version(version, mgmt_name=mgmt_name)
+
     def search_api_commands(
         self,
         query: str = "",
@@ -496,7 +503,7 @@ class ClientRulebaseReportsMixin(ClientBase):
         limit: int = 15,
     ) -> list[dict[str, Any]]:
         """Step 1: Search Check Point API commands offline, inferring `version` from `mgmt_name` when omitted."""
-        eff_version = self._resolve_api_version(version, mgmt_name=mgmt_name)
+        eff_version = self.resolve_api_version(version, mgmt_name=mgmt_name)
         return self.api_reference.search_commands(
             query,
             category=category,
@@ -516,7 +523,7 @@ class ClientRulebaseReportsMixin(ClientBase):
         include_examples: bool = True,
     ) -> dict[str, Any] | None:
         """Step 2: Describe one or more Check Point API commands offline, inferring `version` from `mgmt_name`."""
-        eff_version = self._resolve_api_version(version, mgmt_name=mgmt_name)
+        eff_version = self.resolve_api_version(version, mgmt_name=mgmt_name)
         return self.api_reference.describe_command(
             command,
             version=eff_version,
@@ -533,7 +540,7 @@ class ClientRulebaseReportsMixin(ClientBase):
         mgmt_name: str | None = None,
     ) -> dict[str, Any]:
         """Step 3: Validate a candidate request payload offline against the command's schema for `version` / `mgmt_name`."""
-        eff_version = self._resolve_api_version(version, mgmt_name=mgmt_name)
+        eff_version = self.resolve_api_version(version, mgmt_name=mgmt_name)
         return self.api_reference.validate_payload(
             command,
             payload,

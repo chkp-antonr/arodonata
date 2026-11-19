@@ -47,6 +47,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Enable declarative CPCRUD MCP tools",
     )
+    parser.add_argument(
+        "--allow-insecure-unauthenticated",
+        action="store_true",
+        default=None,
+        help="Explicitly allow unsafe auth_mode='none' combinations (non-loopback, wildcard, or mutating tools)",
+    )
     return parser
 
 
@@ -82,6 +88,8 @@ def run_cli(
             mcp_kwargs["allow_write_api"] = True
         if args.cpcrud is True:
             mcp_kwargs["cpcrud"] = True
+        if args.allow_insecure_unauthenticated is True:
+            mcp_kwargs["allow_insecure_unauthenticated"] = True
 
         mcp_settings = ArodonataMCPSettings(**mcp_kwargs)
         core_settings = ArodonataSettings()

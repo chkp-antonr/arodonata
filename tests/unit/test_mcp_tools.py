@@ -1799,3 +1799,45 @@ async def test_list_assets_and_query_objects_cpmi_aliases() -> None:
             "CpmiHostCkp",
         }
         assert all(g["domain"] == "Corp" and g["domain_name"] == "Corp" for g in q_grouped["groups"])
+
+
+@pytest.mark.spec("SCN-MCP-002-1")
+def test_mcp_tools_package_backward_compatible_reexports() -> None:
+    """Verify `arodonata.mcp.tools` package preserves all legacy constants, helpers, and tool registrars."""
+    from arodonata.mcp import tools as mcp_tools
+    from arodonata.rulebase import RULEBASE_TYPE_TO_COMMAND
+
+    expected_attrs = (
+        "CANONICAL_LAYER_AND_PACKAGE_TYPES",
+        "CANONICAL_SHOW_OBJECT_TYPES",
+        "MAX_MCP_API_TIMEOUT_SECONDS",
+        "MAX_STORED_PLANS",
+        "MCPCacheModeInput",
+        "RULEBASE_TYPE_TO_LIVE_COMMAND",
+        "_build_page_envelope",
+        "_canonical_plan_payload",
+        "_compute_cache_age",
+        "_entity_scope_and_type",
+        "_filter_assets",
+        "_filter_cp_objects",
+        "_filter_cp_services",
+        "_get_v2_cache",
+        "_normalize_cache_mode",
+        "_raise_if_sync_failed",
+        "_serialize_any_entity",
+        "_serialize_asset",
+        "_serialize_domain",
+        "_serialize_layer",
+        "_serialize_object",
+        "_serialize_package",
+        "_serialize_service",
+        "_sign_plan",
+        "_upgrade_uninitialized_cache_mode",
+        "register_mcp_tools",
+    )
+    for attr in expected_attrs:
+        assert hasattr(mcp_tools, attr), f"Missing backward-compatible export {attr!r} on arodonata.mcp.tools"
+
+    assert mcp_tools.RULEBASE_TYPE_TO_LIVE_COMMAND is RULEBASE_TYPE_TO_COMMAND
+    for public_sym in mcp_tools.__all__:
+        assert hasattr(mcp_tools, public_sym)

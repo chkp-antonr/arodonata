@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import contextlib
+import ipaddress
 import json
 import os
 import re
-from typing import Annotated, Any, Literal
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import arlogi
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from arodonata.adapters.checkpoint.tls import TrustPolicy
 from arodonata.core.config import ArodonataSettings, _split_csv
-from arodonata.core.errors import REDACTED_PLACEHOLDER, ConfigurationError, TrustStoreError
+from arodonata.core.errors import REDACTED_PLACEHOLDER, ConfigurationError
+
+if TYPE_CHECKING:
+    from arodonata.client import TrustPolicy
 
 logger = arlogi.get_logger(__name__)
 
@@ -22,6 +27,42 @@ MIN_STATIC_TOKEN_LENGTH: int = 32
 _CLIENT_ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
 CsvStrList = Annotated[list[str], NoDecode]
+
+LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def is_loopback_host(host: str) -> bool:
+    """Return `True` if `host` is a local loopback address (`127.0.0.1`, `localhost`, or `::1`)."""
+    clean = host.strip().lower()
+    if clean.startswith("[") and clean.endswith("]"):
+        clean = clean[1:-1]
+    if not clean:
+        return False
+    if clean == "localhost":
+        return True
+    with contextlib.suppress(ValueError):
+        clean = ipaddress.ip_address(clean).compressed
+    return clean in LOOPBACK_HOSTS
+
+
+def _has_wildcard_entry(entries: Sequence[str]) -> bool:
+    """Return `True` if any host or origin pattern uses a hostname wildcard (e.g. `*`, `http://*`, `*.domain`).
+
+    Explicit host port-wildcards such as `127.0.0.1:*`, `localhost:*`, `[::1]:*`, and
+    `http://localhost:*` are permitted.
+    """
+    for raw in entries:
+        cleaned = raw.strip().lower()
+        if not cleaned:
+            continue
+        host_part = cleaned.partition("://")[2] if "://" in cleaned else cleaned
+        host_part = host_part.split("/", 1)[0]
+        if host_part.endswith(":*"):
+            host_part = host_part[:-2]
+        if not host_part or "*" in host_part:
+            return True
+    return False
+
 
 DEFAULT_ALLOWED_HOSTS: tuple[str, ...] = (
     "127.0.0.1:*",
@@ -107,6 +148,29 @@ class ArodonataMCPSettings(BaseSettings):
     cpcrud: bool = Field(
         default=False,
         validation_alias=AliasChoices("cpcrud", "ARODONATA_MCP_CPCRUD"),
+    )
+    allow_insecure_unauthenticated: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "allow_insecure_unauthenticated",
+            "ARODONATA_MCP_ALLOW_INSECURE_UNAUTHENTICATED",
+        ),
+    )
+    tool_rate_limit_per_minute: int = Field(
+        default=120,
+        ge=0,
+        validation_alias=AliasChoices(
+            "tool_rate_limit_per_minute",
+            "ARODONATA_MCP_TOOL_RATE_LIMIT_PER_MINUTE",
+        ),
+    )
+    live_tool_rate_limit_per_minute: int = Field(
+        default=30,
+        ge=0,
+        validation_alias=AliasChoices(
+            "live_tool_rate_limit_per_minute",
+            "ARODONATA_MCP_LIVE_TOOL_RATE_LIMIT_PER_MINUTE",
+        ),
     )
 
     json_response: bool = Field(
@@ -206,19 +270,25 @@ class ArodonataMCPSettings(BaseSettings):
 
         return pairs
 
-    def validate_standalone_startup(
+    def validate_security_policy(
         self,
-        core_settings: ArodonataSettings | None = None,
         *,
+        standalone: bool = False,
+        has_token_verifier: bool = False,
         environ: dict[str, str] | None = None,
-    ) -> TrustPolicy:
-        """Validate standalone CLI (`arodonata-mcp`) auth mode and TLS trust store configuration.
+    ) -> None:
+        """Enforce unified fail-closed MCP security invariants across CLI, server, and ASGI factories.
 
-        Refuses `auth_mode="host"` or `"jwt"` in standalone mode by raising `ConfigurationError`.
-        Emits a prominent warning when `auth_mode="none"` is combined with a non-loopback host or `*`.
-        Verifies TLS trust policy and loads/validates the trust store.
+        1. Rejects `auth_mode="host"` or `"jwt"` in standalone CLI mode, and rejects `auth_mode="jwt"`
+           without an explicit `token_verifier`.
+        2. Requires at least one valid static bearer token in standalone `auth_mode="static"`.
+        3. Rejects hostname/origin wildcards (`"*"`) whenever DNS rebinding protection is active.
+        4. Rejects `auth_mode="none"` paired with non-loopback `host`, wildcard `allowed_hosts` /
+           `allowed_origins`, or mutating capabilities (`allow_write_api=True`, `cpcrud=True`)
+           unless `allow_insecure_unauthenticated=True` is explicitly set (in which case a prominent
+           `WARNING` is logged).
         """
-        if self.auth_mode in ("host", "jwt"):
+        if standalone and self.auth_mode in ("host", "jwt"):
             raise ConfigurationError(
                 f"ARODONATA_MCP_AUTH_MODE={self.auth_mode!r} is not supported in standalone 'arodonata-mcp' CLI mode. "
                 "Use ARODONATA_MCP_AUTH_MODE='static' for standalone execution, or embed the server via "
@@ -226,14 +296,13 @@ class ArodonataMCPSettings(BaseSettings):
                 "authenticating ASGI host."
             )
 
-        if self.auth_mode == "none" and (self.host.strip() in ("0.0.0.0", "::", "*") or "*" in self.allowed_hosts):
-            logger.warning(
-                "SECURITY WARNING: arodonata-mcp started with ARODONATA_MCP_AUTH_MODE='none' and exposed host/allowed_hosts",
-                host=self.host,
-                allowed_hosts=self.allowed_hosts,
+        if self.auth_mode == "jwt" and not has_token_verifier:
+            raise ConfigurationError(
+                "auth_mode='jwt' requires an explicit token_verifier instance passed to "
+                "create_mcp_server / create_asgi_app."
             )
 
-        if self.auth_mode == "static":
+        if standalone and self.auth_mode == "static":
             pairs = self.resolve_static_tokens(environ=environ)
             if not pairs:
                 raise ConfigurationError(
@@ -241,23 +310,61 @@ class ArodonataMCPSettings(BaseSettings):
                     "ARODONATA_MCP_TOKEN_VARS or ARODONATA_MCP_TOKENS."
                 )
 
-        resolved_core = core_settings if core_settings is not None else ArodonataSettings()
-        env = environ if environ is not None else dict(os.environ)
-        lab_env = env.get("ARODONATA_LAB")
+        has_wildcard_host = _has_wildcard_entry(self.allowed_hosts)
+        has_wildcard_origin = _has_wildcard_entry(self.allowed_origins)
 
-        trust_policy = TrustPolicy(
-            mode=resolved_core.tls_trust,
-            known_hosts_path=resolved_core.tls_known_hosts_path,
-            pinned_fingerprints=resolved_core.tls_fingerprints,
-            lab_env=lab_env,
-        )
-        entries = trust_policy.trust_store.load()
-        if trust_policy.mode == "pinned" and not trust_policy.pinned_fingerprints and not entries:
-            raise TrustStoreError(
-                "TLS trust mode 'pinned' requires at least one certificate fingerprint in "
-                f"ARODONATA_TLS_FINGERPRINTS or {resolved_core.tls_known_hosts_path!r}."
+        if self.enable_dns_rebinding_protection and (has_wildcard_host or has_wildcard_origin):
+            raise ConfigurationError(
+                "Wildcard '*' entries in ARODONATA_MCP_ALLOWED_HOSTS or ARODONATA_MCP_ALLOWED_ORIGINS are forbidden "
+                "while DNS rebinding protection is enabled (ARODONATA_MCP_ENABLE_DNS_REBINDING_PROTECTION=true). "
+                "Specify explicit hosts/origins or disable DNS rebinding protection explicitly."
             )
-        return trust_policy
+
+        if self.auth_mode == "none":
+            unsafe_reasons: list[str] = []
+            if not is_loopback_host(self.host):
+                unsafe_reasons.append(f"non-loopback host={self.host!r}")
+            if has_wildcard_host:
+                unsafe_reasons.append("wildcard entry in allowed_hosts")
+            if has_wildcard_origin:
+                unsafe_reasons.append("wildcard entry in allowed_origins")
+            if self.allow_write_api:
+                unsafe_reasons.append("allow_write_api=True")
+            if self.cpcrud:
+                unsafe_reasons.append("cpcrud=True")
+
+            if unsafe_reasons:
+                if not self.allow_insecure_unauthenticated:
+                    raise ConfigurationError(
+                        "Refusing unsafe unauthenticated MCP configuration (auth_mode='none') with "
+                        f"{', '.join(unsafe_reasons)}. Configure authentication (auth_mode='static'/'host'/'jwt') "
+                        "or bind strictly to loopback without wildcards or write tools, or set "
+                        "allow_insecure_unauthenticated=True (ARODONATA_MCP_ALLOW_INSECURE_UNAUTHENTICATED=true) "
+                        "to opt in explicitly."
+                    )
+                logger.warning(
+                    "SECURITY WARNING: MCP server configured with auth_mode='none' and allow_insecure_unauthenticated=True",
+                    host=self.host,
+                    allowed_hosts=self.allowed_hosts,
+                    allowed_origins=self.allowed_origins,
+                    allow_write_api=self.allow_write_api,
+                    cpcrud=self.cpcrud,
+                    reasons=unsafe_reasons,
+                )
+
+    def validate_standalone_startup(
+        self,
+        core_settings: ArodonataSettings | None = None,
+        *,
+        environ: dict[str, str] | None = None,
+    ) -> TrustPolicy:
+        """Validate standalone CLI (`arodonata-mcp`) security policy and TLS trust store configuration."""
+        self.validate_security_policy(standalone=True, environ=environ)
+
+        resolved_core = core_settings if core_settings is not None else ArodonataSettings()
+        from arodonata.client import build_validated_trust_policy
+
+        return build_validated_trust_policy(resolved_core, environ=environ)
 
     def model_dump(self, **kwargs: Any) -> dict[str, Any]:
         """Serialize MCP settings with `tokens` masked."""
@@ -291,5 +398,7 @@ __all__ = [
     "ArodonataMCPSettings",
     "DEFAULT_ALLOWED_HOSTS",
     "DEFAULT_ALLOWED_ORIGINS",
+    "LOOPBACK_HOSTS",
     "MCPAuthMode",
+    "is_loopback_host",
 ]

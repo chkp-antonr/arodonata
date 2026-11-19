@@ -7,6 +7,8 @@ import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Final
 
+from arodonata.core.errors import ValidationError
+
 if TYPE_CHECKING:
     from arodonata.core.models.objects import CPObject
 
@@ -15,6 +17,57 @@ UUID_RE: Final[re.Pattern[str]] = re.compile(
 )
 
 MAX_IPV4_INT: Final[int] = 4294967295
+
+READONLY_EXACT_COMMANDS: Final[frozenset[str]] = frozenset(
+    {
+        "where-used",
+        "verify-policy",
+        "keepalive",
+    }
+)
+
+_COMMAND_NAME_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def is_readonly_command(command: str) -> bool:
+    """Return `True` if `command` is a read-only Check Point Web API command (`C8`)."""
+    clean = command.strip().lower().lstrip("/")
+    return clean.startswith("show-") or clean in READONLY_EXACT_COMMANDS
+
+
+def validate_command_name(command: str) -> str:
+    """Validate and normalize a Check Point Web API command name against `^[a-z0-9]+(-[a-z0-9]+)*$`."""
+    if not isinstance(command, str):
+        raise ValidationError(f"Invalid Check Point API command type: {type(command).__name__}")
+    if command != command.strip():
+        raise ValidationError(
+            f"Invalid Check Point Web API command {command!r}: leading or trailing whitespace is forbidden."
+        )
+    raw = command
+    if raw.startswith("/web_api/"):
+        raw = raw.removeprefix("/web_api/")
+    elif raw.startswith("web_api/"):
+        raw = raw.removeprefix("web_api/")
+    if not raw or not _COMMAND_NAME_RE.fullmatch(raw):
+        raise ValidationError(
+            f"Invalid Check Point Web API command {command!r}: must match '^[a-z0-9]+(-[a-z0-9]+)*$'."
+        )
+    return raw
+
+
+def format_host_attr_for_url(host: str) -> str:
+    """Wrap raw IPv6 literal in brackets `[...]` for URL/key construction."""
+    cleaned = host.strip()
+    if cleaned.startswith("[") and cleaned.endswith("]"):
+        return cleaned
+    try:
+        addr = ipaddress.ip_address(cleaned)
+        if addr.version == 6:
+            return f"[{addr.compressed}]"
+    except ValueError:
+        if ":" in cleaned:
+            return f"[{cleaned}]"
+    return cleaned
 
 
 def is_uuid(value: Any) -> bool:
@@ -198,9 +251,12 @@ def parse_cidr_or_range_bounds(cidr_or_range: str) -> tuple[int, int, int] | Non
 
 __all__ = [
     "MAX_IPV4_INT",
+    "READONLY_EXACT_COMMANDS",
     "UUID_RE",
     "effective_range_prefix_len",
     "format_composite_id",
+    "format_host_attr_for_url",
+    "is_readonly_command",
     "is_uuid",
     "mask_to_prefix_len",
     "normalize_str_sequence",
@@ -208,4 +264,5 @@ __all__ = [
     "parse_cidr_or_range_bounds",
     "parse_composite_id",
     "prefix_len_to_mask",
+    "validate_command_name",
 ]

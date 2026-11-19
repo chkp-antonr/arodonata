@@ -8,6 +8,12 @@ auto-owned in-memory SQLite engine (`sqlite+aiosqlite:///:memory:`).
 
 from __future__ import annotations
 
+from arodonata.client._base import (
+    TrustPolicy as TrustPolicy,
+)
+from arodonata.client._base import (
+    build_validated_trust_policy as build_validated_trust_policy,
+)
 from arodonata.client._base import logger as logger
 from arodonata.client.inventory import ClientInventoryMixin
 from arodonata.client.lifecycle import ClientLifecycleMixin
@@ -26,4 +32,6 @@ class ArodonataClient(
 
 __all__ = [
     "ArodonataClient",
+    "TrustPolicy",
+    "build_validated_trust_policy",
 ]

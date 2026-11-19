@@ -124,6 +124,9 @@ app.mount("/mcp", mcp_asgi)
 | `ARODONATA_MCP_ALLOWED_ORIGINS` | `list[str]` (CSV) | `http(s)://localhost:*`, `127.0.0.1:*` | Permitted browser `Origin` headers |
 | `ARODONATA_MCP_ALLOW_WRITE_API` | `bool` | `False` | When `False`, `api_call` permits only the explicit read-only allowlist (`show-*`, `where-used`, `verify-policy`); when `True`, mutating calls run in an isolated dedicated session |
 | `ARODONATA_MCP_CPCRUD` | `bool` | `False` | Registers the 5 tamper-proof HMAC-signed CPCRUD tools (`cpcrud_validate`, `cpcrud_plan`, `cpcrud_apply`, `cpcrud_inverse`, `cpcrud_staged_session`) |
+| `ARODONATA_MCP_ALLOW_INSECURE_UNAUTHENTICATED` | `bool` | `False` | Explicit opt-in required to pair `ARODONATA_MCP_AUTH_MODE=none` with non-loopback `host`, wildcards, `allow_write_api=true`, or `cpcrud=true` (emits a `SECURITY WARNING`) |
+| `ARODONATA_MCP_TOOL_RATE_LIMIT_PER_MINUTE` | `int` | `120` | Sliding-window per-`client_id` tool invocation limit per minute across all MCP tools (`0` disables enforcement) |
+| `ARODONATA_MCP_LIVE_TOOL_RATE_LIMIT_PER_MINUTE` | `int` | `30` | Stricter per-`client_id` sliding-window limit per minute for live/mutating MCP tools (`0` disables enforcement) |
 | `ARODONATA_MCP_JSON_RESPONSE` | `bool` | `False` | Return JSON responses instead of SSE streams on Streamable-HTTP POST |
 | `ARODONATA_MCP_STATELESS_HTTP` | `bool` | `False` | Enable stateless Streamable-HTTP mode per request |
 | `ARODONATA_MCP_SERVER_NAME` | `str` | `"arodonata-mcp"` | Server identifier reported in MCP initialization |

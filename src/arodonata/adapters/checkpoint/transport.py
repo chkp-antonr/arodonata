@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -41,33 +40,11 @@ from arodonata.core.errors import (
     ConfigurationError,
     ServerIdentityError,
     TransportError,
-    ValidationError,
     redact_sid,
 )
 from arodonata.core.models.common import ApiCallResult
+from arodonata.core.primitives import validate_command_name
 from arodonata.core.telemetry import span_attrs, traced
-
-_COMMAND_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-
-
-def validate_command_name(command: str) -> str:
-    """Validate and normalize a Check Point Web API command name against `^[a-z0-9]+(-[a-z0-9]+)*$`."""
-    if not isinstance(command, str):
-        raise ValidationError(f"Invalid Check Point API command type: {type(command).__name__}")
-    if command != command.strip():
-        raise ValidationError(
-            f"Invalid Check Point Web API command {command!r}: leading or trailing whitespace is forbidden."
-        )
-    raw = command
-    if raw.startswith("/web_api/"):
-        raw = raw.removeprefix("/web_api/")
-    elif raw.startswith("web_api/"):
-        raw = raw.removeprefix("web_api/")
-    if not raw or not _COMMAND_NAME_RE.fullmatch(raw):
-        raise ValidationError(
-            f"Invalid Check Point Web API command {command!r}: must match '^[a-z0-9]+(-[a-z0-9]+)*$'."
-        )
-    return raw
 
 
 @dataclass

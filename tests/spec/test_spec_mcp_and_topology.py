@@ -196,8 +196,9 @@ class _McpTopoFakeApi:
 @pytest.mark.spec("SCN-MCP-001-1")
 def test_standalone_mcp_cli_warns_when_auth_none_with_non_loopback_or_wildcard_hosts(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """SCN-MCP-001-1: Standalone startup emits prominent WARNING when `auth_mode='none'` pairs with `0.0.0.0` or `*`."""
+    """SCN-MCP-001-1: Standalone startup fails closed on unsafe `auth_mode='none'` by default, and emits prominent WARNING when explicitly opted in."""
     warnings_logged: list[str] = []
     monkeypatch.setattr(mcp_config.logger, "warning", lambda msg, *_a, **_kw: warnings_logged.append(str(msg)))
     monkeypatch.setattr(mcp_cli.logger, "warning", lambda msg, *_a, **_kw: warnings_logged.append(str(msg)))
@@ -208,12 +209,33 @@ def test_standalone_mcp_cli_warns_when_auth_none_with_non_loopback_or_wildcard_h
     monkeypatch.setenv("ARODONATA_TLS_TRUST", "pinned")
     monkeypatch.setenv("ARODONATA_TLS_FINGERPRINTS", f"10.0.0.1:443={_make_fp()}")
 
-    # Non-loopback bind host + wildcard ALLOWED_HOSTS with auth_mode="none"
+    # 1. Fail closed with exit code 2 on non-loopback host or wildcard ALLOWED_HOSTS without opt-in
     monkeypatch.setenv("ARODONATA_MCP_ALLOWED_HOSTS", "*")
-    rc = mcp_cli.run_cli(["--host", "0.0.0.0", "--auth-mode", "none"], uvicorn_runner=lambda *_a, **_kw: None)
-    assert rc == 0
+    rc_blocked_wild = mcp_cli.run_cli(
+        ["--host", "0.0.0.0", "--auth-mode", "none"], uvicorn_runner=lambda *_a, **_kw: None
+    )
+    assert rc_blocked_wild == 2
+    assert "configuration error" in capsys.readouterr().err.lower()
+
+    monkeypatch.delenv("ARODONATA_MCP_ALLOWED_HOSTS", raising=False)
+    rc_blocked_host = mcp_cli.run_cli(
+        ["--host", "0.0.0.0", "--auth-mode", "none"], uvicorn_runner=lambda *_a, **_kw: None
+    )
+    assert rc_blocked_host == 2
+    assert "allow_insecure_unauthenticated" in capsys.readouterr().err
+
+    # 2. Explicit opt-in (--allow-insecure-unauthenticated, plus DNS rebinding disabled when ALLOWED_HOSTS='*') succeeds with WARNING
+    monkeypatch.setenv("ARODONATA_MCP_ALLOWED_HOSTS", "*")
+    monkeypatch.setenv("ARODONATA_MCP_ENABLE_DNS_REBINDING_PROTECTION", "false")
+    rc_opt_in = mcp_cli.run_cli(
+        ["--host", "0.0.0.0", "--auth-mode", "none", "--allow-insecure-unauthenticated"],
+        uvicorn_runner=lambda *_a, **_kw: None,
+    )
+    assert rc_opt_in == 0
     assert any(
-        "unauthenticated" in w.lower() or "security warning" in w.lower() or "none" in w.lower()
+        "unauthenticated" in w.lower()
+        or "security warning" in w.lower()
+        or "allow_insecure_unauthenticated" in w.lower()
         for w in warnings_logged
     )
 

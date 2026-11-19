@@ -504,7 +504,7 @@ class SearchService:
 
         return result
 
-    async def _resolve_implicit_domain_mode(
+    async def resolve_implicit_domain_mode(
         self,
         mgmt_name: str,
         eff_domain: str | None,
@@ -545,6 +545,8 @@ class SearchService:
         if len(non_global) == 1:
             return non_global[0], cache_mode
         return "default", cache_mode
+
+    _resolve_implicit_domain_mode = resolve_implicit_domain_mode
 
     @staticmethod
     def _dedup_entities_by_uid(

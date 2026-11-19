@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
@@ -21,6 +22,7 @@ from arodonata.api_reference import ApiReferenceEngine, get_api_reference
 from arodonata.client.warmup import CacheWarmupCoordinator, logger
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import AuthContext, UserContext, WriteSession, normalize_domain_key
+from arodonata.core.errors import TrustStoreError
 from arodonata.core.models.common import utc_now
 from arodonata.core.ports import ApiPort, AuthProvider, CachePort, GatewayCliCallable, GatewayCliPort, LockPort
 from arodonata.core.services import (
@@ -335,4 +337,27 @@ class ClientBase:
         return self._warmup.warmup_tasks
 
 
-__all__ = ["ClientBase", "logger"]
+def build_validated_trust_policy(
+    core_settings: ArodonataSettings,
+    *,
+    environ: dict[str, str] | None = None,
+) -> TrustPolicy:
+    """Build and validate a `TrustPolicy` from `ArodonataSettings`, loading and checking its trust store."""
+    env = environ if environ is not None else dict(os.environ)
+    lab_env = env.get("ARODONATA_LAB")
+    trust_policy = TrustPolicy(
+        mode=core_settings.tls_trust,
+        known_hosts_path=core_settings.tls_known_hosts_path,
+        pinned_fingerprints=core_settings.tls_fingerprints,
+        lab_env=lab_env,
+    )
+    entries = trust_policy.trust_store.load()
+    if trust_policy.mode == "pinned" and not trust_policy.pinned_fingerprints and not entries:
+        raise TrustStoreError(
+            "TLS trust mode 'pinned' requires at least one certificate fingerprint in "
+            f"ARODONATA_TLS_FINGERPRINTS or {core_settings.tls_known_hosts_path!r}."
+        )
+    return trust_policy
+
+
+__all__ = ["ClientBase", "TrustPolicy", "build_validated_trust_policy", "logger"]

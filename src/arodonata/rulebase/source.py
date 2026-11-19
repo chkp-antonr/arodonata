@@ -202,7 +202,7 @@ class CachedRulebaseSource:
 
         raise DomainNotFoundError(f"Could not resolve domain for {kind} {target!r} on management server {mgmt_name!r}.")
 
-    async def _ensure_and_load_snapshot(
+    async def ensure_and_load_snapshot(
         self,
         mgmt_name: str,
         domain_name: str,
@@ -229,6 +229,8 @@ class CachedRulebaseSource:
         if st.synced_at is not None:
             age = max(0.0, (self._now() - st.synced_at).total_seconds())
         return snapshot, st.last_session_uid, st.last_published_at, st.status, age
+
+    _ensure_and_load_snapshot = ensure_and_load_snapshot
 
     async def _ensure_and_load_package_snapshot(
         self,
