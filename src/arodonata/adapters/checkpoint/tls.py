@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
-import ipaddress
 import json
 import os
 import re
@@ -30,6 +29,7 @@ from arodonata.core.errors import (
     UnknownServerCertificateError,
 )
 from arodonata.core.models.common import utc_now
+from arodonata.core.primitives import format_host_attr_for_url
 from arodonata.core.telemetry import span_attrs, traced
 
 logger = arlogi.get_logger("arodonata.adapters.checkpoint.tls")
@@ -113,21 +113,6 @@ def compute_der_fingerprint(der_bytes: bytes) -> str:
         raise TrustStoreError("Peer did not present a TLS certificate. No request was sent.")
     digest = hashlib.sha256(der_bytes).hexdigest().upper()
     return ":".join(digest[i : i + 2] for i in range(0, 64, 2))
-
-
-def format_host_attr_for_url(host: str) -> str:
-    """Wrap raw IPv6 literal in brackets `[...]` for URL/key construction."""
-    cleaned = host.strip()
-    if cleaned.startswith("[") and cleaned.endswith("]"):
-        return cleaned
-    try:
-        addr = ipaddress.ip_address(cleaned)
-        if addr.version == 6:
-            return f"[{addr.compressed}]"
-    except ValueError:
-        if ":" in cleaned:
-            return f"[{cleaned}]"
-    return cleaned
 
 
 def format_host_port(host: str, port: int = 443) -> str:

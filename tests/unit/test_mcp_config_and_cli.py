@@ -12,9 +12,12 @@ from arodonata.core.errors import REDACTED_PLACEHOLDER, ConfigurationError, Trus
 from arodonata.mcp import (
     EXIT_CONFIG_ERROR,
     ArodonataMCPSettings,
+    is_loopback_host,
     main,
     run_cli,
 )
+from arodonata.mcp import cli as mcp_cli
+from arodonata.mcp import config as mcp_config
 
 
 def test_mcp_settings_defaults_and_token_redaction() -> None:
@@ -157,3 +160,103 @@ def test_validate_standalone_startup_method(tmp_path: Path) -> None:
             core_settings,
             environ={"TEAM_A_TOKEN": "sec-0123456789abcdefghijklmnopqrstuv"},
         )
+
+
+@pytest.mark.spec("SCN-MCP-001-6")
+def test_unified_security_policy_cli_and_settings_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """SCN-MCP-001-6: Fail-closed `validate_security_policy()` across CLI and `ArodonataMCPSettings`."""
+    # Loopback detection handles IPv4, localhost, and bracketed/canonical IPv6 loopback strictly
+    for valid_lb in ("127.0.0.1", "localhost", "::1", "[::1]", "0:0:0:0:0:0:0:1"):
+        assert is_loopback_host(valid_lb) is True
+    for non_lb in ("0.0.0.0", "::", "10.0.0.1", "127.0.0.2", "0.0.0.0:8000", ""):
+        assert is_loopback_host(non_lb) is False
+
+    # Setup valid TLS trust store so CLI checks security policy cleanly
+    monkeypatch.setenv("ARODONATA_TLS_TRUST", "pinned")
+    monkeypatch.setenv("ARODONATA_TLS_KNOWN_HOSTS_PATH", str(tmp_path / "kh.json"))
+    monkeypatch.setenv("ARODONATA_TLS_FINGERPRINTS", f"10.0.0.1:443={'AA:' * 31 + 'BB'}")
+
+    # 1. Safe loopback read-only auth_mode="none" succeeds
+    started_hosts: list[str] = []
+    for lb in ("127.0.0.1", "localhost", "::1"):
+        rc_ok = run_cli(
+            ["--auth-mode", "none", "--host", lb],
+            uvicorn_runner=lambda _app, *, host, port: started_hosts.append(host),
+        )
+        assert rc_ok == 0
+    assert started_hosts == ["127.0.0.1", "localhost", "::1"]
+
+    # 2. Unsafe auth_mode="none" combinations fail with EXIT_CONFIG_ERROR (2)
+    for cli_args in (
+        ["--auth-mode", "none", "--host", "0.0.0.0"],
+        ["--auth-mode", "none", "--host", "::"],
+        ["--auth-mode", "none", "--allow-write-api"],
+        ["--auth-mode", "none", "--cpcrud"],
+    ):
+        rc_bad = run_cli(cli_args, uvicorn_runner=lambda *_a, **_kw: None)
+        assert rc_bad == EXIT_CONFIG_ERROR
+        assert "configuration error" in capsys.readouterr().err.lower()
+
+    # 3. Opt-in via --allow-insecure-unauthenticated succeeds with allow_write_api / non-loopback
+    rc_opt = run_cli(
+        ["--auth-mode", "none", "--host", "0.0.0.0", "--allow-write-api", "--allow-insecure-unauthenticated"],
+        uvicorn_runner=lambda *_a, **_kw: None,
+    )
+    assert rc_opt == 0
+
+    # 4. Wildcard allowed_hosts or allowed_origins with DNS rebinding enabled fails even in static mode
+    monkeypatch.setenv("TEAM_A_TOKEN", "tok-a-0123456789abcdefghijklmnopqrstuv")
+    monkeypatch.setenv("ARODONATA_MCP_TOKEN_VARS", "TEAM_A_TOKEN")
+    monkeypatch.setenv("ARODONATA_MCP_ALLOWED_HOSTS", "*")
+    rc_wild = run_cli([], uvicorn_runner=lambda *_a, **_kw: None)
+    assert rc_wild == EXIT_CONFIG_ERROR
+    assert "Wildcard" in capsys.readouterr().err
+
+    monkeypatch.delenv("ARODONATA_MCP_ALLOWED_HOSTS", raising=False)
+    monkeypatch.setenv("ARODONATA_MCP_ALLOWED_ORIGINS", "https://*")
+    rc_wild_orig = run_cli([], uvicorn_runner=lambda *_a, **_kw: None)
+    assert rc_wild_orig == EXIT_CONFIG_ERROR
+    assert "Wildcard" in capsys.readouterr().err
+
+    # 5. Tightened auth_mode='none' also rejects disabled DNS rebinding and non-loopback allowlist entries
+    monkeypatch.delenv("ARODONATA_MCP_TOKEN_VARS", raising=False)
+    monkeypatch.delenv("TEAM_A_TOKEN", raising=False)
+    monkeypatch.delenv("ARODONATA_MCP_ALLOWED_ORIGINS", raising=False)
+
+    for env_key, env_val in (
+        ("ARODONATA_MCP_ENABLE_DNS_REBINDING_PROTECTION", "false"),
+        ("ARODONATA_MCP_ALLOWED_HOSTS", "mcp.corp.example.com"),
+        ("ARODONATA_MCP_ALLOWED_ORIGINS", "https://app.example.com"),
+    ):
+        monkeypatch.setenv(env_key, env_val)
+        rc_none_bad = run_cli(["--auth-mode", "none"], uvicorn_runner=lambda *_a, **_kw: None)
+        assert rc_none_bad == EXIT_CONFIG_ERROR
+        assert "auth_mode='none'" in capsys.readouterr().err
+        monkeypatch.delenv(env_key, raising=False)
+
+    # 6. CLI opt-in emits SECURITY WARNING strictly once and binds owned client lifecycle
+    warn_msgs: list[str] = []
+    monkeypatch.setattr(mcp_config.logger, "warning", lambda msg, *_a, **_kw: warn_msgs.append(str(msg)))
+    captured_apps: list[Any] = []
+    rc_single_warn = run_cli(
+        ["--auth-mode", "none", "--host", "0.0.0.0", "--allow-insecure-unauthenticated"],
+        uvicorn_runner=lambda app, **_kw: captured_apps.append(app),
+    )
+    assert rc_single_warn == 0
+    assert len(warn_msgs) == 1
+    assert "SECURITY WARNING" in warn_msgs[0]
+    assert len(captured_apps) == 1
+    assert captured_apps[0].mcp_server._arodonata_owns_client is True
+
+    # 7. CLI handles ConfigurationError raised during create_asgi_app cleanly with EXIT_CONFIG_ERROR
+    def _boom_create_asgi_app(*_a: Any, **_kw: Any) -> Any:
+        raise ConfigurationError("simulated factory conflict")
+
+    monkeypatch.setattr(mcp_cli, "create_asgi_app", _boom_create_asgi_app)
+    rc_factory_err = run_cli(["--auth-mode", "none"], uvicorn_runner=lambda *_a, **_kw: None)
+    assert rc_factory_err == EXIT_CONFIG_ERROR
+    assert "simulated factory conflict" in capsys.readouterr().err

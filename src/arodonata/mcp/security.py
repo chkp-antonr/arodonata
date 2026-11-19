@@ -26,6 +26,12 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from arodonata.core.context import get_user_context, user_context
 from arodonata.core.errors import REDACTED_PLACEHOLDER
 from arodonata.mcp.config import ArodonataMCPSettings
+from arodonata.mcp.quota import (
+    MCPToolQuotaManager as MCPToolQuotaManager,
+)
+from arodonata.mcp.quota import (
+    QuotaDecision as QuotaDecision,
+)
 
 logger = arlogi.get_logger(__name__)
 
@@ -249,6 +255,8 @@ class MCPBearerAuthMiddleware:
 __all__ = [
     "MCPBearerAuthMiddleware",
     "MCPOriginHostGuardMiddleware",
+    "MCPToolQuotaManager",
+    "QuotaDecision",
     "StaticTokenVerifier",
     "host_matches_allowed",
     "origin_matches_allowed",

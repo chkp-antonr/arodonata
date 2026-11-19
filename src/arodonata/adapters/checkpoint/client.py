@@ -65,22 +65,13 @@ from arodonata.core.errors import (
 )
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult, utc_now
 from arodonata.core.ports import AuthProvider, CachePort, LockPort
-from arodonata.core.telemetry import span_attrs, traced
-
-READONLY_EXACT_COMMANDS: frozenset[str] = frozenset(
-    {
-        "where-used",
-        "verify-policy",
-        "keepalive",
-    }
+from arodonata.core.primitives import (
+    READONLY_EXACT_COMMANDS as READONLY_EXACT_COMMANDS,
 )
-
-
-def is_readonly_command(command: str) -> bool:
-    """Return `True` if `command` is a read-only Check Point Web API command (`C8`)."""
-    clean = command.strip().lower().lstrip("/")
-    return clean.startswith("show-") or clean in READONLY_EXACT_COMMANDS
-
+from arodonata.core.primitives import (
+    is_readonly_command as is_readonly_command,
+)
+from arodonata.core.telemetry import span_attrs, traced
 
 # Backward-compatible private alias (canonical implementation lives in `arodonata.core.context`).
 _update_overlay_from_command = update_overlay_from_command

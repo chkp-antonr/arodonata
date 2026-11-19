@@ -202,7 +202,7 @@ class CachedRulebaseSource:
 
         raise DomainNotFoundError(f"Could not resolve domain for {kind} {target!r} on management server {mgmt_name!r}.")
 
-    async def _ensure_and_load_snapshot(
+    async def ensure_and_load_snapshot(
         self,
         mgmt_name: str,
         domain_name: str,
@@ -229,6 +229,22 @@ class CachedRulebaseSource:
         if st.synced_at is not None:
             age = max(0.0, (self._now() - st.synced_at).total_seconds())
         return snapshot, st.last_session_uid, st.last_published_at, st.status, age
+
+    async def _ensure_and_load_snapshot(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        cache_mode: CacheMode = "cache",
+        cache_ttl: float | None = None,
+    ) -> tuple[DomainRulebaseSnapshot, str | None, datetime | None, SyncStatus, float | None]:
+        """Forwarding wrapper preserving `_ensure_and_load_snapshot` compatibility with `ensure_and_load_snapshot`."""
+        return await self.ensure_and_load_snapshot(
+            mgmt_name,
+            domain_name,
+            cache_mode=cache_mode,
+            cache_ttl=cache_ttl,
+        )
 
     async def _ensure_and_load_package_snapshot(
         self,
@@ -412,7 +428,7 @@ class CachedRulebaseSource:
             rulebase_type=rulebase_type,
             cache_mode=cache_mode,
         )
-        snap, session_uid, published_at, status, _ = await self._ensure_and_load_snapshot(
+        snap, session_uid, published_at, status, _ = await self.ensure_and_load_snapshot(
             mgmt_name,
             resolved_domain,
             cache_mode=cache_mode,
@@ -462,7 +478,7 @@ class CachedRulebaseSource:
             rule_count=len(rule_uids) if rule_uids else 0,
             layer_count=len(layer_uids) if layer_uids else 0,
         )
-        snap, session_uid, published_at, status, _ = await self._ensure_and_load_snapshot(
+        snap, session_uid, published_at, status, _ = await self.ensure_and_load_snapshot(
             mgmt_name,
             resolved_domain,
             cache_mode=cache_mode,
@@ -532,7 +548,7 @@ class CachedRulebaseSource:
                 cache_mode=cache_mode,
                 cache_ttl=cache_ttl,
             )
-            snap, session_uid, published_at, status, age = await self._ensure_and_load_snapshot(
+            snap, session_uid, published_at, status, age = await self.ensure_and_load_snapshot(
                 mgmt_name,
                 resolved_domain,
                 cache_mode=cache_mode,

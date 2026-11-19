@@ -10,9 +10,12 @@ from typing import Any
 import pytest
 
 from arodonata.adapters.checkpoint import client as checkpoint_client
+from arodonata.adapters.checkpoint import tls as checkpoint_tls
+from arodonata.adapters.checkpoint import transport as checkpoint_transport
 from arodonata.adapters.storage import DatabaseManager, SqlCacheAdapter, SqlLockAdapter
 from arodonata.core import context as core_context
 from arodonata.core import ports as core_ports
+from arodonata.core import primitives as core_primitives
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.errors import ValidationError
 from arodonata.core.models import common as core_common
@@ -102,6 +105,10 @@ _LAYER_FORBIDDEN_IMPORTS: dict[str, tuple[str, ...]] = {
         "arodonata.mcp",
         "arodonata.testing",
     ),
+    "mcp": (
+        "arodonata.adapters",
+        "arodonata.testing",
+    ),
 }
 
 
@@ -136,7 +143,7 @@ def _resolve_import_targets(file_path: Path, node: ast.Import | ast.ImportFrom) 
 
 
 @pytest.mark.spec("SCN-CLIENT-018-1")
-@pytest.mark.parametrize("layer", ["core", "adapters", "cpcrud", "rulebase", "reports"])
+@pytest.mark.parametrize("layer", ["core", "adapters", "cpcrud", "rulebase", "reports", "mcp"])
 def test_layer_ast_import_boundaries(layer: str) -> None:
     """SCN-CLIENT-018-1: Enforce hexagonal layer import boundaries via AST traversal (including lazy and TYPE_CHECKING imports)."""
     layer_dir = _ARODONATA_ROOT / layer
@@ -279,6 +286,10 @@ def test_wave1_backward_compatible_reexports() -> None:
 
     assert sync_coordinator.parse_cp_publish_timestamp is core_common.parse_cp_publish_timestamp
     assert checkpoint_client._update_overlay_from_command is core_context.update_overlay_from_command
+    assert checkpoint_client.is_readonly_command is core_primitives.is_readonly_command
+    assert checkpoint_client.READONLY_EXACT_COMMANDS is core_primitives.READONLY_EXACT_COMMANDS
+    assert checkpoint_transport.validate_command_name is core_primitives.validate_command_name
+    assert checkpoint_tls.format_host_attr_for_url is core_primitives.format_host_attr_for_url
     assert rulebase_numbering.extract_policy_packages is core_rulebase.extract_policy_packages
     assert rulebase_pkg.extract_policy_packages is core_rulebase.extract_policy_packages
     assert rulebase_models.PolicyPackageInfo is core_rulebase.PolicyPackageInfo

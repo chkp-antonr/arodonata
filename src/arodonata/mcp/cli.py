@@ -10,7 +10,6 @@ from typing import Any
 import arlogi
 from pydantic import ValidationError
 
-from arodonata.client import ArodonataClient
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.errors import ArodonataError, redact_sid
 from arodonata.mcp.config import ArodonataMCPSettings
@@ -47,6 +46,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Enable declarative CPCRUD MCP tools",
     )
+    parser.add_argument(
+        "--allow-insecure-unauthenticated",
+        action="store_true",
+        default=None,
+        help="Explicitly allow unsafe auth_mode='none' combinations (non-loopback, wildcard, or mutating tools)",
+    )
     return parser
 
 
@@ -82,24 +87,28 @@ def run_cli(
             mcp_kwargs["allow_write_api"] = True
         if args.cpcrud is True:
             mcp_kwargs["cpcrud"] = True
+        if args.allow_insecure_unauthenticated is True:
+            mcp_kwargs["allow_insecure_unauthenticated"] = True
 
         mcp_settings = ArodonataMCPSettings(**mcp_kwargs)
         core_settings = ArodonataSettings()
-        trust_policy = mcp_settings.validate_standalone_startup(core_settings, environ=environ)
+        trust_policy = mcp_settings.validate_standalone_startup(
+            core_settings,
+            environ=environ,
+            emit_warning=False,
+        )
+        asgi_app = create_asgi_app(
+            settings=core_settings,
+            trust_policy=trust_policy,
+            mcp_settings=mcp_settings,
+            environ=environ,
+        )
     except (ArodonataError, ValidationError, ValueError) as exc:
         err_msg = redact_sid(str(exc))
         sys.stderr.write(f"arodonata-mcp configuration error: {err_msg}\n")
         sys.stderr.flush()
         logger.error("arodonata-mcp startup validation failed", error=err_msg)
         return EXIT_CONFIG_ERROR
-
-    client = ArodonataClient(settings=core_settings, trust_policy=trust_policy)
-    asgi_app = create_asgi_app(
-        client,
-        settings=core_settings,
-        mcp_settings=mcp_settings,
-        environ=environ,
-    )
 
     if uvicorn_runner is not None:
         uvicorn_runner(asgi_app, host=mcp_settings.host, port=mcp_settings.port)

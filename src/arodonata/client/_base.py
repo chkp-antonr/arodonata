@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from typing import Any
@@ -21,6 +22,7 @@ from arodonata.api_reference import ApiReferenceEngine, get_api_reference
 from arodonata.client.warmup import CacheWarmupCoordinator, logger
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import AuthContext, UserContext, WriteSession, normalize_domain_key
+from arodonata.core.errors import TrustStoreError
 from arodonata.core.models.common import utc_now
 from arodonata.core.ports import ApiPort, AuthProvider, CachePort, GatewayCliCallable, GatewayCliPort, LockPort
 from arodonata.core.services import (
@@ -228,6 +230,37 @@ class ClientBase:
         if self._amgmt is not None and (mgmt_name, normalize_domain_key(domain)) not in self._amgmt.invalidated_domains:
             self._amgmt._invalidated_domains.add((mgmt_name, normalize_domain_key(domain)))
 
+    def get_active_dedicated_sids(self, mgmt_name: str | None = None) -> list[str]:
+        """Return deduplicated active dedicated session SIDs tracked by the transport or injected API double."""
+        sources: list[Any] = []
+        if self._amgmt is not None:
+            coord = getattr(self._amgmt, "login_coordinator", None)
+            if coord is not None:
+                sources.append(getattr(coord, "active_dedicated_sids", None))
+        if self._api is not None and self._api is not self._amgmt:
+            api_coord = getattr(self._api, "login_coordinator", None)
+            if api_coord is not None:
+                sources.append(getattr(api_coord, "active_dedicated_sids", None))
+            sources.append(getattr(self._api, "active_dedicated_sids", None))
+            sources.append(getattr(self._api, "_active_dedicated_sids", None))
+
+        sids: list[str] = []
+        for raw in sources:
+            if raw is None:
+                continue
+            items = raw.keys() if isinstance(raw, Mapping) else raw if isinstance(raw, (set, list, tuple)) else ()
+            for item in items:
+                if isinstance(item, tuple) and len(item) >= 2:
+                    item_mgmt, item_sid = item[0], item[1]
+                    if mgmt_name is not None and item_mgmt != mgmt_name:
+                        continue
+                    sid_val = item_sid
+                else:
+                    sid_val = item
+                if isinstance(sid_val, str) and sid_val and sid_val not in sids:
+                    sids.append(sid_val)
+        return sids
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -335,4 +368,27 @@ class ClientBase:
         return self._warmup.warmup_tasks
 
 
-__all__ = ["ClientBase", "logger"]
+def build_validated_trust_policy(
+    core_settings: ArodonataSettings,
+    *,
+    environ: dict[str, str] | None = None,
+) -> TrustPolicy:
+    """Build and validate a `TrustPolicy` from `ArodonataSettings`, loading and checking its trust store."""
+    env = environ if environ is not None else dict(os.environ)
+    lab_env = env.get("ARODONATA_LAB")
+    trust_policy = TrustPolicy(
+        mode=core_settings.tls_trust,
+        known_hosts_path=core_settings.tls_known_hosts_path,
+        pinned_fingerprints=core_settings.tls_fingerprints,
+        lab_env=lab_env,
+    )
+    entries = trust_policy.trust_store.load()
+    if trust_policy.mode == "pinned" and not trust_policy.pinned_fingerprints and not entries:
+        raise TrustStoreError(
+            "TLS trust mode 'pinned' requires at least one certificate fingerprint in "
+            f"ARODONATA_TLS_FINGERPRINTS or {core_settings.tls_known_hosts_path!r}."
+        )
+    return trust_policy
+
+
+__all__ = ["ClientBase", "TrustPolicy", "build_validated_trust_policy", "logger"]

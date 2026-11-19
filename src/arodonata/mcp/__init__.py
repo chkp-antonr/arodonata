@@ -6,8 +6,10 @@ from arodonata.mcp.cli import EXIT_CONFIG_ERROR, main, run_cli
 from arodonata.mcp.config import (
     DEFAULT_ALLOWED_HOSTS,
     DEFAULT_ALLOWED_ORIGINS,
+    LOOPBACK_HOSTS,
     ArodonataMCPSettings,
     MCPAuthMode,
+    is_loopback_host,
 )
 from arodonata.mcp.errors import (
     ToolFailure,
@@ -19,6 +21,11 @@ from arodonata.mcp.errors import (
     validate_domain_or_fail,
 )
 from arodonata.mcp.prompts import register_mcp_prompts
+from arodonata.mcp.quota import (
+    MCPToolQuotaManager,
+    QuotaBucket,
+    QuotaDecision,
+)
 from arodonata.mcp.security import (
     MCPBearerAuthMiddleware,
     MCPOriginHostGuardMiddleware,
@@ -39,9 +46,13 @@ __all__ = [
     "DEFAULT_ALLOWED_HOSTS",
     "DEFAULT_ALLOWED_ORIGINS",
     "EXIT_CONFIG_ERROR",
+    "LOOPBACK_HOSTS",
     "MCPAuthMode",
     "MCPBearerAuthMiddleware",
     "MCPOriginHostGuardMiddleware",
+    "MCPToolQuotaManager",
+    "QuotaBucket",
+    "QuotaDecision",
     "StaticTokenVerifier",
     "ToolFailure",
     "create_asgi_app",
@@ -49,6 +60,7 @@ __all__ = [
     "format_invalid_credentials_failure",
     "get_known_domain_names",
     "host_matches_allowed",
+    "is_loopback_host",
     "json_tool_result",
     "main",
     "mcp_tool_guard",
