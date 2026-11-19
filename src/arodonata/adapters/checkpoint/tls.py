@@ -12,10 +12,12 @@ import ipaddress
 import json
 import os
 import re
+import ssl
 import stat
 import tempfile
 from pathlib import Path
 
+import arlogi
 from pydantic import BaseModel, ConfigDict, Field
 
 from arodonata.core.config import DEFAULT_TLS_KNOWN_HOSTS_PATH, TlsTrustMode, parse_host_port
@@ -29,7 +31,32 @@ from arodonata.core.errors import (
 from arodonata.core.models.common import utc_now
 from arodonata.core.telemetry import span_attrs, traced
 
+logger = arlogi.get_logger("arodonata.adapters.checkpoint.tls")
+
 _HEX_CLEAN_RE = re.compile(r"[^0-9a-fA-F]")
+
+
+def _build_pinned_ssl_context() -> ssl.SSLContext:
+    """Create a TLS 1.2+ `ssl.SSLContext` designed for post-handshake SHA-256 pinning.
+
+    Note:
+        `check_hostname = False` and `verify_mode = ssl.CERT_NONE` are configured intentionally
+        because Check Point Internal CA (ICA) server certificates routinely omit IP Subject
+        Alternative Names (SANs) and blocking disk CA bundle loads inside async loops would stall
+        concurrent MDS connections. Security is enforced immediately after the TLS handshake by
+        `FingerprintTCPConnector` calling `TrustPolicy.verify_der()`, which validates the peer
+        certificate SHA-256 fingerprint before any HTTP request line, `X-chkp-sid` header,
+        credentials, or JSON payload bytes are transmitted.
+    """
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.options |= ssl.OP_NO_COMPRESSION
+    if hasattr(ssl, "OP_NO_RENEGOTIATION"):
+        ctx.options |= ssl.OP_NO_RENEGOTIATION
+    ctx.set_alpn_protocols(("http/1.1",))
+    return ctx
 
 
 def normalize_fingerprint(raw: str) -> str:
@@ -402,6 +429,19 @@ class TrustPolicy:
         """Explicitly configured fingerprint pins (`ARODONATA_TLS_FINGERPRINTS`)."""
         return dict(self._pinned)
 
+    def create_ssl_context(self) -> ssl.SSLContext:
+        """Create a TLS 1.2+ client `ssl.SSLContext` bound to this validated `TrustPolicy`.
+
+        Security Invariant:
+            Hostname checking and CA store verification are intentionally delegated to
+            post-handshake, pre-request SHA-256 DER fingerprint verification (`verify_der`)
+            because Check Point Internal CA (ICA) certificates frequently lack IP SANs and
+            loading system CA stores synchronously would block the event loop. Calling
+            `FingerprintTCPConnector` ensures `verify_der()` completes before any HTTP request
+            line, credentials, or `X-chkp-sid` headers are sent on the wire.
+        """
+        return _build_pinned_ssl_context()
+
     def _is_fingerprint_trusted_elsewhere(self, fingerprint: str) -> bool:
         """Check if `fingerprint` is already trusted for another MDS/domain address in pins or store."""
         if fingerprint in self._pinned.values():
@@ -412,6 +452,14 @@ class TrustPolicy:
     def verify_der(self, host: str, port: int, der_cert: bytes | None) -> str:
         """Verify raw DER certificate bytes presented by `(host, port)` before sending any HTTP request."""
         if not der_cert:
+            span_attrs(tls_host=host, tls_port=port, tls_mode=self._mode, tls_decision="missing_cert")
+            logger.error(
+                "tls_missing_peer_certificate",
+                event="tls_missing_peer_certificate",
+                host=host,
+                port=port,
+                mode=self._mode,
+            )
             raise TrustStoreError(f"Server at {host}:{port} did not present a peer certificate. No request was sent.")
         fp = compute_der_fingerprint(der_cert)
         return self.verify_fingerprint(host, port, fp)
@@ -427,20 +475,49 @@ class TrustPolicy:
         pinned_for_addr = self._pinned.get(key)
         if pinned_for_addr is not None:
             if presented != pinned_for_addr:
+                span_attrs(tls_decision="mismatch")
+                logger.error(
+                    "tls_certificate_mismatch",
+                    event="tls_certificate_mismatch",
+                    host=host,
+                    port=port,
+                    expected_fingerprint=pinned_for_addr,
+                    presented_fingerprint=presented,
+                    mode=self._mode,
+                    source="pinned",
+                )
                 raise CertificateMismatchError(
                     f"TLS certificate fingerprint mismatch for {key}: expected pinned {pinned_for_addr}, "
                     f"got {presented}. No request was sent."
                 )
+            span_attrs(tls_decision="pinned_match")
             return presented
 
         # 2. Check existing entry for this address in TrustStore
         stored_entry = self._store.get(host, port)
         if stored_entry is not None:
             if presented != stored_entry.fingerprint:
+                span_attrs(tls_decision="mismatch")
+                logger.error(
+                    "tls_certificate_mismatch",
+                    event="tls_certificate_mismatch",
+                    host=host,
+                    port=port,
+                    expected_fingerprint=stored_entry.fingerprint,
+                    presented_fingerprint=presented,
+                    mode=self._mode,
+                    source=stored_entry.source,
+                )
                 raise CertificateMismatchError(
                     f"TLS certificate fingerprint mismatch for {key}: expected {stored_entry.fingerprint} "
                     f"({stored_entry.source}), got {presented}. No request was sent."
                 )
+            decision_by_source = {
+                "tofu": "tofu_match",
+                "lab-memory": "lab_memory_match",
+                "known-identity": "known_identity_match",
+            }
+            span_attrs(tls_decision=decision_by_source.get(stored_entry.source, "pinned_match"))
             return presented
 
         # 3. Check if this certificate belongs to a known MDS member already trusted on another IP
@@ -453,22 +530,74 @@ class TrustPolicy:
                     source="known-identity",
                     persist=(self._mode == "tofu"),
                 )
+            span_attrs(tls_decision="known_identity_match")
             return presented
 
         # 4. Handle unknown certificate for new address based on mode
         if self._mode == "pinned":
+            span_attrs(tls_decision="unpinned_rejected")
+            logger.warning(
+                "tls_unpinned_certificate_rejected",
+                event="tls_unpinned_certificate_rejected",
+                host=host,
+                port=port,
+                fingerprint=presented,
+                mode=self._mode,
+            )
             raise UnknownServerCertificateError(
                 f"Untrusted TLS server certificate for {key} (fingerprint {presented}) in 'pinned' mode. "
                 "No request was sent."
             )
 
         if self._mode == "tofu":
-            self._store.record(host, port, presented, source="tofu", persist=True)
+            try:
+                self._store.record(host, port, presented, source="tofu", persist=True)
+            except CertificateMismatchError:
+                span_attrs(tls_decision="mismatch")
+                logger.error(
+                    "tls_certificate_mismatch",
+                    event="tls_certificate_mismatch",
+                    host=host,
+                    port=port,
+                    presented_fingerprint=presented,
+                    mode="tofu",
+                    source="tofu_concurrent_merge",
+                )
+                raise
+            span_attrs(tls_decision="tofu_first_contact")
+            logger.warning(
+                "tls_tofu_first_contact",
+                event="tls_tofu_first_contact",
+                host=host,
+                port=port,
+                fingerprint=presented,
+                mode="tofu",
+            )
             return presented
 
         # mode == "lab-memory"
         self._store.record(host, port, presented, source="lab-memory", persist=False)
+        span_attrs(tls_decision="lab_memory_first_contact")
+        logger.warning(
+            "tls_tofu_first_contact",
+            event="tls_tofu_first_contact",
+            host=host,
+            port=port,
+            fingerprint=presented,
+            mode="lab-memory",
+        )
         return presented
+
+
+def create_verified_ssl_context(trust_policy: TrustPolicy) -> ssl.SSLContext:
+    """Create a TLS 1.2+ `ssl.SSLContext` explicitly bound to a validated `TrustPolicy`.
+
+    Raises:
+        ConfigurationError: If `trust_policy` is not a valid `TrustPolicy` instance.
+    """
+    if not isinstance(trust_policy, TrustPolicy):
+        raise ConfigurationError("create_verified_ssl_context requires a valid TrustPolicy instance.")
+    return trust_policy.create_ssl_context()
 
 
 __all__ = [
@@ -476,6 +605,7 @@ __all__ = [
     "TrustPolicy",
     "TrustStore",
     "compute_der_fingerprint",
+    "create_verified_ssl_context",
     "format_host_attr_for_url",
     "format_host_port",
     "normalize_fingerprint",

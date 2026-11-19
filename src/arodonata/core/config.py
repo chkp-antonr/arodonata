@@ -640,16 +640,6 @@ class ArodonataSettings(BaseSettings):
 
     @model_validator(mode="before")
     @classmethod
-    def _CaptureExplicitAuthMode(cls, values: dict[str, Any]) -> dict[str, Any]:
-        if isinstance(values, dict) and ("auth_mode" in values or "ARODONATA_AUTH_MODE" in values):
-            values = dict(values)
-            explicit_val = values.get("auth_mode") or values.get("ARODONATA_AUTH_MODE")
-            if explicit_val is not None:
-                values["_explicit_auth_mode"] = explicit_val
-        return values
-
-    @model_validator(mode="before")
-    @classmethod
     def _resolve_cpcrud_naming_prefixes(cls, values: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(values, dict):
             return values

@@ -25,7 +25,7 @@ Defines the native `asyncio` Check Point Management API HTTPS transport (`AMgmtC
 **Intent**: Pin and verify management server TLS identities after handshake and prior to sending any secrets, headers, or payloads.\
 **Non-goals**: TOFU known-hosts file locking and IPv6 key syntax (`REQ-TRANS-003`).
 
-The transport SHALL verify the server certificate SHA-256 fingerprint at `host:port` immediately after the TLS handshake and BEFORE sending HTTP headers, credentials, API keys, or payloads, supporting `tls_trust` `"pinned"`, `"tofu"`, and `ARODONATA_LAB`-gated `"lab-memory"`, forbidding proxies (`trust_env=False`) and unverified test sender hooks, and never retrying `ServerIdentityError`.
+The transport SHALL verify the peer SHA-256 fingerprint immediately after TLS handshake and BEFORE sending headers or payloads across `"pinned"`, `"tofu"`, and `"lab-memory"` modes, bind `SSLContext` creation to `TrustPolicy`, log first-contact TOFU warnings and `arodonata.tls_decision` spans, forbid proxies and unverified hooks, and never retry `ServerIdentityError`.
 
 #### Scenario: SCN-TRANS-002-1 — Untrusted certificate refused in pinned mode
 
@@ -54,6 +54,13 @@ The transport SHALL verify the server certificate SHA-256 fingerprint at `host:p
 
 - **WHEN** a connection raises `ServerIdentityError` (`CertificateMismatchError`, `UnknownServerCertificateError`, or `TrustStoreError`)
 - **THEN** login, keepalive, and task-wait loops SHALL propagate the error immediately without retrying
+
+#### Scenario: SCN-TRANS-002-6 — First-contact TOFU and lab-memory trust emit audit warning, record tls_decision span attribute, and bind SSLContext to TrustPolicy
+
+- **WHEN** `TrustPolicy.verify_der()` / `verify_fingerprint()` trusts a server on first contact (`"tofu"` or `"lab-memory"`), matches a stored or pinned certificate, or rejects an untrusted/mismatched/missing certificate, OR when `TrustPolicy.create_ssl_context()` / `create_verified_ssl_context()` creates a client `SSLContext`
+- **THEN** first-contact `"tofu"` and `"lab-memory"` acceptance SHALL emit a structured `WARNING` audit log (`event="tls_tofu_first_contact"`, `host`, `port`, `fingerprint`, `mode`) without secrets or SIDs
+- **AND** OpenTelemetry spans SHALL record `arodonata.tls_decision` (`"pinned_match"`, `"tofu_match"`, `"tofu_first_contact"`, `"lab_memory_first_contact"`, `"known_identity_match"`, `"lab_memory_match"`, `"mismatch"`, `"unpinned_rejected"`, or `"missing_cert"`)
+- **AND** `TrustPolicy.create_ssl_context()` / `create_verified_ssl_context(policy)` SHALL validate `TrustPolicy` and enforce TLS 1.2+, `OP_NO_COMPRESSION`, and HTTP/1.1 ALPN for post-handshake SHA-256 verification
 
 ### Requirement: Atomic Cross-Process Known-Hosts Persistence and IPv6 Key Normalization
 
