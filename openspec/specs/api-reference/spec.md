@@ -12,7 +12,7 @@ Defines the bundled multi-version Check Point API schema index (`cp_api_index.js
 **Intent**: Provide offline access to multi-version Check Point API schemas without startup overhead or network dependencies.\
 **Non-goals**: Inferring default management server versions from client topology (handled by `ArodonataClient`, `REQ-CLIENT-014`).
 
-`arodonata.api_reference` SHALL package the compressed multi-version Check Point API schema bundle (`cp_api_index.json.gz`, covering Management API `v1.9`, `v2`, `v2.1`, `v2.2` and Gaia API `v2.0.1`) inside the installed distribution, load and decompress it lazily in memory on first query (with optional custom `index_path` override), and perform zero network or database calls.
+`arodonata.api_reference` SHALL package the compressed multi-version Check Point API schema bundle (`cp_api_index.json.gz`, covering Management API `v1.9`, `v2`, `v2.1`, `v2.2` and Gaia API `v2.0.1`) inside the installed distribution, load and decompress it lazily in memory via zero-argument `get_api_reference()` / `ApiReferenceEngine.default()` (or custom index files via `ApiReferenceEngine.from_path(path)`), and perform zero network or database calls.
 
 #### Scenario: SCN-APIREF-001-1 — Default bundled index loads lazily without network or database access
 

@@ -18,6 +18,7 @@ Progressive runnable scripts demonstrating `ArodonataClient` usage from basic ca
 | `10_change_report_evidence.py` | [10 — Change Report Evidence](10-change-report-evidence.md) | Auditable `ChangeReport` evidence: live unpublished numbering via `OwnedSession` vs published cached numbering rendered to HTML, Markdown, and JSON | Yes (auto-reverted via `_session_guard.py`) |
 | `11_otel_tracing.py` | [11 — OpenTelemetry Tracing](11-otel-tracing.md) | Provider-agnostic OpenTelemetry instrumentation (`arlogi.otel.setup_tracing`) with a per-span timing breakdown from exported JSONL traces | No |
 | `12_mcp_embedded.py` | [12 — Embedded FastAPI MCP](12-mcp-embedded.md) | Embedding Arodonata's MCP server (`create_mcp_server`, `create_asgi_app`) inside a FastAPI application with custom tools | No |
+| `13_gateway_topology_matching.py` | [13 — Gateway Topology Matching](13-gateway-topology-matching.md) | Gateway topology sync, interface summaries, affected-gateway LPM matching, diagnostics, reconciliation, and annotations | No |
 | `_session_guard.py` | — | Crash-safe baseline snapshot/restore context manager (`guarded_session`) and standalone CLI tool for manual testing | Helper / CLI |
 
 ## Setup & Execution
@@ -48,6 +49,9 @@ ARODONATA_LAB=home uv run examples/10_change_report_evidence.py
 
 # 6. Run the embedded FastAPI + MCP server on http://127.0.0.1:8000/mcp
 uv run examples/12_mcp_embedded.py
+
+# 7. Run gateway topology & affected-gateway candidate matching against replay fixtures
+uv run examples/13_gateway_topology_matching.py
 ```
 
 ## Crash-Safe Manual Testing with `_session_guard.py`

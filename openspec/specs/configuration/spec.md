@@ -128,7 +128,7 @@ The configuration SHALL maintain distinct timeout settings for TCP/TLS connectio
 #### Scenario: SCN-CONFIG-005-3 — Invalid mode or blank repository script name rejected on settings initialization
 
 - **WHEN** `ArodonataSettings` receives an unsupported `cprid_script_mode` (e.g., `"ssh-only"`) or a blank/whitespace-only `cprid_repository_script_name`
-- **THEN** settings validation SHALL fail immediately with `ValidationError`
+- **THEN** settings validation SHALL fail immediately with `pydantic.ValidationError`
 
 ### Requirement: Environment-Backed CPCRUD Naming Profile Configuration
 
@@ -181,10 +181,23 @@ The system SHALL support hierarchical dotted-prefix span gating via `ARODONATA_T
 **Intent**: Prevent accidental credential leakage when settings objects are logged, printed, or serialized.\
 **Non-goals**: Runtime `sid` redaction in call results, spans, and reports (`REQ-CLIENT-015`, `REQ-CPCRUD-011`).
 
-`ArodonataSettings` SHALL mask all secret fields (`password`, `api_key`, `api_keys`, `mcp_tokens`, and `database_url` credentials) across `repr()`, `str()`, `model_dump()`, and `model_dump_json()` unless an explicit secret getter is invoked internally.
+`ArodonataSettings` (and `ArodonataMCPSettings.tokens`) SHALL mask all secret fields (`password`, `api_key`, `api_keys`, `tokens`, and `database_url` credentials) across `repr()`, `str()`, `model_dump()`, and `model_dump_json()` unless an explicit secret getter is invoked internally.
 
 #### Scenario: SCN-CONFIG-008-1 — Secrets and database URL passwords masked in repr and serialization
 
-- **GIVEN** an `ArodonataSettings` instance configured with `password`, `api_keys`, or `database_url="postgresql+asyncpg://user:secretpass@db.internal:5432/app"`
+- **GIVEN** an `ArodonataSettings` instance configured with `password`, `api_keys`, or `database_url="postgresql+asyncpg://user:secretpass@db.internal:5432/app"` (or `ArodonataMCPSettings` with `tokens`)
 - **WHEN** `repr(settings)`, `str(settings)`, `settings.model_dump()`, or `settings.model_dump_json()` is called
-- **THEN** all passwords, API keys, and the password component of `database_url` SHALL be masked (`"***"`)
+- **THEN** all passwords, API keys, MCP tokens, and the password component of `database_url` SHALL be masked (`"***"`)
+
+### Requirement: Operational Timeout, Cache TTL, and Sync Tuning Configuration
+
+**ID**: REQ-CONFIG-009\
+**Intent**: Expose typed, validated settings fields for multi-server API versions, ports, session TTLs, login throttling, cache windows, SQLite busy timeouts, CPCRUD schema path overrides, and topology confidence weights.\
+**Non-goals**: Core required `mgmt_names`/`mgmt_servers` parsing (`REQ-CONFIG-001`) or timeout calculation rules (`REQ-CONFIG-004`).
+
+`ArodonataSettings` SHALL expose and validate `api_versions`, `api_version`, `mgmt_port`, `session_expire_seconds`, `login_throttle_window`, `login_max_wait`, `domain_list_ttl`, `max_incremental_changes`, `sqlite_busy_timeout_ms`, `cpcrud_schema_path`, and `topology_confidence_weights` with safe defaults and per-server resolution.
+
+#### Scenario: SCN-CONFIG-009-1 — Operational and per-server version settings resolve with validated defaults and overrides
+
+- **WHEN** `ArodonataSettings` is constructed with defaults or overrides for `api_versions`, `api_version`, `mgmt_port`, `session_expire_seconds`, `login_throttle_window`, `login_max_wait`, `domain_list_ttl`, `max_incremental_changes`, `sqlite_busy_timeout_ms`, `cpcrud_schema_path`, and `topology_confidence_weights`
+- **THEN** all fields SHALL enforce their Pydantic numeric bounds and per-server `api_versions` resolution SHALL fall back to `api_version` when a server entry is omitted

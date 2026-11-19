@@ -33,7 +33,7 @@ Defines the primary composition root and unified developer facade (`ArodonataCli
 **Intent**: Warm domain object and service caches asynchronously without spawning duplicate tasks or leaking unhandled task exceptions.\
 **Non-goals**: Foreground synchronous/streaming refresh coordination (`REQ-CACHE-004`, `REQ-CACHE-005`).
 
-`ArodonataClient.start_object_cache_warmup()` SHALL coalesce concurrent in-flight background warm-up calls sharing the same `(mgmt_name, domains, types, include_global, include_services)` scope, handle background failures with `sid`-redacted structured logging without emitting unretrieved asyncio task warnings for fire-and-forget callers, and expose active/recent warm-up state via `get_warmup_status()`.
+`ArodonataClient.start_object_cache_warmup()` SHALL coalesce concurrent in-flight background warm-up calls sharing the same 6-tuple flight key `(mgmt_name, domains, types, include_global, include_services, mode == "force")` (so `"force"` runs never coalesce with `"smart"`), handle failures with `sid`-redacted structured logging without unretrieved asyncio task warnings, and expose status via `get_warmup_status()`.
 
 #### Scenario: SCN-CLIENT-002-1 — Concurrent warm-up calls for the same domain coalesce into one task
 
@@ -55,7 +55,7 @@ Defines the primary composition root and unified developer facade (`ArodonataCli
 **Intent**: Expose typed Pydantic v2 getters honoring `WriteSession` overlays and immediate cache invalidation after publish.\
 **Non-goals**: Low-level Check Point pagination (`REQ-TRANS-006`) or search query classification (`REQ-CACHE-013`).
 
-`ArodonataClient` SHALL expose typed async getters (`get_domains`, `get_gateways`, `get_hosts`, `get_networks`, `get_address_ranges`, `get_dns_domains`, `get_groups`, `get_services`, `get_object_by_uid`, `get_access_rules`, `get_nat_rules`, `get_https_rules`, `get_threat_rules`) returning Pydantic v2 models with `cache_mode`/`cache_ttl`, apply `WriteSession` overlays, and call `invalidate_domain` on publish.
+`ArodonataClient` SHALL expose typed getters (`get_domains`, `get_gateways`, `get_hosts`, `get_networks`, `get_address_ranges`, `get_dns_domains`, `get_groups`, `get_objects`, `get_services`, `get_object_by_uid`) with `cache_mode`/`cache_ttl`, snapshot rulebase getters (`get_access_rules`, `get_nat_rules`, `get_https_rules`, `get_threat_rules`), apply `WriteSession` overlays, and invalidate domain freshness on publish.
 
 #### Scenario: SCN-CLIENT-003-1 — Read helpers reflect active WriteSession overlay via contextvars
 
@@ -109,17 +109,17 @@ Defines the primary composition root and unified developer facade (`ArodonataCli
 **Intent**: Keep unqualified cross-domain lookups fast, strictly local to cache, and safe against multi-domain name collisions.\
 **Non-goals**: Explicit-domain lookups (`REQ-CLIENT-005`).
 
-`ArodonataClient.find_object()` and `ArodonataClient.get_group_members()` SHALL require a non-empty target identifier (`ValidationError` on empty/blank input), and when `domain` is `None` (and cannot be extracted from a `mgmt:domain:key` composite ID) SHALL query strictly from local cache (`cache_mode="cache"`, `include_global=True`) and raise `AmbiguousObjectError` if more than one domain matches.
+`ArodonataClient.find_object()` and `ArodonataClient.get_group_members()` SHALL require a non-empty target (`ValidationError` on blank input); when `domain` is `None` (not a `mgmt:domain:key` composite ID), multi-domain MDS (`> 1` non-global cached domains) SHALL run strictly cache-only (`cache_mode="cache"`, `include_global=True`) while single-domain SMC or cold caches MAY probe `show-domains` when `cache_mode != "cache"`, raising `AmbiguousObjectError` on multi-domain collisions.
 
 #### Scenario: SCN-CLIENT-006-1 — Blank target identifier rejected immediately
 
 - **WHEN** `client.find_object(mgmt_name, domain, "")` or `client.get_group_members(mgmt_name, domain, "   ")` is called
 - **THEN** the method SHALL raise `ValidationError` immediately without scanning cached or remote domains
 
-#### Scenario: SCN-CLIENT-006-2 — Cross-domain lookup runs cache-only with Global visibility and raises AmbiguousObjectError on multi-domain collision
+#### Scenario: SCN-CLIENT-006-2 — Cross-domain lookup enforces MDS cache-only guard with Global visibility and raises AmbiguousObjectError on multi-domain collision
 
-- **WHEN** `await client.find_object(mgmt_name, None, name_or_uid)` or `await client.get_group_members(mgmt_name, None, group_name_or_uid)` is called without a domain
-- **THEN** it SHALL search cached `arodonata_objects`, `arodonata_services`, and `arodonata_assets` across all cached domains including `"Global"` (`cache_mode="cache"`) with zero remote logins or syncs
+- **WHEN** `await client.find_object(mgmt_name, None, name_or_uid)` or `await client.get_group_members(mgmt_name, None, group_name_or_uid)` runs without a domain
+- **THEN** on multi-domain MDS (`> 1` non-global cached domains), it SHALL search cached tables including `"Global"` (`cache_mode="cache"`) with zero remote logins or syncs (while single-domain SMC or cold caches MAY probe `show-domains` when `cache_mode != "cache"`)
 - **AND** it SHALL return the match if unique to one domain, or raise `AmbiguousObjectError` listing candidate domains and composite IDs if multiple domains match
 
 ### Requirement: Context-Aware Write Sessions and Isolated Object Mutation Helpers
@@ -297,3 +297,31 @@ All major client, transport, login, lock, cache, and CPCRUD entry points SHALL b
 - **WHEN** `span_attrs(**attrs)` runs inside a `@traced` operation or an exception with a chained `__cause__` / `__context__` is recorded on a span
 - **THEN** non-`None` attributes SHALL be recorded under `arodonata.<key>` with recursive secret and `sid` redaction across mappings, lists, and chained exception messages
 - **AND** `@traced` and `span_attrs` SHALL operate as a zero-overhead no-op when no `TracerProvider` is configured by the host application
+
+### Requirement: Domain Events and Framework-Agnostic SSE Stream Adapter
+
+**ID**: REQ-CLIENT-016\
+**Intent**: Convert internal async `DomainEvent` generators (`SyncProgressEvent`, `CPCRUDEvent`, `StagedSessionEvent`) into standards-compliant Server-Sent Events cleanly.\
+**Non-goals**: HTTP framework routing (Starlette/FastAPI `StreamingResponse` wiring belongs to host applications).
+
+`arodonata.core.events` and `arodonata.adapters.sse` SHALL define typed Pydantic v2 `DomainEvent` subclasses (`SyncProgressEvent`, `CPCRUDEvent`, `StagedSessionEvent`) and convert async event streams via `to_sse_event()` and `stream_as_sse()` into `SSEEvent` payloads formatted as `event:` / `data:` / `id:` wire strings.
+
+#### Scenario: SCN-CLIENT-016-1 — Domain events serialize to SSEEvent and wire-formatted SSE chunks
+
+- **WHEN** `to_sse_event(event)` or `stream_as_sse(events)` processes `SyncProgressEvent`, `CPCRUDEvent`, or `StagedSessionEvent` instances
+- **THEN** `to_sse_event()` SHALL map `event.event_type` to `SSEEvent.event` and serialize `model_dump(mode="json")` into `SSEEvent.data`
+- **AND** `SSEEvent.format()` / `stream_as_sse()` SHALL emit wire-format `event:` / `data:` chunks terminated by blank lines without owning HTTP server state
+
+### Requirement: Extended Client Lifecycle, Streaming, Staged Session, and Service Properties Facade
+
+**ID**: REQ-CLIENT-017\
+**Intent**: Document and verify the full `ArodonataClient` facade surface so consumers rely on stable top-level methods and service accessors.\
+**Non-goals**: Detailed semantics of underlying services covered in domain specs.
+
+`ArodonataClient` SHALL expose full lifecycle, context, streaming, search, rulebase, reporting, staged-session, CLI, and API-reference methods alongside typed service properties (`db`, `cache`, `lock_port`, `api`, `amgmt`, `cpcrud`, `topology_service`, `script_service`, `api_reference`) delegating cleanly to their backing ports and domain services.
+
+#### Scenario: SCN-CLIENT-017-1 — ArodonataClient exposes full public method and service-accessor contract
+
+- **WHEN** a caller initializes `ArodonataClient` and inspects its service properties (`db`, `cache`, `lock_port`, `api`, `amgmt`, `cpcrud`, `topology_service`, `script_service`, `api_reference`)
+- **AND** invokes `initialize()`, `user_context()`, `create_dedicated_session()`, `logout_sid()`, `invalidate_domain()`, `refresh_*`/`stream_refresh_*`, `search_objects()`, `get_cache_status()`, `get_layer_rulebase()`, `locate_rules()`, `filter_rulebase()`, `build_change_report_from_plan()`, `render_change_report()`, `publish_staged_session()`, `stream_publish_staged_session()`, `discard_staged_session()`, `set_gateway_cli()`, and `ensure_api_reference()`
+- **THEN** all facade methods and service accessors SHALL resolve cleanly and delegate to their backing ports and services

@@ -137,7 +137,7 @@ The SQL persistence layer SHALL support PostgreSQL (`asyncpg`) and SQLite (`aios
 **Intent**: Cache Check Point `application-site` URL lists and regex flags on demand without bloating default network-object syncs.\
 **Non-goals**: Declarative CPCRUD `application-site` planning and patching (`REQ-CPCRUD-006`, `REQ-CPCRUD-007`).
 
-`CPObject` and `ObjectService` SHALL support Check Point `application-site` objects on demand via `show-application-site` and `show-application-sites`, hydrating `primary_category`, `url_list`, and `urls_defined_as_regular_expression` fields from Check Point API responses and cached `raw_data`.
+`CPObject` and `ObjectService` SHALL support Check Point `application-site` objects on demand via `show-application-sites` (bulk sync) and universal `show-object` (single-UID incremental sync), while `HybridStateReader` queries `show-application-site`, hydrating `primary_category`, `url_list`, and `urls_defined_as_regular_expression`.
 
 #### Scenario: SCN-CACHE-006-1 — CPObject hydrates application-site URL list and regex flag from Check Point dict and DB cache
 
@@ -145,10 +145,10 @@ The SQL persistence layer SHALL support PostgreSQL (`asyncpg`) and SQLite (`aios
 - **WHEN** `CPObject.from_cp_dict()` or `CachePort` hydrates the object
 - **THEN** `CPObject` SHALL expose `type == "application-site"`, `primary_category`, `url_list` as `list[str]`, and `urls_defined_as_regular_expression` as `bool | None`
 
-#### Scenario: SCN-CACHE-006-2 — On-demand refresh and query of application-site objects
+#### Scenario: SCN-CACHE-006-2 — On-demand refresh and incremental update of application-site objects
 
-- **WHEN** `refresh_objects(types=["application-site"])` or `get_objects(types=["application-site"])` is invoked
-- **THEN** `ObjectService` SHALL query Check Point using `show-application-sites` (and `show-application-site` for single items)
+- **WHEN** `refresh_objects(types=["application-site"])`, `get_objects(types=["application-site"])`, or incremental `smart-fast` refresh runs
+- **THEN** `ObjectService` SHALL use `show-application-sites` for full reload and `show-object` for single-UID incremental `smart-fast` updates
 - **AND** it SHALL persist rows in `arodonata_objects` with `item_type="application-site"` in `arodonata_domain_sync_state` and return hydrated `CPObject` entries
 
 ### Requirement: Dedicated Service Cache Table and Selective Refresh
@@ -286,11 +286,11 @@ Shared `arodonata_rulebase_*` cache tables SHALL be written exclusively under `D
 **Intent**: Prevent non-deterministic group member expansion when an unqualified group name exists in multiple cached domains.\
 **Non-goals**: Multi-domain search queries (`REQ-CACHE-013`) or MCP response envelope formatting (`REQ-MCP-003`).
 
-`SearchService.get_group_members()` SHALL reject empty or whitespace-only `group_name_or_uid` inputs with `ValidationError`, and when `domain` is `None` (and not encoded in a `mgmt:domain:name` composite ID) SHALL resolve the target container across cached domains including `"Global"` using `cache_mode="cache"`, raising `AmbiguousObjectError` if matching containers exist in more than one domain.
+`SearchService.get_group_members()` SHALL reject blank `group_name_or_uid` inputs with `ValidationError`, and when `domain` is `None` (not a `mgmt:domain:name` composite ID) SHALL enforce `cache_mode="cache"` (`include_global=True`) on multi-domain MDS (`> 1` non-global cached domains) while permitting single-domain SMC or cold caches to probe `show-domains` when `cache_mode != "cache"`, raising `AmbiguousObjectError` if multiple domains match.
 
-#### Scenario: SCN-CACHE-014-1 — Cross-domain group member lookup detects multi-domain name collision without whole-MDS sync
+#### Scenario: SCN-CACHE-014-1 — Cross-domain group member lookup enforces MDS cache-only guard without whole-MDS sync
 
-- **GIVEN** a cache where `"SharedGroup"` exists in two distinct domains under `mgmt_name`
+- **GIVEN** a multi-domain MDS cache where `"SharedGroup"` exists in two distinct domains under `mgmt_name`
 - **WHEN** `SearchService.get_group_members(mgmt_name, None, "SharedGroup")` is called
-- **THEN** it SHALL execute zero remote domain refreshes (`cache_mode="cache"`)
+- **THEN** it SHALL execute zero remote domain refreshes (`cache_mode="cache"`, while single-domain SMC or cold caches MAY probe `show-domains` when `cache_mode != "cache"`)
 - **AND** it SHALL raise `AmbiguousObjectError` enumerating the matching domains and composite identifiers

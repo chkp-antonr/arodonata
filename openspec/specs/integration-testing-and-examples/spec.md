@@ -59,7 +59,7 @@ The integration harness and diagnostic scripts SHALL load lab configuration dete
 #### Scenario: SCN-ITEST-003-1 — Default lab environment loads when ARODONATA_LAB is unset
 
 - **WHEN** `load_lab_env()` is called without `ARODONATA_LAB` set
-- **THEN** it SHALL load `.env.test` followed by `.env.secrets` with `override=True` and return `None`
+- **THEN** it SHALL load `.env.test` with `override=False` (preserving caller env vars), followed by `.env.secrets` with `override=True`, and return `None`
 
 #### Scenario: SCN-ITEST-003-2 — Named lab profile layers overrides and expands secret references
 
@@ -99,7 +99,7 @@ Each integration session SHALL acquire a non-blocking exclusive OS file lock (`_
 **Intent**: Protect live lab domains by reverting any published mutations automatically on test session teardown.\
 **Non-goals**: In-memory replay mock state snapshots (`REQ-ITEST-015`).
 
-Integration sessions SHALL snapshot the last published revision (`show-last-published-session`) of `TEST_DOMAIN_A` and `TEST_DOMAIN_B` before running tests and revert any drifted domain on teardown if any `cp_mutates`-marked test executed.
+Integration sessions SHALL snapshot the last published revision via `show-sessions` (`view-published-sessions=True`) for `TEST_DOMAIN_A` and `TEST_DOMAIN_B` before running tests and revert any drifted domain on teardown if any `cp_mutates`-marked test executed.
 
 #### Scenario: SCN-ITEST-005-1 — Baseline snapshot persisted before tests and restored after mutations
 
@@ -218,12 +218,12 @@ The emulator SHALL support `login`, `logout` / `logout_sid`, `set-session`, `tak
 
 - **WHEN** a client executes `set-session`, `take-over-session` (`uid`, optional `disconnect-active-session`), `switch-session` (`uid`), `discard` (`{}` or `{"uid": <target_session_uid>}`), or `logout`/`logout_sid` before `publish`
 - **THEN** `set-session` SHALL persist `name` and `description` in `show-session`, and session adoption SHALL transfer the overlay (invalidating disconnected active SIDs with HTTP `401` `generic_err_invalid_session_id`)
-- **AND** `discard` or `logout` SHALL roll back all uncommitted overlay changes and release session object locks
+- **AND** `discard` (or clean `logout`) SHALL roll back uncommitted changes and release locks immediately, whereas `logout` on a dirty uncommitted session SHALL transition the session to `"disconnected"` while preserving object locks for Check Point parity
 
 #### Scenario: SCN-ITEST-010-3 — Querying show-changes returns structured deltas for staged and published sessions
 
 - **WHEN** `show-changes` queries a published session (`to-session`, optional `from-session`, `from-date`, `to-date`) or an uncommitted staged session
-- **THEN** the emulator SHALL return `changes[].operations` buckets (`added-objects`, `modified-objects`, `deleted-objects`, `added-rules`, `modified-rules`, `deleted-rules`)
+- **THEN** the emulator SHALL return `changes[]` items carrying `added-objects`, `modified-objects`, `deleted-objects`, `added-rules`, `modified-rules`, and `deleted-rules` directly (without an `.operations` wrapper)
 - **AND** each bucket entry SHALL carry `old-object`, `new-object`, `field-changes`, `layer`, `package`, `rule-number`, and `old-rule-number` metadata
 - **AND** it SHALL return a completed task (`wait_for_task=True`) or pollable `task-id` (`wait_for_task=False`)
 
@@ -272,14 +272,14 @@ The emulator MUST reject `delete-*` on any object, service, or group that is sti
 **Intent**: Keep rule numbers, section bounds, `objects-dictionary`, `where-used`, and `show-objects` consistent across staged rulebase edits.\
 **Non-goals**: MDSM `Global` domain write protection (`REQ-ITEST-014`).
 
-The emulator SHALL support Access, HTTPS, Threat-prevention, and NAT rulebase, rule, section, and layer CRUD plus `verify-policy` and `install-policy` task simulation, automatically recomputing sequential rule numbers, section ranges, live `objects-dictionary`, `show-objects`, `show-object`, and `where-used`.
+The emulator SHALL support Access, HTTPS, Threat-prevention, and NAT rulebase, rule, and section CRUD, read-only `show-{access,https,threat}-layer(s)` with `inline-layer` references, and `verify-policy`/`install-policy` task simulation, automatically recomputing sequential rule numbers, section ranges, live `objects-dictionary`, `show-objects`, `show-object`, and `where-used`.
 
-#### Scenario: SCN-ITEST-013-1 — Access rule, section, and layer CRUD maintains rule-numbers, section bounds, and objects-dictionary
+#### Scenario: SCN-ITEST-013-1 — Access rule, section, and read-only inline-layer reads maintain rule-numbers, section bounds, and objects-dictionary
 
-- **WHEN** a write session executes Access rule/section/layer CRUD (including inline layers), toggles `enabled`, or patches rule cells via list replacement or `{"add": ..., "remove": ...}`
+- **WHEN** a write session executes Access rule/section CRUD or `show-{access,https,threat}-layer(s)` (including `inline-layer` references), toggles `enabled`, or patches rule cells via list replacement or `{"add": ..., "remove": ...}`
 - **AND** rules are positioned via `position` / `new-position` (`"top"`, `"bottom"`, 1-based `rule-number`, `{"top": section}`, `{"bottom": section}`, `{"above": ref}`, `{"below": ref}`)
 - **THEN** the emulator SHALL strip `"Any"` (`97aeb369-9aea-11d5-bd16-0090272ccb30`) on member addition, revert emptied cells to `"Any"`, and recompute sequential 1-based `rule-number`, section `from`/`to`, and layer `total`
-- **AND** `show-access-rule` and `show-access-rulebase` SHALL return live `objects-dictionary` entries (or inline dicts for `use-object-dictionary=False`)
+- **AND** `show-access-rule`, `show-access-rulebase`, and `show-{access,https,threat}-layer(s)` SHALL reflect live `objects-dictionary` entries (or inline dicts for `use-object-dictionary=False`) and layer metadata
 
 #### Scenario: SCN-ITEST-013-2 — HTTPS, Threat-prevention, and NAT rulebase CRUD and policy verification/install tasks
 
@@ -346,7 +346,7 @@ The emulator SHALL record `sid`-redacted call audit entries (`call_log`), expose
 - **AND** tests invoke `assert_no_global_mutations()`, `assert_no_full_object_scans()`, `assert_command_called(...)`, or `assert_command_not_called(...)`
 - **THEN** every `call_log` entry SHALL record `mgmt_name`, `domain`, `command`, `is_mutating`, `sid_ref` (`"sid#..."`), `session_uid`, `read_only_session`, sanitized `payload`, `payload_summary`, `status_code`, `success`, and `error_code`
 - **AND** `call_log` entries SHALL contain zero raw `sid`, `api-key`, or `password` values
-- **AND** assertion helpers SHALL raise descriptive failures if unexpected `Global` mutations or unpaginated bulk `show-hosts` / `show-networks` scans occur
+- **AND** assertion helpers SHALL raise descriptive failures on any unexpected `Global` mutation or any full-table `show-hosts`, `show-networks`, `show-address-ranges`, or `show-groups` call regardless of pagination flags
 
 #### Scenario: SCN-ITEST-016-2 — OpenTelemetry spans propagate over FileReplayApiMock and CheckPointReplayHttpServer without SID leakage
 
@@ -361,7 +361,7 @@ The emulator SHALL record `sid`-redacted call audit entries (`call_log`), expose
 **Intent**: Document every major SDK capability with executable, lab-safe examples including authenticated ASGI MCP embedding.\
 **Non-goals**: Core library runtime features covered in feature specs.
 
-The repository SHALL provide a runnable `examples/` catalog demonstrating Arodonata v2 capabilities from basic cached queries to advanced multi-tenant contexts, CPCRUD, change reports, OpenTelemetry tracing, and ASGI MCP embedding, ensuring that embedded MCP examples enforce host or bearer authentication when write tools (`cpcrud=True` or `live_compat=True`) are enabled.
+The repository SHALL provide a runnable `examples/` catalog demonstrating Arodonata v2 capabilities from basic cached queries to advanced multi-tenant contexts, CPCRUD, change reports, OpenTelemetry tracing, and ASGI MCP embedding, ensuring that embedded MCP examples enforce host or bearer authentication when write tools (`cpcrud=True` or `allow_write_api=True`) are enabled.
 
 #### Scenario: SCN-ITEST-017-1 — Examples cover core and advanced v2 workflows with crash-safe lab guard
 
@@ -369,3 +369,17 @@ The repository SHALL provide a runnable `examples/` catalog demonstrating Arodon
 - **THEN** scripts `01`–`07` SHALL cover basic queries (`01`), search/query (`02`), gateway/VSX relationships (`03`), streaming sync (`04`), rulebases/numbering (`05`), session lifecycle (`06`), and contexts/`SessionOverlay` (`07`)
 - **AND** scripts `08`–`13` SHALL cover CPCRUD apply (`08`) and inverse (`09`), change reports (`10`), OTel tracing (`11`), authenticated FastAPI MCP embedding (`12`), and gateway topology/candidate matching (`13`)
 - **AND** all mutating examples SHALL wrap execution in `guarded_session` so target lab domains restore automatically on exit
+
+### Requirement: Emulator Repository-Script CRUD and Permission Toggles
+
+**ID**: REQ-ITEST-018\
+**Intent**: Emulate Check Point repository-script lifecycle CRUD and session/permission enforcement offline cleanly alongside gateway route-collection scenarios.\
+**Non-goals**: Gateway CPRID route-collection execution covered in `REQ-TOPO-018`.
+
+`FileReplayApiMock` and `CheckPointReplayHttpServer` SHALL implement per-domain `add-repository-script`, `show-repository-script`, `show-repository-scripts`, `set-repository-script`, and `delete-repository-script` inside uncommitted staging overlays until `publish`, honoring `allow_one_time_script`, `allow_repository_script`, and `manage_repository_scripts` permission flags.
+
+#### Scenario: SCN-ITEST-018-1 — Emulator enforces repository-script CRUD isolation and permission toggles
+
+- **WHEN** callers run `add/set/delete/show-repository-script(s)` or configure `allow_one_time_script`, `allow_repository_script`, or `manage_repository_scripts` on `FileReplayApiMock`
+- **THEN** uncommitted script edits SHALL remain isolated to the writing session until `publish`
+- **AND** disabling `manage_repository_scripts` or `allow_repository_script` SHALL reject restricted operations with Check Point permission errors

@@ -158,9 +158,9 @@ When a domain's service cache slice is absent or stale during `CPCRUDService.pla
 #### Scenario: SCN-CPCRUD-006-1 — Schema and semantic validation of application-site operations
 
 - **GIVEN** an `application-site` operation in `objects`, `services`, or `operations` with `name`, `primary-category` (or `primary_category`), `url-list` (or `url_list`), and `urls-defined-as-regular-expression` (or `urls_defined_as_regular_expression`)
-- **WHEN** `CPCRUDService.validate()` is called
-- **THEN** validation SHALL succeed with zero errors when `url-list` or `application-signature` is present
-- **AND** it SHALL reject `present` or `add` `application-site` operations that omit both `url-list` and `application-signature`
+- **WHEN** `CPCRUDService.validate()` or `CPCRUDService.plan()` evaluates `application-site` operations
+- **THEN** static validation SHALL succeed when `url-list` or `application-signature` is present, and reject `action="add"` operations omitting both
+- **AND** static validation SHALL allow `present` metadata updates through, while `CPCRUDService.plan()` SHALL reject absent `present` targets that omit both `url-list` and `application-signature`
 
 #### Scenario: SCN-CPCRUD-006-2 — Planning creation of a new regex application-site object
 
@@ -341,7 +341,7 @@ When a domain's service cache slice is absent or stale during `CPCRUDService.pla
 - **WHEN** `apply(plan, no_publish=True, keep_session=True)` or `stream_apply(plan, no_publish=True, keep_session=True)` is called
 - **THEN** `CPCRUDService` SHALL assign a default `arodonata-cpcrud-staged` session name when none was supplied
 - **AND** it SHALL leave the dedicated write session open without publishing
-- **AND** it SHALL record `StagedSessionInfo` (`sid`, `server_ip`, `session_uid`, `session_name`, `sid` redacted in `repr()`/logs) in `ApplyReport.staged_sessions` and the client registry upon creation
+- **AND** it SHALL record `StagedSessionInfo` (`sid`, `server_ip`, `session_uid`, `session_name`, `sid` redacted in `repr()`/logs) in `ApplyReport.staged_sessions` and the internal `Executor._staged_sessions` LRU registry (256 entries) upon creation
 - **AND** `stream_apply()` SHALL emit a `StagedSessionEvent`
 
 #### Scenario: SCN-CPCRUD-011-2 — Staged session publication adopts ownership via take-over-session and invalidates domain cache
@@ -368,11 +368,11 @@ When a domain's service cache slice is absent or stale during `CPCRUDService.pla
 
 #### Scenario: SCN-CPCRUD-011-4 — Foreign, active SmartConsole, or already-finalized session UID refused during staged adoption
 
-- **GIVEN** a `session_uid` belonging to a SmartConsole session, another user's Web API session (`allow_foreign=False`), a mismatched `expected_session_name`, a finalized session, or an active session when `force_disconnect=False`
+- **GIVEN** a `session_uid` belonging to a SmartConsole session, another user's Web API session (`allow_foreign=False`), a mismatched `expected_session_name`, an already published/discarded session, or an active session when `force_disconnect=False`
 - **WHEN** `publish_staged_session`, `stream_publish_staged_session`, or `discard_staged_session` is called
-- **THEN** the service SHALL refuse adoption before issuing disruptive `take-over-session` or `switch-session`
-- **AND** it SHALL log out any fresh helper session it opened without disconnecting the active administrator or publishing/discarding their work
-- **AND** it SHALL return a failed `ApiCallResult` (or failure event)
+- **THEN** the service SHALL refuse foreign, SmartConsole (`application` outside `""`/`"web_api"`/`"arodonata"`), or finalized sessions before issuing `take-over-session` or `switch-session`
+- **AND** when `force_disconnect=False`, `take-over-session` SHALL omit `disconnect-active-session` so an active holder is never forcibly disconnected
+- **AND** it SHALL log out any fresh helper session cleanly and return a failed `ApiCallResult` (or failure event)
 
 ### Requirement: Compensating Rollback Template Generation
 
@@ -389,3 +389,17 @@ When a domain's service cache slice is absent or stale during `CPCRUDService.pla
 - **THEN** it SHALL return a dictionary valid against `checkpoint_ops_schema.json` containing compensating operations ONLY for actions that succeeded in `report`
 - **AND** it SHALL delete `CREATE` actions strictly by the concrete `uid` recorded in `report` (skipping any `CREATE` that lacks a real created UID)
 - **AND** it SHALL restore all prior field values from `prior_state` for `UPDATE` actions and re-create `DELETE` actions from `prior_state`
+
+### Requirement: Public CPCRUDService Options and Package Helper Exports
+
+**ID**: REQ-CPCRUD-013\
+**Intent**: Expose configurable conflict policies, naming overrides, schema path overrides, and pure helper primitives cleanly across `CPCRUDService` and `arodonata.cpcrud`.\
+**Non-goals**: Internal multi-action plan execution semantics (`REQ-CPCRUD-010`, `REQ-CPCRUD-011`).
+
+`CPCRUDService` SHALL support `schema_path=` on `validate()` and `on_name_conflict=`, `on_ip_conflict=`, `naming_prefixes=`, and `validate_schema=` on `plan()`, while `arodonata.cpcrud` SHALL export typed models (`Plan`, `PlannedAction`, `ApplyReport`, `ActionResult`, `StagedSessionInfo`, `NamingPrefixes`), enums (`Outcome`, conflict policies), and pure helper primitives.
+
+#### Scenario: SCN-CPCRUD-013-1 — CPCRUDService.validate and plan accept explicit schema, policy, and naming overrides
+
+- **WHEN** callers invoke `CPCRUDService.validate(template, schema_path=...)` and `CPCRUDService.plan(template, on_name_conflict=..., on_ip_conflict=..., naming_prefixes=..., validate_schema=False)`
+- **THEN** `validate()` SHALL validate against the explicit `schema_path` offline
+- **AND** `plan()` SHALL honor the per-call conflict policies, naming prefixes, and `validate_schema` toggle

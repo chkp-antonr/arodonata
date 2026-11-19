@@ -123,8 +123,8 @@ The change report builder SHALL number added, modified, moved, and deleted rules
 
 - **GIVEN** a session with rule changes where no usable `OwnedSession` handled numbering and `CachePort.get_domain_rulebase` is empty
 - **WHEN** invoked via `ArodonataClient`
-- **THEN** it SHALL delegate cache warming to `RulebaseRefreshService` / `DomainSyncCoordinator` (enforcing distributed locks and `DomainSyncState` stamps) before reading cache
-- **AND** when standalone (or if warming leaves cache empty), it SHALL attempt read-only in-memory `collect_domain_rulebase_snapshot` without writing to `CachePort`
+- **THEN** `ArodonataClient` SHALL delegate cache warming to `RulebaseRefreshService` / `DomainSyncCoordinator` (enforcing distributed locks and `DomainSyncState` stamps) before reading cache
+- **AND** when called standalone without coordinator warming (no `refresh_rulebase_fn` executed), it SHALL attempt read-only in-memory `collect_domain_rulebase_snapshot` without writing to `CachePort` or double-fetching after coordinator sync
 - **AND** that live fallback SHALL set `numbering_source = "live_published"` and basis `"Numbering read live from published rulebase at <time> UTC"`
 - **AND** only if live collection fails or is empty SHALL it fall back to `"Numbering from cached rulebase snapshot (unavailable)"` (`numbering_source = "unnumbered"`)
 
@@ -155,8 +155,8 @@ The change report builder SHALL number added, modified, moved, and deleted rules
 #### Scenario: SCN-REPORT-005-1 — Self-contained HTML evidence output
 
 - **GIVEN** a `ChangeReport` with rule changes, section context, object changes, and field diffs
-- **WHEN** `render_change_report(report, formats=["html"], options=...)` runs
-- **THEN** it SHALL return a single self-contained UTF-8 HTML document (`bytes`) with inline CSS, zero `<script>` tags, and zero external network assets
+- **WHEN** `render_change_report(report, formats=["html"], options=...)` (or `formats=["md"]`) runs
+- **THEN** it SHALL return a `RenderedReportBundle` (normalizing `"md"` to `"markdown"`) whose `.html` attribute contains a self-contained UTF-8 HTML document (`bytes`) with inline CSS, zero `<script>` tags, and zero external network assets
 - **AND** the HTML SHALL render SmartConsole-styled dark-blue headers (`#253245`), yellow section banner rows (`<tr class="section-row">` on `#eee8aa` with `▾ <section_name> (<section_range>)`), and shaded `.col-num` rule cells
 - **AND** it SHALL display change badges (`NEW`, `DELETED`, `MODIFIED`, `MOVED`), disabled `✗` markers, and `Accept`/`Drop` action indicators
 - **AND** it SHALL show inline `- <name>` / `+ <name>` / `before → after` cell diffs, plus `Field Diffs` tables when `RenderOptions.include_field_diffs=True`
@@ -167,6 +167,7 @@ The change report builder SHALL number added, modified, moved, and deleted rules
 - **GIVEN** a `ChangeReport` containing modified rules or objects with `field_diffs`
 - **WHEN** `render_change_report(report, formats=["markdown"], ...)` runs
 - **THEN** it SHALL render removed items (`[-<name>]`), added/replacement items (`[+<name>]`), and scalar `before -> after` transitions inline in `Rule Changes` (including `Track`) and `Object Changes` cells
+- **AND** when `RenderOptions.include_field_diffs=True`, it SHALL emit detailed Markdown `Field Diffs` tables for both rule changes and object changes symmetrically to HTML
 - **AND** it SHALL escape pipe characters, newlines, and raw HTML tags in Check Point strings
 
 #### Scenario: SCN-REPORT-005-3 — Round-trip JSON serialization with format_version check

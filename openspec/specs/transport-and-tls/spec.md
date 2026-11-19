@@ -155,7 +155,7 @@ The HTTPS transport SHALL pool fingerprint-verified keep-alive connections for u
 **Intent**: Enforce unambiguous failure semantics and never double-execute non-idempotent Check Point commands after bytes leave the socket.\
 **Non-goals**: Timeout budget settings resolution (`REQ-CONFIG-004`).
 
-`AMgmtClient` HTTPS transport SHALL enforce explicit TCP/TLS `connect_timeout` and socket read timeouts on every `/web_api/<command>` call, disable HTTP redirects (`allow_redirects=False`), classify every `TransportError` with `phase` (`"connect"` / `request_sent=False` vs `"read"` / `"post-send"` with `request_sent=True`), and NEVER automatically resend a request after bytes have been written.
+`AMgmtClient` HTTPS transport SHALL enforce explicit TCP/TLS `connect_timeout` and socket read timeouts on every `/web_api/<command>` call, disable HTTP redirects (`allow_redirects=False`), classify every `TransportError` with `phase` (`"connect"` / `request_sent=False` vs `"read"` / `"post-send"` with `request_sent=True`), and NEVER automatically resend a general API request after `request_sent=True` (except `LoginCoordinator`'s gated single `login` retry under `REQ-SESS-006`).
 
 #### Scenario: SCN-TRANS-007-1 — Socket connect or handshake timeout
 

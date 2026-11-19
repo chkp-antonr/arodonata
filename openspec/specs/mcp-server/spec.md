@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines the Streamable-HTTP Model Context Protocol server (`arodonata-mcp` CLI and `arodonata.mcp` embeddable ASGI application under `arodonata[mcp]`), authentication and security guards, tool surface (native, cached, structured query/aggregation, rulebase, change report, live compatibility, and opt-in CPCRUD tools), and prompt templates.
+Defines the Streamable-HTTP Model Context Protocol server (`arodonata-mcp` CLI and `arodonata.mcp` embeddable ASGI application under `arodonata[mcp]`), authentication and security guards, tool surface (native, cached, structured query/aggregation, rulebase, change report, API reference, and opt-in CPCRUD tools), and prompt templates.
 
 ## Requirements
 
@@ -121,7 +121,7 @@ The `arodonata[mcp]` server SHALL expose `cache_control` (`action="status" | "re
 
 - **WHEN** `cache_control(mgmt_name=..., action="status")` or `cache_control(mgmt_name=..., domain=..., action="refresh", scope="objects" | "topology", gateways=..., collect_routes=...)` is called
 - **THEN** `action="status"` SHALL return per-domain and per-`item_type` status, `last_published_at`, `last_session_uid`, `synced_at`, and `cache_age_seconds` across all six scopes
-- **AND** `action="refresh"` SHALL synchronize the requested scope (forwarding `gateways` and `collect_routes` for `"topology"`) and return the `RefreshOutcome`
+- **AND** `action="refresh"` SHALL synchronize the requested scope (forwarding `gateways` and `collect_routes` for `"topology"`), returning `RefreshOutcome` (or `{"scope": "domains", "mgmt_name": ..., "refreshed_count": ..., "domains": [...]}` for `scope="domains"`)
 
 ### Requirement: Rulebase Inspection and Local Filtering Tool
 
@@ -212,3 +212,17 @@ MCP tools SHALL pre-validate explicit `domain` arguments against `arodonata_doma
 - **THEN** with `ALLOW_WRITE_API=false`, `api_call` SHALL permit ONLY explicit read-only allowlisted commands (rejecting traversal, writes, `publish`, `discard`, `logout`, and unlisted commands)
 - **AND** with `ALLOW_WRITE_API=true`, mutating `api_call` calls SHALL run in an isolated dedicated session (never shared `arodonata_sid_cache`) with bounded `timeout`
 - **AND** any active `sid` in error output SHALL be redacted before logging or returning to the MCP client
+
+### Requirement: Built-In MCP Domain Prompt Templates
+
+**ID**: REQ-MCP-011\
+**Intent**: Provide reusable workflow prompts guiding LLM clients to combine Arodonata read, topology, change-report, and API-reference tools effectively.\
+**Non-goals**: Underlying MCP tool execution (`REQ-MCP-002`..`REQ-MCP-010`).
+
+The `arodonata[mcp]` server (`arodonata.mcp.prompts`) SHALL register four reusable MCP prompt templates (`audit_access_rulebase`, `investigate_ip_exposure`, `summarize_recent_changes`, `lookup_api_command`) returning structured user-role guidance tailored to optional domain, package, IP, and command arguments.
+
+#### Scenario: SCN-MCP-011-1 — MCP server registers all four domain workflow prompts with argument substitution
+
+- **WHEN** `register_prompts(mcp)` registers prompt templates on a server (via `create_mcp_server`)
+- **THEN** `audit_access_rulebase`, `investigate_ip_exposure`, `summarize_recent_changes`, and `lookup_api_command` SHALL be registered and callable
+- **AND** invoking each prompt with domain, package, IP, or command arguments SHALL interpolate those parameters into workflow instructions without touching the network or database

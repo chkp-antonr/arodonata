@@ -169,3 +169,17 @@ The client SHALL cap in-flight API requests per MDS member to `concurrent_limit`
 
 - **WHEN** `api_call`, `get_readonly_session`, `create_dedicated_session`, `keepalive_sid`, or `logout_sid` receives an `explicit_server_ip` absent from `mgmt_name`'s configured endpoints and cached/discovered MDS or domain server IPs
 - **THEN** the client SHALL raise `ValidationError` before opening a TLS connection, learning a TOFU certificate, or transmitting `X-chkp-sid`
+
+### Requirement: Contextual User Attribution Propagation
+
+**ID**: REQ-SESS-009\
+**Intent**: Attribute dedicated Web API work sessions to downstream application users and metadata via `contextvars` without mixing identity across concurrent tasks.\
+**Non-goals**: Authentication credentials passed via `AuthContext` (`REQ-CONFIG-003`).
+
+`arodonata.core.context` (`UserContext`) and `ArodonataClient.user_context()` SHALL bind caller attribution metadata (`session_name`, `session_description`, `user_id`, `username`) to `contextvars`, applying `session_name` and `session_description` automatically to dedicated write sessions while preserving clean outer context on exit.
+
+#### Scenario: SCN-SESS-009-1 — UserContext attributes dedicated sessions safely via contextvars
+
+- **WHEN** `create_dedicated_session` or `write_session` runs inside `async with` / `with client.user_context(session_name="change-42", session_description="ticket", username="alice"):` without explicit session metadata overrides
+- **THEN** the opened session SHALL receive `session_name` and `session_description` from the active `UserContext` (`login` / `set-session`)
+- **AND** exiting the `user_context` block SHALL restore the previous `UserContext` without mutating concurrent tasks

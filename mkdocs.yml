@@ -118,6 +118,7 @@ nav:
       - Enterprise Replay Mock Server: guides/enterprise-replay-mock-server.md
       - Mock Testing Scenarios: guides/mock-testing-scenarios.md
       - MCP Server & Tools: mcp/index.md
+      - Check Point API Quirks: troubleshooting/checkpoint-api-quirks.md
   - Architecture:
       - Overview: architecture/index.md
       - Hexagonal Ports & Adapters: architecture/ports-and-adapters.md
@@ -140,6 +141,7 @@ nav:
       - 10 — Change Report Evidence: examples/10-change-report-evidence.md
       - 11 — OpenTelemetry Tracing: examples/11-otel-tracing.md
       - 12 — Embedded FastAPI MCP: examples/12-mcp-embedded.md
+      - 13 — Gateway Topology Matching: examples/13-gateway-topology-matching.md
   - Project:
       - Testing & Quality Gates: development/testing.md
       - Changelog: CHANGELOG.md

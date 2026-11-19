@@ -239,9 +239,9 @@ The cache layer SHALL persist `TopologyAnnotation` records in `arodonata_topolog
 
 #### Scenario: SCN-TOPO-012-2 — Policy package resolution combines asset policy metadata and rulebase installation targets
 
-- **GIVEN** an affected gateway with `raw_data["policy"]["access-policy-name"] = "Standard_Policy"` and/or entries in cached `PolicyPackageInfo.installation_targets`
+- **GIVEN** an affected gateway with `raw_data["policy"]["access-policy-name"] = "Standard_Policy"` or an entry in cached `PolicyPackageInfo.installation_targets`
 - **WHEN** `find_affected_gateways()` builds the candidate
-- **THEN** it SHALL populate `installed_access_policy="Standard_Policy"`, all matching `policy_packages`, and ordered `access_layers` when the package catalog or rulebase snapshot is cached
+- **THEN** it SHALL populate `installed_access_policy` and `policy_packages=[installed_policy]` (assigning the single active installed policy) alongside ordered `access_layers` when cached
 
 #### Scenario: SCN-TOPO-012-3 — Static-only source_types and disabled annotations filter out live route and manual intervals
 
@@ -344,7 +344,7 @@ The cache layer SHALL persist `TopologyAnnotation` records in `arodonata_topolog
 - **WHEN** `find_affected_gateways()` evaluates a 7–10 hop ECMP/standby-BGP flow (`include_standby=True` vs `False`), nested `/8`–`/32` prefixes, and a `20+ x 20+` batch with nested groups and ranges
 - **THEN** it SHALL return all active hops (including both ECMP legs) while filtering standby BGP hops via `include_standby`
 - **AND** it SHALL select the exact most-specific interface at every `/8`–`/32` matryoshka level via LPM
-- **AND** it SHALL complete the `20+ x 20+` batch from cache in sub-second time while preserving exact caller input order in `matched_sources` and `matched_destinations`
+- **AND** it SHALL complete the `20+ x 20+` batch from cache within the CI latency budget (< 5.0s) while preserving exact caller input order in `matched_sources` and `matched_destinations`
 
 #### Scenario: SCN-TOPO-017-3 — Targeted single-gateway refresh after raw API and CLI mutation queries only the target gateway
 
@@ -366,3 +366,17 @@ The cache layer SHALL persist `TopologyAnnotation` records in `arodonata_topolog
 - **GIVEN** `arodonata-collect-routes-v1` provisioned via `ensure_route_collection_script` (invisible to other sessions until `publish`) and `FileReplayApiMock(allow_one_time_script=False, allow_repository_script=True)`
 - **WHEN** `collect_gateway_routes(cprid_script_mode="repository")` vs `cprid_script_mode="inline"` runs across cluster and VSX replay fixtures
 - **THEN** `"repository"` mode SHALL succeed using `script-type="repository"`, whereas `"inline"` mode SHALL fail with `error_code="repository_script_permission_denied"`
+
+### Requirement: Interface Topology Aggregation and Cached Policy Metadata Enrichment
+
+**ID**: REQ-TOPO-019\
+**Intent**: Provide summarized per-interface topology views and enrich cached `get_gateway_topology()` rows with installed policy package metadata.\
+**Non-goals**: Flow matching and confidence scoring (`REQ-TOPO-011`..`REQ-TOPO-014`).
+
+`TopologyService.summarize_gateway_interfaces()` SHALL aggregate `GatewayTopologyEntry` rows into `GatewayInterfaceSummary` models preserving zones, anti-spoofing modes, source types, and CIDRs/ranges, while `TopologyService.get_gateway_topology()` SHALL enrich returned entries with `installed_access_policy` and `policy_packages` from cached assets and policy packages.
+
+#### Scenario: SCN-TOPO-019-1 — Interface summary aggregation and get_gateway_topology policy enrichment
+
+- **WHEN** `TopologyService.summarize_gateway_interfaces(entries)` or `client.get_gateway_topology(mgmt_name, domain)` runs on cached topology entries and rulebase/asset snapshots
+- **THEN** `summarize_gateway_interfaces` SHALL group rows by `(mgmt_name, domain_name, gateway_uid, interface_name)` and aggregate `topology_zone`, `source_types`, and `cidrs_and_ranges`
+- **AND** `get_gateway_topology` SHALL populate `installed_access_policy` and `policy_packages` on each enriched `GatewayTopologyEntry`

@@ -114,10 +114,24 @@ When `get_package_rulebase` (or `refresh_package_rulebase`) runs with `cache_mod
 **Intent**: Search cached rulebases offline with transitive group expansion and export matched rules directly into CPCRUD templates.\
 **Non-goals**: Planning or applying CPCRUD rule mutations against Check Point (`REQ-CPCRUD-008`, `REQ-CPCRUD-009`).
 
-`filter_rulebase()` and `rule_to_cpcrud_operation()` SHALL evaluate search/filter queries locally against cached rulebases (`PackageRulebase` or `NumberedLayerRulebase`) with transitive object/service group expansion and convert matched access, NAT, HTTPS, and threat-prevention rules into schema-valid `cpcrud` operation dictionaries (`format="cpcrud"`).
+`filter_rulebase()` and `rule_to_cpcrud_operation()` SHALL evaluate search/filter queries locally against cached rulebases (`PackageRulebase` or `NumberedLayerRulebase`) with transitive object/service group expansion and convert matched access, NAT, HTTPS, and threat-prevention rules into schema-valid `cpcrud` operation dictionaries (`output_format="cpcrud"`).
 
 #### Scenario: SCN-RULE-005-1 — Convert matched access and NAT rules into valid CPCRUD operations
 
-- **WHEN** `rule_to_cpcrud_operation(rule)` or `filter_rulebase(..., format="cpcrud")` is called on a cached `AccessRuleEntry`, `NatRuleEntry`, `HttpsRuleEntry`, or `ThreatRuleEntry`
-- **THEN** it SHALL return an operation dictionary (`operation`, `type`, `layer` or `package`, `key`, `data`) that passes `CPCRUDService.validate()`
+- **WHEN** `rule_to_cpcrud_operation(rule)` or `filter_rulebase(..., output_format="cpcrud")` is called on a cached `AccessRuleEntry`, `NatRuleEntry`, `HttpsRuleEntry`, or `ThreatRuleEntry`
+- **THEN** it SHALL return a flat operation dictionary (`operation`, `type`, `layer` or `package`, `uid`, `name`, `source`/`destination`/`service` or NAT `original-*`/`translated-*` keys) compatible with `CPCRUDService.validate({"operations": [...]})`
 - **AND** it SHALL normalize Check Point NAT `"Original"` and `"Any"` sentinel UIDs
+
+### Requirement: Public Rulebase Numbering and Formatting Helper Exports
+
+**ID**: REQ-RULE-006\
+**Intent**: Export pure rulebase filtering, SmartConsole formatting, policy-package extraction, and standalone snapshot helpers cleanly under `arodonata.rulebase`.\
+**Non-goals**: Coordinator-synchronized database persistence (`REQ-RULE-002`, `REQ-RULE-003`).
+
+`arodonata.rulebase` SHALL export `filter_numbered_rulebase`, `format_rules_markdown`, `format_rules_model_friendly`, `extract_policy_packages`, and `collect_domain_rulebase_snapshot` alongside model and numbering primitives so downstream tools and custom adapters can format and inspect snapshots offline.
+
+#### Scenario: SCN-RULE-006-1 — Public rulebase formatting and package extraction helpers work standalone on snapshot objects
+
+- **WHEN** callers invoke `extract_policy_packages()`, `filter_numbered_rulebase()`, `format_rules_markdown()`, `format_rules_model_friendly()`, or `collect_domain_rulebase_snapshot()` from `arodonata.rulebase`
+- **THEN** `extract_policy_packages` SHALL extract `PolicyPackageInfo` entries from a domain snapshot
+- **AND** `filter_numbered_rulebase`, `format_rules_markdown`, and `format_rules_model_friendly` SHALL render filtered rules deterministically offline
