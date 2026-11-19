@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arodonata.core.errors import REDACTED_PLACEHOLDER, sanitize_mapping
+from arodonata.core.errors import REDACTED_PLACEHOLDER, redact_sid, sanitize_mapping
 from arodonata.core.models.common import SyncScope, utc_now
 
 SyncPhase = Literal["started", "probing", "syncing", "completed", "skipped", "failed"]
@@ -54,6 +54,10 @@ class SyncProgressEvent(DomainEvent):
     total: int | None = None
     error: str | None = None
 
+    def model_post_init(self, __context: Any) -> None:
+        if self.error:
+            self.error = redact_sid(self.error)
+
 
 class SyncStartedEvent(SyncProgressEvent):
     """Emitted when a multi-domain synchronization run begins."""
@@ -95,6 +99,11 @@ class DomainSyncFailedEvent(SyncProgressEvent):
 
     event_type: str = "domain_sync_failed"
     phase: SyncPhase = "failed"
+
+    def model_post_init(self, __context: Any) -> None:
+        super().model_post_init(__context)
+        if self.message:
+            self.message = redact_sid(self.message)
 
 
 class SyncCompletedEvent(SyncProgressEvent):

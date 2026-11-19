@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from arodonata.core.context import normalize_domain_key
-from arodonata.core.errors import ValidationError
+from arodonata.core.errors import ServerIdentityError, ValidationError
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.topology import GatewayCliTarget, TopologySourceType
 from arodonata.core.services.topology._shared import RepositoryScriptArgsCallable
@@ -45,6 +45,8 @@ class AutoScriptModeResolver:
                 return True
             try:
                 await asyncio.shield(fut)
+            except ServerIdentityError:
+                raise
             except asyncio.CancelledError:
                 cur_task = asyncio.current_task()
                 if not fut.done() or (cur_task is not None and cur_task.cancelling() > 0):
@@ -66,14 +68,22 @@ class AutoScriptModeResolver:
         if fut is not None and not fut.done():
             fut.set_result(mode)
 
-    def abort_probe_if_unresolved(self, mgmt_name: str, domain_name: str | None) -> None:
+    def abort_probe_if_unresolved(
+        self,
+        mgmt_name: str,
+        domain_name: str | None,
+        *,
+        exc: BaseException | None = None,
+    ) -> None:
         """Release the in-flight probe slot if the prober exited before resolving."""
         key = (mgmt_name, normalize_domain_key(domain_name))
         if key in self._resolved:
             return
         fut = self._flights.pop(key, None)
         if fut is not None and not fut.done():
-            fut.set_exception(RuntimeError("auto script probe aborted"))
+            fut.set_exception(
+                exc if isinstance(exc, ServerIdentityError) else RuntimeError("auto script probe aborted")
+            )
             fut.exception()
 
 

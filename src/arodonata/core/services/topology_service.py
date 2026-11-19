@@ -65,6 +65,39 @@ from arodonata.core.services.topology.normalizer import (
 from arodonata.core.services.topology.normalizer import (
     _parse_route_nexthop_and_interface as _parse_route_nexthop_and_interface,
 )
+from arodonata.core.services.topology.route_executor import (
+    execute_gateway_cli as execute_gateway_cli,
+)
+from arodonata.core.services.topology.route_parsers import (
+    parse_combined_cli_routes_with_status as parse_combined_cli_routes_with_status,
+)
+from arodonata.core.services.topology.route_parsers import (
+    routes_to_topology_entries as routes_to_topology_entries,
+)
+from arodonata.core.services.topology.route_scripts import (
+    CLISH_SKIPPED_LARGE_TABLE_MARKER as CLISH_SKIPPED_LARGE_TABLE_MARKER,
+)
+from arodonata.core.services.topology.route_scripts import (
+    DEFAULT_ROUTE_COLLECT_REPOSITORY_SCRIPT_NAME as DEFAULT_ROUTE_COLLECT_REPOSITORY_SCRIPT_NAME,
+)
+from arodonata.core.services.topology.route_scripts import (
+    AutoScriptModeResolver as AutoScriptModeResolver,
+)
+from arodonata.core.services.topology.route_scripts import (
+    ParsedCliRoute as ParsedCliRoute,
+)
+from arodonata.core.services.topology.route_scripts import (
+    RepositoryScriptArgsCallable as RepositoryScriptArgsCallable,
+)
+from arodonata.core.services.topology.route_scripts import (
+    build_route_collection_repository_script as build_route_collection_repository_script,
+)
+from arodonata.core.services.topology.route_scripts import (
+    build_route_collection_script as build_route_collection_script,
+)
+from arodonata.core.services.topology.route_scripts import (
+    resolve_gateway_cli_targets as resolve_gateway_cli_targets,
+)
 from arodonata.core.services.topology.service import TopologyService
 
 __all__ = [

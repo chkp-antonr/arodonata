@@ -11,7 +11,7 @@ from typing import Any
 
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import get_write_session
-from arodonata.core.errors import redact_sid
+from arodonata.core.errors import ServerIdentityError, redact_sid
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.domains import DomainSyncState
 from arodonata.core.models.rulebase import DomainRulebaseSnapshot
@@ -246,6 +246,7 @@ async def _collect_gateway_routes_impl(
         if eff_script_mode == "auto" and eff_cli is None:
             preclaimed = await auto_mode_resolver.acquire_probe_turn(target.mgmt_name, target.domain_name)
 
+        probe_exc: BaseException | None = None
         try:
             node_key = str(target.node_uid or target.node_ipv4 or target.node_name or target.gateway_uid)
             node_lock = get_node_lock(target.mgmt_name, node_key)
@@ -275,13 +276,27 @@ async def _collect_gateway_routes_impl(
                     preclaimed_auto_probe=preclaimed,
                 )
                 return target, res
+        except BaseException as exc:
+            probe_exc = exc
+            raise
         finally:
             if preclaimed:
-                auto_mode_resolver.abort_probe_if_unresolved(target.mgmt_name, target.domain_name)
+                auto_mode_resolver.abort_probe_if_unresolved(
+                    target.mgmt_name,
+                    target.domain_name,
+                    exc=probe_exc,
+                )
 
     async def _collect_for_gateway(gw_asset: Asset) -> tuple[GatewayRouteCollectionStatus, int]:
         cli_targets = resolve_gateway_cli_targets(gw_asset, all_mgmt_assets)
-        target_results = await asyncio.gather(*(_run_target(t) for t in cli_targets))
+        try:
+            async with asyncio.TaskGroup() as tg:
+                target_tasks = [tg.create_task(_run_target(t)) for t in cli_targets]
+            target_results = [t.result() for t in target_tasks]
+        except* ServerIdentityError as eg:
+            raise eg.exceptions[0] from None
+        except* Exception as eg:
+            raise eg.exceptions[0] from None
         known_sids = list({sid for sid, _ in cprid_sessions.values() if sid}) or None
 
         parsed_by_node: dict[str, list[ParsedCliRoute]] = {}
@@ -297,7 +312,7 @@ async def _collect_gateway_routes_impl(
                 if cli_res.error_code:
                     node_error_codes.append(cli_res.error_code)
                 raw_node_err = f"{target.node_name}: {cli_res.error_message or cli_res.stderr or 'CLI command failed'}"
-                node_errors.append(redact_sid(raw_node_err, known_sids=known_sids))
+                node_errors.append(redact_sid(raw_node_err, known_sids=known_sids) if known_sids else raw_node_err)
                 continue
             raw_stdout = cli_res.stdout
             parsed_routes, was_truncated = parse_combined_cli_routes_with_status(
@@ -316,9 +331,7 @@ async def _collect_gateway_routes_impl(
         target_results.clear()
 
         if not parsed_by_node:
-            err_summary = (
-                redact_sid("; ".join(node_errors), known_sids=known_sids) if node_errors else "No routes returned"
-            )
+            err_summary = "; ".join(node_errors) if node_errors else "No routes returned"
             return (
                 GatewayRouteCollectionStatus(
                     mgmt_name=gw_asset.mgmt_name,
@@ -404,7 +417,6 @@ async def _collect_gateway_routes_impl(
             gw_warnings.extend(truncation_warnings)
         if node_errors:
             gw_warnings.extend(node_errors)
-        redacted_warnings = [redact_sid(w, known_sids=known_sids) for w in gw_warnings]
 
         return (
             GatewayRouteCollectionStatus(
@@ -419,20 +431,26 @@ async def _collect_gateway_routes_impl(
                 executor=",".join(executors_used) if executors_used else "ssh",
                 routes_collected=entry_count,
                 member_drift_detected=drift_detected,
-                warnings=redacted_warnings,
+                warnings=gw_warnings,
                 error=None,
             ),
             entry_count,
         )
 
     try:
-        results = await asyncio.gather(*(_collect_for_gateway(gw) for gw in sorted_gateways))
+        try:
+            async with asyncio.TaskGroup() as tg:
+                gw_tasks = [tg.create_task(_collect_for_gateway(gw)) for gw in sorted_gateways]
+            results = [t.result() for t in gw_tasks]
+        except* ServerIdentityError as eg:
+            raise eg.exceptions[0] from None
+        except* Exception as eg:
+            raise eg.exceptions[0] from None
     finally:
         for (m_name, _d_name), (ded_sid, ded_ip) in list(cprid_sessions.items()):
             with contextlib.suppress(Exception):
                 await api.logout_sid(m_name, ded_sid, server_ip=ded_ip)
 
-    known_sids = list({sid for sid, _ in cprid_sessions.values() if sid}) or None
     statuses = [st for st, _ in results]
     succeeded_count = sum(1 for st in statuses if st.success)
     failed_count = len(statuses) - succeeded_count
@@ -445,9 +463,7 @@ async def _collect_gateway_routes_impl(
     for st, cnt in results:
         routes_count_by_dom[(st.mgmt_name, st.domain_name)] += cnt
         if not st.success:
-            failed_by_dom[(st.mgmt_name, st.domain_name)].append(
-                redact_sid(f"{st.gateway_name}: {st.error or 'failed'}", known_sids=known_sids)
-            )
+            failed_by_dom[(st.mgmt_name, st.domain_name)].append(f"{st.gateway_name}: {st.error or 'failed'}")
 
     for (m_name, d_name), errs in failed_by_dom.items():
         await cache.upsert_sync_state(
@@ -459,7 +475,7 @@ async def _collect_gateway_routes_impl(
                 synced_at=now,
                 status="failed",
                 object_count=routes_count_by_dom[(m_name, d_name)],
-                last_error=redact_sid("; ".join(errs), known_sids=known_sids),
+                last_error="; ".join(errs),
             )
         )
 

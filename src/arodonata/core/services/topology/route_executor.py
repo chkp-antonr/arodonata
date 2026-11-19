@@ -10,6 +10,7 @@ from arodonata.core.errors import (
     RepositoryScriptError,
     RepositoryScriptNotFoundError,
     RepositoryScriptPermissionError,
+    ServerIdentityError,
     SessionError,
     SessionStateError,
     is_script_permission_error,
@@ -29,6 +30,13 @@ from arodonata.core.services.topology.route_scripts import (
 )
 
 
+def _scrub_known_sids(text: str, known_sids: Sequence[str] | None) -> str:
+    """Redact explicit session identifiers when bare `known_sids` are present; pattern scrubbing happens on models."""
+    if not text or not known_sids:
+        return text
+    return redact_sid(text, known_sids=known_sids)
+
+
 def _format_cli_error(
     ssh_error: str | None,
     cprid_detail: str,
@@ -36,12 +44,13 @@ def _format_cli_error(
     cprid_prefix: str = "",
     known_sids: Sequence[str] | None = None,
 ) -> str:
-    """Format an SSH/cprid failure message with SID redaction applied."""
-    clean_detail = redact_sid(cprid_detail, known_sids=known_sids)
-    if ssh_error:
-        clean_ssh = redact_sid(ssh_error, known_sids=known_sids)
-        return f"SSH failed ({clean_ssh}); cprid fallback failed ({clean_detail})"
-    return f"{cprid_prefix}{clean_detail}" if cprid_prefix else clean_detail
+    """Format an SSH/cprid failure message with bare-SID scrubbing (`GatewayCliResult` redacts regex patterns)."""
+    msg = (
+        f"SSH failed ({ssh_error}); cprid fallback failed ({cprid_detail})"
+        if ssh_error
+        else (f"{cprid_prefix}{cprid_detail}" if cprid_prefix else cprid_detail)
+    )
+    return _scrub_known_sids(msg, known_sids)
 
 
 async def _execute_ssh_gateway_cli(
@@ -88,12 +97,14 @@ async def _execute_ssh_gateway_cli(
         if isinstance(raw_res, GatewayCliResult):
             if "_vs_error=" in raw_res.stdout and raw_res.success:
                 return (
-                    raw_res.model_copy(
-                        update={
-                            "success": False,
-                            "exit_code": 1,
-                            "error_message": raw_res.stdout.strip(),
-                        }
+                    GatewayCliResult(
+                        success=False,
+                        stdout=raw_res.stdout,
+                        stderr=raw_res.stderr,
+                        exit_code=1,
+                        executor=raw_res.executor,
+                        error_code=raw_res.error_code,
+                        error_message=raw_res.stdout.strip(),
                     ),
                     None,
                 )
@@ -104,21 +115,39 @@ async def _execute_ssh_gateway_cli(
                 and "===ARODONATA_VSID_RESOLVED=" not in raw_res.stdout
             ):
                 return (
-                    raw_res.model_copy(
-                        update={
-                            "success": False,
-                            "exit_code": 1,
-                            "error_message": f"Unable to resolve VSID for Virtual System {target.vs_name!r}",
-                        }
+                    GatewayCliResult(
+                        success=False,
+                        stdout=raw_res.stdout,
+                        stderr=raw_res.stderr,
+                        exit_code=1,
+                        executor=raw_res.executor,
+                        error_code=raw_res.error_code,
+                        error_message=f"Unable to resolve VSID for Virtual System {target.vs_name!r}",
                     ),
                     None,
                 )
             if raw_res.success or not fallback_to_cprid:
+                if raw_res.stderr or raw_res.error_message:
+                    # Ensure boundary redaction even if raw_res was created via model_construct or mutated
+                    return (
+                        GatewayCliResult(
+                            success=raw_res.success,
+                            stdout=raw_res.stdout,
+                            stderr=raw_res.stderr,
+                            exit_code=raw_res.exit_code,
+                            executor=raw_res.executor,
+                            error_code=raw_res.error_code,
+                            error_message=raw_res.error_message,
+                        ),
+                        None,
+                    )
                 return raw_res, None
-            ssh_err = redact_sid(raw_res.error_message or raw_res.stderr or f"SSH exited with {raw_res.exit_code}")
+            ssh_err = raw_res.error_message or raw_res.stderr or f"SSH exited with {raw_res.exit_code}"
             return None, ssh_err
+    except ServerIdentityError:
+        raise
     except Exception as exc:
-        ssh_err = redact_sid(str(exc))
+        ssh_err = str(exc)
         if not fallback_to_cprid:
             return (
                 GatewayCliResult(
@@ -133,7 +162,19 @@ async def _execute_ssh_gateway_cli(
             )
         return None, ssh_err
 
-    return None, "SSH execution failed"
+    if not fallback_to_cprid:
+        return (
+            GatewayCliResult(
+                success=False,
+                stdout="",
+                stderr="SSH execution failed",
+                exit_code=1,
+                executor="ssh",
+                error_message="SSH execution failed",
+            ),
+            None,
+        )
+    return None, None
 
 
 async def _run_inline_cprid(
@@ -199,12 +240,13 @@ async def _run_inline_cprid(
                 finally:
                     with contextlib.suppress(Exception):
                         await api.logout_sid(target.mgmt_name, ded_sid, server_ip=ded_ip)
+    except ServerIdentityError:
+        raise
     except (SessionError, AuthenticationError) as exc:
-        exc_msg = redact_sid(str(exc), known_sids=used_sids or None)
+        known = used_sids or None
+        exc_msg = _scrub_known_sids(str(exc), known)
         session_err_code = "repository_script_permission_denied" if is_script_permission_error(None, exc_msg) else None
-        err_msg = _format_cli_error(
-            ssh_error, exc_msg, cprid_prefix="run-script failed: ", known_sids=used_sids or None
-        )
+        err_msg = _format_cli_error(ssh_error, exc_msg, cprid_prefix="run-script failed: ", known_sids=known)
         return GatewayCliResult(
             success=False,
             stdout="",
@@ -215,10 +257,8 @@ async def _run_inline_cprid(
             error_message=err_msg,
         )
     except Exception as exc:
-        exc_msg = redact_sid(str(exc), known_sids=used_sids or None)
-        err_msg = _format_cli_error(
-            ssh_error, exc_msg, cprid_prefix="run-script failed: ", known_sids=used_sids or None
-        )
+        known = used_sids or None
+        err_msg = _format_cli_error(ssh_error, str(exc), cprid_prefix="run-script failed: ", known_sids=known)
         return GatewayCliResult(
             success=False,
             stdout="",
@@ -233,20 +273,21 @@ async def _run_inline_cprid(
     overall_ok = res.success and ok_decode and not missing_vsid_res
     err_out: str | None = None
     err_code: str | None = None
-    clean_stderr = redact_sid(stderr_str, known_sids=used_sids or None)
+    known = used_sids or None
+    clean_stderr = _scrub_known_sids(stderr_str, known)
     if not overall_ok:
         if not res.success and is_script_permission_error(res.error_code, res.error_message):
             err_code = "repository_script_permission_denied"
         raw_err_out = (
             clean_stderr
-            or (redact_sid(res.error_message, known_sids=used_sids or None) if res.error_message else "")
+            or _scrub_known_sids(res.error_message or "", known)
             or (
                 f"Unable to resolve VSID for Virtual System {target.vs_name!r}"
                 if missing_vsid_res
                 else "run-script task did not succeed"
             )
         )
-        err_out = _format_cli_error(ssh_error, raw_err_out, known_sids=used_sids or None)
+        err_out = _format_cli_error(ssh_error, raw_err_out, known_sids=known)
 
     return GatewayCliResult(
         success=overall_ok,
@@ -279,6 +320,8 @@ async def _run_repository_cprid(
             if repository_script_args_fn is not None
             else format_route_collection_repository_args(target, max_routes=max_routes)
         )
+    except ServerIdentityError:
+        raise
     except Exception as exc:
         err_msg = _format_cli_error(ssh_error, str(exc))
         return GatewayCliResult(
@@ -312,9 +355,12 @@ async def _run_repository_cprid(
             timeout=timeout,
             session_getter=session_getter_wrapped,
         )
+    except ServerIdentityError:
+        raise
     except RepositoryScriptNotFoundError as exc:
-        exc_msg = redact_sid(str(exc), known_sids=used_sids or None)
-        err_msg = _format_cli_error(ssh_error, exc_msg, known_sids=used_sids or None)
+        known = used_sids or None
+        exc_msg = _scrub_known_sids(str(exc), known)
+        err_msg = _format_cli_error(ssh_error, exc_msg, known_sids=known)
         return GatewayCliResult(
             success=False,
             stdout="",
@@ -325,8 +371,9 @@ async def _run_repository_cprid(
             error_message=err_msg,
         )
     except RepositoryScriptPermissionError as exc:
-        exc_msg = redact_sid(str(exc), known_sids=used_sids or None)
-        err_msg = _format_cli_error(ssh_error, exc_msg, known_sids=used_sids or None)
+        known = used_sids or None
+        exc_msg = _scrub_known_sids(str(exc), known)
+        err_msg = _format_cli_error(ssh_error, exc_msg, known_sids=known)
         return GatewayCliResult(
             success=False,
             stdout="",
@@ -337,8 +384,9 @@ async def _run_repository_cprid(
             error_message=err_msg,
         )
     except RepositoryScriptError as exc:
-        exc_msg = redact_sid(str(exc), known_sids=used_sids or None)
-        err_msg = _format_cli_error(ssh_error, exc_msg, known_sids=used_sids or None)
+        known = used_sids or None
+        exc_msg = _scrub_known_sids(str(exc), known)
+        err_msg = _format_cli_error(ssh_error, exc_msg, known_sids=known)
         err_code = "repository_script_unsupported" if is_unsupported_script_command_error(None, exc_msg) else None
         return GatewayCliResult(
             success=False,
@@ -350,10 +398,8 @@ async def _run_repository_cprid(
             error_message=err_msg,
         )
     except Exception as exc:
-        exc_msg = redact_sid(str(exc), known_sids=used_sids or None)
-        err_msg = _format_cli_error(
-            ssh_error, exc_msg, cprid_prefix="run-script failed: ", known_sids=used_sids or None
-        )
+        known = used_sids or None
+        err_msg = _format_cli_error(ssh_error, str(exc), cprid_prefix="run-script failed: ", known_sids=known)
         return GatewayCliResult(
             success=False,
             stdout="",
@@ -363,8 +409,9 @@ async def _run_repository_cprid(
             error_message=err_msg,
         )
 
+    known = used_sids or None
     stdout_str = outcome.stdout
-    stderr_str = redact_sid(outcome.stderr, known_sids=used_sids or None)
+    stderr_str = _scrub_known_sids(outcome.stderr, known)
     has_vs_err = "_vs_error=" in stdout_str
     missing_vsid_res = bool(target.vs_name and target.vsid is None and "===ARODONATA_VSID_RESOLVED=" not in stdout_str)
     overall_ok = outcome.success and not has_vs_err and not missing_vsid_res
@@ -373,14 +420,14 @@ async def _run_repository_cprid(
         raw_err_out = (
             (stdout_str.strip() if has_vs_err else None)
             or stderr_str
-            or (redact_sid(outcome.error_message, known_sids=used_sids or None) if outcome.error_message else "")
+            or _scrub_known_sids(outcome.error_message or "", known)
             or (
                 f"Unable to resolve VSID for Virtual System {target.vs_name!r}"
                 if missing_vsid_res
                 else "run-script task did not succeed"
             )
         )
-        err_out = _format_cli_error(ssh_error, raw_err_out, known_sids=used_sids or None)
+        err_out = _format_cli_error(ssh_error, raw_err_out, known_sids=known)
 
     return GatewayCliResult(
         success=overall_ok,
@@ -423,17 +470,6 @@ async def execute_gateway_cli(
         )
         if ssh_result is not None:
             return ssh_result
-
-    if gateway_cli is not None and not fallback_to_cprid:
-        clean_ssh = redact_sid(ssh_error) if ssh_error else "SSH execution failed"
-        return GatewayCliResult(
-            success=False,
-            stdout="",
-            stderr=clean_ssh,
-            exit_code=1,
-            executor="ssh",
-            error_message=clean_ssh,
-        )
 
     async def _run_inline() -> GatewayCliResult:
         return await _run_inline_cprid(
@@ -479,6 +515,7 @@ async def execute_gateway_cli(
                     return await _run_inline()
                 return await _run_repo()
 
+            probe_exc: BaseException | None = None
             try:
                 repo_res = await _run_repo()
                 should_fallback = repo_res.error_code in (
@@ -495,8 +532,15 @@ async def execute_gateway_cli(
                         domain_fallback_inline[(target.mgmt_name, target.domain_name)] = True
                     return await _run_inline()
                 return repo_res
+            except BaseException as exc:
+                probe_exc = exc
+                raise
             finally:
-                auto_mode_resolver.abort_probe_if_unresolved(target.mgmt_name, target.domain_name)
+                auto_mode_resolver.abort_probe_if_unresolved(
+                    target.mgmt_name,
+                    target.domain_name,
+                    exc=probe_exc,
+                )
 
         dom_key = (target.mgmt_name, target.domain_name)
         if domain_fallback_inline is not None and domain_fallback_inline.get(dom_key):

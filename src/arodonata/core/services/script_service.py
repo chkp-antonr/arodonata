@@ -18,11 +18,13 @@ from arodonata.core.errors import (
     RepositoryScriptError,
     RepositoryScriptNotFoundError,
     RepositoryScriptPermissionError,
+    ServerIdentityError,
     SessionError,
     SessionStateError,
     ValidationError,
     is_script_permission_error,
     is_unsupported_script_command_error,
+    redact_sid,
 )
 from arodonata.core.models.common import ApiCallResult
 from arodonata.core.models.scripts import (
@@ -84,6 +86,7 @@ def _classify_api_error(
     operation: str,
     res: ApiCallResult,
     target_refs: Sequence[str] | None = None,
+    known_sids: Sequence[str] | None = None,
 ) -> RepositoryScriptError:
     """Map an unsuccessful Check Point Management `ApiCallResult` to a typed script error."""
     code = str(res.error_code or (res.data.get("code") if isinstance(res.data, dict) else "") or "")
@@ -97,25 +100,30 @@ def _classify_api_error(
             script_ref,
             operation=operation,
             message=msg,
+            known_sids=known_sids,
         )
     if is_unsupported_script_command_error(code, msg):
         return RepositoryScriptError(
             f"Check Point Script Repository API command {operation!r} is not supported on "
-            f"{mgmt_name!r} ({domain_label!r}): {msg}"
+            f"{mgmt_name!r} ({domain_label!r}): {msg}",
+            known_sids=known_sids,
         )
     if _is_not_found_text(code, msg):
         if operation == "run-script" and _is_target_not_found_in_run_script(msg.lower(), script_ref, target_refs):
             return RepositoryScriptError(
-                f"Repository script {operation!r} failed for {script_ref!r} on {mgmt_name!r} ({domain_label!r}): {msg}"
+                f"Repository script {operation!r} failed for {script_ref!r} on {mgmt_name!r} ({domain_label!r}): {msg}",
+                known_sids=known_sids,
             )
         return RepositoryScriptNotFoundError(
             mgmt_name,
             domain_label,
             script_ref,
             message=msg,
+            known_sids=known_sids,
         )
     return RepositoryScriptError(
-        f"Repository script {operation!r} failed for {script_ref!r} on {mgmt_name!r} ({domain_label!r}): {msg}"
+        f"Repository script {operation!r} failed for {script_ref!r} on {mgmt_name!r} ({domain_label!r}): {msg}",
+        known_sids=known_sids,
     )
 
 
@@ -643,6 +651,7 @@ class ScriptRepositoryService:
             payload["timeout"] = int(script_timeout)
 
         active_ws = None if sid is not None else get_write_session(mgmt_name=mgmt_name, domain_name=dom_key)
+        used_sids: list[str] = []
 
         async def _call_run_script(eff_sid: str | None, eff_ip: str | None) -> ApiCallResult:
             return await self._api.api_call(
@@ -657,8 +666,12 @@ class ScriptRepositoryService:
             )
 
         if sid is not None:
+            if sid:
+                used_sids.append(sid)
             res = await _call_run_script(sid, server_ip)
         elif active_ws is not None:
+            if active_ws.sid:
+                used_sids.append(active_ws.sid)
             res = await _call_run_script(active_ws.sid, active_ws.server_ip)
         elif session_getter is not None:
             try:
@@ -673,6 +686,8 @@ class ScriptRepositoryService:
                         message=str(exc),
                     ) from exc
                 raise
+            if ded_sid:
+                used_sids.append(ded_sid)
             res = await _call_run_script(ded_sid, ded_ip)
         else:
             try:
@@ -691,12 +706,21 @@ class ScriptRepositoryService:
                         message=str(exc),
                     ) from exc
                 raise
+            if ded_sid:
+                used_sids.append(ded_sid)
             try:
                 res = await _call_run_script(ded_sid, ded_ip)
+            except ServerIdentityError:
+                raise
+            except Exception as exc:
+                if ded_sid and len(ded_sid) >= 4 and ded_sid in str(exc):
+                    raise RepositoryScriptError(str(exc), known_sids=[ded_sid]) from None
+                raise
             finally:
                 with suppress(Exception):
                     await self._api.logout_sid(mgmt_name, ded_sid, server_ip=ded_ip)
 
+        known_sids = used_sids or None
         tasks_raw = res.data.get("tasks") if isinstance(res.data, dict) else None
         has_tasks = isinstance(tasks_raw, list) and len(tasks_raw) > 0
         if not res.success and not has_tasks:
@@ -707,6 +731,7 @@ class ScriptRepositoryService:
                 operation="run-script",
                 res=res,
                 target_refs=target_list,
+                known_sids=known_sids,
             )
 
         if (
@@ -720,6 +745,7 @@ class ScriptRepositoryService:
                 ref,
                 operation="run-script",
                 message=res.error_message,
+                known_sids=known_sids,
             )
 
         task_ids: list[str] = []
@@ -756,6 +782,8 @@ class ScriptRepositoryService:
                     )
                     stdout_str = decode_base64_task_message(str(raw_msg)) if raw_msg else ""
                     stderr_str = decode_base64_task_message(str(raw_err)) if raw_err else ""
+                    if stderr_str and known_sids:
+                        stderr_str = redact_sid(stderr_str, known_sids=known_sids)
                     status_desc = str(detail.get("statusDescription") or "").strip()
                     detail_status = str(detail.get("statusCode") or task_status or "").strip()
                     detail_ok = (
@@ -780,6 +808,9 @@ class ScriptRepositoryService:
                     )
             else:
                 t_label = str(task_dict.get("target") or (target_list[task_idx] if task_idx < len(target_list) else ""))
+                fallback_stderr = str(res.error_message or "") if not res.success else ""
+                if fallback_stderr and known_sids:
+                    fallback_stderr = redact_sid(fallback_stderr, known_sids=known_sids)
                 target_results.append(
                     ScriptTargetExecutionResult(
                         target=t_label,
@@ -788,7 +819,7 @@ class ScriptRepositoryService:
                         status=task_status,
                         success=task_ok and bool(res.success),
                         stdout="",
-                        stderr=str(res.error_message or "") if not res.success else "",
+                        stderr=fallback_stderr,
                     )
                 )
 
@@ -807,10 +838,14 @@ class ScriptRepositoryService:
 
         combined_stdout = "\n".join(r.stdout for r in target_results if r.stdout)
         combined_stderr = "\n".join(r.stderr for r in target_results if r.stderr)
+        if combined_stderr and known_sids:
+            combined_stderr = redact_sid(combined_stderr, known_sids=known_sids)
         overall_ok = bool(res.success) and (all(r.success for r in target_results) if target_results else True)
         err_msg: str | None = None
         if not overall_ok:
             err_msg = res.error_message or combined_stderr or "Repository script execution failed."
+            if known_sids:
+                err_msg = redact_sid(err_msg, known_sids=known_sids)
 
         return RepositoryScriptExecutionOutcome(
             mgmt_name=mgmt_name,

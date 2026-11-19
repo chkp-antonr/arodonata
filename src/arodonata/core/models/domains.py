@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from arodonata.core.errors import REDACTED_PLACEHOLDER
+from arodonata.core.errors import REDACTED_PLACEHOLDER, redact_sid
 from arodonata.core.models.common import SyncScope, SyncStatus, to_naive_utc, utc_now
 from arodonata.core.primitives import format_composite_id
 
@@ -96,6 +96,8 @@ class DomainSyncState(BaseModel):
             self.id = self.make_id(self.mgmt_name, self.domain_name, self.scope, self.item_type)
         self.last_published_at = to_naive_utc(self.last_published_at)
         self.synced_at = to_naive_utc(self.synced_at)
+        if self.last_error:
+            self.last_error = redact_sid(self.last_error)
 
     @staticmethod
     def make_id(mgmt_name: str, domain_name: str, scope: str, item_type: str = "*") -> str:
@@ -113,6 +115,10 @@ class RefreshOutcome(BaseModel):
     skipped_domains: list[str] = Field(default_factory=list)
     failed_domains: dict[str, str] = Field(default_factory=dict)
     total_items: int = 0
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.failed_domains:
+            self.failed_domains = {k: redact_sid(v) for k, v in self.failed_domains.items()}
 
 
 WarmupTaskStatus = Literal["running", "completed", "failed", "cancelled"]

@@ -3108,6 +3108,8 @@ Merge active `WriteSession` overlay from `contextvars` onto `cached_objects`.
 
 ### `arodonata/core/services/route_collector.py`
 
+> Backward-compatible re-export shim backed by `arodonata/core/services/topology/` (`route_scripts.py`, `route_parsers.py`, `route_executor.py`, and `route_collection.py`).
+
 Live gateway route collection, CLI execution, VSX `vsenv` scripts, and route table parsers.
 
 #### Module-Level Functions
@@ -3538,6 +3540,8 @@ Stream `SyncProgressEvent` items while synchronizing target domains concurrently
 Synchronize target domains and return the aggregated `RefreshOutcome`.
 
 ### `arodonata/core/services/topology_service.py`
+
+> Backward-compatible re-export shim backed by `arodonata/core/services/topology/` (`_shared.py`, `normalizer.py`, `objects.py`, `scoring.py`, `policy_rules.py`, `extractor.py`, `flow_matching.py`, `policy_matcher.py`, `diagnostics.py`, `reconciler.py`, `refresh.py`, `route_collection.py`, and `service.py`).
 
 Gateway interface topology extraction, caching, and affected gateway candidate matching (`TopologyService`).
 

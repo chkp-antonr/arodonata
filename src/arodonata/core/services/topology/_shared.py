@@ -11,17 +11,14 @@ from weakref import WeakKeyDictionary
 import arlogi
 
 from arodonata.core.errors import ServerIdentityError
-from arodonata.core.events import SyncProgressEvent
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import CacheMode
 from arodonata.core.models.domains import RefreshOutcome
-from arodonata.core.models.objects import CPObject
 from arodonata.core.models.scripts import CpridScriptMode
 from arodonata.core.models.topology import (
     AntiSpoofingMode,
     ConfidenceDelta,
     GatewayCliTarget,
-    GatewayTopologyEntry,
     RouteCollectionOutcome,
     TopologyZone,
 )
@@ -38,8 +35,10 @@ from arodonata.core.ports import (
 from arodonata.core.primitives import normalize_str_sequence
 from arodonata.core.services.sync_coordinator import resolve_loop_state
 
-# Shared loggers preserved at canonical legacy names so monkeypatching `topology_service.logger`
-# or `route_collector.logger` intercepts log calls emitted by every topology submodule.
+# Shared logger instances preserved at canonical legacy logger names so monkeypatching methods on
+# `topology_service.logger` (for example `monkeypatch.setattr(topology_service.logger, "warning", ...)`)
+# intercepts log calls emitted across topology submodules. `route_logger` is exported as
+# `route_collector.logger` for shim compatibility.
 logger = arlogi.get_logger("arodonata.core.services.topology_service")
 route_logger = arlogi.get_logger("arodonata.core.services.route_collector")
 
@@ -297,24 +296,3 @@ class _CollectRoutesFn(Protocol):
         repository_script_name: str | None = None,
         repository_script_args_fn: RepositoryScriptArgsCallable | None = None,
     ) -> RouteCollectionOutcome: ...
-
-
-class _ExtractDomainEntriesFn(Protocol):
-    """Callback protocol matching `TopologyService._extract_domain_topology_entries`."""
-
-    async def __call__(
-        self,
-        *,
-        mgmt_name: str,
-        domain_name: str,
-        assets: Sequence[Asset],
-        objects: Sequence[CPObject],
-        target_gateway_uids: set[str] | None = None,
-        allow_live_detail: bool = True,
-        force_object_refresh: bool = False,
-        trusted_object_domains: set[str] | None = None,
-        already_detailed_uids: set[str] | None = None,
-        global_cache: dict[str, list[CPObject]] | None = None,
-        global_lock: asyncio.Lock | None = None,
-        emit: Callable[[SyncProgressEvent], Awaitable[None]] | None = None,
-    ) -> tuple[list[GatewayTopologyEntry], list[Asset]]: ...

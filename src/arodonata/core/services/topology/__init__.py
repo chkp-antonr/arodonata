@@ -5,7 +5,6 @@ from arodonata.core.services.topology._shared import (
     POLICY_GATEWAY_TYPES,
     is_policy_enforcing_gateway,
 )
-from arodonata.core.services.topology.route_collection import collect_gateway_routes
 from arodonata.core.services.topology.route_executor import execute_gateway_cli
 from arodonata.core.services.topology.route_parsers import (
     decode_cprid_task_output,
@@ -43,7 +42,6 @@ __all__ = [
     "TopologyService",
     "build_route_collection_repository_script",
     "build_route_collection_script",
-    "collect_gateway_routes",
     "decode_cprid_task_output",
     "execute_gateway_cli",
     "format_route_collection_repository_args",
