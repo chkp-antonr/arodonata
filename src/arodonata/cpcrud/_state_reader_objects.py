@@ -42,25 +42,37 @@ class _ObjectLookupMixin(_HybridStateReaderBase):
             return virt
 
         if await self.is_slice_cache_fresh(mgmt_name, domain_name, "objects", obj_type):
+            lookup_names = [name, f".{name}"] if (obj_type == "dns-domain" and not name.startswith(".")) else [name]
             try:
                 objs = await self._cache.get_objects(
                     mgmt_name=mgmt_name,
                     domain_name=domain_name,
                     types=[obj_type],
-                    names=[name],
+                    names=lookup_names,
                 )
             except Exception as exc:
                 raise StateLookupError(
                     f"Cache lookup failed for {obj_type} {name!r} in {mgmt_name}:{domain_name}: {exc}"
                 ) from exc
             for item in objs:
+                if item.name != name:
+                    continue
                 resolved = _apply_fetched_entity_overlay(obj_type, item, del_set, virt_map)
                 if resolved is not None:
                     return resolved
-            if obj_type == "dns-domain" and not name.startswith(".") and f"name:dns-domain:.{name}" not in del_set:
-                dot_virt = virt_map.get(f"name:dns-domain:.{name}")
+            if obj_type == "dns-domain" and not name.startswith("."):
+                dot_name = f".{name}"
+                if f"name:dns-domain:{dot_name}" in del_set:
+                    return None
+                dot_virt = virt_map.get(f"name:dns-domain:{dot_name}")
                 if dot_virt is not None:
                     return dot_virt
+                for item in objs:
+                    if item.name != dot_name:
+                        continue
+                    resolved = _apply_fetched_entity_overlay(obj_type, item, del_set, virt_map)
+                    if resolved is not None:
+                        return resolved
             return None
 
         # Fallback to live API call

@@ -303,7 +303,7 @@ class Planner:
         )
 
         actions: list[PlannedAction] = []
-        global_name_resolutions: dict[str, str] = {}
+        global_res_by_domain: dict[tuple[str, str], dict[str, str]] = {}
         action_seq = 0
 
         for t in targets:
@@ -328,6 +328,7 @@ class Planner:
             failed_action_ids_by_domain: dict[tuple[str, str], set[str]] = {}
             domain_resolutions: dict[tuple[str, str], dict[str, str]] = {}
             action_ids_by_ref_by_domain: dict[tuple[str, str], dict[str, str]] = {}
+            entity_action_ids_by_domain: dict[tuple[str, str], dict[tuple[str, str], str]] = {}
 
             steps = self._collect_ordered_steps(t)
             for kind, step_spec in steps:
@@ -348,6 +349,7 @@ class Planner:
                 failed_refs = failed_refs_by_domain.setdefault(dom_key, set())
                 failed_ids = failed_action_ids_by_domain.setdefault(dom_key, set())
                 res_map = domain_resolutions.setdefault(dom_key, {})
+                dom_global_res = global_res_by_domain.setdefault(dom_key, {})
 
                 if step_stamp is None or not step_stamp.readable:
                     err_reason = (step_stamp.error if step_stamp else None) or "show-last-published-session failed"
@@ -388,6 +390,7 @@ class Planner:
                     broken_deps.extend(sorted(r for r in step_refs if r in failed_refs))
 
                 ref_action_ids = action_ids_by_ref_by_domain.setdefault(dom_key, {})
+                entity_action_ids = entity_action_ids_by_domain.setdefault(dom_key, {})
                 inferred_deps: list[str] = []
                 for ref in sorted(step_refs):
                     resolved_ref = res_map.get(ref, ref)
@@ -467,6 +470,23 @@ class Planner:
                         res_map=res_map,
                     )
 
+                if kind in ("object", "service", "group"):
+                    if act.outcome in (Outcome.UPDATE, Outcome.DELETE):
+                        dep_cands = [
+                            entity_action_ids.get(("uid", act.target_uid)) if act.target_uid else None,
+                            entity_action_ids.get((act.object_type, act.name)) if act.name else None,
+                            entity_action_ids.get((act.object_type, act.requested_name))
+                            if act.requested_name
+                            else None,
+                        ]
+                        for aid in dep_cands:
+                            if aid and aid != act.action_id and aid not in inferred_deps:
+                                inferred_deps.append(aid)
+                    elif act.outcome == Outcome.CREATE and act.name:
+                        prev_aid = entity_action_ids.get((act.object_type, act.name))
+                        if prev_aid and prev_aid != act.action_id and prev_aid not in inferred_deps:
+                            inferred_deps.append(prev_aid)
+
                 merged_deps = list(dict.fromkeys([*explicit_deps, *inferred_deps, *act.depends_on]))
                 if merged_deps and merged_deps != act.depends_on:
                     act = act.model_copy(update={"depends_on": merged_deps})
@@ -477,16 +497,25 @@ class Planner:
                         failed_refs.add(act.requested_name)
                     if act.name:
                         failed_refs.add(act.name)
-                    failed_ids.add(act.action_id)
+                    failed_ids.add(action_id)
                 else:
                     if act.outcome == Outcome.DELETE:
                         deleted_names = {n for n in (act.name, act.resolved_name) if n}
-                        for rk in [k for k, v in res_map.items() if k in deleted_names or v in deleted_names]:
-                            res_map.pop(rk, None)
+                        for target_map in (res_map, dom_global_res):
+                            for rk in [k for k, v in target_map.items() if k in deleted_names or v in deleted_names]:
+                                target_map.pop(rk, None)
+                        for n in deleted_names:
+                            ref_action_ids.pop(n, None)
+                            entity_action_ids[(act.object_type, n)] = act.action_id
+                        if act.target_uid:
+                            entity_action_ids.pop(("uid", act.target_uid), None)
                     else:
+                        if act.resolved_name:
+                            res_map.pop(act.resolved_name, None)
+                            dom_global_res.pop(act.resolved_name, None)
                         if act.requested_name and act.resolved_name and act.requested_name != act.resolved_name:
                             res_map[act.requested_name] = act.resolved_name
-                            global_name_resolutions[act.requested_name] = act.resolved_name
+                            dom_global_res[act.requested_name] = act.resolved_name
                         if (
                             act.outcome == Outcome.UPDATE
                             and act.name
@@ -494,12 +523,18 @@ class Planner:
                             and act.name != act.resolved_name
                         ):
                             res_map[act.name] = act.resolved_name
-                            global_name_resolutions[act.name] = act.resolved_name
+                            dom_global_res[act.name] = act.resolved_name
                     if act.outcome in (Outcome.CREATE, Outcome.UPDATE):
                         for ref_key in (act.requested_name, act.resolved_name, act.name):
                             if ref_key:
                                 ref_action_ids[ref_key] = act.action_id
+                                entity_action_ids[(act.object_type, ref_key)] = act.action_id
+                        if act.target_uid:
+                            entity_action_ids[("uid", act.target_uid)] = act.action_id
+                        if act.outcome == Outcome.CREATE and act.name:
+                            entity_action_ids[("uid", f"planned:{act.object_type}:{act.name}")] = act.action_id
 
+        global_name_resolutions = {k: v for dom_map in global_res_by_domain.values() for k, v in dom_map.items()}
         return Plan(
             created_at=self._now(),
             domain_stamps=domain_stamps,

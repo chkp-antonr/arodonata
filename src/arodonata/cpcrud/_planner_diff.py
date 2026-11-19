@@ -16,7 +16,12 @@ from arodonata.cpcrud._planner_helpers import (
     _entity_wire_identity,
     _make_error_action,
 )
-from arodonata.cpcrud.differ import DiffSafetyError, compute_object_diff, compute_service_diff
+from arodonata.cpcrud.differ import (
+    DiffSafetyError,
+    compute_object_diff,
+    compute_service_diff,
+    parse_existing_member_entries,
+)
 from arodonata.cpcrud.models import ConflictPolicy, FieldChange, Outcome, PlannedAction
 from arodonata.cpcrud.state_reader import HybridStateReader, StateLookupError
 
@@ -204,8 +209,12 @@ def _plan_create_entity(
         reader.record_virtual_service(CPService.from_cp_dict(mgmt_name, domain_name, virt_data))
     else:
         reader.record_virtual_object(CPObject.from_cp_dict(mgmt_name, domain_name, virt_data))
+    if target_create_name:
+        res_map.pop(target_create_name, None)
     if req_name and target_create_name != req_name:
         res_map[req_name] = target_create_name
+    elif req_name:
+        res_map.pop(req_name, None)
     return PlannedAction(
         action_id=action_id,
         mgmt_name=mgmt_name,
@@ -230,94 +239,71 @@ def _compute_post_update_members(
     update_payload: Mapping[str, Any],
 ) -> tuple[list[str], list[dict[str, Any]]]:
     """Compute post-update `(members, raw_data_members)` for `group` and `service-group` overlays."""
-    raw_existing = raw_data.get("members") if isinstance(raw_data, Mapping) else None
-    existing_dicts: list[dict[str, Any]] = []
+    existing_dicts = parse_existing_member_entries(existing_members, raw_data)
     by_token: dict[str, dict[str, Any]] = {}
+    for entry in existing_dicts:
+        u = str(entry.get("uid") or "").strip()
+        n = str(entry.get("name") or "").strip()
+        if u:
+            by_token[u] = entry
+        if n:
+            by_token[n] = entry
 
-    if isinstance(raw_existing, list) and raw_existing:
-        for item in raw_existing:
-            if isinstance(item, Mapping):
-                entry = dict(item)
-                existing_dicts.append(entry)
+    if "members" in update_payload:
+        member_spec = update_payload["members"]
+        new_members: list[str] = []
+        new_raw_members: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        if isinstance(member_spec, list):
+            for raw_m in member_spec:
+                tok = str(raw_m).strip()
+                if not tok:
+                    continue
+                matched = by_token.get(tok)
+                if matched is not None:
+                    entry = dict(matched)
+                    member_id = str(entry.get("uid") or entry.get("name") or tok)
+                else:
+                    entry = {"name": tok}
+                    member_id = tok
+                if member_id not in seen_ids:
+                    seen_ids.add(member_id)
+                    new_members.append(member_id)
+                    new_raw_members.append(entry)
+            return new_members, new_raw_members
+
+        if isinstance(member_spec, Mapping):
+            diff_entry = diffs.get("members")
+            removed_raw = diff_entry.removed_items if diff_entry is not None else (member_spec.get("remove") or [])
+            added_raw = diff_entry.added_items if diff_entry is not None else (member_spec.get("add") or [])
+            removed_tokens = {str(x).strip() for x in removed_raw if str(x).strip()}
+
+            surviving_tokens: set[str] = set()
+            for entry in existing_dicts:
                 u = str(entry.get("uid") or "").strip()
                 n = str(entry.get("name") or "").strip()
-                if u:
-                    by_token[u] = entry
-                if n:
-                    by_token[n] = entry
-            elif isinstance(item, str) and item.strip():
-                tok = item.strip()
-                entry = {"name": tok}
-                existing_dicts.append(entry)
-                by_token[tok] = entry
-    else:
-        for m in existing_members:
-            tok = str(m).strip()
-            if tok:
-                entry = {"name": tok}
-                existing_dicts.append(entry)
-                by_token[tok] = entry
+                if (u and u in removed_tokens) or (n and n in removed_tokens):
+                    continue
+                member_id = u or n
+                if member_id and member_id not in seen_ids:
+                    seen_ids.add(member_id)
+                    new_members.append(member_id)
+                    new_raw_members.append(dict(entry))
+                    if u:
+                        surviving_tokens.add(u)
+                    if n:
+                        surviving_tokens.add(n)
 
-    if "members" not in update_payload:
-        surviving_ids = [
-            str(d.get("uid") or d.get("name") or "") for d in existing_dicts if d.get("uid") or d.get("name")
-        ]
-        return surviving_ids, existing_dicts
-
-    member_spec = update_payload["members"]
-    new_members: list[str] = []
-    new_raw_members: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
-
-    if isinstance(member_spec, list):
-        for raw_m in member_spec:
-            tok = str(raw_m).strip()
-            if not tok:
-                continue
-            matched = by_token.get(tok)
-            if matched is not None:
-                entry = dict(matched)
-                member_id = str(entry.get("uid") or entry.get("name") or tok)
-            else:
-                entry = {"name": tok}
-                member_id = tok
-            if member_id not in seen_ids:
-                seen_ids.add(member_id)
-                new_members.append(member_id)
-                new_raw_members.append(entry)
-        return new_members, new_raw_members
-
-    if isinstance(member_spec, Mapping):
-        diff_entry = diffs.get("members")
-        removed_raw = diff_entry.removed_items if diff_entry is not None else (member_spec.get("remove") or [])
-        added_raw = diff_entry.added_items if diff_entry is not None else (member_spec.get("add") or [])
-        removed_tokens = {str(x).strip() for x in removed_raw if str(x).strip()}
-
-        surviving_tokens: set[str] = set()
-        for entry in existing_dicts:
-            u = str(entry.get("uid") or "").strip()
-            n = str(entry.get("name") or "").strip()
-            if (u and u in removed_tokens) or (n and n in removed_tokens):
-                continue
-            member_id = u or n
-            if member_id and member_id not in seen_ids:
-                seen_ids.add(member_id)
-                new_members.append(member_id)
-                new_raw_members.append(dict(entry))
-                if u:
-                    surviving_tokens.add(u)
-                if n:
-                    surviving_tokens.add(n)
-
-        for raw_add in added_raw:
-            tok = str(raw_add).strip()
-            if not tok or tok in surviving_tokens or tok in seen_ids:
-                continue
-            seen_ids.add(tok)
-            surviving_tokens.add(tok)
-            new_members.append(tok)
-            new_raw_members.append({"name": tok})
-        return new_members, new_raw_members
+            for raw_add in added_raw:
+                tok = str(raw_add).strip()
+                if not tok or tok in surviving_tokens or tok in seen_ids:
+                    continue
+                seen_ids.add(tok)
+                surviving_tokens.add(tok)
+                new_members.append(tok)
+                new_raw_members.append({"name": tok})
+            return new_members, new_raw_members
 
     surviving_ids = [str(d.get("uid") or d.get("name") or "") for d in existing_dicts if d.get("uid") or d.get("name")]
     return surviving_ids, existing_dicts

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +12,7 @@ from arodonata import cpcrud as cpcrud_pkg
 from arodonata import reports as reports_pkg
 from arodonata import rulebase as rulebase_pkg
 from arodonata.adapters.storage import DatabaseManager, SqlCacheAdapter
+from arodonata.core.errors import REDACTED_PLACEHOLDER
 from arodonata.core.events import DomainSyncProgressEvent, SyncProgressEvent
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
 from arodonata.core.models.domains import DomainSyncState
@@ -28,6 +29,7 @@ from arodonata.cpcrud.state_reader import HybridStateReader, StateLookupError, n
 from arodonata.reports import collector as reports_collector_mod
 from arodonata.reports import renderer as reports_renderer_mod
 from arodonata.reports.collector import collect_change_report, is_bare_uid
+from arodonata.reports.models import OwnedSession, RangeScope, SessionScope
 from arodonata.reports.renderer import build_change_report, render_change_report
 from arodonata.rulebase import collector as rulebase_collector_mod
 from arodonata.rulebase import refresh as rulebase_refresh_mod
@@ -572,7 +574,12 @@ class _BfsParityFakeApi:
                     ]
                 },
             )
-        if command in ("show-access-layers", "show-https-layers", "show-threat-layers"):
+        if command == "show-access-layers":
+            return ApiCallResult(
+                success=True,
+                data={"access-layers": [{"uid": "layer-inline", "name": "Inline_Sub"}]},
+            )
+        if command in ("show-https-layers", "show-threat-layers"):
             return ApiCallResult(success=True, data={"objects": []})
         if command == "show-access-rulebase":
             target = req.get("uid") or req.get("name")
@@ -719,6 +726,12 @@ async def test_rulebase_shared_bfs_produces_identical_slice_and_snapshot_models_
     assert ("layer-global", None, None, True) in [
         (layer.uid, layer.parent_layer_uid, layer.parent_rule_uid, layer.is_global) for layer in full_snap.layers
     ]
+    assert ("layer-dom", "layer-global", "r-ph", False) in [
+        (layer.uid, layer.parent_layer_uid, layer.parent_rule_uid, layer.is_global) for layer in full_snap.layers
+    ]
+    assert ("layer-inline", "layer-dom", "r-dom-1", False) in [
+        (layer.uid, layer.parent_layer_uid, layer.parent_rule_uid, layer.is_global) for layer in full_snap.layers
+    ]
     assert [
         (r.layer_uid, r.uid, r.placeholder_domain_layer_uid, r.inline_layer_uid) for r in slice_snap.access_rules
     ] == [(r.layer_uid, r.uid, r.placeholder_domain_layer_uid, r.inline_layer_uid) for r in full_snap.access_rules]
@@ -727,7 +740,352 @@ async def test_rulebase_shared_bfs_produces_identical_slice_and_snapshot_models_
     ]
 
 
-@pytest.mark.spec("SCN-CLIENT-018-1")
+@pytest.mark.asyncio
+@pytest.mark.spec("SCN-CPCRUD-003-6")
+async def test_planner_rename_then_recreate_old_name_and_delete_prunes_plan_resolutions() -> None:
+    """SCN-CPCRUD-003-6: Recreating a renamed-away name clears stale res_map aliases and DELETE prunes Plan.name_resolutions."""
+    db = DatabaseManager(engine="sqlite+aiosqlite:///:memory:")
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        await _seed_all_fresh(
+            cache,
+            objects=[
+                CPObject(
+                    uid="u-a", name="A", type="host", mgmt_name="mds1", domain_name="Corp", ipv4_address="10.1.1.1"
+                ),
+                CPObject(
+                    uid="u-reused",
+                    name="h_10.0.0.5",
+                    type="host",
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    ipv4_address="10.0.0.5",
+                ),
+            ],
+        )
+        planner = Planner(api=_OverlayFakeApi(), cache=cache)
+        plan = await planner.decide(
+            {
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "on_ip_conflict": "reuse",
+                "operations": [
+                    {"id": "rename-a", "type": "host", "operation": "set", "name": "A", "new-name": "B"},
+                    {"id": "recreate-a", "type": "host", "operation": "add", "name": "A", "ipv4-address": "10.1.1.2"},
+                    {
+                        "id": "grp-uses-a",
+                        "type": "group",
+                        "operation": "add",
+                        "name": "G_A",
+                        "members": ["A"],
+                        "groups": ["Parent_Grp"],
+                        "ignore-warnings": True,
+                        "set-if-exists": True,
+                    },
+                    {
+                        "id": "reuse-web",
+                        "type": "host",
+                        "operation": "present",
+                        "name": "web",
+                        "ipv4-address": "10.0.0.5",
+                    },
+                    {"id": "del-reused", "type": "host", "operation": "absent", "name": "h_10.0.0.5"},
+                ],
+            }
+        )
+        by_id = {a.action_id: a for a in plan.actions}
+        assert by_id["rename-a"].outcome == Outcome.UPDATE
+        assert by_id["recreate-a"].outcome == Outcome.CREATE
+        assert "rename-a" in by_id["recreate-a"].depends_on
+        assert by_id["grp-uses-a"].outcome == Outcome.CREATE
+        assert by_id["grp-uses-a"].payload["members"] == ["A"]
+        assert by_id["grp-uses-a"].payload["groups"] == ["Parent_Grp"]
+        assert by_id["grp-uses-a"].payload["ignore-warnings"] is True
+        assert by_id["grp-uses-a"].payload["set-if-exists"] is True
+        assert "recreate-a" in by_id["grp-uses-a"].depends_on
+        assert "rename-a" not in by_id["grp-uses-a"].depends_on
+        assert by_id["reuse-web"].outcome == Outcome.REUSE
+        assert by_id["del-reused"].outcome == Outcome.DELETE
+        assert "A" not in plan.name_resolutions
+        assert "web" not in plan.name_resolutions
+        assert "h_10.0.0.5" not in plan.name_resolutions
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.spec("SCN-CPCRUD-003-6")
+async def test_planner_fresh_cache_dns_domain_leading_dot_parity() -> None:
+    """SCN-CPCRUD-003-6: Fresh cache dns-domain lookup matches live API leading-dot semantics."""
+    db_fresh = DatabaseManager(engine="sqlite+aiosqlite:///:memory:")
+    db_cold = DatabaseManager(engine="sqlite+aiosqlite:///:memory:")
+    await db_fresh.initialize()
+    await db_cold.initialize()
+    try:
+        fresh_cache = SqlCacheAdapter(db_fresh)
+        cold_cache = SqlCacheAdapter(db_cold)
+        dot_domain = CPObject(
+            uid="u-dns-dot",
+            name=".example.com",
+            type="dns-domain",
+            mgmt_name="mds1",
+            domain_name="Corp",
+            is_sub_domain=True,
+            comments="initial",
+        )
+        await _seed_all_fresh(fresh_cache, objects=[dot_domain])
+
+        template = {
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "operations": [
+                {
+                    "id": "dns-present",
+                    "type": "dns-domain",
+                    "operation": "present",
+                    "name": "example.com",
+                    "is-sub-domain": True,
+                    "comments": "initial",
+                },
+                {
+                    "id": "dns-update",
+                    "type": "dns-domain",
+                    "operation": "set",
+                    "name": "example.com",
+                    "comments": "updated",
+                },
+                {"id": "dns-del", "type": "dns-domain", "operation": "absent", "name": "example.com"},
+                {"id": "dns-del-again", "type": "dns-domain", "operation": "absent", "name": "example.com"},
+            ],
+        }
+        api_live = _OverlayFakeApi(
+            dns_domains={
+                ".example.com": {
+                    "uid": "u-dns-dot",
+                    "name": ".example.com",
+                    "type": "dns-domain",
+                    "is-sub-domain": True,
+                    "comments": "initial",
+                }
+            }
+        )
+        fresh_plan = await Planner(api=_OverlayFakeApi(), cache=fresh_cache).decide(template)
+        live_plan = await Planner(api=api_live, cache=cold_cache).decide(template)
+
+        assert [(a.action_id, a.outcome, a.name, a.payload) for a in fresh_plan.actions] == [
+            (a.action_id, a.outcome, a.name, a.payload) for a in live_plan.actions
+        ]
+        assert [a.outcome for a in fresh_plan.actions] == [
+            Outcome.UNCHANGED,
+            Outcome.UPDATE,
+            Outcome.DELETE,
+            Outcome.UNCHANGED,
+        ]
+        assert fresh_plan.actions[1].name == ".example.com"
+    finally:
+        await db_fresh.close()
+        await db_cold.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.spec("SCN-CPCRUD-003-6", "SCN-CPCRUD-010-4")
+async def test_executor_skips_same_template_update_and_delete_when_create_fails_and_uses_instance_hooks() -> None:
+    """SCN-CPCRUD-003-6 / SCN-CPCRUD-010-4: Failed CREATE skips follow-up SET/DELETE and Executor hooks intercept pass checks."""
+
+    class _ApplyFailFakeApi(_OverlayFakeApi):
+        def __init__(self) -> None:
+            super().__init__()
+            self.write_commands: list[tuple[str, dict[str, Any]]] = []
+
+        async def api_call(
+            self,
+            mgmt_name: str,
+            command: str,
+            payload: dict[str, Any] | None = None,
+            *,
+            domain: str | None = None,
+            sid: str | None = None,
+            server_ip: str | None = None,
+            wait_for_task: bool = True,
+            timeout: float | None = None,
+        ) -> ApiCallResult:
+            req = dict(payload or {})
+            if command in ("add-host", "set-host", "delete-host"):
+                self.write_commands.append((command, req))
+            if command == "add-host" and req.get("name") == "web-fail":
+                return ApiCallResult(success=False, status_code=400, error_code="err", error_message="bad host")
+            if command in ("add-host", "set-host"):
+                return ApiCallResult(success=True, data={"uid": "u-ok", "name": req.get("name")})
+            if command == "publish":
+                return ApiCallResult(success=True, data={"uid": "pub-wave5-2"})
+            if command == "discard":
+                return ApiCallResult(success=True, data={})
+            return await super().api_call(
+                mgmt_name,
+                command,
+                payload,
+                domain=domain,
+                sid=sid,
+                server_ip=server_ip,
+                wait_for_task=wait_for_task,
+                timeout=timeout,
+            )
+
+    db = DatabaseManager(engine="sqlite+aiosqlite:///:memory:")
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        await _seed_all_fresh(cache)
+        api = _ApplyFailFakeApi()
+        planner = Planner(api=api, cache=cache)
+        plan = await planner.decide(
+            {
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "operations": [
+                    {
+                        "id": "ok-create",
+                        "type": "host",
+                        "operation": "add",
+                        "name": "web-ok",
+                        "ipv4-address": "10.3.0.1",
+                    },
+                    {"id": "ok-upd", "type": "host", "operation": "set", "name": "web-ok", "comments": "v2"},
+                    {
+                        "id": "fail-create",
+                        "type": "host",
+                        "operation": "add",
+                        "name": "web-fail",
+                        "ipv4-address": "10.3.0.2",
+                    },
+                    {"id": "fail-upd", "type": "host", "operation": "set", "name": "web-fail", "comments": "never"},
+                    {"id": "fail-del", "type": "host", "operation": "absent", "name": "web-fail"},
+                ],
+            }
+        )
+        by_id = {a.action_id: a for a in plan.actions}
+        assert "ok-create" in by_id["ok-upd"].depends_on
+        assert "fail-create" in by_id["fail-upd"].depends_on
+        assert "fail-upd" in by_id["fail-del"].depends_on
+
+        executor = Executor(api=api)
+        head_checks: list[tuple[str, str]] = []
+        invalidations: list[tuple[str, str | None]] = []
+
+        async def _hook_head(mgmt_name: str, domain_name: str) -> tuple[bool, str | None, datetime | None, str | None]:
+            head_checks.append((mgmt_name, domain_name))
+            stamp = plan.domain_stamps["mds1:Corp"]
+            return stamp.readable, stamp.last_session_uid, stamp.last_published_at, None
+
+        def _hook_invalidate(mgmt_name: str, domain_name: str | None) -> None:
+            invalidations.append((mgmt_name, domain_name))
+
+        executor._check_current_domain_head = _hook_head  # type: ignore[method-assign]
+        executor._invalidate_domain = _hook_invalidate  # type: ignore[method-assign]
+
+        report = await executor.apply(plan)
+        res_by_id = {r.action_id: r for r in report.results}
+        assert res_by_id["ok-create"].outcome == Outcome.CREATE
+        assert res_by_id["ok-upd"].outcome == Outcome.UPDATE
+        assert res_by_id["fail-create"].outcome == Outcome.ERROR
+        assert res_by_id["fail-upd"].outcome == Outcome.SKIPPED_DEPENDENCY
+        assert res_by_id["fail-del"].outcome == Outcome.SKIPPED_DEPENDENCY
+        assert [cmd for cmd, _ in api.write_commands] == ["add-host", "set-host", "add-host"]
+        assert len(head_checks) >= 2
+        assert invalidations == [("mds1", "Corp")]
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.spec("SCN-REPORT-003-2")
+async def test_reports_discover_target_sessions_redacts_sids_in_warnings_and_raw_responses() -> None:
+    """SCN-REPORT-003-2: Session discovery redacts caller/header SID tokens in warnings and RawResponse payloads."""
+
+    class _LeakySessionsApi:
+        async def api_query(self, mgmt_name: str, command: str, *args: Any, **kwargs: Any) -> ApiQueryResult:
+            if command == "show-sessions" and kwargs.get("domain") == "DomErr":
+                raise RuntimeError("transport failed with sid-secret-999 and X-chkp-sid: header-sid-888")
+            if command == "show-sessions" and kwargs.get("domain") == "DomFail":
+                return ApiQueryResult(
+                    success=False,
+                    error_message="denied for sid-secret-999 X-chkp-sid=header-sid-777",
+                    code="err",
+                )
+            if command == "show-sessions":
+                return ApiQueryResult(
+                    success=True,
+                    total=1,
+                    objects=[
+                        {
+                            "uid": "s-1",
+                            "name": "ok",
+                            "sid": "sid-secret-999",
+                            "publish-time": {"iso-8601": "2026-11-19T12:00:00Z"},
+                        }
+                    ],
+                )
+            return ApiQueryResult(success=True, objects=[], total=0)
+
+        async def api_call(
+            self, mgmt_name: str, command: str, payload: dict[str, Any] | None = None, **kwargs: Any
+        ) -> ApiCallResult:
+            if command == "show-session":
+                return ApiCallResult(
+                    success=True,
+                    data={"uid": (payload or {}).get("uid", "s-1"), "state": "published", "changes": 0},
+                )
+            if command == "show-changes":
+                return ApiCallResult(success=True, data={"tasks": [{"changes": []}]})
+            return ApiCallResult(success=True, data={})
+
+        async def create_dedicated_session(self, *args: Any, **kwargs: Any) -> tuple[str, str]:
+            return "sid-unused", "10.0.0.1"
+
+        async def logout_sid(self, *args: Any, **kwargs: Any) -> bool:
+            return True
+
+        async def close(self, *, logout: bool | None = None) -> None:
+            return None
+
+    db = DatabaseManager(engine="sqlite+aiosqlite:///:memory:")
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        start_dt = datetime(2026, 11, 1, tzinfo=UTC)
+        end_dt = datetime(2026, 11, 20, tzinfo=UTC)
+        report = await collect_change_report(
+            _LeakySessionsApi(),
+            cache,
+            [
+                SessionScope(
+                    mgmt_name="mds1",
+                    domain="DomOk",
+                    session_uids=["s-1"],
+                    owned_sessions=OwnedSession(
+                        mgmt_name="mds1", domain="DomOk", session_uid="s-1", sid="sid-secret-999"
+                    ),
+                ),
+                RangeScope(mgmt_name="mds1", domain="DomErr", from_date=start_dt, to_date=end_dt),
+                RangeScope(mgmt_name="mds1", domain="DomFail", from_date=start_dt, to_date=end_dt),
+                RangeScope(mgmt_name="mds1", domain="DomOk", from_date=start_dt, to_date=end_dt),
+            ],
+        )
+        serialized = report.model_dump_json()
+        assert "sid-secret-999" not in serialized
+        assert "header-sid-888" not in serialized
+        assert "header-sid-777" not in serialized
+        session_warnings = [w for w in report.warnings if w.code == "session_fetch_failed"]
+        assert len(session_warnings) == 2
+        assert all(REDACTED_PLACEHOLDER in w.message for w in session_warnings)
+        raw_show_sessions = [r for r in report.raw_responses if r.command == "show-sessions"]
+        assert len(raw_show_sessions) == 1
+        assert REDACTED_PLACEHOLDER in str(raw_show_sessions[0].response)
+    finally:
+        await db.close()
+
+
 def test_wave5_compat_imports_logger_traced_parity_and_loc_limits() -> None:
     """Verify backward-compatible shims, logger names, 10 @traced span names, and <=700 LOC module bounds."""
     assert cpcrud_pkg.Planner is planner_mod.Planner is Planner

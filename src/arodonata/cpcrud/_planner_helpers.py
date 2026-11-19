@@ -15,7 +15,7 @@ from arodonata.core.models.rulebase import (
     ThreatRuleEntry,
 )
 from arodonata.core.models.services import CPService
-from arodonata.cpcrud.differ import DiffSafetyError, resolve_member_reference
+from arodonata.cpcrud.differ import DiffSafetyError, _resolve_existing_member_names, resolve_member_reference
 from arodonata.cpcrud.models import FieldChange, Outcome, PlannedAction
 from arodonata.cpcrud.rule_identity import (
     RuleEntryUnion,
@@ -210,21 +210,7 @@ def _extract_group_references(spec: Mapping[str, Any]) -> set[str]:
 
 def _extract_prior_members(existing_members: Sequence[str], raw_data: Mapping[str, Any] | None) -> list[str]:
     """Extract readable member names (or UIDs) from `raw_data['members']` or `existing_members`."""
-    raw_members = raw_data.get("members") if isinstance(raw_data, Mapping) else None
-    if isinstance(raw_members, list):
-        names: list[str] = []
-        for m in raw_members:
-            if isinstance(m, Mapping):
-                val = m.get("name") or m.get("uid")
-                if val is not None and str(val).strip():
-                    names.append(str(val).strip())
-            elif isinstance(m, str) and m.strip():
-                names.append(m.strip())
-        if names:
-            return names
-        if len(raw_members) == 0:
-            return []
-    return list(existing_members)
+    return _resolve_existing_member_names(existing_members, raw_data)
 
 
 def _extract_raw_group_names(raw_data: Mapping[str, Any] | None) -> list[str]:
@@ -562,12 +548,7 @@ def _build_add_group_payload(
     elif isinstance(raw_members, dict):
         adds = raw_members.get("add") or []
         payload["members"] = [resolve_member_reference(str(m), name_resolutions) for m in adds]
-    if "comments" in spec and spec["comments"] is not None:
-        payload["comments"] = str(spec["comments"])
-    if "color" in spec and spec["color"] is not None:
-        payload["color"] = str(spec["color"])
-    if "tags" in spec and isinstance(spec["tags"], list):
-        payload["tags"] = [str(t) for t in spec["tags"]]
+    _append_common_create_metadata(payload, spec)
     return payload
 
 

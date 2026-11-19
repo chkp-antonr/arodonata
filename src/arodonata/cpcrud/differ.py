@@ -46,24 +46,46 @@ def resolve_member_reference(
     return clean
 
 
+def parse_existing_member_entries(
+    existing_members: Sequence[str],
+    raw_data: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Normalize existing group/service-group members into ordered `{uid, name, ...}` dicts."""
+    raw_members = raw_data.get("members") if isinstance(raw_data, Mapping) else None
+    if isinstance(raw_members, list):
+        entries: list[dict[str, Any]] = []
+        for item in raw_members:
+            if isinstance(item, Mapping):
+                entry = dict(item)
+                uid_val = str(entry.get("uid") or "").strip()
+                name_val = str(entry.get("name") or "").strip()
+                if uid_val:
+                    entry["uid"] = uid_val
+                else:
+                    entry.pop("uid", None)
+                if name_val:
+                    entry["name"] = name_val
+                else:
+                    entry.pop("name", None)
+                if uid_val or name_val:
+                    entries.append(entry)
+            elif isinstance(item, str) and item.strip():
+                entries.append({"name": item.strip()})
+        if entries or len(raw_members) == 0:
+            return entries
+    return [{"name": str(m).strip()} for m in existing_members if str(m).strip()]
+
+
 def _resolve_existing_member_names(
     existing_members: Sequence[str],
-    raw_data: Mapping[str, Any],
+    raw_data: Mapping[str, Any] | None,
 ) -> list[str]:
     """Resolve existing group `members` into a list of member names (or UIDs if names are unavailable)."""
-    raw_members = raw_data.get("members")
-    if isinstance(raw_members, list) and raw_members:
-        names: list[str] = []
-        for item in raw_members:
-            if isinstance(item, dict):
-                n = item.get("name") or item.get("uid")
-                if isinstance(n, str) and n:
-                    names.append(n)
-            elif isinstance(item, str) and item:
-                names.append(item)
-        if names:
-            return names
-    return list(existing_members)
+    return [
+        str(entry.get("name") or entry.get("uid"))
+        for entry in parse_existing_member_entries(existing_members, raw_data)
+        if entry.get("name") or entry.get("uid")
+    ]
 
 
 def compute_object_diff(
@@ -392,14 +414,11 @@ def _build_member_uid_to_name_map(
     current_names: Sequence[str],
 ) -> dict[str, str]:
     uid_to_name: dict[str, str] = {}
-    raw_members = raw_data.get("members")
-    if isinstance(raw_members, list):
-        for elem in raw_members:
-            if isinstance(elem, Mapping):
-                u = str(elem.get("uid") or "").strip()
-                n = str(elem.get("name") or "").strip()
-                if u and n:
-                    uid_to_name[u] = n
+    for elem in parse_existing_member_entries(existing_members, raw_data):
+        u = str(elem.get("uid") or "").strip()
+        n = str(elem.get("name") or "").strip()
+        if u and n:
+            uid_to_name[u] = n
     if len(existing_members) == len(current_names):
         for u, n in zip(existing_members, current_names, strict=False):
             if u and n and u not in uid_to_name:

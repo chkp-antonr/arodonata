@@ -56,11 +56,35 @@ class _ReportCachePort(ObjectCachePort, ServiceCachePort, RulebaseCachePort, Syn
     """Cache capabilities required by change report collection and placement numbering."""
 
 
+def _collect_scope_known_sids(validated_scopes: Sequence[ReportScope]) -> list[str]:
+    """Collect any caller-supplied `OwnedSession.sid` values for SID redaction during discovery."""
+    sids: list[str] = []
+    seen: set[str] = set()
+    for scope in validated_scopes:
+        if not isinstance(scope, SessionScope) or scope.owned_sessions is None:
+            continue
+        owned_raw = scope.owned_sessions
+        candidates: list[OwnedSession]
+        if isinstance(owned_raw, OwnedSession):
+            candidates = [owned_raw]
+        elif isinstance(owned_raw, dict):
+            candidates = list(owned_raw.values())
+        else:
+            candidates = list(owned_raw)
+        for owned in candidates:
+            if owned.sid and owned.sid not in seen:
+                seen.add(owned.sid)
+                sids.append(owned.sid)
+    return sids
+
+
 async def _discover_target_sessions(
     api: ApiPort,
     validated_scopes: Sequence[ReportScope],
     warnings: list[ReportWarning],
     raw_responses: list[RawResponse],
+    *,
+    known_sids: Sequence[str] = (),
 ) -> tuple[dict[tuple[str, str, str], _TargetSessionEntry], list[tuple[str, str, str]]]:
     """Expand and deduplicate `SessionScope` and `RangeScope` entries into ordered target sessions."""
     target_sessions: dict[tuple[str, str, str], _TargetSessionEntry] = {}
@@ -101,15 +125,16 @@ async def _discover_target_sessions(
                     payload=payload,
                 )
                 if not q_res.success:
+                    safe_fail = redact_sid(
+                        q_res.error_message or q_res.code or "query failed",
+                        known_sids=known_sids,
+                    )
                     warnings.append(
                         ReportWarning(
                             code="session_fetch_failed",
                             mgmt_name=mgmt_name,
                             domain=dom_name or None,
-                            message=(
-                                f"Failed to list published sessions on {mgmt_name}:{dom_name}: "
-                                f"{q_res.error_message or q_res.code or 'query failed'}"
-                            ),
+                            message=f"Failed to list published sessions on {mgmt_name}:{dom_name}: {safe_fail}",
                         )
                     )
                     continue
@@ -119,8 +144,11 @@ async def _discover_target_sessions(
                         mgmt_name=mgmt_name,
                         domain=dom_name or None,
                         command="show-sessions",
-                        payload=payload,
-                        response={"total": q_res.total, "objects": q_res.objects},
+                        payload=sanitize_mapping(payload, known_sids=known_sids),
+                        response=sanitize_mapping(
+                            {"total": q_res.total, "objects": q_res.objects},
+                            known_sids=known_sids,
+                        ),
                     )
                 )
 
@@ -137,12 +165,13 @@ async def _discover_target_sessions(
             except ServerIdentityError:
                 raise
             except Exception as exc:
+                safe_exc = redact_sid(str(exc), known_sids=known_sids)
                 warnings.append(
                     ReportWarning(
                         code="session_fetch_failed",
                         mgmt_name=mgmt_name,
                         domain=dom_name or None,
-                        message=f"Error listing sessions on {mgmt_name}:{dom_name}: {exc}",
+                        message=f"Error listing sessions on {mgmt_name}:{dom_name}: {safe_exc}",
                     )
                 )
 
@@ -294,7 +323,14 @@ async def collect_change_report(
 
     warnings: list[ReportWarning] = []
     raw_responses: list[RawResponse] = []
-    target_sessions, session_order = await _discover_target_sessions(api, validated_scopes, warnings, raw_responses)
+    scope_sids = _collect_scope_known_sids(validated_scopes)
+    target_sessions, session_order = await _discover_target_sessions(
+        api,
+        validated_scopes,
+        warnings,
+        raw_responses,
+        known_sids=scope_sids,
+    )
 
     uid_lookup_count = 0
     lookup_cap_warned = False

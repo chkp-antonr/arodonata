@@ -101,6 +101,8 @@ class Executor:
             on_domain_invalidated=self._on_domain_invalidated,
             staged_registry=self._staged_sessions,
             plan=plan,
+            check_domain_head=self._check_current_domain_head,
+            invalidate_domain=self._invalidate_domain,
             force=force,
             no_publish=no_publish,
             keep_session=keep_session,

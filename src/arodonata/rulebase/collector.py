@@ -101,16 +101,24 @@ async def _fetch_domain_packages_raw(
     return []
 
 
-def extract_package_layer_entries(
+def _extract_package_layers_and_seeds(
     mgmt_name: str,
     domain_name: str,
     packages: Sequence[dict[str, Any]],
     *,
-    now: datetime | None = None,
-) -> list[RulebasePackageLayerEntry]:
-    """Build `RulebasePackageLayerEntry` catalog rows from raw `show-packages` dictionaries."""
-    ts = now or utc_now()
+    now: datetime,
+) -> tuple[
+    list[RulebasePackageLayerEntry],
+    list[tuple[str, str]],
+    list[_QueuedLayer],
+    dict[str, list[tuple[str, str]]],
+]:
+    """Single-pass extraction of `RulebasePackageLayerEntry` rows, NAT package pairs, and initial BFS seeds."""
     package_layers: list[RulebasePackageLayerEntry] = []
+    nat_packages: list[tuple[str, str]] = []
+    initial_layers: list[_QueuedLayer] = []
+    pkg_domain_layers: dict[str, list[tuple[str, str]]] = {}
+
     for pkg in packages:
         pkg_uid = str(pkg.get("uid") or pkg.get("name") or "")
         pkg_name = str(pkg.get("name") or pkg_uid)
@@ -118,6 +126,7 @@ def extract_package_layer_entries(
             continue
 
         if _has_nat_policy(pkg):
+            nat_packages.append((pkg_uid, pkg_name))
             package_layers.append(
                 RulebasePackageLayerEntry(
                     mgmt_name=mgmt_name,
@@ -129,21 +138,22 @@ def extract_package_layer_entries(
                     layer_name=f"{pkg_name} NAT",
                     position=1,
                     raw_data=dict(pkg),
-                    updated_at=ts,
+                    updated_at=now,
                 )
             )
 
-        for rb_type, pkg_field in (
+        pkg_layer_specs: tuple[tuple[RulebaseType, str], ...] = (
             ("access", "access-layers"),
             ("https", "https-layers"),
             ("threat", "threat-layers"),
-        ):
-            r_type: RulebaseType = rb_type  # type: ignore[assignment]
+        )
+        for r_type, pkg_field in pkg_layer_specs:
             for idx, l_dict in enumerate(_extract_ordered_layers_from_package(pkg, pkg_field), start=1):
                 l_uid = str(l_dict.get("uid") or l_dict.get("name") or "")
                 l_name = str(l_dict.get("name") or l_uid)
                 if not l_uid:
                     continue
+                pos = int(l_dict.get("position") or idx)
                 package_layers.append(
                     RulebasePackageLayerEntry(
                         mgmt_name=mgmt_name,
@@ -153,11 +163,40 @@ def extract_package_layer_entries(
                         rulebase_type=r_type,
                         layer_uid=l_uid,
                         layer_name=l_name,
-                        position=int(l_dict.get("position") or idx),
+                        position=pos,
                         raw_data=dict(pkg),
-                        updated_at=ts,
+                        updated_at=now,
                     )
                 )
+                if r_type == "access" and not _is_global_layer(l_dict, domain_name):
+                    pkg_domain_layers.setdefault(pkg_name, []).append((l_uid, l_name))
+                initial_layers.append(
+                    _QueuedLayer(
+                        rulebase_type=r_type,
+                        layer_uid=l_uid,
+                        layer_name=l_name,
+                        raw_meta=dict(l_dict),
+                        package_uid=pkg_uid,
+                        package_name=pkg_name,
+                    )
+                )
+    return package_layers, nat_packages, initial_layers, pkg_domain_layers
+
+
+def extract_package_layer_entries(
+    mgmt_name: str,
+    domain_name: str,
+    packages: Sequence[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+) -> list[RulebasePackageLayerEntry]:
+    """Build `RulebasePackageLayerEntry` catalog rows from raw `show-packages` dictionaries."""
+    package_layers, _, _, _ = _extract_package_layers_and_seeds(
+        mgmt_name,
+        domain_name,
+        packages,
+        now=now or utc_now(),
+    )
     return package_layers
 
 
@@ -573,62 +612,39 @@ async def collect_domain_rulebase_snapshot(
     """Traverse all packages, NAT policies, ordered/standalone/inline layers, and Global placeholders for a domain."""
     now = utc_now()
     packages = await _fetch_domain_packages_raw(api, mgmt_name, domain_name, sid=sid, server_ip=server_ip, strict=False)
-    package_layers = extract_package_layer_entries(mgmt_name, domain_name, packages, now=now)
+    package_layers, nat_packages, initial_layers, pkg_domain_layers = _extract_package_layers_and_seeds(
+        mgmt_name,
+        domain_name,
+        packages,
+        now=now,
+    )
 
     sections_by_key: dict[tuple[str, str], RulebaseSectionEntry] = {}
     nat_rules_by_key: dict[tuple[str, str], NatRuleEntry] = {}
-    initial_layers: list[_QueuedLayer] = []
-    pkg_domain_layers: dict[str, list[tuple[str, str]]] = {}
 
-    for pkg in packages:
-        pkg_uid = str(pkg.get("uid") or pkg.get("name") or "")
-        pkg_name = str(pkg.get("name") or pkg_uid)
-        if not pkg_uid:
-            continue
+    for pkg_uid, pkg_name in nat_packages:
+        nat_paged = await _fetch_nat_package_rules(
+            api,
+            mgmt_name,
+            domain_name,
+            pkg_uid=pkg_uid,
+            pkg_name=pkg_name,
+            page_limit=page_limit,
+            sid=sid,
+            server_ip=server_ip,
+            emit=emit,
+        )
+        for sec in nat_paged.sections:
+            sections_by_key[(sec.layer_uid, sec.uid)] = sec
+        for nr in nat_paged.nat_rules:
+            nat_rules_by_key[(nr.package_uid, nr.uid)] = nr
 
-        if _has_nat_policy(pkg):
-            nat_paged = await _fetch_nat_package_rules(
-                api,
-                mgmt_name,
-                domain_name,
-                pkg_uid=pkg_uid,
-                pkg_name=pkg_name,
-                page_limit=page_limit,
-                sid=sid,
-                server_ip=server_ip,
-                emit=emit,
-            )
-            for sec in nat_paged.sections:
-                sections_by_key[(sec.layer_uid, sec.uid)] = sec
-            for nr in nat_paged.nat_rules:
-                nat_rules_by_key[(nr.package_uid, nr.uid)] = nr
-
-        for rb_type, pkg_field in (("access", "access-layers"), ("https", "https-layers"), ("threat", "threat-layers")):
-            r_type: RulebaseType = rb_type  # type: ignore[assignment]
-            for l_dict in _extract_ordered_layers_from_package(pkg, pkg_field):
-                l_uid = str(l_dict.get("uid") or l_dict.get("name") or "")
-                l_name = str(l_dict.get("name") or l_uid)
-                if not l_uid:
-                    continue
-                if r_type == "access" and not _is_global_layer(l_dict, domain_name):
-                    pkg_domain_layers.setdefault(pkg_name, []).append((l_uid, l_name))
-                initial_layers.append(
-                    _QueuedLayer(
-                        rulebase_type=r_type,
-                        layer_uid=l_uid,
-                        layer_name=l_name,
-                        raw_meta=dict(l_dict),
-                        package_uid=pkg_uid,
-                        package_name=pkg_name,
-                    )
-                )
-
-    for rb_type, list_cmd, list_key in (
+    layer_list_specs: tuple[tuple[RulebaseType, str, str], ...] = (
         ("access", "show-access-layers", "access-layers"),
         ("https", "show-https-layers", "https-layers"),
         ("threat", "show-threat-layers", "threat-layers"),
-    ):
-        r_type = rb_type  # type: ignore[assignment]
+    )
+    for r_type, list_cmd, list_key in layer_list_specs:
         l_res = await api.api_call(
             mgmt_name, list_cmd, {"details-level": "full"}, domain=domain_name, sid=sid, server_ip=server_ip
         )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict, defaultdict
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import datetime
 
@@ -48,17 +48,8 @@ from arodonata.cpcrud.models import (
     StagedSessionInfo,
 )
 
-
-def _invalidate_domain(
-    api: ApiPort,
-    on_domain_invalidated: Callable[[str, str | None], None] | None,
-    mgmt_name: str,
-    domain_name: str | None,
-) -> None:
-    if on_domain_invalidated is not None:
-        on_domain_invalidated(mgmt_name, domain_name or None)
-    elif hasattr(api, "invalidate_domain"):
-        api.invalidate_domain(mgmt_name, domain_name or None)
+_HeadCheckFn = Callable[[str, str], Awaitable[tuple[bool, str | None, datetime | None, str | None]]]
+_InvalidateFn = Callable[[str, str | None], None]
 
 
 async def _shielded_discard(
@@ -136,7 +127,8 @@ async def _register_staged_session(
 async def _finalize_domain_session(
     *,
     api: ApiPort,
-    on_domain_invalidated: Callable[[str, str | None], None] | None,
+    check_domain_head: _HeadCheckFn,
+    invalidate_domain: _InvalidateFn,
     mgmt_name: str,
     dom_name: str,
     dom_label: str,
@@ -179,7 +171,7 @@ async def _finalize_domain_session(
         return
 
     if not force and stamp is not None:
-        pre_pub_ok, pre_pub_uid, pre_pub_at, pre_pub_err = await check_current_domain_head(api, mgmt_name, dom_name)
+        pre_pub_ok, pre_pub_uid, pre_pub_at, pre_pub_err = await check_domain_head(mgmt_name, dom_name)
         if _is_domain_head_stale(stamp, pre_pub_uid, pre_pub_at, pre_pub_ok):
             stale_domains.append(dom_label)
             stale_msg = (
@@ -239,12 +231,12 @@ async def _finalize_domain_session(
         pub_data = pub_res.data if isinstance(pub_res.data, dict) else {}
         pub_uid = _extract_published_session_uid(pub_data) or session_uid or None
         if pub_uid is None:
-            head_ok, head_uid, _, _ = await check_current_domain_head(api, mgmt_name, dom_name)
+            head_ok, head_uid, _, _ = await check_domain_head(mgmt_name, dom_name)
             if head_ok and head_uid:
                 pub_uid = head_uid
         if pub_uid:
             published_sessions[dom_label] = pub_uid
-        _invalidate_domain(api, on_domain_invalidated, mgmt_name, dom_name)
+        invalidate_domain(mgmt_name, dom_name or None)
         events.append(
             CPCRUDDomainPublishedEvent(
                 mgmt_name=mgmt_name,
@@ -287,7 +279,8 @@ async def _finalize_domain_session(
 async def _execute_domain_batch(
     *,
     api: ApiPort,
-    on_domain_invalidated: Callable[[str, str | None], None] | None,
+    check_domain_head: _HeadCheckFn,
+    invalidate_domain: _InvalidateFn,
     staged_registry: OrderedDict[tuple[str, str, str], StagedSessionInfo],
     mgmt_name: str,
     dom_name: str,
@@ -315,7 +308,7 @@ async def _execute_domain_batch(
         and dom_actions
         and (any(a.is_write_action for a in dom_actions) or (stamp is not None and stamp.readable))
     ):
-        readable, curr_uid, curr_pub_at, head_err = await check_current_domain_head(api, mgmt_name, dom_name)
+        readable, curr_uid, curr_pub_at, head_err = await check_domain_head(mgmt_name, dom_name)
         if _is_domain_head_stale(stamp, curr_uid, curr_pub_at, readable):
             stale_domains.append(dom_label)
             expected_uid = stamp.last_session_uid if stamp else None
@@ -423,6 +416,12 @@ async def _execute_domain_batch(
                     continue
 
                 broken_deps = [d for d in act.depends_on if d in runtime_failed_ids or d in runtime_failed_names]
+                if (
+                    act.operation in ("set", "delete")
+                    and (act.target_uid or "").startswith("planned:")
+                    and act.name in runtime_failed_names
+                ):
+                    broken_deps.append(act.name)
                 if act.object_type in ("group", "service-group"):
                     grp_refs = _extract_group_references(act.desired_spec)
                     broken_deps.extend(sorted(r for r in grp_refs if r in runtime_failed_names))
@@ -518,7 +517,8 @@ async def _execute_domain_batch(
 
             await _finalize_domain_session(
                 api=api,
-                on_domain_invalidated=on_domain_invalidated,
+                check_domain_head=check_domain_head,
+                invalidate_domain=invalidate_domain,
                 mgmt_name=mgmt_name,
                 dom_name=dom_name,
                 dom_label=dom_label,
@@ -557,6 +557,8 @@ async def execute_single_pass(
     on_domain_invalidated: Callable[[str, str | None], None] | None,
     staged_registry: OrderedDict[tuple[str, str, str], StagedSessionInfo],
     plan: Plan,
+    check_domain_head: _HeadCheckFn | None = None,
+    invalidate_domain: _InvalidateFn | None = None,
     force: bool = False,
     no_publish: bool = False,
     keep_session: bool = False,
@@ -566,6 +568,18 @@ async def execute_single_pass(
     session_description: str | None = None,
 ) -> tuple[list[CPCRUDEvent], ApplyReport]:
     """Execute one pass of `plan`, collecting both `CPCRUDEvent` items and the pass `ApplyReport`."""
+
+    async def _default_head_check(m: str, d: str) -> tuple[bool, str | None, datetime | None, str | None]:
+        return await check_current_domain_head(api, m, d)
+
+    def _default_invalidate(m: str, d: str | None) -> None:
+        if on_domain_invalidated is not None:
+            on_domain_invalidated(m, d or None)
+        elif hasattr(api, "invalidate_domain"):
+            api.invalidate_domain(m, d or None)
+
+    eff_head_check: _HeadCheckFn = check_domain_head or _default_head_check
+    eff_invalidate: _InvalidateFn = invalidate_domain or _default_invalidate
     started_at = now_fn()
     events: list[CPCRUDEvent] = [
         CPCRUDStartedEvent(
@@ -607,7 +621,8 @@ async def execute_single_pass(
     for mgmt_name, dom_name in domain_order:
         await _execute_domain_batch(
             api=api,
-            on_domain_invalidated=on_domain_invalidated,
+            check_domain_head=eff_head_check,
+            invalidate_domain=eff_invalidate,
             staged_registry=staged_registry,
             mgmt_name=mgmt_name,
             dom_name=dom_name,
