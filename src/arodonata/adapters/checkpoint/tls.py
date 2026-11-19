@@ -6,16 +6,21 @@ request line, headers (`X-chkp-sid`), credentials, or JSON payloads are sent.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
 import re
 import ssl
 import stat
+import sys
 import tempfile
 import weakref
 from pathlib import Path
+
+if sys.platform == "win32":  # pragma: no cover
+    import msvcrt
+else:
+    import fcntl
 
 import arlogi
 from pydantic import BaseModel, ConfigDict, Field
@@ -224,12 +229,13 @@ class TrustStore:
                     f"Unsafe ownership on TLS trust store {str(self._path)!r}: owned by uid {st.st_uid}, "
                     f"expected {euid}. No request was sent."
                 )
-        mode = stat.S_IMODE(st.st_mode)
-        if mode & (stat.S_IWGRP | stat.S_IWOTH):
-            raise TrustStoreError(
-                f"Unsafe permissions {oct(mode)} on TLS trust store {str(self._path)!r}: "
-                "group or world write permissions are forbidden (expected 0600). No request was sent."
-            )
+        if os.name != "nt":
+            mode = stat.S_IMODE(st.st_mode)
+            if mode & (stat.S_IWGRP | stat.S_IWOTH):
+                raise TrustStoreError(
+                    f"Unsafe permissions {oct(mode)} on TLS trust store {str(self._path)!r}: "
+                    "group or world write permissions are forbidden (expected 0600). No request was sent."
+                )
 
     def _read_entries_from_disk(self) -> dict[str, KnownHostEntry]:
         """Read and validate entries from `self._path` if present on disk."""
@@ -344,7 +350,11 @@ class TrustStore:
             parent.mkdir(parents=True, exist_ok=True)
             lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                if sys.platform == "win32":  # pragma: no cover
+                    os.lseek(lock_fd, 0, os.SEEK_SET)
+                    msvcrt.locking(lock_fd, msvcrt.LK_LOCK, 1)
+                else:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX)
                 disk_entries = self._read_entries_from_disk()
                 merged = dict(disk_entries)
                 for k, v in self._entries.items():
@@ -373,14 +383,17 @@ class TrustStore:
                 )
                 tmp_path = Path(tmp_path_str)
                 try:
-                    os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)
+                    if hasattr(os, "fchmod"):
+                        os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)
                     with os.fdopen(fd, "w", encoding="utf-8") as handle:
                         handle.write(serialized)
                         handle.flush()
                         os.fsync(handle.fileno())
-                    os.chmod(tmp_path, 0o600)
+                    if hasattr(os, "chmod"):
+                        os.chmod(tmp_path, 0o600)
                     os.replace(tmp_path, self._path)
-                    os.chmod(self._path, 0o600)
+                    if hasattr(os, "chmod"):
+                        os.chmod(self._path, 0o600)
                 except Exception:
                     if tmp_path.exists():
                         tmp_path.unlink(missing_ok=True)
@@ -388,7 +401,14 @@ class TrustStore:
                 self._entries = merged
             finally:
                 try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    if sys.platform == "win32":  # pragma: no cover
+                        try:
+                            os.lseek(lock_fd, 0, os.SEEK_SET)
+                            msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
+                        except OSError:
+                            pass
+                    else:
+                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
                 finally:
                     os.close(lock_fd)
         except ServerIdentityError:

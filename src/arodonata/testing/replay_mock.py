@@ -765,6 +765,58 @@ class FileReplayCliMock(GatewayCliPort):
                     return current_id
         return None
 
+    def list_virtual_systems(self, node_name: str) -> list[tuple[int, str]]:
+        """Return list of `(vsid, vs_name)` for all non-switch Virtual Systems on `node_name`."""
+        stat_path = self._cli_dir / f"{node_name}__vsx_stat_l.txt"
+        results: list[tuple[int, str]] = []
+        seen_vsids: set[int] = set()
+
+        if stat_path.is_file():
+            current_id: int | None = None
+            current_name: str | None = None
+            current_type: str | None = None
+
+            def _flush() -> None:
+                nonlocal current_id, current_name, current_type
+                if (
+                    current_id is not None
+                    and current_id > 0
+                    and current_id not in seen_vsids
+                    and (not current_type or "switch" not in current_type.lower())
+                ):
+                    eff_name = current_name or f"VS_{current_id}"
+                    results.append((current_id, eff_name))
+                    seen_vsids.add(current_id)
+                current_id = None
+                current_name = None
+                current_type = None
+
+            for raw_line in stat_path.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if line.startswith("VSID:"):
+                    _flush()
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        try:
+                            current_id = int(parts[1])
+                        except ValueError:
+                            current_id = None
+                elif line.startswith("Name:"):
+                    parts = line.split(None, 1)
+                    current_name = parts[1].strip() if len(parts) >= 2 else None
+                elif line.startswith("Type:"):
+                    parts = line.split(None, 1)
+                    current_type = parts[1].strip() if len(parts) >= 2 else None
+            _flush()
+
+        for n_name, v_id in self._cli_overrides:
+            if n_name == node_name and v_id > 0 and v_id not in seen_vsids:
+                results.append((v_id, f"VS_{v_id}"))
+                seen_vsids.add(v_id)
+
+        results.sort(key=lambda item: item[0])
+        return results
+
     async def execute_command(
         self,
         target: GatewayCliTarget,
@@ -885,12 +937,14 @@ class FileReplayApiMock(ApiPort):
         allow_one_time_script: bool = True,
         allow_repository_script: bool = True,
         manage_repository_scripts: str = "write",
+        encode_repository_script_body_base64: bool = False,
     ) -> None:
         self._dataset_dir = ensure_enterprise_raw_dataset(dataset_dir)
         self._cli_mock = cli_mock or FileReplayCliMock(self._dataset_dir)
         self.allow_one_time_script: bool = bool(allow_one_time_script)
         self.allow_repository_script: bool = bool(allow_repository_script)
         self.manage_repository_scripts: str = str(manage_repository_scripts)
+        self.encode_repository_script_body_base64: bool = bool(encode_repository_script_body_base64)
 
         self._manifest: dict[str, Any] = json.loads((self._dataset_dir / "manifest.json").read_text(encoding="utf-8"))
         self._show_domains: dict[str, Any] = json.loads(
@@ -1046,6 +1100,7 @@ class FileReplayApiMock(ApiPort):
             allow_one_time_script=self.allow_one_time_script,
             allow_repository_script=self.allow_repository_script,
             manage_repository_scripts=self.manage_repository_scripts,
+            encode_repository_script_body_base64=self.encode_repository_script_body_base64,
         )
 
     def restore_state(self, snapshot: ReplayStateSnapshot) -> None:
@@ -1067,6 +1122,9 @@ class FileReplayApiMock(ApiPort):
         self.allow_one_time_script = bool(snapshot.allow_one_time_script)
         self.allow_repository_script = bool(snapshot.allow_repository_script)
         self.manage_repository_scripts = str(snapshot.manage_repository_scripts)
+        self.encode_repository_script_body_base64 = bool(
+            getattr(snapshot, "encode_repository_script_body_base64", False)
+        )
 
         self._sid_seq = snapshot.counters.get("sid_seq", self._sid_seq)
         self._task_seq = snapshot.counters.get("task_seq", self._task_seq)
@@ -1117,6 +1175,7 @@ class FileReplayApiMock(ApiPort):
         self.allow_one_time_script = True
         self.allow_repository_script = True
         self.manage_repository_scripts = "write"
+        self.encode_repository_script_body_base64 = False
         self.reset_counters()
 
     def get_calls(
@@ -1603,6 +1662,13 @@ class FileReplayApiMock(ApiPort):
                     "Cannot provide inline 'script' or 'script-base64' when script-type is 'repository'",
                     status_code=400,
                 )
+            raw_args = str(payload.get("args") or "").strip()
+            if not self.allow_one_time_script and raw_args:
+                return cp_error(
+                    "err_validation_failed",
+                    "Insufficient permissions to run this script with arguments.",
+                    status_code=400,
+                )
             lookup_ref = str(payload.get("uid") or payload.get("script-name") or "").strip()
             if not lookup_ref:
                 return cp_error(
@@ -1671,24 +1737,43 @@ class FileReplayApiMock(ApiPort):
                 assert repo_script is not None
                 repo_body = str(repo_script.get("script-body") or "")
                 raw_args = str(payload.get("args") or "").strip()
-                if "===ARODONATA_IP_ROUTE_START===" in repo_body:
-                    tokens = raw_args.split()
-                    max_tok = tokens[0] if len(tokens) >= 1 else "0"
-                    vsid_tok = tokens[1] if len(tokens) >= 2 else "0"
-                    vs_name_val = " ".join(tokens[2:]) if len(tokens) >= 3 else ""
-                    if not max_tok.isdigit():
-                        script_error = f"_vs_error=invalid max_routes argument: {max_tok}"
-                    elif not vsid_tok.isdigit():
-                        script_error = f"_vs_error=invalid vsid argument: {vsid_tok}"
+                if "===ARODONATA_IP_ROUTE_START===" in repo_body or "===ARODONATA_VSX_BUNDLE_START===" in repo_body:
+                    if raw_args:
+                        tokens = raw_args.split()
+                        max_tok = tokens[0] if len(tokens) >= 1 else "0"
+                        vsid_tok = tokens[1] if len(tokens) >= 2 else "0"
+                        vs_name_val = " ".join(tokens[2:]) if len(tokens) >= 3 else ""
+                        if not max_tok.isdigit():
+                            script_error = f"_vs_error=invalid max_routes argument: {max_tok}"
+                        elif not vsid_tok.isdigit():
+                            script_error = f"_vs_error=invalid vsid argument: {vsid_tok}"
+                        else:
+                            vsid = int(vsid_tok)
+                            if vsid == 0 and vs_name_val:
+                                resolved = self._cli_mock.resolve_vsid_from_stat(node_name, vs_name_val)
+                                if resolved is None:
+                                    script_error = f"_vs_error=vs_not_found:{vs_name_val}"
+                                else:
+                                    vsid = resolved
+                                    prepend_resolved = True
                     else:
-                        vsid = int(vsid_tok)
-                        if vsid == 0 and vs_name_val:
-                            resolved = self._cli_mock.resolve_vsid_from_stat(node_name, vs_name_val)
-                            if resolved is None:
-                                script_error = f"_vs_error=vs_not_found:{vs_name_val}"
-                            else:
-                                vsid = resolved
-                                prepend_resolved = True
+                        vs_list = self._cli_mock.list_virtual_systems(node_name)
+                        if vs_list:
+                            bundle_parts = ["===ARODONATA_VSX_BUNDLE_START===\n"]
+                            for v_id, v_name in vs_list:
+                                v_out = self._cli_mock.get_raw_cli_stdout(node_name, v_id)
+                                bundle_parts.append(f"===ARODONATA_VS_START vsid={v_id} name={v_name}===\n")
+                                if v_out is not None:
+                                    bundle_parts.append(v_out.rstrip() + "\n")
+                                else:
+                                    bundle_parts.append(
+                                        f"===ARODONATA_VS_ERROR vsid={v_id} name={v_name} error=vsenv {v_id} failed===\n"
+                                    )
+                                bundle_parts.append("===ARODONATA_VS_END===\n")
+                            bundle_parts.append("===ARODONATA_VSX_BUNDLE_END===\n")
+                            custom_stdout = "".join(bundle_parts)
+                        else:
+                            vsid = 0
                 else:
                     if (node_name, 0) in self._cli_mock._cli_overrides:
                         custom_stdout = self._cli_mock.get_raw_cli_stdout(node_name, 0) or ""
@@ -3084,7 +3169,11 @@ class FileReplayApiMock(ApiPort):
                         f"Requested repository script [{lookup}] not found",
                         status_code=404,
                     )
-                return cp_ok(_project_repository_script(matched_script, details_level))
+                projected_obj = _project_repository_script(matched_script, details_level)
+                if self.encode_repository_script_body_base64 and isinstance(projected_obj.get("script-body"), str):
+                    raw_str = projected_obj["script-body"]
+                    projected_obj["script-body"] = base64.b64encode(raw_str.encode("utf-8")).decode("ascii")
+                return cp_ok(projected_obj)
 
             order_desc = False
             raw_order = req.get("order")
@@ -3095,6 +3184,10 @@ class FileReplayApiMock(ApiPort):
             offset = int(req.get("offset", 0))
             sliced = sorted_scripts[offset : offset + limit]
             projected = [_project_repository_script(s, details_level) for s in sliced]
+            if self.encode_repository_script_body_base64:
+                for obj in projected:
+                    if isinstance(obj.get("script-body"), str):
+                        obj["script-body"] = base64.b64encode(obj["script-body"].encode("utf-8")).decode("ascii")
             return cp_ok(
                 {
                     "objects": projected,

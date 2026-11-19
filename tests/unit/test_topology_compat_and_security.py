@@ -185,6 +185,21 @@ async def test_topology_and_route_collector_reexport_identity_and_shared_logger(
 
     # Route collector shim identity
     assert (
+        route_mod.DEFAULT_REPOSITORY_MAX_ROUTES
+        == topology_pkg.DEFAULT_REPOSITORY_MAX_ROUTES
+        == route_scripts.DEFAULT_REPOSITORY_MAX_ROUTES
+        == 50000
+    )
+    assert (
+        route_mod.VSX_BUNDLE_START_MARKER
+        is topology_pkg.VSX_BUNDLE_START_MARKER
+        is route_scripts.VSX_BUNDLE_START_MARKER
+    )
+    assert route_mod.VSX_BUNDLE_END_MARKER is topology_pkg.VSX_BUNDLE_END_MARKER is route_scripts.VSX_BUNDLE_END_MARKER
+    assert route_mod.VS_START_PREFIX is topology_pkg.VS_START_PREFIX is route_scripts.VS_START_PREFIX
+    assert route_mod.VS_END_MARKER is topology_pkg.VS_END_MARKER is route_scripts.VS_END_MARKER
+    assert route_mod.VS_ERROR_PREFIX is topology_pkg.VS_ERROR_PREFIX is route_scripts.VS_ERROR_PREFIX
+    assert (
         route_mod.AutoScriptModeResolver is topology_pkg.AutoScriptModeResolver is route_scripts.AutoScriptModeResolver
     )
     assert route_mod.ParsedCliRoute is topology_pkg.ParsedCliRoute is route_scripts.ParsedCliRoute
@@ -231,6 +246,17 @@ async def test_topology_and_route_collector_reexport_identity_and_shared_logger(
         route_mod.routes_to_topology_entries
         is topology_pkg.routes_to_topology_entries
         is route_parsers.routes_to_topology_entries
+    )
+    assert route_mod.VsxBundleSlice is topology_pkg.VsxBundleSlice is route_parsers.VsxBundleSlice
+    assert (
+        route_mod.parse_vsx_bundle_output
+        is topology_pkg.parse_vsx_bundle_output
+        is route_parsers.parse_vsx_bundle_output
+    )
+    assert (
+        route_mod.extract_vs_slice_from_bundle
+        is topology_pkg.extract_vs_slice_from_bundle
+        is route_parsers.extract_vs_slice_from_bundle
     )
     assert route_mod.execute_gateway_cli is topology_pkg.execute_gateway_cli is route_executor.execute_gateway_cli
     assert callable(route_collection.collect_gateway_routes)

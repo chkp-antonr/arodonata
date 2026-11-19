@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import hashlib
+import ipaddress
 import json
 import ssl
 import subprocess
@@ -13,6 +15,16 @@ from typing import Any
 import aiohttp
 import pytest
 from aiohttp import web
+
+try:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    _HAVE_CRYPTOGRAPHY = True
+except ImportError:
+    _HAVE_CRYPTOGRAPHY = False
 
 from arodonata.adapters.checkpoint.tls import TrustPolicy, compute_der_fingerprint
 from arodonata.adapters.checkpoint.transport import (
@@ -374,41 +386,90 @@ def _generate_self_signed_cert(tmp_dir: Path, cn: str = "127.0.0.1") -> tuple[Pa
     cert_pem = tmp_dir / f"{cn}.crt"
     key_pem = tmp_dir / f"{cn}.key"
     cert_der = tmp_dir / f"{cn}.der"
-    subprocess.run(
+
+    import shutil
+
+    if shutil.which("openssl") is not None:
+        try:
+            subprocess.run(
+                [
+                    "openssl",
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:2048",
+                    "-nodes",
+                    "-keyout",
+                    str(key_pem),
+                    "-out",
+                    str(cert_pem),
+                    "-days",
+                    "1",
+                    "-subj",
+                    f"/CN={cn}",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    "openssl",
+                    "x509",
+                    "-in",
+                    str(cert_pem),
+                    "-outform",
+                    "DER",
+                    "-out",
+                    str(cert_der),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            der_bytes = cert_der.read_bytes()
+            fp = compute_der_fingerprint(der_bytes)
+            return cert_pem, key_pem, der_bytes, fp
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+            pass
+
+    if not _HAVE_CRYPTOGRAPHY:
+        raise RuntimeError(
+            "Neither 'openssl' CLI nor 'cryptography' library is available to generate self-signed TLS certificate."
+        )
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = issuer = x509.Name(
         [
-            "openssl",
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-keyout",
-            str(key_pem),
-            "-out",
-            str(cert_pem),
-            "-days",
-            "1",
-            "-subj",
-            f"/CN={cn}",
-        ],
-        check=True,
-        capture_output=True,
+            x509.NameAttribute(NameOID.COMMON_NAME, cn),
+        ]
     )
-    subprocess.run(
-        [
-            "openssl",
-            "x509",
-            "-in",
-            str(cert_pem),
-            "-outform",
-            "DER",
-            "-out",
-            str(cert_der),
-        ],
-        check=True,
-        capture_output=True,
+    san_names: list[x509.GeneralName] = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.IPv4Address("127.0.0.1"))]
+    if cn not in ("localhost", "127.0.0.1", "0.0.0.0"):
+        try:
+            san_names.append(x509.IPAddress(ipaddress.ip_address(cn)))
+        except ValueError:
+            san_names.append(x509.DNSName(cn))
+
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.now(datetime.UTC))
+        .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1))
+        .add_extension(x509.SubjectAlternativeName(san_names), critical=False)
+        .sign(key, hashes.SHA256())
     )
-    der_bytes = cert_der.read_bytes()
+    cert_pem.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_pem.write_bytes(
+        key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    der_bytes = cert.public_bytes(serialization.Encoding.DER)
+    cert_der.write_bytes(der_bytes)
     fp = compute_der_fingerprint(der_bytes)
     return cert_pem, key_pem, der_bytes, fp
 

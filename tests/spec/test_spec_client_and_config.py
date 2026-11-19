@@ -619,6 +619,76 @@ async def test_repository_script_delete_and_ensure_permission_error_metadata() -
         assert "sid_perm_secret_42" not in str(ens_exc.value)
 
 
+@pytest.mark.spec("SCN-CLIENT-010-4")
+async def test_repository_script_r82_base64_decoding_and_zero_write_fast_path() -> None:
+    """SCN-CLIENT-010-4: Base64-encoded script-body from Check Point R82 show-repository-script decodes cleanly without false outdated drift."""
+    import base64
+
+    expected_body = "#!/bin/bash\necho 'canonical route collector'\nexit 0\n"
+    b64_body = base64.b64encode(expected_body.encode("utf-8")).decode("ascii")
+
+    class _R82ShowScriptApi:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, dict[str, Any] | None]] = []
+
+        async def api_call(
+            self, mgmt_name: str, command: str, payload: dict[str, Any] | None = None, **kw: Any
+        ) -> ApiCallResult:
+            self.calls.append((mgmt_name, command, payload))
+            if command == "show-repository-script":
+                return ApiCallResult(
+                    success=True,
+                    status_code=200,
+                    data={
+                        "name": "arodonata-collect-routes-v1",
+                        "script-body": b64_body,
+                        "comments": "",
+                        "color": "black",
+                        "tags": [],
+                    },
+                )
+            if command in ("add-repository-script", "set-repository-script", "publish"):
+                raise AssertionError(f"Write command '{command}' must not be called on up-to-date script")
+            return ApiCallResult(success=False, status_code=404, error_code="not_found", error_message="not found")
+
+        async def api_query(self, mgmt_name: str, command: str, **kw: Any) -> ApiQueryResult:
+            return ApiQueryResult(success=True, objects=[], total=0)
+
+        async def create_dedicated_session(self, *args: Any, **kwargs: Any) -> tuple[str, str]:
+            raise AssertionError("Dedicated write session must not be opened for unchanged script")
+
+        def logout_sid(self, *args: Any, **kwargs: Any) -> Awaitable[bool]:
+            async def _ok() -> bool:
+                return True
+
+            return _ok()
+
+        async def close(self, *, logout: bool | None = None) -> None:
+            return None
+
+    api = _R82ShowScriptApi()
+    async with ArodonataClient(ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="k"), api=api) as client:
+        # 1. get_repository_script returns decoded script
+        script = await client.get_repository_script("mds1", "arodonata-collect-routes-v1", domain="Corp")
+        assert script is not None
+        assert script.script_body == expected_body
+
+        # 2. check_repository_script reports matches_expected=True without false outdated drift
+        check = await client.check_repository_script(
+            "mds1", "arodonata-collect-routes-v1", domain="Corp", expected_body=expected_body
+        )
+        assert check.exists is True
+        assert check.matches_expected is True
+        assert check.script is not None
+        assert check.script.script_body == expected_body
+
+        # 3. ensure_repository_script returns action="unchanged" without opening WriteSession or publishing
+        ens = await client.ensure_repository_script("mds1", "arodonata-collect-routes-v1", expected_body, domain="Corp")
+        assert ens.action == "unchanged"
+        assert ens.published is False
+        assert ens.script.script_body == expected_body
+
+
 @pytest.mark.spec("SCN-CLIENT-012-2")
 async def test_run_repository_script_uses_dedicated_rw_session_never_sid_cache(tmp_path: Path) -> None:
     """SCN-CLIENT-012-2: `run_repository_script` opens dedicated `read_only=False` session and ignores `arodonata_sid_cache`."""

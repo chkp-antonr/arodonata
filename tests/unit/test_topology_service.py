@@ -3855,14 +3855,31 @@ echo "B 10.88.0.0/16 via 10.10.1.254, eth1, cost 20, age 50"
 echo "O 10.90.0.0/16 via 10.10.1.252, eth1, cost 10, age 30"
 """,
     )
+    import shutil
+
     _write_exec(
         "vsx",
         """
 cat <<'EOF'
+VSID: 0
+Type: Gateway
+Name: CheckPoint_VSX_GW
+
 VSID: 3
+Type: Virtual System
 Name: VS_BLUE
+
+VSID: 5
+Type: Virtual Switch
+Name: VSW_5
+
 VSID: 12
+Type: Virtual System
 Name: VS_DMZ
+
+VSID: 99
+Type: Virtual System
+Name: VS_FAIL
 EOF
 """,
     )
@@ -3879,16 +3896,54 @@ EOF
     env_base = dict(os.environ)
     env_base["PATH"] = f"{bin_dir}:{env_base.get('PATH', '')}"
 
-    def _run_bash(script_path: Path, *args: str, large: bool = False) -> subprocess.CompletedProcess[str]:
-        run_env = dict(env_base)
+    def _run_bash(
+        script_path: Path, *args: str, large: bool = False, custom_env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        run_env = dict(custom_env if custom_env is not None else env_base)
         run_env["FAKE_LARGE_TABLE"] = "1" if large else "0"
+        bash_cmd = shutil.which("bash") or "bash"
         return subprocess.run(
-            ["/bin/bash", str(script_path), *args],
+            [bash_cmd, str(script_path), *args],
             capture_output=True,
             text=True,
             env=run_env,
             check=False,
         )
+
+    # Zero-arg VSX Chassis self-detection & bundle emission
+    from arodonata.core.services.route_collector import (
+        VS_END_MARKER,
+        VS_ERROR_PREFIX,
+        VS_START_PREFIX,
+        VSX_BUNDLE_END_MARKER,
+        VSX_BUNDLE_START_MARKER,
+    )
+
+    res_zero_vsx = _run_bash(repo_script_file)
+    assert res_zero_vsx.returncode == 0
+    assert VSX_BUNDLE_START_MARKER in res_zero_vsx.stdout
+    assert VSX_BUNDLE_END_MARKER in res_zero_vsx.stdout
+    assert f"{VS_START_PREFIX}vsid=3 name=VS_BLUE===" in res_zero_vsx.stdout
+    assert f"{VS_START_PREFIX}vsid=12 name=VS_DMZ===" in res_zero_vsx.stdout
+    assert "VSW_5" not in res_zero_vsx.stdout  # L2 Virtual Switch is skipped
+    assert f"{VS_ERROR_PREFIX}vsid=99 name=VS_FAIL error=vsenv 99 failed===" in res_zero_vsx.stdout
+    assert VS_END_MARKER in res_zero_vsx.stdout
+
+    # Zero-arg non-VSX gateway self-detection (without vsx tool in path)
+    non_vsx_bin = tmp_path / "bin_non_vsx"
+    non_vsx_bin.mkdir()
+    (non_vsx_bin / "ip").write_text((bin_dir / "ip").read_text(encoding="utf-8"), encoding="utf-8")
+    (non_vsx_bin / "ip").chmod((bin_dir / "ip").stat().st_mode)
+    (non_vsx_bin / "clish").write_text((bin_dir / "clish").read_text(encoding="utf-8"), encoding="utf-8")
+    (non_vsx_bin / "clish").chmod((bin_dir / "clish").stat().st_mode)
+    non_vsx_env = dict(os.environ)
+    non_vsx_env["PATH"] = f"{non_vsx_bin}:{non_vsx_env.get('PATH', '')}"
+
+    res_zero_non_vsx = _run_bash(repo_script_file, custom_env=non_vsx_env)
+    assert res_zero_non_vsx.returncode == 0
+    assert VSX_BUNDLE_START_MARKER not in res_zero_non_vsx.stdout
+    assert "===ARODONATA_IP_ROUTE_START===" in res_zero_non_vsx.stdout
+    assert "===ARODONATA_CLISH_ROUTE_START===" in res_zero_non_vsx.stdout
 
     # Parity check 1: Gaia standalone / cluster member
     inline_gw_file = tmp_path / "inline_gw.sh"
@@ -4023,7 +4078,23 @@ async def test_execute_gateway_cli_repository_and_auto_modes() -> None:
             domain="Branch",
         )
 
+    # Under allow_one_time_script=False, passing arguments is rejected by Check Point
     api_mock.allow_one_time_script = False
+    api_mock.reset_counters()
+    denied_res = await execute_gateway_cli(
+        target,
+        inline_script,
+        api=api_mock,
+        cprid_script_mode="repository",
+        repository_script_name="corp-routes-v2",
+        repository_script_args_fn=lambda t, mr: f"{mr or 0} 0",
+        max_routes=25000,
+    )
+    assert denied_res.success is False
+    assert denied_res.error_code == "repository_script_permission_denied"
+
+    # Under allow_one_time_script=True, positional args succeed
+    api_mock.allow_one_time_script = True
     api_mock.reset_counters()
     custom_res = await execute_gateway_cli(
         target,
@@ -4161,7 +4232,8 @@ async def test_topology_service_repository_mode_auto_fallback_and_custom_overrid
             build_route_collection_repository_script(),
             domain="Regional",
         )
-        api_mock.allow_one_time_script = False
+        # Positional arguments require one-time script permission on Check Point R81.20/R82
+        api_mock.allow_one_time_script = True
         api_mock.reset_counters()
 
         refresh_out = await client.refresh_topology(
@@ -4483,3 +4555,292 @@ async def test_auto_mode_single_flight_concurrency_stale_target_and_permission_m
         assert dms_denied.gateways[0].error_code == "repository_script_permission_denied"
     finally:
         await db.close()
+
+
+def test_vsx_bundle_parser_and_slice_extractor() -> None:
+    """Verify VsxBundleSlice, parse_vsx_bundle_output, and extract_vs_slice_from_bundle."""
+    from arodonata.core.services.topology.route_parsers import (
+        extract_vs_slice_from_bundle,
+        parse_combined_cli_routes_with_status,
+        parse_vsx_bundle_output,
+    )
+    from arodonata.core.services.topology.route_scripts import (
+        ROUTE_LIMIT_MARKER,
+        VS_END_MARKER,
+        VS_ERROR_PREFIX,
+        VS_START_PREFIX,
+        VSX_BUNDLE_END_MARKER,
+        VSX_BUNDLE_START_MARKER,
+    )
+
+    # 1. Non-bundle passthrough for physical gateways (vsid=None/0 and no vs_name)
+    plain_output = "default via 192.168.1.1 dev eth0\n10.0.0.0/24 dev eth1"
+    passthrough = extract_vs_slice_from_bundle(plain_output, vsid=None, vs_name=None)
+    assert passthrough.success is True
+    assert passthrough.stdout == plain_output
+    passthrough_zero = extract_vs_slice_from_bundle(plain_output, vsid=0, vs_name=None)
+    assert passthrough_zero.success is True
+
+    # 1b. Fail closed when a Virtual System receives non-bundle output (outdated script regression)
+    vs_missing_bundle = extract_vs_slice_from_bundle(plain_output, vsid=1, vs_name="VS1")
+    assert vs_missing_bundle.success is False
+    assert vs_missing_bundle.error_code == "vsx_bundle_missing"
+
+    # 1c. Fail closed on truncated bundle (missing VSX_BUNDLE_END_MARKER)
+    trunc_bundle = extract_vs_slice_from_bundle(
+        f"{VSX_BUNDLE_START_MARKER}\n{VS_START_PREFIX}vsid=1 name=VS1===\nroutes\n{VS_END_MARKER}\n",
+        vsid=1,
+    )
+    assert trunc_bundle.success is False
+    assert trunc_bundle.error_code == "vsx_bundle_truncated"
+
+    # 2. Multi-VS bundle with normal slices, error slice, and truncated slice
+    bundle_text = f"""{VSX_BUNDLE_START_MARKER}
+{VS_START_PREFIX}vsid=1 name=VS_Corp===
+===ARODONATA_IP_ROUTE_START===
+10.10.1.0/24 dev eth1 proto kernel scope link src 10.10.1.1
+10.20.0.0/16 via 10.10.1.254 dev eth1 proto bgp
+===ARODONATA_IP_ROUTE_END===
+{VS_END_MARKER}
+{VS_START_PREFIX}vsid=2 name=VS_DMZ===
+===ARODONATA_IP_ROUTE_START===
+172.16.2.0/24 dev eth2 proto kernel scope link src 172.16.2.1
+{ROUTE_LIMIT_MARKER}
+===ARODONATA_IP_ROUTE_END===
+{VS_END_MARKER}
+{VS_START_PREFIX}vsid=3 name=VS_Broken===
+{VS_ERROR_PREFIX}vsid=3 name=VS_Broken error=vsenv 3 failed===
+{VS_END_MARKER}
+{VSX_BUNDLE_END_MARKER}
+"""
+
+    slices = parse_vsx_bundle_output(bundle_text)
+    assert len(slices) == 3
+    assert slices[0].vsid == 1 and slices[0].vs_name == "VS_Corp" and slices[0].error is None
+    assert slices[1].vsid == 2 and slices[1].vs_name == "VS_DMZ" and slices[1].error is None
+    assert slices[2].vsid == 3 and slices[2].vs_name == "VS_Broken" and slices[2].error == "vsenv 3 failed"
+
+    # 3. Extract by vsid
+    res1 = extract_vs_slice_from_bundle(bundle_text, vsid=1, vs_name=None)
+    assert res1.success is True
+    assert "10.10.1.0/24" in res1.stdout
+    routes1, trunc1 = parse_combined_cli_routes_with_status(res1.stdout, max_routes=50000)
+    assert len(routes1) == 2
+    assert trunc1 is False
+
+    # 4. Extract by vs_name fallback (case-insensitive)
+    res2 = extract_vs_slice_from_bundle(bundle_text, vsid=None, vs_name="vs_dmz")
+    assert res2.success is True
+    assert "172.16.2.0/24" in res2.stdout
+    routes2, trunc2 = parse_combined_cli_routes_with_status(res2.stdout, max_routes=50000)
+    assert len(routes2) == 1
+    assert trunc2 is True  # Preserves route limit reached marker
+
+    # 5. Extract failed VS slice isolates error
+    res3 = extract_vs_slice_from_bundle(bundle_text, vsid=3, vs_name="VS_Broken")
+    assert res3.success is False
+    assert res3.error_code == "vs_context_error"
+    assert "vsenv 3 failed" in str(res3.error_message)
+
+    # 6. Extract missing VS slice fails closed without returning other VS routes
+    res_missing = extract_vs_slice_from_bundle(bundle_text, vsid=99, vs_name="VS_Nonexistent")
+    assert res_missing.success is False
+    assert res_missing.error_code == "vs_not_found_in_bundle"
+    assert "99" in str(res_missing.error_message)
+
+
+@pytest.mark.spec("SCN-TOPO-008-4")
+@pytest.mark.asyncio
+async def test_zero_arg_vsx_bundle_coalescing_and_error_isolation() -> None:
+    """Verify SCN-TOPO-008-4: zero-arg repository mode coalesces per physical node and isolates per-VS errors."""
+    from arodonata import ArodonataClient, ArodonataSettings
+    from arodonata.testing import FileReplayApiMock
+
+    api_mock = FileReplayApiMock()
+    settings = ArodonataSettings(
+        mgmt_name="mds",
+        mgmt_ip="127.0.0.1",
+        api_key="mock-key",
+        database_url="sqlite+aiosqlite:///:memory:",
+        max_routes_per_gateway=100,
+    )
+
+    async with ArodonataClient(settings=settings, api=api_mock) as client:
+        await client.refresh_assets(mgmt_name="mds", domains=["DC_Spine"], mode="force")
+        await client.ensure_route_collection_script("mds", "DC_Spine")
+
+        api_mock.allow_one_time_script = False
+        api_mock.allow_repository_script = True
+
+        # Inject an error into VS3 on dc-vsx-chassis-02
+        api_mock.cli_mock.set_cli_stdout(
+            "dc-vsx-chassis-02",
+            3,
+            "===ARODONATA_VS_ERROR vsid=3 name=dc-vsx-spine-vs03 error=vsenv 3 failed===\n",
+        )
+        api_mock.reset_counters()
+
+        # 1. Zero-argument repository mode: 3 VSs on same physical chassis coalesce into 1 run-script call
+        repo_out = await client.collect_gateway_routes(
+            mgmt_name="mds",
+            domains=["DC_Spine"],
+            gateways=["dc-vsx-spine-vs02", "dc-vsx-spine-vs03", "dc-vsx-spine-vs04"],
+            cprid_script_mode="repository",
+        )
+        assert repo_out.total_gateways == 3
+        assert repo_out.succeeded_gateways == 2
+        assert repo_out.failed_gateways == 1
+
+        calls = api_mock.get_calls(domain="DC_Spine", command="run-script")
+        assert len(calls) == 1
+        assert calls[0]["payload"]["script-type"] == "repository"
+        assert "args" not in calls[0]["payload"]
+        assert "script" not in calls[0]["payload"]
+        assert "script-base64" not in calls[0]["payload"]
+
+        # Verify isolated error on VS3 without failing VS2 or VS4
+        statuses = {g.gateway_name: g for g in repo_out.gateways}
+        assert statuses["dc-vsx-spine-vs02"].success is True
+        assert statuses["dc-vsx-spine-vs02"].routes_collected > 0
+        assert statuses["dc-vsx-spine-vs03"].success is False
+        assert "vsenv 3 failed" in (statuses["dc-vsx-spine-vs03"].error or "")
+        assert statuses["dc-vsx-spine-vs04"].success is True
+        assert statuses["dc-vsx-spine-vs04"].routes_collected > 0
+
+        # 2. Backward-compatible parameterized execution with explicit repository_script_args_fn
+        api_mock.allow_one_time_script = True
+        api_mock.reset_counters()
+        param_out = await client.collect_gateway_routes(
+            mgmt_name="mds",
+            domains=["DC_Spine"],
+            gateways=["dc-vsx-spine-vs02", "dc-vsx-spine-vs04"],
+            cprid_script_mode="repository",
+            repository_script_args_fn=lambda t, mr: f"{mr or 0} {t.vsid or 0}",
+        )
+        assert param_out.succeeded_gateways == 2
+        param_calls = api_mock.get_calls(domain="DC_Spine", command="run-script")
+        assert len(param_calls) == 2
+        assert param_calls[0]["payload"]["args"] == "100 2"
+        assert param_calls[1]["payload"]["args"] == "100 4"
+
+
+@pytest.mark.asyncio
+async def test_audit_findings_f1_f2_f3_f5_f6_verification() -> None:
+    """Verify audit fixes F1 (failure carryover), F2 (cancellation safety), F3 (outdated script fail closed), and F5 (execute_gateway_cli slice return)."""
+    from arodonata.core.models.topology import GatewayCliResult, GatewayCliTarget
+    from arodonata.core.services.topology.route_executor import execute_gateway_cli
+    from arodonata.core.services.topology.route_parsers import extract_vs_slice_from_bundle
+    from arodonata.core.services.topology.route_scripts import (
+        VS_END_MARKER,
+        VS_START_PREFIX,
+        VSX_BUNDLE_END_MARKER,
+        VSX_BUNDLE_START_MARKER,
+    )
+
+    # F1: extract_vs_slice_from_bundle preserves failure when base_result failed
+    bundle_text = (
+        f"{VSX_BUNDLE_START_MARKER}\n"
+        f"{VS_START_PREFIX}vsid=1 name=VS1===\n"
+        "10.0.0.0/24 dev eth1\n"
+        f"{VS_END_MARKER}\n"
+        f"{VSX_BUNDLE_END_MARKER}\n"
+    )
+    failed_base = GatewayCliResult(
+        success=False,
+        stdout=bundle_text,
+        stderr="task timed out",
+        exit_code=1,
+        executor="cprid",
+        error_code="task_timeout",
+        error_message="Check Point task timed out",
+    )
+    extracted_fail = extract_vs_slice_from_bundle(
+        bundle_text, vsid=1, vs_name="VS1", executor="cprid", base_result=failed_base
+    )
+    assert extracted_fail.success is False
+    assert extracted_fail.error_code == "task_timeout"
+    assert "timed out" in (extracted_fail.error_message or "")
+
+    # F3: Outdated zero-arg repository script returning non-bundle stdout to VS target fails closed
+    non_bundle_host_output = "default via 192.168.1.1 dev eth0\n10.0.0.0/8 dev eth0"
+    target_vs = GatewayCliTarget(
+        mgmt_name="m1",
+        domain_name="d1",
+        gateway_name="vs1",
+        gateway_uid="gw-1",
+        gateway_type="simple-gateway",
+        node_uid="node-1",
+        vsid=1,
+        vs_name="vs1",
+        node_name="node1",
+    )
+
+    class _MockApi:
+        pass
+
+    class _OutdatedScriptService:
+        async def run_repository_script(self, *args: Any, **kwargs: Any) -> Any:
+            from arodonata.core.models.scripts import RepositoryScriptExecutionOutcome
+
+            return RepositoryScriptExecutionOutcome(
+                mgmt_name="m1",
+                domain_name="d1",
+                script_ref="dummy_script",
+                success=True,
+                stdout=non_bundle_host_output,
+                stderr="",
+                tasks=[],
+            )
+
+    cli_res = await execute_gateway_cli(
+        target_vs,
+        "dummy_script",
+        api=_MockApi(),  # type: ignore[arg-type]
+        gateway_cli="cprid",
+        cprid_script_mode="repository",
+        repository_script_args_fn=None,
+        script_service=_OutdatedScriptService(),  # type: ignore[arg-type]
+    )
+    assert cli_res.success is False
+    assert cli_res.error_code == "vsx_bundle_missing"
+    assert "expected VSX bundle output" in (cli_res.error_message or "")
+    assert cli_res.stdout == ""  # Never returns VS0 host routes!
+
+    # F5: execute_gateway_cli on a VS target returns only that VS slice, not full bundle
+    class _BundleScriptService:
+        async def run_repository_script(self, *args: Any, **kwargs: Any) -> Any:
+            from arodonata.core.models.scripts import RepositoryScriptExecutionOutcome
+
+            multi_bundle = (
+                f"{VSX_BUNDLE_START_MARKER}\n"
+                f"{VS_START_PREFIX}vsid=1 name=VS1===\n"
+                "10.1.0.0/16 dev eth1\n"
+                f"{VS_END_MARKER}\n"
+                f"{VS_START_PREFIX}vsid=2 name=VS2===\n"
+                "10.2.0.0/16 dev eth2\n"
+                f"{VS_END_MARKER}\n"
+                f"{VSX_BUNDLE_END_MARKER}\n"
+            )
+            return RepositoryScriptExecutionOutcome(
+                mgmt_name="m1",
+                domain_name="d1",
+                script_ref="dummy_script",
+                success=True,
+                stdout=multi_bundle,
+                stderr="",
+                tasks=[],
+            )
+
+    slice_res = await execute_gateway_cli(
+        target_vs,
+        "dummy_script",
+        api=_MockApi(),  # type: ignore[arg-type]
+        gateway_cli="cprid",
+        cprid_script_mode="repository",
+        repository_script_args_fn=None,
+        script_service=_BundleScriptService(),  # type: ignore[arg-type]
+    )
+    assert slice_res.success is True
+    assert "10.1.0.0/16" in slice_res.stdout
+    assert "10.2.0.0/16" not in slice_res.stdout  # Sibling VS routes NOT returned in target slice
+    assert slice_res.bundle_stdout is not None  # Raw bundle attached for coalescing followers

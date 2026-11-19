@@ -20,6 +20,12 @@ ROUTE_LIMIT_MARKER = "===ARODONATA_ROUTE_LIMIT_REACHED==="
 CLISH_SKIPPED_LARGE_TABLE_MARKER = "===ARODONATA_CLISH_SKIPPED_LARGE_TABLE==="
 DEFAULT_CLISH_SKIP_THRESHOLD = 10000
 DEFAULT_ROUTE_COLLECT_REPOSITORY_SCRIPT_NAME = "arodonata-collect-routes-v1"
+DEFAULT_REPOSITORY_MAX_ROUTES = 50000
+VSX_BUNDLE_START_MARKER = "===ARODONATA_VSX_BUNDLE_START==="
+VSX_BUNDLE_END_MARKER = "===ARODONATA_VSX_BUNDLE_END==="
+VS_START_PREFIX = "===ARODONATA_VS_START "
+VS_END_MARKER = "===ARODONATA_VS_END==="
+VS_ERROR_PREFIX = "===ARODONATA_VS_ERROR "
 
 _UNSAFE_VS_NAME_RE = re.compile(r"[\s\x00-\x1f\x7f'\"\\$`;&|<>()\[\]{}*?!~]")
 
@@ -189,15 +195,93 @@ def build_route_collection_script(
     )
 
 
-def build_route_collection_repository_script() -> str:
-    """Build the canonical parameterized bash script (`arodonata-collect-routes-v1`) for Check Point Script Repository.
+def build_route_collection_repository_script(
+    *,
+    default_max_routes: int = DEFAULT_REPOSITORY_MAX_ROUTES,
+    default_skip_threshold: int = DEFAULT_CLISH_SKIP_THRESHOLD,
+) -> str:
+    """Build the canonical self-detecting bash script (`arodonata-collect-routes-v1`) for Check Point Script Repository.
 
-    Positional arguments (`run-script` `args`):
-    - `$1`: `max_routes` (digits-only; `0` or empty = unlimited)
-    - `$2`: `vsid` (digits-only; `0` or empty = host / non-VSX)
-    - `$3`: `vs_name` (optional Virtual System name resolved dynamically via `vsx stat -l` when `vsid=0`)
+    Execution modes:
+    - Zero-argument (`$# -eq 0`): auto-detects VSX via `vsx stat -l </dev/null 2>/dev/null`.
+      - On VSX chassis: iterates all L3 Virtual Systems / Virtual Routers (`VSID > 0`, skipping Virtual Switches),
+        emitting a bundle delimited by `===ARODONATA_VSX_BUNDLE_START===` ... `===ARODONATA_VSX_BUNDLE_END===`
+        with per-VS markers `===ARODONATA_VS_START vsid=<id> name=<name>===` ... `===ARODONATA_VS_END===`
+        and isolating failed `vsenv` contexts with `===ARODONATA_VS_ERROR vsid=<id> name=<name> error=<err>===`.
+      - On non-VSX gateways: executes with built-in route limit (`default_max_routes`) and clish skip threshold.
+    - Parameterized (`$# -gt 0`): preserves backward-compatible positional argument handling:
+      - `$1`: `max_routes` (digits-only; `0` or empty = unlimited)
+      - `$2`: `vsid` (digits-only; `0` or empty = host / non-VSX)
+      - `$3`: `vs_name` (optional Virtual System name resolved dynamically via `vsx stat -l` when `vsid=0`)
     """
+    eff_skip_thr = min(default_skip_threshold, default_max_routes) if default_max_routes > 0 else default_skip_threshold
     return (
+        'if [ "$#" -eq 0 ]; then\n'
+        "  _is_vsx=0\n"
+        '  _vs_list=""\n'
+        "  if command -v vsx >/dev/null 2>&1 && command -v vsenv >/dev/null 2>&1; then\n"
+        "    _vs_list=$(vsx stat -l </dev/null 2>/dev/null | awk '\n"
+        "function flush() {\n"
+        '  if (vid != "" && (vid + 0) > 0 && index(tolower(vtype), "switch") == 0) {\n'
+        '    if (vname == "") vname = "VS_" vid;\n'
+        '    print vid "\\t" vname;\n'
+        "  }\n"
+        '  vid = ""; vname = ""; vtype = "";\n'
+        "}\n"
+        "/^VSID:[ \\t]*/ { flush(); vid = $2; next }\n"
+        '/^Name:[ \\t]*/ { sub(/^Name:[ \\t]*/, ""); vname = $0; next }\n'
+        '/^Type:[ \\t]*/ { sub(/^Type:[ \\t]*/, ""); vtype = $0; next }\n'
+        "END { flush() }')\n"
+        '    if [ -n "$_vs_list" ]; then\n'
+        "      _is_vsx=1\n"
+        "    fi\n"
+        "  fi\n"
+        '  if [ "$_is_vsx" -eq 1 ]; then\n'
+        f'    echo "{VSX_BUNDLE_START_MARKER}"\n'
+        "    printf '%s\\n' \"$_vs_list\" | while IFS=\"$(printf '\\t')\" read -r vid vname; do\n"
+        '      [ -n "$vid" ] || continue\n'
+        f'      echo "{VS_START_PREFIX}vsid=${{vid}} name=${{vname}}==="\n'
+        '      ctx=$(printf "CTX%05d" "$vid")\n'
+        '      if ! vsenv "$vid" >/dev/null 2>&1 </dev/null; then\n'
+        f'        echo "{VS_ERROR_PREFIX}vsid=${{vid}} name=${{vname}} error=vsenv ${{vid}} failed==="\n'
+        "      else\n"
+        '        case "$FWDIR" in\n'
+        '          *"$ctx"*) ;;\n'
+        f'          *) echo "{VS_ERROR_PREFIX}vsid=${{vid}} name=${{vname}} error=context not switched (FWDIR=$FWDIR)===" ;;\n'
+        "        esac\n"
+        '        case "$FWDIR" in\n'
+        '          *"$ctx"*)\n'
+        '            echo "===ARODONATA_IP_ROUTE_START==="\n'
+        f"            ip -4 route show 2>/dev/null </dev/null | awk -v lim={default_max_routes} "
+        f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
+        '            echo "===ARODONATA_IP_ROUTE_END==="\n'
+        "            ;;\n"
+        "        esac\n"
+        "      fi\n"
+        f'      echo "{VS_END_MARKER}"\n'
+        "    done\n"
+        f'    echo "{VSX_BUNDLE_END_MARKER}"\n'
+        "    exit 0\n"
+        "  else\n"
+        f"    max_routes={default_max_routes}\n"
+        f"    skip_thr={eff_skip_thr}\n"
+        '    echo "===ARODONATA_IP_ROUTE_START==="\n'
+        "    _ip_rc=0\n"
+        '    ip -4 route show 2>/dev/null </dev/null | awk -v lim="$max_routes" -v thr="$skip_thr" '
+        f'\'NR<=lim {{print}} NR==lim+1 {{print "{ROUTE_LIMIT_MARKER}"; exit 42}} '
+        "END {if (NR>thr) exit 42}' || _ip_rc=$?\n"
+        '    echo "===ARODONATA_IP_ROUTE_END==="\n'
+        '    if [ "$_ip_rc" -eq 42 ]; then\n'
+        f'      echo "{CLISH_SKIPPED_LARGE_TABLE_MARKER}"\n'
+        "    else\n"
+        '      echo "===ARODONATA_CLISH_ROUTE_START==="\n'
+        '      clish -c "show route" 2>/dev/null </dev/null | awk -v lim="$max_routes" '
+        f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
+        '      echo "===ARODONATA_CLISH_ROUTE_END==="\n'
+        "    fi\n"
+        "    exit 0\n"
+        "  fi\n"
+        "fi\n"
         'max_routes="${1:-0}"\n'
         'vsid="${2:-0}"\n'
         'vs_name="${3:-}"\n'
@@ -399,10 +483,16 @@ __all__ = [
     "AutoScriptModeResolver",
     "CLISH_SKIPPED_LARGE_TABLE_MARKER",
     "DEFAULT_CLISH_SKIP_THRESHOLD",
+    "DEFAULT_REPOSITORY_MAX_ROUTES",
     "DEFAULT_ROUTE_COLLECT_REPOSITORY_SCRIPT_NAME",
     "ParsedCliRoute",
     "ROUTE_LIMIT_MARKER",
     "RepositoryScriptArgsCallable",
+    "VSX_BUNDLE_END_MARKER",
+    "VSX_BUNDLE_START_MARKER",
+    "VS_END_MARKER",
+    "VS_ERROR_PREFIX",
+    "VS_START_PREFIX",
     "build_route_collection_repository_script",
     "build_route_collection_script",
     "format_route_collection_repository_args",

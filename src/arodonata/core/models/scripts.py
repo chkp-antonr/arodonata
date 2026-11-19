@@ -23,35 +23,68 @@ def normalize_script_body(body: str) -> str:
     return "\n".join(line.rstrip() for line in normalized.split("\n")).strip()
 
 
-def decode_base64_task_message(raw_val: str) -> str:
-    """Decode a Base64-encoded Check Point task message when plausible UTF-8 text, else return `raw_val`."""
+def _try_decode_base64_text(
+    raw_val: str,
+    *,
+    min_len: int = 4,
+    strict_b64: bool = False,
+    strict_utf8: bool = False,
+    min_printable_ratio: float = 0.85,
+    sample_len: int | None = None,
+    require_script_tokens: bool = False,
+) -> str:
+    """Attempt to decode a Base64-encoded ASCII/UTF-8 string. Returns decoded text if valid, else `raw_val`."""
     cleaned = raw_val.strip()
     if not cleaned:
         return ""
-    if (
-        "===ARODONATA_" in cleaned
-        or "_vs_error=" in cleaned
-        or " dev " in cleaned
-        or " via " in cleaned
-        or "\n" in cleaned
-        or " " in cleaned
-        or "\t" in cleaned
-    ):
+    if "\n" in cleaned or "\r" in cleaned or " " in cleaned or "\t" in cleaned:
         return raw_val
-    if len(cleaned) < 4 or len(cleaned) % 4 == 1 or not _BASE64_TOKEN_RE.fullmatch(cleaned):
+    if "===ARODONATA_" in cleaned or "_vs_error=" in cleaned or " dev " in cleaned or " via " in cleaned:
+        return raw_val
+    if len(cleaned) < min_len or len(cleaned) % 4 == 1 or not _BASE64_TOKEN_RE.fullmatch(cleaned):
         return raw_val
     try:
         padded = cleaned + "=" * ((4 - len(cleaned) % 4) % 4)
-        decoded_bytes = base64.b64decode(padded, validate=False)
-        decoded_str = decoded_bytes.decode("utf-8", errors="replace")
-        sample = decoded_str[:120]
-        if sample:
-            valid_chars = sum(1 for ch in sample if (ch.isprintable() and ch != "\ufffd") or ch in ("\n", "\r", "\t"))
-            if valid_chars / len(sample) >= 0.85:
-                return decoded_str
+        decoded_bytes = base64.b64decode(padded, validate=strict_b64)
+        errors_mode = "strict" if strict_utf8 else "replace"
+        decoded_str = decoded_bytes.decode("utf-8", errors=errors_mode)
+        if not decoded_str:
+            return raw_val
+        eval_text = decoded_str[:sample_len] if sample_len is not None else decoded_str
+        valid_chars = sum(1 for ch in eval_text if (ch.isprintable() and ch != "\ufffd") or ch in ("\n", "\r", "\t"))
+        if valid_chars / len(eval_text) < min_printable_ratio:
+            return raw_val
+        if require_script_tokens and not any(token in decoded_str for token in ("\n", " ", "=", "#", "$", ";")):
+            return raw_val
+        return decoded_str
     except Exception:
-        pass
-    return raw_val
+        return raw_val
+
+
+def decode_base64_task_message(raw_val: str) -> str:
+    """Decode a Base64-encoded Check Point task message when plausible UTF-8 text, else return `raw_val`."""
+    return _try_decode_base64_text(
+        raw_val,
+        min_len=4,
+        strict_b64=False,
+        strict_utf8=False,
+        min_printable_ratio=0.85,
+        sample_len=120,
+        require_script_tokens=False,
+    )
+
+
+def _decode_repository_script_body(raw_body: str) -> str:
+    """Decode Base64-encoded `script-body` from Check Point R82 `show-repository-script` if valid, else return `raw_body`."""
+    return _try_decode_base64_text(
+        raw_body,
+        min_len=8,
+        strict_b64=True,
+        strict_utf8=True,
+        min_printable_ratio=0.90,
+        sample_len=None,
+        require_script_tokens=True,
+    )
 
 
 class RepositoryScript(BaseModel):
@@ -90,14 +123,16 @@ class RepositoryScript(BaseModel):
 
         raw_body = data.get("script-body")
         raw_b64 = data.get("script-body-base64")
-        if isinstance(raw_body, str):
-            script_body = raw_body
-        elif isinstance(raw_b64, str) and raw_b64.strip():
+        if isinstance(raw_b64, str) and raw_b64.strip():
             try:
                 padded = raw_b64.strip() + "=" * ((4 - len(raw_b64.strip()) % 4) % 4)
                 script_body = base64.b64decode(padded, validate=False).decode("utf-8", errors="replace")
             except Exception:
                 script_body = fallback_body or ""
+        elif isinstance(raw_body, str) and raw_body.strip():
+            script_body = _decode_repository_script_body(raw_body)
+        elif isinstance(raw_body, str):
+            script_body = raw_body
         elif isinstance(data.get("script_body"), str):
             script_body = str(data["script_body"])
         else:

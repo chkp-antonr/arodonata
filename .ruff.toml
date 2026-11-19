@@ -35,4 +35,4 @@ known-third-party = ["arlogi"]
 quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
-line-ending = "native"
+line-ending = "lf"

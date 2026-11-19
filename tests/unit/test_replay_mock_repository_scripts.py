@@ -190,21 +190,30 @@ async def test_replay_mock_permissions_readonly_and_positional_args_execution() 
             await client.get_repository_script("mds", "custom-health", domain="Branch")
         mock.manage_repository_scripts = "read"
 
-        # 3. Repository multi-target execution succeeds under restricted permissions
+        # 3. Repository multi-target execution succeeds without args under restricted permissions
         multi = await client.run_repository_script(
             "mds",
             "custom-health",
             ["br-spb-gw-01", "br-reg-gw-002"],
             domain="Branch",
-            args=["--fast", "10"],
         )
         assert multi.success is True
         assert len(multi.targets) == 2
         assert "br-spb-gw-01" in multi.targets[0].stdout
-        assert "--fast 10" in multi.targets[0].stdout
         assert "br-reg-gw-002" in multi.targets[1].stdout
 
-        # 4. Route-collection script positional args: explicit vsid=0 and dynamic vs_name resolution + invalid non-digit args
+        # Under allow_one_time_script=False, passing arguments is rejected by Check Point
+        with pytest.raises(RepositoryScriptPermissionError):
+            await client.run_repository_script(
+                "mds",
+                "custom-health",
+                ["br-spb-gw-01"],
+                domain="Branch",
+                args=["--fast", "10"],
+            )
+
+        # 4. Route-collection script positional args with allow_one_time_script=True
+        mock.allow_one_time_script = True
         res_gw = await mock.api_call(
             "mds",
             "run-script",
@@ -262,3 +271,91 @@ async def test_replay_mock_permissions_readonly_and_positional_args_execution() 
         mock.allow_repository_script = True
         with pytest.raises(RepositoryScriptNotFoundError):
             await client.run_repository_script("mds", "does-not-exist", ["br-spb-gw-01"], domain="Branch")
+
+
+@pytest.mark.spec("SCN-TOPO-018-2")
+async def test_replay_mock_r82_parity_base64_and_zero_arg_bundle_and_args_rejection() -> None:
+    """Verify SCN-TOPO-018-2: args rejection under allow_one_time_script=False, zero-arg VSX bundle, Base64 script-body."""
+    mock = FileReplayApiMock(
+        allow_one_time_script=False,
+        allow_repository_script=True,
+        encode_repository_script_body_base64=True,
+    )
+    settings = ArodonataSettings(
+        mgmt_name="mds",
+        mgmt_ip="127.0.0.1",
+        api_key="mock-key",
+        database_url="sqlite+aiosqlite:///:memory:",
+    )
+
+    async with ArodonataClient(settings=settings, api=mock) as client:
+        # Provision canonical route script on DC_Spine (VSX domain)
+        route_script = build_route_collection_repository_script()
+        ensured = await client.ensure_repository_script(
+            "mds",
+            "arodonata-collect-routes-v1",
+            route_script,
+            domain="DC_Spine",
+        )
+        assert ensured.action == "created"
+        assert ensured.published is True
+
+        # 1. show-repository-script returns Base64-encoded script-body, cleanly decoded by check_repository_script
+        raw_show = await mock.api_call(
+            "mds",
+            "show-repository-script",
+            {"name": "arodonata-collect-routes-v1"},
+            domain="DC_Spine",
+        )
+        assert raw_show.success is True
+        raw_body_b64 = raw_show.data["script-body"]
+        assert "\n" not in raw_body_b64
+        # Verify it really is a valid base64 string
+        decoded_raw = base64.b64decode(raw_body_b64).decode("utf-8")
+        assert "===ARODONATA_VSX_BUNDLE_START===" in decoded_raw
+
+        status = await client.check_repository_script(
+            "mds",
+            "arodonata-collect-routes-v1",
+            domain="DC_Spine",
+            expected_body=route_script,
+        )
+        assert status.exists is True
+        assert status.matches_expected is True
+
+        # 2. run-script with non-empty args returns HTTP 400 err_validation_failed
+        rejected_args = await mock.api_call(
+            "mds",
+            "run-script",
+            {
+                "script-name": "arodonata-collect-routes-v1",
+                "script-type": "repository",
+                "targets": ["dc-vsx-chassis-01"],
+                "args": "50000 0",
+            },
+            domain="DC_Spine",
+        )
+        assert rejected_args.success is False
+        assert rejected_args.status_code == 400
+        assert rejected_args.error_code == "err_validation_failed"
+        assert "Insufficient permissions to run this script with arguments." in (rejected_args.error_message or "")
+
+        # 3. run-script without args succeeds and emits zero-arg VSX bundle
+        zero_arg_run = await mock.api_call(
+            "mds",
+            "run-script",
+            {
+                "script-name": "arodonata-collect-routes-v1",
+                "script-type": "repository",
+                "targets": ["dc-vsx-chassis-01"],
+            },
+            domain="DC_Spine",
+        )
+        assert zero_arg_run.success is True
+        task_detail = zero_arg_run.data["tasks"][0]["task-details"][0]
+        assert task_detail["statusCode"] == "succeeded"
+        bundle_out = decode_base64_task_message(task_detail["responseMessage"])
+        assert "===ARODONATA_VSX_BUNDLE_START===" in bundle_out
+        assert "===ARODONATA_VS_START vsid=1 name=dc-vsx-spine-vs01===" in bundle_out
+        assert "===ARODONATA_IP_ROUTE_START===" in bundle_out
+        assert "===ARODONATA_VSX_BUNDLE_END===" in bundle_out

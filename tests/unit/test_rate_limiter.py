@@ -133,7 +133,9 @@ async def test_login_gate_serializes_concurrent_logins_per_mds_member() -> None:
 
 
 @pytest.mark.spec("SCN-SESS-007-2")
-async def test_login_gate_min_interval_pacing_shared_cooldown_and_wait_timeout() -> None:
+async def test_login_gate_min_interval_pacing_shared_cooldown_and_wait_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Adversarial test for C7, W4, W5, W6, I7:
     - LoginGate paces logins by min_login_interval and shared record_cooldown (W4, W5).
     - LoginGate bounds local lock wait by wait_timeout (W4).
@@ -174,6 +176,14 @@ async def test_login_gate_min_interval_pacing_shared_cooldown_and_wait_timeout()
     with pytest.raises(AuthenticationError, match="exceeds remaining wait_timeout"):
         async with gate.acquire("10.0.0.1", wait_timeout=10.0):
             pass
+
+    # Recording cooldown with principal attributes the administrator cleanly without exposing secrets
+    from arodonata.adapters.checkpoint import rate_limiter as rate_limiter_mod
+
+    recorded_warnings: list[str] = []
+    monkeypatch.setattr(rate_limiter_mod.logger, "warning", lambda msg, *_a, **_kw: recorded_warnings.append(str(msg)))
+    gate.record_cooldown("10.0.0.2", 70.0, principal="fpcr_ro")
+    assert any("10.0.0.2" in w and "70.0s" in w and "user='fpcr_ro'" in w for w in recorded_warnings)
 
     # I7: Coalesced keepalive survives cancellation of first caller when second caller is waiting
     limiter = RateLimiter(concurrent_limit=2)

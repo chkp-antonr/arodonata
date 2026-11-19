@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import shutil
 import stat
 import subprocess
 import tomllib
@@ -30,6 +31,13 @@ from tests.integration.run_lock import IntegrationRunLock, IntegrationRunLocked
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _runner_cmd(script_path: Path, *args: str) -> list[str]:
+    if os.name == "nt":
+        bash = shutil.which("bash") or "bash"
+        return [bash, str(script_path), *args]
+    return [str(script_path), *args]
+
+
 def _make_stub_pytest_runner_workspace(tmp_path: Path, *, fail_marker: str | None = None) -> tuple[Path, Path, Path]:
     """Create an isolated `tmp_path` sandbox with `pytest.sh` and a stub `uv` binary."""
     src_script = REPO_ROOT / "pytest.sh"
@@ -41,12 +49,13 @@ def _make_stub_pytest_runner_workspace(tmp_path: Path, *, fail_marker: str | Non
         (tmp_path / sub).mkdir(parents=True, exist_ok=True)
 
     log_file = tmp_path / "uv_calls.log"
+    log_file_posix = str(log_file).replace("\\", "/")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     uv_stub = bin_dir / "uv"
     fail_clause = f'if [[ " $* " == *" {fail_marker} "* ]]; then exit 1; fi\n' if fail_marker else ""
     uv_stub.write_text(
-        f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "{log_file}"\n{fail_clause}exit 0\n',
+        f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "{log_file_posix}"\n{fail_clause}exit 0\n',
         encoding="utf-8",
     )
     uv_stub.chmod(0o755)
@@ -67,11 +76,11 @@ def test_default_pytest_config_and_unit_runner_exclude_integration(tmp_path: Pat
     assert "-m" in addopts and "not integration" in addopts
 
     script_path, bin_dir, log_file = _make_stub_pytest_runner_workspace(tmp_path)
-    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ.get('PATH', '')}")
+    env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
-    r_default = subprocess.run([str(script_path)], capture_output=True, text=True, env=env, check=False)
+    r_default = subprocess.run(_runner_cmd(script_path), capture_output=True, text=True, env=env, check=False)
     r_unit = subprocess.run(
-        [str(script_path), "unit", "-k", "smoke"], capture_output=True, text=True, env=env, check=False
+        _runner_cmd(script_path, "unit", "-k", "smoke"), capture_output=True, text=True, env=env, check=False
     )
     assert r_default.returncode == 0
     assert r_unit.returncode == 0
@@ -84,10 +93,10 @@ def test_default_pytest_config_and_unit_runner_exclude_integration(tmp_path: Pat
 def test_single_integration_bucket_runner_passes_short_tb_and_info_cli_logs(tmp_path: Path) -> None:
     """SCN-ITEST-001-2: `./pytest.sh int-<N>` passes bucket filter, `--tb=short`, `--durations=15`, and INFO logs."""
     script_path, bin_dir, log_file = _make_stub_pytest_runner_workspace(tmp_path)
-    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ.get('PATH', '')}")
+    env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
     res = subprocess.run(
-        [str(script_path), "int-2", "-k", "login"], capture_output=True, text=True, env=env, check=False
+        _runner_cmd(script_path, "int-2", "-k", "login"), capture_output=True, text=True, env=env, check=False
     )
     assert res.returncode == 0
     call = log_file.read_text(encoding="utf-8").strip()
@@ -111,11 +120,11 @@ def test_int_full_runner_runs_all_buckets_sequentially_and_exits_nonzero_on_fail
     script_path, bin_dir, log_file = _make_stub_pytest_runner_workspace(tmp_path, fail_marker="bucket_3")
     env = dict(
         os.environ,
-        PATH=f"{bin_dir}:{os.environ.get('PATH', '')}",
+        PATH=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
         BUCKET_PAUSE_SECONDS="0",
     )
 
-    res = subprocess.run([str(script_path), "int-full"], capture_output=True, text=True, env=env, check=False)
+    res = subprocess.run(_runner_cmd(script_path, "int-full"), capture_output=True, text=True, env=env, check=False)
     assert res.returncode == 1
     assert "FAILED buckets: b3" in res.stdout
 
@@ -130,9 +139,9 @@ def test_int_full_runner_runs_all_buckets_sequentially_and_exits_nonzero_on_fail
 def test_unknown_integration_target_exits_2_before_pytest_collection(tmp_path: Path) -> None:
     """SCN-ITEST-001-4: `./pytest.sh int-unknown` exits with code 2 and never invokes pytest."""
     script_path, bin_dir, log_file = _make_stub_pytest_runner_workspace(tmp_path)
-    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ.get('PATH', '')}")
+    env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
-    res = subprocess.run([str(script_path), "int-unknown"], capture_output=True, text=True, env=env, check=False)
+    res = subprocess.run(_runner_cmd(script_path, "int-unknown"), capture_output=True, text=True, env=env, check=False)
     assert res.returncode == 2
     assert "Valid: unit | int-1 .. int-7 | int-full" in res.stderr
     assert not log_file.exists()

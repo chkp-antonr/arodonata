@@ -258,6 +258,7 @@ class GatewayCliResult(BaseModel):
     executor: Literal["ssh", "cprid"] = "ssh"
     error_code: str | None = None
     error_message: str | None = None
+    bundle_stdout: str | None = None
 
     def model_post_init(self, __context: Any) -> None:
         if self.stderr:
