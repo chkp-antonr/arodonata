@@ -14,10 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **topology,services**: Decomposed `topology_service.py` and `route_collector.py` into the cohesive, acyclic `src/arodonata/core/services/topology/` package (`_shared`, `normalizer`, `objects`, `scoring`, `policy_rules`, `extractor`, `flow_matching`, `policy_matcher`, `diagnostics`, `reconciler`, `refresh`, `route_scripts`, `route_parsers`, `route_executor`, `route_collection`, `service`) while keeping `topology_service.py` and `route_collector.py` as 100% backward-compatible re-export shims with exact shared `logger` identity.
 - **core,cpcrud,rulebase,mcp,testing**: Moved `parse_cp_publish_timestamp` to `core.models.common`, `SERVICE_COMMAND_TYPES` / `NON_OVERLAY_MUTATION_TARGETS` / `update_overlay_from_command` to `core.context`, and `PolicyPackageInfo` / `extract_policy_packages` to `core.models.rulebase` with 100% backward-compatible re-exports; eliminated hexagonal violations across `core`, `cpcrud`, and `rulebase`; decoupled `TopologyService` via `RulebaseRefreshPort` DI (logging a warning when omitted during cold package refresh); and migrated duplicate UUID/CSV/IPv4 helpers and `dataset_generator.py` sentinel literals to the unified core modules.
 
 ### Fixed
 
+- **topology,security**: Wrapped exception and failure messages across targeted gateway topology refresh (`_stream_targeted_gateway_refresh`, `DomainSyncFailedEvent`, warning logs) and live route collection (`execute_gateway_cli`, `collect_gateway_routes`, `GatewayCliResult`, `GatewayRouteCollectionStatus`, `DomainSyncState.last_error`) with `redact_sid()` so session identifiers never leak on failures.
 - **testing,sentinels**: Resolved UID `6c488338-8eec-4103-ad21-cd461ac2c476` misclassification in the replay emulator by removing `DROP_UID_ALT` and mapping it canonically to `Policy Targets` (`type="Global"`), matching Check Point Management API semantics (`6c488338-8eec-4103-ad21-cd461ac2c473` remains `Drop`), and switched `_normalize_action` / `_normalize_track` to validate strictly against `ACTION_UID_TO_NAME` / `TRACK_UID_TO_NAME`.
 - **cpcrud,primitives**: Implemented single-pass contiguous netmask validation in `mask_to_prefix_len` (supporting integral floats such as `24.0` and explicit `allow_hostmask` / `allow_prefix_int` flags) and added `strict=True` validation in `normalize_mask_length` for desired CPCRUD network specs so invalid `mask_length4` or `subnet_mask` values raise `ValidationError` instead of being silently dropped.
 
