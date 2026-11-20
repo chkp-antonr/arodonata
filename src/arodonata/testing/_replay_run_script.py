@@ -191,8 +191,7 @@ def handle_run_script(
                 else:
                     custom_stdout = f"target={node_name} script={repo_script.get('name')} args={raw_args}\n"
 
-        mock._task_seq += 1
-        task_id = f"12345678-8888-4888-8888-{mock._task_seq:012d}"
+        task_id = mock._next_task_id()
         default_task_name = (
             str(repo_script.get("name"))
             if repo_script is not None

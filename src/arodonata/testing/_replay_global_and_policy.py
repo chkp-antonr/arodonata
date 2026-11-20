@@ -126,7 +126,7 @@ def preflight_target_uids(
         is_section = command.endswith("-section")
         rb_cmd = f"show-{matched_kind}-rulebase"
         store = dom_files.get(rb_cmd, {})
-        pkg_or_lyr = str(req.get("package") if is_nat else (req.get("layer") or ""))
+        pkg_or_lyr = str((req.get("package") or "") if is_nat else (req.get("layer") or ""))
 
         if not is_section:
             uid = str(req.get("uid") or "").strip()
@@ -221,7 +221,6 @@ def handle_global_assignments_cmd(
     req: Mapping[str, Any],
     *,
     binding: SidBinding | None,
-    dom_name: str,
     wait_for_task: bool,
 ) -> ApiCallResult:
     """Handle `show-global-assignments`, `show-global-assignment`, and `assign-global-*` commands."""
@@ -257,7 +256,7 @@ def handle_global_assignments_cmd(
     if clean_cmd in ("assign-global-assignment", "assign-global-policy"):
         if binding is not None and mock._work_sessions[binding.session_uid].read_only:
             return cp_error("err_validation_failed", "Cannot modify database in read-only session", status_code=400)
-        if binding is not None and binding.domain not in ("System Data", "Global") and dom_name == "Global":
+        if binding is not None and binding.domain not in ("System Data", "Global"):
             return cp_error(
                 "generic_err_object_read_only",
                 f"Cannot assign Global policy from local domain [{binding.domain}]",

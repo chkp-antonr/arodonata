@@ -31,6 +31,7 @@ class FileReplayCliMock(GatewayCliPort):
         self.fail_ssh_nodes: set[str] = (
             set(fail_ssh_nodes) if fail_ssh_nodes is not None else {"br-reg-gw-138", "br-reg-gw-139", "br-reg-gw-140"}
         )
+        self._initial_fail_ssh_nodes: frozenset[str] = frozenset(self.fail_ssh_nodes)
         self._cli_overrides: dict[tuple[str, int], str] = {}
         self.cli_call_counts: Counter[tuple[str, int]] = Counter()
         self.node_call_counts: Counter[str] = Counter()

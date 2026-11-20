@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 import subprocess
 import sys
@@ -191,3 +192,282 @@ def test_dataset_generator_deterministic_parity(tmp_path: Path) -> None:
     assert fresh_files == default_files
     for rel_path in fresh_files:
         assert (fresh_dir / rel_path).read_bytes() == (default_dir / rel_path).read_bytes(), str(rel_path)
+
+
+@pytest.mark.spec("SCN-ITEST-009-2")
+@pytest.mark.asyncio
+async def test_nat_rule_lock_preflight_without_package_parameter() -> None:
+    """NAT lock preflight still resolves target UIDs when `package` is omitted on set/delete by name."""
+    api = replay_mock.FileReplayApiMock()
+    sid_a, _ = await api.create_dedicated_session("mds", "Branch")
+    sid_b, _ = await api.create_dedicated_session("mds", "Branch")
+
+    rb_res = await api.api_call(
+        "mds",
+        "show-nat-rulebase",
+        {"package": "Branch_Standard_Pkg", "limit": 10},
+        domain="Branch",
+        sid=sid_a,
+    )
+    assert rb_res.success
+    nat_rule = next(
+        rule
+        for _, rule in _emulator_projection.iter_flat_rule_entries(rb_res.data["rulebase"])
+        if rule.get("type") == "nat-rule"
+    )
+    rule_name = f"nat_lock_test_{nat_rule['rule-number']}"
+
+    named = await api.api_call(
+        "mds",
+        "set-nat-rule",
+        {"package": "Branch_Standard_Pkg", "uid": nat_rule["uid"], "new-name": rule_name},
+        domain="Branch",
+        sid=sid_a,
+    )
+    assert named.success
+    assert (await api.api_call("mds", "publish", {}, domain="Branch", sid=sid_a)).success
+
+    # Lock the published named NAT rule in session A (with explicit package).
+    locked = await api.api_call(
+        "mds",
+        "set-nat-rule",
+        {"package": "Branch_Standard_Pkg", "uid": nat_rule["uid"], "comments": "locked-by-a"},
+        domain="Branch",
+        sid=sid_a,
+    )
+    assert locked.success
+
+    blocked_set = await api.api_call(
+        "mds",
+        "set-nat-rule",
+        {"name": rule_name, "comments": "conflict"},
+        domain="Branch",
+        sid=sid_b,
+    )
+    assert not blocked_set.success
+    assert blocked_set.status_code == 400
+    assert blocked_set.error_code == "generic_err_object_locked"
+
+    blocked_del = await api.api_call(
+        "mds",
+        "delete-nat-rule",
+        {"name": rule_name},
+        domain="Branch",
+        sid=sid_b,
+    )
+    assert not blocked_del.success
+    assert blocked_del.status_code == 400
+    assert blocked_del.error_code == "generic_err_object_locked"
+
+
+@pytest.mark.spec("SCN-ITEST-015-1")
+def test_reset_restores_initial_fail_ssh_nodes() -> None:
+    """`reset()` restores constructor `fail_ssh_nodes` defaults and custom sets."""
+    default_api = replay_mock.FileReplayApiMock()
+    expected_defaults = {"br-reg-gw-138", "br-reg-gw-139", "br-reg-gw-140"}
+    assert default_api.cli_mock.fail_ssh_nodes == expected_defaults
+
+    default_api.cli_mock.fail_ssh_nodes.add("br-spb-gw-01")
+    default_api.cli_mock.fail_ssh_nodes.discard("br-reg-gw-138")
+    default_api.reset()
+    assert default_api.cli_mock.fail_ssh_nodes == expected_defaults
+
+    custom_cli = replay_mock.FileReplayCliMock(fail_ssh_nodes={"custom-gw-01"})
+    custom_api = replay_mock.FileReplayApiMock(cli_mock=custom_cli)
+    custom_api.cli_mock.fail_ssh_nodes.clear()
+    custom_api.reset()
+    assert custom_api.cli_mock.fail_ssh_nodes == {"custom-gw-01"}
+
+
+@pytest.mark.spec("SCN-ITEST-010-2")
+@pytest.mark.asyncio
+async def test_discard_by_uid_rotates_all_sid_bindings_and_blocks_non_open_writes() -> None:
+    """Discarding another session by UID rotates its active SID and guards non-open writes."""
+    api = replay_mock.FileReplayApiMock()
+    sid_a, _ = await api.create_dedicated_session("mds", "Branch")
+    sid_b, _ = await api.create_dedicated_session("mds", "Branch")
+    uid_b = (await api.api_call("mds", "show-session", {}, domain="Branch", sid=sid_b)).data["uid"]
+
+    assert (
+        await api.api_call(
+            "mds",
+            "add-host",
+            {"name": "H_Discard_Before", "ipv4-address": "10.220.1.1"},
+            domain="Branch",
+            sid=sid_b,
+        )
+    ).success
+
+    disc_res = await api.api_call("mds", "discard", {"uid": uid_b}, domain="Branch", sid=sid_a)
+    assert disc_res.success
+    assert disc_res.data["number-of-discarded-changes"] == 1
+    assert api.get_active_sid_binding(sid_b).session_uid != uid_b  # type: ignore[union-attr]
+
+    # Session B's SID now targets a fresh open work session rather than the discarded one.
+    add_after = await api.api_call(
+        "mds",
+        "add-host",
+        {"name": "H_Discard_After", "ipv4-address": "10.220.1.2"},
+        domain="Branch",
+        sid=sid_b,
+    )
+    assert add_after.success
+    shown = await api.api_call("mds", "show-host", {"name": "H_Discard_After"}, domain="Branch", sid=sid_b)
+    assert shown.success
+    pub = await api.api_call("mds", "publish", {}, domain="Branch", sid=sid_b)
+    assert pub.success
+
+    # Defense in depth: if a SID binding somehow points at a non-open WorkSession, mutations fail closed.
+    sid_c, _ = await api.create_dedicated_session("mds", "Branch")
+    binding_c = api.get_active_sid_binding(sid_c)
+    assert binding_c is not None
+    api._work_sessions[binding_c.session_uid].state = "discarded"
+    dead_write = await api.api_call(
+        "mds",
+        "add-host",
+        {"name": "H_Dead_Overlay", "ipv4-address": "10.220.1.3"},
+        domain="Branch",
+        sid=sid_c,
+    )
+    assert not dead_write.success
+    assert dead_write.status_code == 400
+    assert dead_write.error_code == "err_validation_failed"
+
+
+@pytest.mark.spec("SCN-ITEST-007-1")
+@pytest.mark.asyncio
+async def test_projection_separation_determinism_and_pagination_clamping() -> None:
+    """Replay vs CRUD projections are separated, deterministic, and pagination handles limit=0 cleanly."""
+    assert "strict_standard" not in inspect.signature(_emulator_projection.project_details_level).parameters
+    assert "groups" not in _emulator_projection.REPLAY_STANDARD_SUMMARY_KEYS
+
+    large_obj = {k: f"val-{k}" for k in reversed(_emulator_projection.CRUD_STANDARD_KEEP_KEYS)}
+    large_obj.update(
+        {
+            "fqdn": "example.internal",
+            "subnet6": "2001:db8::",
+            "mask-length6": 64,
+            "ipv6-address-first": "2001:db8::1",
+            "ipv6-address-last": "2001:db8::9",
+            "icon": "Hosts/Host",
+            "class-name": "com.checkpoint.objects.classes.dummy.CpmiHostPlain",
+            "extra-field": "drop-me",
+        }
+    )
+    crud_slim = _emulator_projection.project_details_level(large_obj, "standard")
+    assert list(crud_slim.keys()) == list(_emulator_projection.CRUD_STANDARD_KEEP_KEYS)
+    for forbidden in (
+        "fqdn",
+        "subnet6",
+        "mask-length6",
+        "ipv6-address-first",
+        "ipv6-address-last",
+        "icon",
+        "class-name",
+    ):
+        assert forbidden not in crud_slim
+
+    api = replay_mock.FileReplayApiMock()
+    sid, _ = await api.create_dedicated_session("mds", "Branch")
+    created = await api.api_call(
+        "mds",
+        "add-host",
+        {"name": "H_Replay_Std_Shape", "ipv4-address": "10.220.2.1"},
+        domain="Branch",
+        sid=sid,
+    )
+    assert created.success
+    assert "groups" in created.data
+
+    hosts_page = await api.api_call(
+        "mds",
+        "show-hosts",
+        {"filter": "H_Replay_Std_Shape", "details-level": "standard"},
+        domain="Branch",
+        sid=sid,
+    )
+    assert hosts_page.success
+    matched = [h for h in hosts_page.data["objects"] if h["name"] == "H_Replay_Std_Shape"]
+    assert matched and "groups" not in matched[0]
+
+    empty_hosts = await api.api_call("mds", "show-hosts", {"limit": 0, "offset": -5}, domain="Branch", sid=sid)
+    assert empty_hosts.success
+    assert empty_hosts.data["objects"] == []
+    assert empty_hosts.data["from"] == 0
+    assert empty_hosts.data["to"] == 0
+    assert empty_hosts.data["total"] >= 1
+
+    assert (
+        await api.api_call(
+            "mds",
+            "add-repository-script",
+            {"name": "pagination-probe", "script-body": "echo ok\n"},
+            domain="Branch",
+            sid=sid,
+        )
+    ).success
+    empty_scripts = await api.api_call(
+        "mds", "show-repository-scripts", {"limit": 0, "offset": -3}, domain="Branch", sid=sid
+    )
+    assert empty_scripts.success
+    assert empty_scripts.data["objects"] == []
+    assert empty_scripts.data["from"] == 0
+    assert empty_scripts.data["to"] == 0
+    assert empty_scripts.data["total"] >= 1
+
+
+@pytest.mark.spec("SCN-ITEST-014-3")
+@pytest.mark.asyncio
+async def test_local_domain_session_cannot_assign_global_policy() -> None:
+    """A session bound to a local domain cannot invoke `assign-global-policy` even on that domain."""
+    api = replay_mock.FileReplayApiMock()
+    br_sid, _ = await api.create_dedicated_session("mds", "Branch")
+
+    for cmd in ("assign-global-policy", "assign-global-assignment"):
+        res = await api.api_call(
+            "mds",
+            cmd,
+            {"dependent-domains": ["DC_Pod"], "global-domains": ["Global"]},
+            domain="Branch",
+            sid=br_sid,
+        )
+        assert not res.success
+        assert res.status_code == 400
+        assert res.error_code == "generic_err_object_read_only"
+
+
+@pytest.mark.spec("SCN-ITEST-018-1")
+@pytest.mark.asyncio
+async def test_apply_domain_mutation_seam_and_unified_run_script_task_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live dispatch routes mutations through `_apply_domain_mutation` and `run-script` uses `_next_task_id`."""
+    api = replay_mock.FileReplayApiMock()
+    sid, _ = await api.create_dedicated_session("mds", "Branch")
+
+    seen_cmds: list[str] = []
+    orig_apply = api._apply_domain_mutation
+
+    def wrapped_apply(*args: Any, **kwargs: Any) -> Any:
+        seen_cmds.append(str(args[0]))
+        return orig_apply(*args, **kwargs)
+
+    monkeypatch.setattr(api, "_apply_domain_mutation", wrapped_apply)
+    res = await api.api_call(
+        "mds",
+        "add-host",
+        {"name": "H_Seam_Test", "ipv4-address": "10.220.3.1"},
+        domain="Branch",
+        sid=sid,
+    )
+    assert res.success
+    assert "add-host" in seen_cmds
+
+    script_res = await api.api_call(
+        "mds",
+        "run-script",
+        {"script-name": "show-ver", "script": "echo ok", "targets": ["br-spb-gw-01"]},
+        domain="Branch",
+        sid=sid,
+    )
+    assert script_res.success
+    task_ids = [t["task-id"] for t in script_res.data["tasks"]]
+    assert task_ids and all(tid.startswith("12345678-9999-4999-8999-") for tid in task_ids)

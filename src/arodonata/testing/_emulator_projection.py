@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from ._emulator_models import BUILTIN_SENTINELS, ENTITY_SPECS, format_domain_meta
@@ -122,7 +122,7 @@ RULE_KIND_CONFIGS: dict[str, dict[str, Any]] = {
     },
 }
 
-STANDARD_SUMMARY_KEYS: frozenset[str] = frozenset(
+REPLAY_STANDARD_SUMMARY_KEYS: frozenset[str] = frozenset(
     {
         "uid",
         "name",
@@ -150,7 +150,6 @@ STANDARD_SUMMARY_KEYS: frozenset[str] = frozenset(
         "urls-defined-as-regular-expression",
         "primary-category",
         "members",
-        "groups",
         "color",
         "comments",
         "meta-info",
@@ -158,6 +157,34 @@ STANDARD_SUMMARY_KEYS: frozenset[str] = frozenset(
         "tags",
         "class-name",
     }
+)
+CRUD_STANDARD_KEEP_KEYS: tuple[str, ...] = (
+    "uid",
+    "name",
+    "type",
+    "domain",
+    "color",
+    "comments",
+    "ipv4-address",
+    "ipv6-address",
+    "subnet4",
+    "mask-length4",
+    "subnet-mask",
+    "ipv4-address-first",
+    "ipv4-address-last",
+    "port",
+    "protocol",
+    "members",
+    "groups",
+    "tags",
+    "url-list",
+    "primary-category",
+    "urls-defined-as-regular-expression",
+    "is-sub-domain",
+    "icmp-type",
+    "icmp-code",
+    "ip-protocol",
+    "meta-info",
 )
 
 
@@ -202,28 +229,25 @@ def iter_flat_rule_entries(nodes: Any) -> list[tuple[dict[str, Any] | None, dict
     return out
 
 
-def project_details_level(
-    obj: Mapping[str, Any],
-    details_level: str,
-    *,
-    strict_standard: bool = False,
-) -> dict[str, Any]:
-    """Apply Check Point `details-level` (`uid`, `standard`, `full`) projection to an object."""
-    if strict_standard:
-        level = (details_level or "standard").strip().lower()
-        if level == "uid":
-            uid = obj.get("uid")
-            return {"uid": uid} if uid is not None else copy.deepcopy(dict(obj))
-        if level == "standard":
-            return {k: copy.deepcopy(v) for k, v in obj.items() if k in STANDARD_SUMMARY_KEYS}
-        return copy.deepcopy(dict(obj))
+def project_replay_details_level(obj: Mapping[str, Any], details_level: str) -> dict[str, Any]:
+    """Apply strict Check Point `details-level` (`uid`, `standard`, `full`) projection for replay reads."""
+    level = (details_level or "standard").strip().lower()
+    if level == "uid":
+        uid = obj.get("uid")
+        return {"uid": uid} if uid is not None else copy.deepcopy(dict(obj))
+    if level == "standard":
+        return {k: copy.deepcopy(v) for k, v in obj.items() if k in REPLAY_STANDARD_SUMMARY_KEYS}
+    return copy.deepcopy(dict(obj))
 
+
+def project_details_level(obj: Mapping[str, Any], details_level: str) -> dict[str, Any]:
+    """Apply Check Point `details-level` (`uid`, `standard`, `full`) projection to a CRUD object."""
     level = (details_level or "").strip().lower()
     if level == "uid":
         return {"uid": obj.get("uid")}
     copied = copy.deepcopy(dict(obj))
     if level == "standard" and len(copied) > 24:
-        slim = {k: copied[k] for k in STANDARD_SUMMARY_KEYS if k in copied}
+        slim = {k: copied[k] for k in CRUD_STANDARD_KEEP_KEYS if k in copied}
         if slim:
             return slim
     return copied
@@ -237,19 +261,16 @@ def paginate_items(
     details_level: str | None = None,
     default_limit: int = 100,
     default_details_level: str | None = None,
-    strict_standard: bool = False,
+    min_limit: int = 1,
+    projector: Callable[[Mapping[str, Any], str], dict[str, Any]] = project_details_level,
 ) -> dict[str, Any]:
     """Paginate a list using Check Point `limit` / `offset` conventions."""
     total = len(items)
     offset = max(0, int(req.get("offset", 0)))
-    limit = max(1, int(req.get("limit", default_limit)))
+    limit = max(min_limit, int(req.get("limit", default_limit)))
     page_items = items[offset : offset + limit]
     eff_level = str(details_level or req.get("details-level") or default_details_level or "").strip().lower()
-    sliced = (
-        [project_details_level(item, eff_level, strict_standard=strict_standard) for item in page_items]
-        if eff_level
-        else copy.deepcopy(page_items)
-    )
+    sliced = [projector(item, eff_level) for item in page_items] if eff_level else copy.deepcopy(page_items)
     from_idx = (offset + 1) if sliced else 0
     to_idx = (offset + len(sliced)) if sliced else 0
     return {

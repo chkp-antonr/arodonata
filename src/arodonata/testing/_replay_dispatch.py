@@ -174,9 +174,7 @@ def dispatch_api_call(
         "assign-global-assignment",
         "assign-global-policy",
     ):
-        return handle_global_assignments_cmd(
-            mock, clean_cmd, req, binding=binding, dom_name=dom_name, wait_for_task=wait_for_task
-        )
+        return handle_global_assignments_cmd(mock, clean_cmd, req, binding=binding, wait_for_task=wait_for_task)
     if clean_cmd == "show-domain":
         lookup = str(req.get("name") or req.get("uid") or dom_name)
         if lookup.lower() == "global" or lookup == mock._show_global_domain.get("uid"):
@@ -285,6 +283,12 @@ def dispatch_api_call(
     global_files = mock._effective_domain_files("Global", binding) or {}
 
     if mutating and active_ws is not None:
+        if active_ws.state != "open":
+            return cp_error(
+                "err_validation_failed",
+                f"Cannot mutate in session [{active_ws.uid}] with state {active_ws.state!r}",
+                status_code=400,
+            )
         if active_ws.read_only:
             return cp_error("err_validation_failed", "Cannot modify database in read-only session", status_code=400)
         if binding is not None and binding.domain != dom_name:
@@ -330,8 +334,7 @@ def dispatch_api_call(
 
         locked_out: set[str] = set()
         all_eff = mock._effective_all_domains(binding)
-        outcome = apply_domain_mutation(
-            mock,
+        outcome = mock._apply_domain_mutation(
             clean_cmd,
             req,
             dom_name=dom_name,

@@ -167,7 +167,7 @@ def reset_mock_state(mock: FileReplayApiMock) -> None:
     mock._uid_seq = 0
     mock._ts_seq = 1794300000000
     mock._cli_mock._cli_overrides.clear()
-    mock._cli_mock.fail_ssh_nodes.clear()
+    mock._cli_mock.fail_ssh_nodes = set(mock._cli_mock._initial_fail_ssh_nodes)
     mock.allow_one_time_script = True
     mock.allow_repository_script = True
     mock.manage_repository_scripts = "write"

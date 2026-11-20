@@ -12,18 +12,19 @@ from arodonata.core.models.common import ApiCallResult
 from arodonata.core.models.scripts import decode_base64_task_message
 
 from ._emulator_models import cp_error, cp_ok, format_domain_meta, format_timestamp
+from ._emulator_projection import paginate_items
 
 if TYPE_CHECKING:
     from .replay_mock import FileReplayApiMock
 
 
-def project_repository_script(item: dict[str, Any], details_level: str) -> dict[str, Any]:
+def project_repository_script(item: Mapping[str, Any], details_level: str) -> dict[str, Any]:
     """Project a repository script object according to Check Point `details-level`."""
     lvl = (details_level or "standard").strip().lower()
     if lvl == "uid":
         uid = item.get("uid")
-        return {"uid": uid} if uid is not None else copy.deepcopy(item)
-    return copy.deepcopy(item)
+        return {"uid": uid} if uid is not None else copy.deepcopy(dict(item))
+    return copy.deepcopy(dict(item))
 
 
 def extract_repo_script_body(req: Mapping[str, Any], *, fallback: str | None = None) -> str | None:
@@ -271,19 +272,17 @@ def handle_show_repository_scripts(
     if isinstance(raw_order, list) and raw_order and isinstance(raw_order[0], Mapping):
         order_desc = "DESC" in raw_order[0]
     sorted_scripts = sorted(scripts_list, key=lambda s: str(s.get("name") or ""), reverse=order_desc)
-    limit = int(req.get("limit", DEFAULT_PAGE_LIMIT))
-    offset = int(req.get("offset", 0))
-    sliced = sorted_scripts[offset : offset + limit]
-    projected = [project_repository_script(s, details_level) for s in sliced]
+    page = paginate_items(
+        sorted_scripts,
+        req,
+        collection_key="objects",
+        default_limit=DEFAULT_PAGE_LIMIT,
+        default_details_level="standard",
+        min_limit=0,
+        projector=project_repository_script,
+    )
     if mock.encode_repository_script_body_base64:
-        for obj in projected:
+        for obj in page["objects"]:
             if isinstance(obj.get("script-body"), str):
                 obj["script-body"] = base64.b64encode(obj["script-body"].encode("utf-8")).decode("ascii")
-    return cp_ok(
-        {
-            "objects": projected,
-            "from": (offset + 1) if projected else 0,
-            "to": (offset + len(projected)) if projected else 0,
-            "total": len(sorted_scripts),
-        }
-    )
+    return cp_ok(page)

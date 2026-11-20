@@ -317,16 +317,7 @@ def handle_discard(
     target_ws.state = "discarded"
     target_ws.last_modify_posix = mock._next_timestamp_ms()
 
-    if binding is not None and active_ws is not None and target_ws.uid == active_ws.uid:
-        fresh_ws = mock._create_work_session(
-            active_ws.domain,
-            user_name=active_ws.user_name,
-            name="",
-            description="",
-            application=active_ws.application,
-            read_only=active_ws.read_only,
-        )
-        binding.session_uid = fresh_ws.uid
+    rotate_sid_bindings_for_session(mock, target_ws)
     return cp_ok({"message": "OK", "number-of-discarded-changes": discarded_changes})
 
 

@@ -10,7 +10,7 @@ from arodonata.core.models.common import ApiCallResult
 
 from ._emulator_lookup import filter_show_objects, find_effective_object, find_unused_objects
 from ._emulator_models import SidBinding, cp_error, cp_ok
-from ._emulator_projection import paginate_items, project_details_level, slice_rulebase_with_sections
+from ._emulator_projection import paginate_items, project_replay_details_level, slice_rulebase_with_sections
 from ._replay_queries import (
     SHOW_OBJECTS_TYPE_TO_CMD,
     build_where_used_response,
@@ -50,10 +50,10 @@ def handle_show_checkpoint_host(
         for bucket_cmd in ("show-checkpoint-hosts", "show-gateways-and-servers"):
             for obj in scope_files.get(bucket_cmd, {}).get("objects", []):
                 if isinstance(obj, dict) and (not lookup or obj.get("uid") == lookup or obj.get("name") == lookup):
-                    return cp_ok(project_details_level(obj, details_level, strict_standard=True))
+                    return cp_ok(project_replay_details_level(obj, details_level))
     for mds_obj in mock._show_mdss.get("objects", []):
         if isinstance(mds_obj, dict) and (mds_obj.get("uid") == lookup or mds_obj.get("name") == lookup):
-            return cp_ok(project_details_level(mds_obj, details_level, strict_standard=True))
+            return cp_ok(project_replay_details_level(mds_obj, details_level))
     if lookup == mgmt_name and "SMC User" in mock._domain_data:
         return cp_ok(
             {
@@ -103,10 +103,10 @@ def handle_domain_read_command(
         store = dom_files.get(clean_cmd, {})
         details_lvl = str(req.get("details-level") or "full")
         if lookup_key in store:
-            return cp_ok(project_details_level(store[lookup_key], details_lvl, strict_standard=True))
+            return cp_ok(project_replay_details_level(store[lookup_key], details_lvl))
         for item_val in store.values():
             if isinstance(item_val, dict) and item_val.get("name") == lookup_key:
-                return cp_ok(project_details_level(item_val, details_lvl, strict_standard=True))
+                return cp_ok(project_replay_details_level(item_val, details_lvl))
         if clean_cmd == "show-generic-object":
             raw_gen = dom_files.get("show-generic-objects", {})
             gen_lists = (
@@ -117,7 +117,7 @@ def handle_domain_read_command(
             for g_list in gen_lists:
                 for g_obj in g_list:
                     if isinstance(g_obj, dict) and (g_obj.get("uid") == lookup_key or g_obj.get("name") == lookup_key):
-                        return cp_ok(project_details_level(g_obj, details_lvl, strict_standard=True))
+                        return cp_ok(project_replay_details_level(g_obj, details_lvl))
         return cp_error("generic_err_object_not_found", f"Requested object [{lookup_key}] not found", status_code=404)
 
     if clean_cmd == "show-generic-objects":

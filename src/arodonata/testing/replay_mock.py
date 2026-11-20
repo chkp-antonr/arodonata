@@ -39,7 +39,7 @@ from arodonata.testing._emulator_models import (
     sanitize_call_payload,
     summarize_payload,
 )
-from arodonata.testing._emulator_projection import paginate_items
+from arodonata.testing._emulator_projection import paginate_items, project_replay_details_level
 from arodonata.testing._replay_cli import FileReplayCliMock
 from arodonata.testing._replay_dispatch import apply_domain_mutation, dispatch_api_call
 from arodonata.testing._replay_state import (
@@ -370,7 +370,8 @@ class FileReplayApiMock(ApiPort):
             collection_key=collection_key,
             default_limit=DEFAULT_PAGE_LIMIT,
             default_details_level="standard",
-            strict_standard=True,
+            min_limit=0,
+            projector=project_replay_details_level,
         )
 
     def _apply_domain_mutation(
