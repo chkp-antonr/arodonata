@@ -265,6 +265,18 @@ class ObjectCachePort(Protocol):
         """Delete `CPObject` rows matching `uids` in `(mgmt_name, domain_name)`."""
         ...
 
+    async def apply_object_diff(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        deleted_uids: Sequence[str] = (),
+        objects: Sequence[CPObject] = (),
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
+        """Atomically delete `deleted_uids`, upsert `objects`, and update `sync_states` in one transaction."""
+        ...
+
 
 @runtime_checkable
 class ServiceCachePort(Protocol):
@@ -319,6 +331,18 @@ class ServiceCachePort(Protocol):
         uids: Sequence[str],
     ) -> int:
         """Delete `CPService` rows matching `uids` in `(mgmt_name, domain_name)`."""
+        ...
+
+    async def apply_service_diff(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        deleted_uids: Sequence[str] = (),
+        services: Sequence[CPService] = (),
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
+        """Atomically delete `deleted_uids`, upsert `services`, and update `sync_states` in one transaction."""
         ...
 
 

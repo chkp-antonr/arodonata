@@ -974,3 +974,89 @@ async def test_server_identity_error_fail_fast_and_ssh_none_fallback_parity() ->
             )
     finally:
         await db.close()
+
+
+@pytest.mark.spec("SCN-TOPO-020-2")
+async def test_gateway_cli_result_and_repository_vs_error_stdout_redact_sids() -> None:
+    """SCN-TOPO-020-2 (DA-011): Scrub patterned and bare dedicated SIDs from `GatewayCliResult.stdout` and `bundle_stdout`."""
+    raw_cli = GatewayCliResult(
+        success=True,
+        stdout="route ok X-chkp-sid: CliOutSid1122",
+        bundle_stdout='{"sid": "BundleJsonSid3344"}',
+    )
+    assert "CliOutSid1122" not in raw_cli.stdout
+    assert "BundleJsonSid3344" not in (raw_cli.bundle_stdout or "")
+    assert REDACTED_PLACEHOLDER in raw_cli.stdout
+    assert REDACTED_PLACEHOLDER in (raw_cli.bundle_stdout or "")
+
+    bare_ded_sid = "RepoVsBareDedSid8899"
+
+    class _RepoVsLeakApi:
+        async def create_dedicated_session(
+            self,
+            mgmt_name: str,
+            domain: str | None = None,
+            *,
+            auth: Any = None,
+            session_name: str | None = None,
+            session_description: str | None = None,
+        ) -> tuple[str, str]:
+            _ = (mgmt_name, domain, auth, session_name, session_description)
+            return bare_ded_sid, "10.0.0.1"
+
+        async def api_call(
+            self,
+            mgmt_name: str,
+            command: str,
+            payload: dict[str, Any] | None = None,
+            **kwargs: Any,
+        ) -> ApiCallResult:
+            _ = (mgmt_name, payload, kwargs)
+            if command == "run-script":
+                return ApiCallResult(
+                    success=True,
+                    status_code=200,
+                    data={
+                        "tasks": [
+                            {
+                                "task-id": "t-vs-leak",
+                                "status": "succeeded",
+                                "task-details": [
+                                    {
+                                        "gatewayName": "gw-vs",
+                                        "statusCode": "succeeded",
+                                        "responseMessage": f"_vs_error=failed for {bare_ded_sid}",
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                )
+            return ApiCallResult(success=True, status_code=200, data={})
+
+        async def logout_sid(self, mgmt_name: str, sid: str, *, server_ip: str | None = None) -> bool:
+            _ = (mgmt_name, sid, server_ip)
+            return True
+
+    target = GatewayCliTarget(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        gateway_uid="gw-1",
+        gateway_name="gw-vs",
+        gateway_type="simple-gateway",
+        node_uid="gw-1",
+        node_name="gw-vs",
+    )
+    res = await route_executor.execute_gateway_cli(
+        target,
+        "ip -4 route show",
+        api=_RepoVsLeakApi(),  # type: ignore[arg-type]
+        cprid_session_getter=None,
+        cprid_script_mode="repository",
+        script_service=ScriptRepositoryService(api=_RepoVsLeakApi()),  # type: ignore[arg-type]
+    )
+    assert not res.success
+    assert bare_ded_sid not in res.stdout
+    assert bare_ded_sid not in (res.error_message or "")
+    assert REDACTED_PLACEHOLDER in res.stdout
+    assert REDACTED_PLACEHOLDER in (res.error_message or "")

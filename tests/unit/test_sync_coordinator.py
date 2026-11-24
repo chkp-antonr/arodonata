@@ -899,3 +899,283 @@ async def test_coordinator_partial_refresh_when_one_server_unreachable_cold_cach
     assert single_dead.total_items == 0
 
     await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-004-3")
+@pytest.mark.asyncio
+async def test_timestamped_domain_and_wildcard_invalidation_persists_across_scopes() -> None:
+    """SCN-CACHE-004-3 (DA-002): Partial/single-scope sync never clears invalidation for other scopes or domains."""
+    from datetime import timedelta
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = CoordinatorFakeApi()
+    clock = [datetime(2026, 11, 23, 12, 0, 0)]
+
+    probe_calls: list[tuple[str, str]] = []
+    orig_api_call = api.api_call
+
+    async def spy_api_call(
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        domain: str | None = None,
+        **kwargs: Any,
+    ) -> ApiCallResult:
+        if command == "show-last-published-session" and domain:
+            probe_calls.append((mgmt_name, domain))
+        return await orig_api_call(mgmt_name, command, payload, domain=domain, **kwargs)
+
+    api.api_call = spy_api_call  # type: ignore[method-assign]
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=300)
+    ds = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port, now_fn=lambda: clock[0])
+    ds.tracker.mark_refreshed("mds1")
+    await cache.upsert_domains(
+        [
+            DomainInfo(mgmt_name="mds1", uid="d1", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1"),
+            DomainInfo(mgmt_name="mds1", uid="d2", name="Sales", active_ip="10.1.0.2", active_mds_ip="10.0.0.1"),
+        ]
+    )
+
+    t0 = clock[0]
+    for dom in ("Corp", "Sales"):
+        for scope, item_type in (("objects", "host"), ("objects", "network"), ("services", "service-tcp")):
+            await cache.upsert_sync_state(
+                DomainSyncState(
+                    mgmt_name="mds1",
+                    domain_name=dom,
+                    scope=scope,
+                    item_type=item_type,
+                    last_published_at=datetime(2026, 10, 23, 12, 0, 0),
+                    last_session_uid=f"sess-{dom}",
+                    synced_at=t0,
+                    status="ok",
+                    object_count=1,
+                )
+            )
+
+    coordinator = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=ds,
+        now_fn=lambda: clock[0],
+    )
+
+    async def _noop_handler(_probe: DomainProbeResult, _emit: Any) -> int:
+        return 0
+
+    # Advance 10s (< cache_ttl=300) and wildcard-invalidate all domains on mds1
+    clock[0] = t0 + timedelta(seconds=10)
+    coordinator.invalidate_domain("mds1", None)
+
+    # 1. Sync ONLY objects/host for Corp -> must probe Corp, then skip second objects/host read within TTL
+    probe_calls.clear()
+    clock[0] = t0 + timedelta(seconds=11)
+    await coordinator.ensure(
+        scope="objects", item_types=["host"], handler=_noop_handler, mgmt_name="mds1", domains=["Corp"]
+    )
+    assert probe_calls == [("mds1", "Corp")]
+
+    probe_calls.clear()
+    await coordinator.ensure(
+        scope="objects", item_types=["host"], handler=_noop_handler, mgmt_name="mds1", domains=["Corp"]
+    )
+    assert probe_calls == []  # objects/host on Corp is now fresh!
+
+    # 2. Other item_type ("network"), other scope ("services"), and other domain ("Sales") MUST STILL be invalidated!
+    probe_calls.clear()
+    await coordinator.ensure(
+        scope="objects", item_types=["network"], handler=_noop_handler, mgmt_name="mds1", domains=["Corp"]
+    )
+    assert probe_calls == [("mds1", "Corp")]
+
+    probe_calls.clear()
+    await coordinator.ensure(
+        scope="services", item_types=["service-tcp"], handler=_noop_handler, mgmt_name="mds1", domains=["Corp"]
+    )
+    assert probe_calls == [("mds1", "Corp")]
+
+    probe_calls.clear()
+    await coordinator.ensure(
+        scope="objects", item_types=["host"], handler=_noop_handler, mgmt_name="mds1", domains=["Sales"]
+    )
+    assert probe_calls == [("mds1", "Sales")]
+
+    await db.close()
+
+
+class _InvalidatingApi(CoordinatorFakeApi):
+    """Fake API that triggers a domain invalidation while `show-last-published-session` is in flight."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.on_probe: Any = None
+
+    async def api_call(
+        self, mgmt_name: str, command: str, payload: dict[str, Any] | None = None, **kwargs: Any
+    ) -> ApiCallResult:
+        res = await super().api_call(mgmt_name, command, payload, **kwargs)
+        if command == "show-last-published-session" and self.on_probe is not None:
+            self.on_probe()
+        return res
+
+
+@pytest.mark.spec("SCN-CACHE-015-1")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("frozen_clock", [False, True])
+async def test_probe_preserves_invalidation_arriving_mid_flight(frozen_clock: bool) -> None:
+    """An invalidation during `show-last-published-session` must not be masked by probe completion."""
+    from datetime import timedelta
+
+    pub_time = datetime(2026, 10, 23, 12, 0, 0)
+    clock = {"now": datetime(2026, 10, 23, 13, 0, 0)}
+
+    def _now() -> datetime:
+        if not frozen_clock:
+            clock["now"] += timedelta(seconds=1)
+        return clock["now"]
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = _InvalidatingApi()
+    api.published_sessions["Corp"] = {"uid": "sess-v2", "publish-time": {"iso-8601": "2026-10-23T12:00:00Z"}}
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=3600)
+    domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port, now_fn=_now)
+    dom = DomainInfo(mgmt_name="mds1", uid="d1", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1")
+    await cache.upsert_domains([dom])
+    # Synced long ago (beyond ttl) so the probe hits the server and finds the head unchanged.
+    await cache.upsert_sync_state(
+        DomainSyncState(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            scope="objects",
+            item_type="host",
+            last_published_at=pub_time,
+            last_session_uid="sess-v2",
+            synced_at=datetime(2026, 10, 23, 1, 0, 0),
+            status="ok",
+            object_count=3,
+        )
+    )
+    coordinator = DomainSyncCoordinator(
+        settings=settings, api=api, cache=cache, lock_port=lock_port, domain_service=domain_service, now_fn=_now
+    )
+    api.on_probe = lambda: coordinator.invalidate_domain("mds1", "Corp")
+
+    probe = await coordinator.probe_domain_staleness(dom, scope="objects", item_types=["host"], mode="smart")
+    assert probe.probe_started_at is not None
+
+    state = await cache.get_sync_state("mds1", "Corp", "objects", "host")
+    assert state is not None
+    assert coordinator.is_slice_invalidated("mds1", "Corp", "objects", "host", state.synced_at)
+
+    # A probe without mid-flight invalidation stamps synced_at at probe start and stays valid.
+    api.on_probe = None
+    await coordinator.probe_domain_staleness(dom, scope="objects", item_types=["host"], mode="smart")
+    state = await cache.get_sync_state("mds1", "Corp", "objects", "host")
+    assert state is not None
+    assert not coordinator.is_slice_invalidated("mds1", "Corp", "objects", "host", state.synced_at)
+
+    # Invalidation after a clean probe wins even with a frozen clock (sequence tie-break).
+    coordinator.invalidate_domain("mds1", "Corp")
+    assert coordinator.is_slice_invalidated("mds1", "Corp", "objects", "host", state.synced_at)
+
+    await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-016-1")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("frozen_clock", [False, True])
+async def test_slice_sync_stamps_probe_start_and_preserves_mid_handler_invalidation(frozen_clock: bool) -> None:
+    """Slice sync handlers stamp `synced_at` at `probe_started_at` and preserve mid-handler invalidations."""
+    from datetime import timedelta
+
+    from arodonata.core.services import ObjectService
+
+    clock = {"now": datetime(2026, 10, 23, 13, 0, 0)}
+
+    def _now() -> datetime:
+        if not frozen_clock:
+            clock["now"] += timedelta(seconds=5)
+        return clock["now"]
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = _InvalidatingApi()
+    api.published_sessions["Corp"] = {"uid": "sess-v1", "publish-time": {"iso-8601": "2026-10-23T12:00:00Z"}}
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=3600)
+    domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port, now_fn=_now)
+    dom = DomainInfo(mgmt_name="mds1", uid="d1", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1")
+    await cache.upsert_domains([dom])
+
+    coordinator = DomainSyncCoordinator(
+        settings=settings, api=api, cache=cache, lock_port=lock_port, domain_service=domain_service, now_fn=_now
+    )
+    obj_service = ObjectService(
+        settings=settings,
+        api=api,
+        cache=cache,
+        coordinator=coordinator,
+        now_fn=_now,
+    )
+
+    probe_calls = 0
+
+    async def _api_query(
+        mgmt_name: str,
+        command: str,
+        *,
+        domain: str | None = None,
+        details_level: str = "full",
+        payload: dict[str, Any] | None = None,
+    ) -> ApiQueryResult:
+        # Simulate a WriteSession publish / invalidate_domain arriving mid-handler while fetching objects.
+        coordinator.invalidate_domain(mgmt_name, domain)
+        return ApiQueryResult(
+            success=True,
+            objects=[{"uid": "h1", "name": "host-1", "type": "host", "ipv4-address": "10.0.0.1"}],
+            total=1,
+        )
+
+    orig_api_call = api.api_call
+    probe_call_time: datetime | None = None
+
+    async def _counting_api_call(
+        mgmt_name: str, command: str, payload: dict[str, Any] | None = None, **kwargs: Any
+    ) -> ApiCallResult:
+        nonlocal probe_calls, probe_call_time
+        if command == "show-last-published-session":
+            probe_calls += 1
+            probe_call_time = clock["now"]
+        return await orig_api_call(mgmt_name, command, payload, **kwargs)
+
+    api.api_query = _api_query  # type: ignore[method-assign]
+    api.api_call = _counting_api_call  # type: ignore[method-assign]
+
+    await obj_service.refresh_objects(mgmt_name="mds1", domains=["Corp"], types=["host"], mode="smart")
+
+    state = await cache.get_sync_state("mds1", "Corp", "objects", "host")
+    assert state is not None
+    assert probe_call_time is not None
+    assert state.synced_at == probe_call_time
+    assert state.object_count == 1
+    assert coordinator.is_slice_invalidated("mds1", "Corp", "objects", "host", state.synced_at)
+
+    # A subsequent smart probe within cache_ttl must NOT skip via TTL; it must hit the server.
+    prev_probes = probe_calls
+    await coordinator.probe_domain_staleness(dom, scope="objects", item_types=["host"], mode="smart")
+    assert probe_calls == prev_probes + 1
+
+    await db.close()

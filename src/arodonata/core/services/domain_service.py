@@ -171,6 +171,12 @@ class DomainListRefreshTracker:
         self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
         self._last_refreshed_at: dict[str, datetime] = {}
         self._invalidated_servers: set[str] = set()
+        self._invalidated_at: dict[str, datetime] = {}
+        self._global_invalidated_at: datetime | None = None
+        self._invalidation_counter: int = 0
+        self._global_invalidated_seq: int = 0
+        self._server_invalidated_seq: dict[str, int] = {}
+        self._server_refreshed_seq: dict[str, int] = {}
 
     @property
     def ttl_seconds(self) -> float:
@@ -179,19 +185,27 @@ class DomainListRefreshTracker:
 
     def mark_refreshed(self, mgmt_name: str, refreshed_at: datetime | None = None) -> datetime:
         """Record that `mgmt_name`'s domain list was refreshed at `refreshed_at`."""
-        ts = refreshed_at if refreshed_at is not None else self._now()
+        ts = to_naive_utc(refreshed_at) if refreshed_at is not None else self._now()
         self._last_refreshed_at[mgmt_name] = ts
         self._invalidated_servers.discard(mgmt_name)
+        self._server_refreshed_seq[mgmt_name] = self._invalidation_counter
         return ts
 
     def invalidate(self, mgmt_name: str | None = None) -> None:
         """Invalidate the domain list TTL memo for `mgmt_name` (or all servers if `None`)."""
+        self._invalidation_counter += 1
+        inv_ts = self._now()
         if mgmt_name is None:
             self._last_refreshed_at.clear()
             self._invalidated_servers.clear()
+            self._invalidated_at.clear()
+            self._global_invalidated_at = inv_ts
+            self._global_invalidated_seq = self._invalidation_counter
         else:
             self._last_refreshed_at.pop(mgmt_name, None)
             self._invalidated_servers.add(mgmt_name)
+            self._invalidated_at[mgmt_name] = inv_ts
+            self._server_invalidated_seq[mgmt_name] = self._invalidation_counter
 
     def last_refreshed_at(self, mgmt_name: str) -> datetime | None:
         """Return the last recorded in-memory refresh timestamp for `mgmt_name`."""
@@ -217,9 +231,23 @@ class DomainListRefreshTracker:
             return True
 
         eff_ttl = float(ttl_override) if ttl_override is not None else self._ttl_seconds
-        ref_time = self._last_refreshed_at.get(mgmt_name) or persisted_synced_at
-        if ref_time is None:
+        ref_time_raw = self._last_refreshed_at.get(mgmt_name) or persisted_synced_at
+        if ref_time_raw is None:
             return True
+        ref_time = to_naive_utc(ref_time_raw)
+
+        inv_candidates: list[tuple[datetime, int]] = []
+        if self._global_invalidated_at is not None:
+            inv_candidates.append((self._global_invalidated_at, self._global_invalidated_seq))
+        srv_inv = self._invalidated_at.get(mgmt_name)
+        if srv_inv is not None:
+            inv_candidates.append((srv_inv, self._server_invalidated_seq.get(mgmt_name, 0)))
+        if inv_candidates:
+            max_inv_ts, max_inv_seq = max(inv_candidates, key=lambda pair: (pair[0], pair[1]))
+            if ref_time < max_inv_ts:
+                return True
+            if ref_time == max_inv_ts and self._server_refreshed_seq.get(mgmt_name, 0) < max_inv_seq:
+                return True
 
         age = (self._now() - ref_time).total_seconds()
         return age >= eff_ttl

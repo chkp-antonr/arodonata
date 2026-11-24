@@ -319,3 +319,84 @@ async def test_mcp_api_reference_tool_search_describe_validate_and_version_infer
     # 6. Verify lookup_api_command prompt is registered
     prompts = await server.list_prompts()
     assert any(p.name == "lookup_api_command" for p in prompts)
+
+
+@pytest.mark.spec("SCN-APIREF-003-2", "SCN-APIREF-004-1")
+def test_api_reference_batch_cap_dedup_and_list_enum_validation() -> None:
+    """SCN-APIREF-003-2 & SCN-APIREF-004-1 (VVAH-APIREF-01, DA-055): Deduplicate & cap batch describe at <= 50 and validate list[enum] items."""
+    from arodonata.core.errors import ValidationError
+
+    # 1. Batch describe deduplicates repeated commands and raises ValidationError above 50 unique entries
+    deduped = describe_api_command(
+        ["add-host", "set-host", "add-host", "add_host", "no-such", "no_such"], version="v2.2"
+    )
+    assert deduped is not None
+    assert set(deduped["commands"]) == {"add-host", "set-host"}
+    assert deduped["not_found"] == ["no-such"]
+
+    too_many = [f"cmd-{i}" for i in range(51)]
+    with pytest.raises(ValidationError):
+        describe_api_command(too_many, version="v2.2")
+
+    # Duplicates collapse below 50 without raising
+    within_cap = ["add-host"] * 60 + ["set-host"]
+    within_res = describe_api_command(within_cap, version="v2.2")
+    assert within_res is not None
+    assert set(within_res["commands"]) == {"add-host", "set-host"}
+
+    # 2. Validate valid_values and enum_ref on list[enum] fields
+    custom_engine = ApiReferenceEngine(
+        {
+            "meta": {"latest": "v2.2", "versions": ["v2.2"]},
+            "enums": {"details_enum": {"values": ["uid", "standard", "full"]}},
+            "shared_objects": {},
+            "commands": {
+                "test-list-enum": {
+                    "name": "test-list-enum",
+                    "api_family": "management",
+                    "supported_versions": ["v2.2"],
+                    "fields": [
+                        {
+                            "name": "inline-modes",
+                            "required": False,
+                            "supported_versions": ["v2.2"],
+                            "types": [
+                                {
+                                    "kind": "list",
+                                    "element_type": {"kind": "enum", "valid_values": ["read", "write"]},
+                                }
+                            ],
+                        },
+                        {
+                            "name": "ref-levels",
+                            "required": False,
+                            "supported_versions": ["v2.2"],
+                            "types": [
+                                {
+                                    "kind": "list",
+                                    "element_type": {"kind": "enum", "enum_ref": "details_enum"},
+                                }
+                            ],
+                        },
+                    ],
+                }
+            },
+        }
+    )
+
+    ok_res = custom_engine.validate_payload(
+        "test-list-enum",
+        {"inline-modes": ["read", "WRITE"], "ref-levels": ["uid", "full"]},
+        version="v2.2",
+    )
+    assert ok_res["valid"] is True
+
+    bad_res = custom_engine.validate_payload(
+        "test-list-enum",
+        {"inline-modes": ["read", "bogus"], "ref-levels": ["uid", "invalid-lvl"]},
+        version="v2.2",
+    )
+    assert bad_res["valid"] is False
+    bad_fields = {issue["field"] for issue in bad_res["errors"]}
+    assert bad_fields == {"inline-modes", "ref-levels"}
+    assert all(issue["code"] == "invalid_enum_value" for issue in bad_res["errors"])

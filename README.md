@@ -29,7 +29,7 @@ uv add "arodonata @ git+https://github.com/chkp-antonr/arodonata.git@master_v1"
 - **Full Documentation (`docs/`)**:
   - [Overview & Quickstart](docs/index.md)
   - [Capabilities & Downstream Integration Guide (`CAPABILITIES.md`)](docs/CAPABILITIES.md)
-  - [Database Schema Reference (15 `arodonata_*` Tables)](docs/architecture/database-schema.md)
+  - [Database Schema Reference (17 `arodonata_*` Tables)](docs/architecture/database-schema.md)
   - [Consolidated MCP Server & Tools](docs/mcp/index.md)
   - [Architecture Overview](docs/architecture/index.md) · [Caching & Sync](docs/architecture/caching-and-sync.md) · [Sessions & `SessionOverlay`](docs/architecture/sessions-and-mdm.md) · [CPCRUD Engine](docs/architecture/cpcrud.md)
   - [Configuration Reference](docs/configuration/index.md) · [Multi-Server Setup](docs/configuration/multi-server.md) · [TLS Verification](docs/configuration/tls-verification.md)

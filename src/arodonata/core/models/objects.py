@@ -123,6 +123,12 @@ class CPObject(BaseModel):
             else data.get("urls_defined_as_regular_expression")
         )
 
+        raw_mask4 = data.get("mask-length4")
+        if raw_mask4 is None or raw_mask4 == "":
+            raw_mask4 = data.get("mask_length4")
+        if raw_mask4 == "":
+            raw_mask4 = None
+
         return cls(
             id=format_composite_id(mgmt_name, domain_name, uid),
             object_id=format_composite_id(mgmt_name, domain_name, name),
@@ -135,7 +141,7 @@ class CPObject(BaseModel):
             ipv4_address=data.get("ipv4-address") or data.get("ipv4_address"),
             ipv6_address=data.get("ipv6-address") or data.get("ipv6_address"),
             subnet4=data.get("subnet4"),
-            mask_length4=data.get("mask-length4") or data.get("mask_length4"),
+            mask_length4=raw_mask4,
             subnet_mask=data.get("subnet-mask") or data.get("subnet_mask"),
             ipv4_address_first=data.get("ipv4-address-first") or data.get("ipv4_address_first"),
             ipv4_address_last=data.get("ipv4-address-last") or data.get("ipv4_address_last"),

@@ -338,6 +338,8 @@ class SearchService:
                 all_cached,
                 mgmt_name=mgmt_name,
                 domain_name=single_dom,
+                allowed_domains=domain_list,
+                include_global=want_global,
             )
 
             allowed_match_types = set(obj_types) if obj_types is not None else None
@@ -430,6 +432,8 @@ class SearchService:
                     cached_groups,
                     mgmt_name=mgmt_name,
                     domain_name=single_dom,
+                    allowed_domains=domain_list,
+                    include_global=want_global,
                 )
             memberships = self._resolve_group_memberships(
                 matched_objects,
@@ -465,7 +469,7 @@ class SearchService:
             if not direct_parents:
                 continue
 
-            nodes_by_uid: dict[str, GroupMembershipNode] = {}
+            nodes_by_id: dict[str, GroupMembershipNode] = {n.id: n for n in result.get(match.uid, [])}
             # BFS queue of (group_obj, depth)
             queue: deque[tuple[CPObject, int]] = deque((g, 1) for g in direct_parents)
             visited_at_depth: dict[str, int] = {}
@@ -474,15 +478,15 @@ class SearchService:
                 grp, depth = queue.popleft()
                 if depth > max_depth:
                     continue
-                if grp.uid in visited_at_depth and visited_at_depth[grp.uid] <= depth:
+                if grp.id in visited_at_depth and visited_at_depth[grp.id] <= depth:
                     continue
-                visited_at_depth[grp.uid] = depth
+                visited_at_depth[grp.id] = depth
 
                 higher_groups = reverse_groups.get((grp.mgmt_name, grp.domain_name, grp.uid), [])
                 parent_uids = [hg.uid for hg in higher_groups]
                 parent_object_ids = [hg.object_id for hg in higher_groups]
 
-                nodes_by_uid[grp.uid] = GroupMembershipNode(
+                candidate_node = GroupMembershipNode(
                     id=grp.id,
                     object_id=grp.object_id,
                     uid=grp.uid,
@@ -493,14 +497,20 @@ class SearchService:
                     parent_uids=parent_uids,
                     parent_object_ids=parent_object_ids,
                 )
+                existing_node = nodes_by_id.get(grp.id)
+                if existing_node is None or depth < existing_node.depth:
+                    nodes_by_id[grp.id] = candidate_node
 
                 if depth < max_depth:
                     for hg in higher_groups:
                         if hg.uid != match.uid:
                             queue.append((hg, depth + 1))
 
-            if nodes_by_uid:
-                result[match.uid] = sorted(nodes_by_uid.values(), key=lambda n: (n.depth, n.name))
+            if nodes_by_id:
+                result[match.uid] = sorted(
+                    nodes_by_id.values(),
+                    key=lambda n: (n.depth, n.mgmt_name, n.domain_name, n.name),
+                )
 
         return result
 
@@ -651,6 +661,7 @@ class SearchService:
             cached,
             mgmt_name=mgmt_name,
             domain_name=domain,
+            include_global=include_global,
             types=types,
             names=names,
             uids=uids,
@@ -756,29 +767,23 @@ class SearchService:
             cache_mode="cache" if eff_domain is None else eff_cache_mode,
             cache_ttl=cache_ttl,
         )
-        target_group: CPObject | None = None
-        group_candidates: list[CPObject] = [o for o in all_objs if o.uid == clean_target]
-        if not group_candidates:
-            group_candidates = [
+        obj_containers: list[CPObject] = [
+            o
+            for o in all_objs
+            if o.uid == clean_target and (o.type in ("group", "group-with-exclusion") or bool(o.members))
+        ]
+        if not obj_containers:
+            obj_containers = [
                 o
                 for o in all_objs
                 if clean_target in (o.name, o.object_id, o.id)
-                and (o.type in ("group", "group-with-exclusion") or o.members)
+                and (o.type in ("group", "group-with-exclusion") or bool(o.members))
             ]
-        if not group_candidates:
-            group_candidates = [o for o in all_objs if clean_target in (o.name, o.object_id, o.id)]
-        if group_candidates:
-            deduped_groups = [c for c in self._dedup_entities_by_uid(group_candidates) if isinstance(c, CPObject)]
-            distinct_domains = {(o.original_domain or o.domain_name) for o in deduped_groups}
-            if eff_domain is None and len(distinct_domains) > 1:
-                raise AmbiguousObjectError(
-                    mgmt_name,
-                    clean_target,
-                    [o.model_dump(mode="json") for o in deduped_groups],
-                )
-            target_group = deduped_groups[0]
+        obj_fallbacks: list[CPObject] = [o for o in all_objs if o.uid == clean_target] or [
+            o for o in all_objs if clean_target in (o.name, o.object_id, o.id)
+        ]
 
-        if target_group is not None:
+        def _expand_obj_group(target_group: CPObject) -> list[CPObject | CPService | Asset]:
             group_domain = target_group.domain_name
             scoped_objs = [o for o in all_objs if o.domain_name in (group_domain, "Global")]
             by_uid: dict[str, CPObject] = {o.uid: o for o in scoped_objs}
@@ -787,7 +792,6 @@ class SearchService:
             members: list[CPObject | CPService | Asset] = []
             seen_uids: set[str] = {target_group.uid}
             queue: deque[tuple[str, int]] = deque((m_uid, 1) for m_uid in target_group.members)
-
             while queue:
                 m_uid, depth = queue.popleft()
                 if m_uid in seen_uids:
@@ -801,12 +805,16 @@ class SearchService:
                     for child_uid in member_obj.members:
                         if child_uid not in seen_uids:
                             queue.append((child_uid, depth + 1))
+            return members
 
-            return target_group, members
+        if eff_domain is not None and obj_containers:
+            deduped_groups = [c for c in self._dedup_entities_by_uid(obj_containers) if isinstance(c, CPObject)]
+            target_group = deduped_groups[0]
+            return target_group, _expand_obj_group(target_group)
 
         # 2. Check arodonata_services for a matching service-group
         if self._service_cache is not None:
-            if eff_domain is None and eff_cache_mode != "cache" and sync_domain is not None:
+            if eff_domain is None and eff_cache_mode != "cache" and sync_domain is not None and not obj_containers:
                 await self._service_cache.refresh_services(
                     mgmt_name=mgmt_name,
                     domains=[sync_domain],
@@ -818,35 +826,32 @@ class SearchService:
                 mgmt_name=mgmt_name,
                 domain=eff_domain,
                 include_global=eff_include_global,
-                cache_mode="cache" if eff_domain is None else eff_cache_mode,
+                cache_mode="cache" if (eff_domain is None or obj_containers) else eff_cache_mode,
                 cache_ttl=cache_ttl,
             )
         else:
             all_svcs = await self._cache.get_services(mgmt_name=mgmt_name, domain_name=eff_domain)
-            all_svcs = ServiceCacheService.apply_context_overlay(all_svcs, mgmt_name=mgmt_name, domain_name=eff_domain)
+            all_svcs = ServiceCacheService.apply_context_overlay(
+                all_svcs,
+                mgmt_name=mgmt_name,
+                domain_name=eff_domain,
+                include_global=eff_include_global,
+            )
 
-        target_svc_group: CPService | None = None
-        svc_candidates: list[CPService] = [s for s in all_svcs if s.uid == clean_target]
-        if not svc_candidates:
-            svc_candidates = [
+        svc_containers: list[CPService] = [
+            s for s in all_svcs if s.uid == clean_target and (s.type == "service-group" or bool(s.members))
+        ]
+        if not svc_containers:
+            svc_containers = [
                 s
                 for s in all_svcs
-                if clean_target in (s.name, s.service_id, s.id) and (s.type == "service-group" or s.members)
+                if clean_target in (s.name, s.service_id, s.id) and (s.type == "service-group" or bool(s.members))
             ]
-        if not svc_candidates:
-            svc_candidates = [s for s in all_svcs if clean_target in (s.name, s.service_id, s.id)]
-        if svc_candidates:
-            deduped_svcs = [c for c in self._dedup_entities_by_uid(svc_candidates) if isinstance(c, CPService)]
-            distinct_svc_domains = {(s.original_domain or s.domain_name) for s in deduped_svcs}
-            if eff_domain is None and len(distinct_svc_domains) > 1:
-                raise AmbiguousObjectError(
-                    mgmt_name,
-                    clean_target,
-                    [s.model_dump(mode="json") for s in deduped_svcs],
-                )
-            target_svc_group = deduped_svcs[0]
+        svc_fallbacks: list[CPService] = [s for s in all_svcs if s.uid == clean_target] or [
+            s for s in all_svcs if clean_target in (s.name, s.service_id, s.id)
+        ]
 
-        if target_svc_group is not None:
+        def _expand_svc_group(target_svc_group: CPService) -> list[CPObject | CPService | Asset]:
             svc_domain = target_svc_group.domain_name
             scoped_svcs = [s for s in all_svcs if s.domain_name in (svc_domain, "Global")]
             svc_by_uid: dict[str, CPService] = {s.uid: s for s in scoped_svcs}
@@ -855,7 +860,6 @@ class SearchService:
             svc_members: list[CPObject | CPService | Asset] = []
             seen_svc_uids: set[str] = {target_svc_group.uid}
             svc_queue: deque[tuple[str, int]] = deque((m_uid, 1) for m_uid in target_svc_group.members)
-
             while svc_queue:
                 m_uid, depth = svc_queue.popleft()
                 if m_uid in seen_svc_uids:
@@ -869,12 +873,22 @@ class SearchService:
                     for child_uid in member_svc.members:
                         if child_uid not in seen_svc_uids:
                             svc_queue.append((child_uid, depth + 1))
+            return svc_members
 
-            return target_svc_group, svc_members
+        if eff_domain is not None and svc_containers:
+            deduped_svcs = [c for c in self._dedup_entities_by_uid(svc_containers) if isinstance(c, CPService)]
+            target_svc_group = deduped_svcs[0]
+            return target_svc_group, _expand_svc_group(target_svc_group)
 
         # 3. Check arodonata_assets for a matching cluster or VSX container
         if self._asset_service is not None:
-            if eff_domain is None and eff_cache_mode != "cache" and sync_domain is not None:
+            if (
+                eff_domain is None
+                and eff_cache_mode != "cache"
+                and sync_domain is not None
+                and not obj_containers
+                and not svc_containers
+            ):
                 await self._asset_service.refresh_assets(
                     mgmt_name=mgmt_name,
                     domains=[sync_domain],
@@ -886,7 +900,7 @@ class SearchService:
                 mgmt_name=mgmt_name,
                 domain=eff_domain,
                 include_global=eff_include_global,
-                cache_mode="cache" if eff_domain is None else eff_cache_mode,
+                cache_mode="cache" if (eff_domain is None or obj_containers or svc_containers) else eff_cache_mode,
                 cache_ttl=cache_ttl,
             )
         else:
@@ -908,19 +922,47 @@ class SearchService:
                     or a.id.lower() == needle_lower
                 )
             ]
-        target_asset: Asset | None = None
-        if asset_candidates:
-            deduped_assets = [c for c in self._dedup_entities_by_uid(asset_candidates) if isinstance(c, Asset)]
-            distinct_asset_domains = {a.domain_name for a in deduped_assets}
-            if eff_domain is None and len(distinct_asset_domains) > 1:
-                raise AmbiguousObjectError(
-                    mgmt_name,
-                    clean_target,
-                    [a.model_dump(mode="json") for a in deduped_assets],
-                )
-            target_asset = deduped_assets[0]
 
-        if target_asset is not None:
+        deduped_obj_containers = (
+            [c for c in self._dedup_entities_by_uid(obj_containers) if isinstance(c, CPObject)]
+            if obj_containers
+            else []
+        )
+        deduped_svc_containers = (
+            [c for c in self._dedup_entities_by_uid(svc_containers) if isinstance(c, CPService)]
+            if svc_containers
+            else []
+        )
+        deduped_assets = (
+            [c for c in self._dedup_entities_by_uid(asset_candidates) if isinstance(c, Asset)]
+            if asset_candidates
+            else []
+        )
+        combined_containers: list[CPObject | CPService | Asset] = [
+            *deduped_obj_containers,
+            *deduped_svc_containers,
+            *deduped_assets,
+        ]
+        if combined_containers:
+            if eff_domain is None:
+                distinct_domains = {
+                    (c.original_domain or c.domain_name) if isinstance(c, (CPObject, CPService)) else c.domain_name
+                    for c in combined_containers
+                }
+                if len(distinct_domains) > 1:
+                    raise AmbiguousObjectError(
+                        mgmt_name,
+                        clean_target,
+                        [c.model_dump(mode="json") for c in combined_containers],
+                    )
+            if deduped_obj_containers:
+                target_group = deduped_obj_containers[0]
+                return target_group, _expand_obj_group(target_group)
+            if deduped_svc_containers:
+                target_svc_group = deduped_svc_containers[0]
+                return target_svc_group, _expand_svc_group(target_svc_group)
+
+            target_asset = deduped_assets[0]
             # Also load cross-domain assets on the same mgmt_name if VSX children reside in tenant domains
             mgmt_assets = await self._cache.get_assets(mgmt_name=mgmt_name)
             for ma in mgmt_assets:
@@ -944,7 +986,15 @@ class SearchService:
                         asset.parent_uid == target_asset.uid
                         or asset.parent_id == target_asset.id
                         or asset.parent_asset_id == target_asset.asset_id
-                        or (asset.parent_name and asset.parent_name.lower() == target_asset.name.lower())
+                        or (
+                            not asset.parent_uid
+                            and not asset.parent_id
+                            and (not asset.parent_asset_id or asset.parent_asset_id == target_asset.asset_id)
+                            and asset.mgmt_name == target_asset.mgmt_name
+                            and asset.domain_name == target_asset.domain_name
+                            and asset.parent_name is not None
+                            and asset.parent_name.lower() == target_asset.name.lower()
+                        )
                     )
                 ):
                     child_uids.append(asset.uid)
@@ -955,6 +1005,25 @@ class SearchService:
                 if child_asset is not None:
                     asset_members.append(child_asset)
             return target_asset, asset_members
+
+        # 4. Only after exhausting container candidates across all three tables fall back to non-container singletons
+        deduped_obj_fb = (
+            [c for c in self._dedup_entities_by_uid(obj_fallbacks) if isinstance(c, CPObject)] if obj_fallbacks else []
+        )
+        deduped_svc_fb = (
+            [c for c in self._dedup_entities_by_uid(svc_fallbacks) if isinstance(c, CPService)] if svc_fallbacks else []
+        )
+        combined_fb: list[CPObject | CPService] = [*deduped_obj_fb, *deduped_svc_fb]
+        if combined_fb:
+            if eff_domain is None:
+                distinct_fb_domains = {(c.original_domain or c.domain_name) for c in combined_fb}
+                if len(distinct_fb_domains) > 1:
+                    raise AmbiguousObjectError(
+                        mgmt_name,
+                        clean_target,
+                        [c.model_dump(mode="json") for c in combined_fb],
+                    )
+            return combined_fb[0], []
 
         return None, []
 
@@ -1018,12 +1087,28 @@ class SearchService:
         lookup_names = list(dict.fromkeys([clean_query, lookup_key]))
 
         if eff_domain is not None:
+            ws = get_write_session(mgmt_name=mgmt_name, domain_name=eff_domain)
             if not is_service_type and not is_asset_type:
+                if ws is not None:
+                    touched, overlaid = ws.overlay.lookup_object_by_uid(lookup_key)
+                    if touched and overlaid is not None and (clean_type is None or overlaid.type.lower() == clean_type):
+                        return overlaid
+
+                if cache_mode != "cache":
+                    await self._object_service.refresh_objects(
+                        mgmt_name=mgmt_name,
+                        domains=[eff_domain],
+                        types=[clean_type] if clean_type else None,
+                        include_global=(eff_domain == "Global"),
+                        mode=cache_mode,
+                        cache_ttl=cache_ttl,
+                    )
+
                 by_uid = await self._object_service.get_object_by_uid(
                     mgmt_name,
                     eff_domain,
                     lookup_key,
-                    cache_mode=cache_mode,
+                    cache_mode="cache",
                     cache_ttl=cache_ttl,
                 )
                 if by_uid is not None and (clean_type is None or by_uid.type.lower() == clean_type):
@@ -1035,18 +1120,37 @@ class SearchService:
                     types=[clean_type] if clean_type else None,
                     names=lookup_names,
                     include_global=(eff_domain == "Global"),
-                    cache_mode="cache" if cache_mode != "force" else cache_mode,
+                    cache_mode="cache",
                     cache_ttl=cache_ttl,
                 )
                 if objs:
                     return objs[0]
 
             if is_service_type or clean_type is None:
+                if ws is not None:
+                    touched_svc, overlaid_svc = ws.overlay.lookup_service_by_uid(lookup_key)
+                    if (
+                        touched_svc
+                        and overlaid_svc is not None
+                        and (clean_type is None or overlaid_svc.type.lower() == clean_type)
+                    ):
+                        return overlaid_svc
+
+                if cache_mode != "cache" and self._service_cache is not None:
+                    await self._service_cache.refresh_services(
+                        mgmt_name=mgmt_name,
+                        domains=[eff_domain],
+                        types=[clean_type] if is_service_type and clean_type else None,
+                        include_global=(eff_domain == "Global"),
+                        mode=cache_mode,
+                        cache_ttl=cache_ttl,
+                    )
+
                 svc_by_uid = await self._get_service_by_uid_for_find(
                     mgmt_name,
                     eff_domain,
                     lookup_key,
-                    cache_mode=cache_mode,
+                    cache_mode="cache",
                     cache_ttl=cache_ttl,
                 )
                 if svc_by_uid is not None and (clean_type is None or svc_by_uid.type.lower() == clean_type):
@@ -1058,7 +1162,7 @@ class SearchService:
                     types=[clean_type] if clean_type else None,
                     names=lookup_names,
                     include_global=(eff_domain == "Global"),
-                    cache_mode="cache" if cache_mode != "force" else cache_mode,
+                    cache_mode="cache",
                     cache_ttl=cache_ttl,
                 )
                 if svcs:
@@ -1292,8 +1396,18 @@ class SearchService:
             services = [s for s in services if s.domain_name != "Global"]
             assets = [a for a in assets if a.domain_name != "Global"]
 
-        objects = ObjectService.apply_context_overlay(objects, mgmt_name=mgmt_name, domain_name=domain_name)
-        services = ServiceCacheService.apply_context_overlay(services, mgmt_name=mgmt_name, domain_name=domain_name)
+        objects = ObjectService.apply_context_overlay(
+            objects,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            include_global=include_global,
+        )
+        services = ServiceCacheService.apply_context_overlay(
+            services,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            include_global=include_global,
+        )
 
         obj_type_counts: dict[str, int] = defaultdict(int)
         svc_type_counts: dict[str, int] = defaultdict(int)
@@ -1493,12 +1607,24 @@ class SearchService:
 
         if want_objects:
             objs = await self._cache.get_objects(mgmt_name=mgmt_name, domain_name=domain_name)
-            objs = ObjectService.apply_context_overlay(objs, mgmt_name=mgmt_name, domain_name=domain_name)
+            objs = ObjectService.apply_context_overlay(
+                objs,
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                allowed_domains=target_domains,
+                include_global=want_global_dom,
+            )
             combined_items.extend(objs)
 
         if want_services:
             svcs = await self._cache.get_services(mgmt_name=mgmt_name, domain_name=domain_name)
-            svcs = ServiceCacheService.apply_context_overlay(svcs, mgmt_name=mgmt_name, domain_name=domain_name)
+            svcs = ServiceCacheService.apply_context_overlay(
+                svcs,
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                allowed_domains=target_domains,
+                include_global=want_global_dom,
+            )
             combined_items.extend(svcs)
 
         if want_assets:
@@ -1601,7 +1727,10 @@ class SearchService:
                 and (fnmatchcase(str(val).lower(), paid_pat) if paid_wild else str(val).lower() == paid_pat)
             ]
 
-        # Grouping
+        # Grouping & bounded pagination
+        eff_limit = max(1, min(int(limit), 1000))
+        eff_offset = max(0, int(offset))
+
         if group_by:
             raw_group_fields = [g.strip() for g in group_by if g and g.strip()]
             group_specs: list[tuple[str, list[str]]] = []
@@ -1632,10 +1761,12 @@ class SearchService:
                 row_dict["count"] = count_val
                 groups_out.append(row_dict)
 
+            paged_groups = groups_out[eff_offset : eff_offset + eff_limit]
             return {
                 "total": len(combined_items),
+                "total_groups": len(groups_out),
                 "group_by": [canonical_attr for canonical_attr, _ in group_specs],
-                "groups": groups_out,
+                "groups": paged_groups,
             }
 
         if aggregate == "count":
@@ -1644,11 +1775,11 @@ class SearchService:
                 "count": len(combined_items),
             }
 
-        sliced = combined_items[offset : offset + max(1, limit)]
+        sliced = combined_items[eff_offset : eff_offset + eff_limit]
         return {
             "total": len(combined_items),
-            "from": (offset + 1) if sliced else 0,
-            "to": offset + len(sliced),
+            "from": (eff_offset + 1) if sliced else 0,
+            "to": eff_offset + len(sliced),
             "objects": [item.model_dump(mode="json") for item in sliced],
         }
 

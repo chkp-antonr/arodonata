@@ -52,6 +52,7 @@ from arodonata.adapters.checkpoint.target_resolver import (
     logger,
     resolve_active_mds_ip_for_target,
     resolve_failover_domain_ip,
+    resolve_tls_identity_host,
     validate_explicit_server_ip,
 )
 from arodonata.adapters.checkpoint.transport import ApiTransport, derive_session_pool_scope
@@ -245,7 +246,11 @@ class LoginCoordinator:
         return self._auth_provider is not None
 
     def is_sid_entry_fresh(self, entry: SIDCacheEntry) -> bool:
-        """Return `True` if `entry` is younger than `session_expire_seconds` and not past `expires_at`."""
+        """Return `True` if `entry` is still fresh.
+
+        When `expires_at` is present it takes precedence (`now < expires_at`); otherwise the sliding window applies,
+        i.e. the age since `last_used_at` (falling back to `created_at`) is below `session_expire_seconds`.
+        """
         return is_sid_entry_fresh(
             entry,
             now=self._now(),
@@ -382,6 +387,7 @@ class LoginCoordinator:
             domain,
             explicit_server_ip=explicit_server_ip,
         )
+        tls_identity_host = resolve_tls_identity_host(explicit_server_ip, target_ip)
 
         payload = build_login_payload(
             session_timeout=self._settings.session_timeout,
@@ -412,6 +418,7 @@ class LoginCoordinator:
                         payload,
                         port=port,
                         timeout=self._settings.login_timeout,
+                        tls_identity_host=tls_identity_host,
                     )
                 except ServerIdentityError:
                     raise
@@ -650,8 +657,9 @@ class LoginCoordinator:
             return False
 
         endpoint = self.get_server_endpoint(mgmt_name)
-        target_ip = server_ip or (cached.server_ip if cached is not None else endpoint.host)
-        _, mds_ip, port = await self.resolve_target_ips(mgmt_name, domain, explicit_server_ip=target_ip)
+        raw_target_ip = server_ip or (cached.server_ip if cached is not None else endpoint.host)
+        target_ip, mds_ip, port = await self.resolve_target_ips(mgmt_name, domain, explicit_server_ip=raw_target_ip)
+        tls_identity_host = resolve_tls_identity_host(raw_target_ip, target_ip)
 
         try:
             async with self._rate_limiter.slot(mds_ip):
@@ -662,17 +670,18 @@ class LoginCoordinator:
                     port=port,
                     sid=target_sid,
                     timeout=self._settings.api_timeout,
+                    tls_identity_host=tls_identity_host,
                 )
         except ServerIdentityError:
             raise
         except Exception:
             if cached is not None and cached.sid == target_sid:
-                await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=cached.auth_identity)
+                await self._cache.evict_sid(mgmt_name, cached.domain_name, auth_identity=cached.auth_identity)
             return False
 
         if not res.success:
             if cached is not None and cached.sid == target_sid:
-                await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=cached.auth_identity)
+                await self._cache.evict_sid(mgmt_name, cached.domain_name, auth_identity=cached.auth_identity)
             return False
 
         if cached is not None and cached.sid == target_sid:
@@ -727,11 +736,13 @@ class LoginCoordinator:
                 mgmt_name,
                 explicit_server_ip=server_ip,
             )
+            tls_identity_host = resolve_tls_identity_host(server_ip, target_ip)
         else:
             cached_ip = matching_entries[0].server_ip if matching_entries else None
             target_ip = dedicated_ip or cached_ip or endpoint.host
             mds_ip = endpoint.host
             port = endpoint.port
+            tls_identity_host = None
             if target_ip != endpoint.host:
                 cached_domains = await self._cache.get_domains(mgmt_name, include_global=True)
                 mds_ip = resolve_active_mds_ip_for_target(target_ip, endpoint.host, cached_domains)
@@ -754,13 +765,14 @@ class LoginCoordinator:
                     port=port,
                     sid=sid,
                     timeout=self._settings.api_timeout,
+                    tls_identity_host=tls_identity_host,
                 )
             if res.success:
                 self._active_dedicated_sids.pop((mgmt_name, sid), None)
             return res.success
         except ServerIdentityError:
             raise
-        except BaseException:
+        except Exception:
             return False
         finally:
             self._transport.connection_pool.close_session_scope(scope)

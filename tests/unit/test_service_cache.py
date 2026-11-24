@@ -263,3 +263,117 @@ async def test_service_cache_smart_fast_prefers_from_session_over_from_date() ->
     assert "from-date" not in captured_payloads[0]
 
     await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-007-2")
+@pytest.mark.asyncio
+async def test_service_cache_normalizes_aliases_and_commits_smart_fast_atomically() -> None:
+    """SCN-CACHE-007-2 (DA-004, DA-025): Service aliases normalize across SQL/overlay and smart-fast hydrates before DB commit."""
+    from datetime import datetime
+
+    from arodonata.core.context import SessionOverlay, WriteSession, write_session_context
+    from arodonata.core.models.domains import DomainSyncState
+    from arodonata.core.services.service_cache import resolve_service_query_command
+
+    assert resolve_service_query_command("tcp") == ("show-services-tcp", {})
+    assert resolve_service_query_command("other") == ("show-services-other", {})
+    assert resolve_service_query_command("svc-group") == ("show-service-groups", {})
+
+    t1 = datetime(2026, 10, 23, 10, 0, 0)
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = ServiceFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=0)
+    domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    domain_service.tracker.mark_refreshed("mds1")
+    await cache.upsert_domains(
+        [DomainInfo(mgmt_name="mds1", uid="d1", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1")]
+    )
+    await cache.replace_domain_services(
+        "mds1",
+        "Corp",
+        [CPService(uid="st1", name="tcp-80", type="service-tcp", mgmt_name="mds1", domain_name="Corp", port="80")],
+        types=["service-tcp"],
+        sync_states=[
+            DomainSyncState(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                scope="services",
+                item_type="service-tcp",
+                last_published_at=t1,
+                last_session_uid="svc-sess-1",
+                synced_at=t1,
+                status="ok",
+                object_count=1,
+            )
+        ],
+    )
+
+    coordinator = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=domain_service,
+    )
+    svc_service = ServiceCacheService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+
+    # 1. Explicit empty types=[] returns [] immediately with zero API calls
+    api.queried_commands.clear()
+    assert await svc_service.get_services("mds1", "Corp", types=[], cache_mode="smart") == []
+    assert api.queried_commands == []
+
+    # 2. Mixed-case alias "TCP" matches SQL and WriteSession overlay uniformly
+    overlay = SessionOverlay("mds1", "Corp")
+    overlay.record_service_upsert(
+        CPService(uid="st-ov", name="tcp-443", type="service-tcp", mgmt_name="mds1", domain_name="Corp", port="443")
+    )
+    ws = WriteSession(mgmt_name="mds1", domain_name="Corp", sid="s-write", server_ip="10.1.0.1", overlay=overlay)
+    with write_session_context(ws):
+        got = await svc_service.get_services("mds1", "Corp", types=["TCP"], cache_mode="cache")
+        assert {s.uid for s in got} == {"st1", "st-ov"}
+
+    # 3. smart-fast mid-hydration show-object failure leaves st1 intact (zero premature deletion)
+    orig_call = api.api_call
+
+    async def failing_svc_show_obj(
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ApiCallResult:
+        if command == "show-last-published-session":
+            return ApiCallResult(
+                success=True,
+                data={"uid": "svc-sess-2", "publish-time": {"iso-8601": "2026-10-23T11:00:00Z"}},
+            )
+        if command == "show-changes":
+            return ApiCallResult(
+                success=True,
+                data={
+                    "changes": [
+                        {
+                            "operations": {
+                                "added-objects": [{"uid": "st2", "type": "service-tcp"}],
+                                "deleted-objects": [{"uid": "st1", "type": "service-tcp"}],
+                            }
+                        }
+                    ]
+                },
+            )
+        if command == "show-object":
+            return ApiCallResult(success=False, error_message="show-object failed")
+        return await orig_call(mgmt_name, command, payload, **kwargs)
+
+    async def failing_svc_query(*_args: Any, **_kwargs: Any) -> ApiQueryResult:
+        return ApiQueryResult(success=False, error_message="fallback query failed")
+
+    api.api_call = failing_svc_show_obj  # type: ignore[method-assign]
+    api.api_query = failing_svc_query  # type: ignore[method-assign]
+    outcome = await svc_service.refresh_services(mgmt_name="mds1", types=["service-tcp"], mode="smart-fast")
+    assert "mds1:Corp" in outcome.failed_domains
+    assert [s.uid for s in await cache.get_services("mds1", "Corp", types=["service-tcp"])] == ["st1"]
+
+    await db.close()

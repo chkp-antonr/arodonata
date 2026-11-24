@@ -553,7 +553,7 @@ class ClientInventoryMixin(ClientLifecycleMixin):
         """Execute `add-/set-/delete-<obj_type>` using active `WriteSession`, explicit `sid`, or isolated `write_session`."""
         clean_type = obj_type.strip().lower().removeprefix(f"{verb}-")
         span_attrs(mgmt_name=mgmt_name, domain=domain, object_type=clean_type)
-        dom_key = normalize_domain_key(domain) if domain is not None else None
+        dom_key = normalize_domain_key(domain)
         if sid is None and get_write_session(mgmt_name=mgmt_name, domain_name=dom_key) is None:
             async with self.write_session(mgmt_name, domain) as ws:
                 return await self.api_call(

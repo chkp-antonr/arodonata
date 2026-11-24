@@ -65,6 +65,9 @@ def register_cpcrud_tools(
         plan_obj: Plan,
         report_obj: ApplyReport | None = None,
     ) -> None:
+        existing_entry = plan_store.get(plan_id)
+        if existing_entry is not None and existing_entry[0] != owner_id:
+            raise ToolFailure(f"CPCRUD plan_id {plan_id!r} belongs to another caller.")
         plan_store[plan_id] = (owner_id, plan_obj, report_obj)
         plan_store.move_to_end(plan_id)
         while len(plan_store) > MAX_STORED_PLANS:
@@ -83,7 +86,10 @@ def register_cpcrud_tools(
         staged_session_store[key] = info
         staged_session_store.move_to_end(key)
         while len(staged_session_store) > MAX_STORED_PLANS:
-            (ev_owner, ev_mgmt, _ev_dom_key, ev_uid), ev_info = staged_session_store.popitem(last=False)
+            same_owner_key = next((k for k in staged_session_store if k[0] == owner_id and k != key), None)
+            evict_key = same_owner_key if same_owner_key is not None else next(iter(staged_session_store))
+            ev_info = staged_session_store.pop(evict_key)
+            ev_owner, ev_mgmt, _ev_dom_key, ev_uid = evict_key
             try:
                 ev_res = await client.cpcrud.discard_staged_session(
                     ev_mgmt,
@@ -138,10 +144,15 @@ def register_cpcrud_tools(
             raise ToolFailure("Provide a signed 'plan' dictionary returned by cpcrud_plan or a 'plan_id'.")
 
         sig = plan.get("plan_signature")
-        embedded_id = plan.get("plan_id") if isinstance(plan.get("plan_id"), str) else plan_id
+        raw_embedded = plan.get("plan_id") if isinstance(plan.get("plan_id"), str) else None
+        if plan_id and raw_embedded and plan_id != raw_embedded:
+            raise ToolFailure("Conflicting 'plan_id' values between parameter and plan payload.")
+        embedded_id = raw_embedded or plan_id
+        if not embedded_id:
+            raise ToolFailure("Untrusted or tampered CPCRUD plan: missing 'plan_id'.")
 
         try:
-            expected_sig = _sign_plan(plan_hmac_key, plan, owner_id=caller_id)
+            expected_sig = _sign_plan(plan_hmac_key, plan, owner_id=caller_id, plan_id=embedded_id)
             parsed_plan = Plan.model_validate({k: v for k, v in plan.items() if k not in ("plan_id", "plan_signature")})
         except Exception as exc:
             raise ToolFailure(f"Invalid or tampered CPCRUD plan payload: {exc}") from exc
@@ -200,7 +211,7 @@ def register_cpcrud_tools(
         _store_plan_entry(caller_id, plan_id, plan, None)
         plan_dict = plan.model_dump(mode="json")
         plan_dict["plan_id"] = plan_id
-        plan_dict["plan_signature"] = _sign_plan(plan_hmac_key, plan_dict, owner_id=caller_id)
+        plan_dict["plan_signature"] = _sign_plan(plan_hmac_key, plan_dict, owner_id=caller_id, plan_id=plan_id)
         known_sids = await collect_known_sids(client)
         return json_tool_result(plan_dict, known_sids=known_sids)
 

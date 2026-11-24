@@ -350,6 +350,28 @@ async def test_rate_limiter_suppresses_lock_release_error_without_leaking_local_
         await db.close()
 
 
+@pytest.mark.spec("SCN-SESS-007-1")
+async def test_login_coordinator_logout_sid_propagates_cancelled_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-SESS-007-1 (DA-019): LoginCoordinator.logout_sid propagates asyncio.CancelledError without swallowing it."""
+    server = _ScriptedServer()
+    rig = _FakeTimeRig()
+    amgmt = _build_amgmt(tmp_path, server, rig)
+    try:
+        await amgmt.initialize()
+
+        async def _cancel_execute(*_args: Any, **_kwargs: Any) -> Any:
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(amgmt._transport, "execute", _cancel_execute)
+        with pytest.raises(asyncio.CancelledError):
+            await amgmt._login_coordinator.logout_sid("mds1", "sid_to_cancel")
+    finally:
+        await amgmt.close(logout=False)
+
+
 @pytest.mark.spec("SCN-SESS-008-1")
 async def test_explicit_server_ip_rejected_before_connect_or_sid_across_keepalive_cache_hit_and_logout(
     tmp_path: Path,
@@ -421,6 +443,86 @@ async def test_explicit_server_ip_rejected_before_connect_or_sid_across_keepaliv
         await amgmt.close(logout=False)
 
 
+@pytest.mark.spec("SCN-SESS-008-1")
+async def test_explicit_server_ip_dns_rebinding_subset_rejection_and_pinned_ip_use(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-SESS-008-1 (DA-001): Require resolved_ips.issubset(trusted_ips) and connect to pinned IP."""
+    server = _ScriptedServer()
+    rig = _FakeTimeRig()
+    amgmt = _build_amgmt(tmp_path, server, rig, known_hosts_ips=("10.0.0.1", "10.0.0.50"))
+
+    async def _fake_resolve(host: str) -> set[str]:
+        if host == "rebind.attacker.test":
+            return {"10.0.0.50", "169.254.169.254"}
+        if host == "trusted-alias.internal":
+            return {"10.0.0.50"}
+        return set()
+
+    monkeypatch.setattr(
+        "arodonata.adapters.checkpoint.target_resolver._resolve_hostname_ips",
+        _fake_resolve,
+    )
+
+    try:
+        await amgmt.initialize()
+        await amgmt.cache.upsert_domains(
+            [
+                DomainInfo(
+                    id="mds1:Corp",
+                    mgmt_name="mds1",
+                    name="Corp",
+                    uid="dom-corp",
+                    active_ip="10.0.0.50",
+                    active_mds_ip="10.0.0.1",
+                )
+            ]
+        )
+
+        # Dual-A-record mixing a trusted IP with 169.254.169.254 MUST fail closed with zero network I/O
+        server.calls.clear()
+        with pytest.raises(ValidationError, match="Untrusted explicit server_ip"):
+            await amgmt.api_call("mds1", "show-hosts", domain="Corp", server_ip="rebind.attacker.test")
+        assert server.calls == []
+
+        # Trusted hostname resolving exclusively to trusted IPs pins to canonical IP before transport
+        res = await amgmt.api_call("mds1", "show-hosts", domain="Corp", server_ip="trusted-alias.internal")
+        assert res.success is True
+        assert all(call["host"] == "10.0.0.50" for call in server.calls)
+    finally:
+        await amgmt.close(logout=False)
+
+
+@pytest.mark.spec("SCN-SESS-010-1")
+async def test_unresolvable_explicit_hostname_fails_closed_before_connect(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SCN-SESS-010-1: A non-IP explicit hostname with zero DNS records is never forwarded unpinned."""
+    from arodonata.adapters.checkpoint.target_resolver import validate_explicit_server_ip
+    from arodonata.core.config import ServerEndpointConfig
+
+    async def _no_dns(host: str) -> set[str]:
+        return set()
+
+    monkeypatch.setattr("arodonata.adapters.checkpoint.target_resolver._resolve_hostname_ips", _no_dns)
+
+    async def _collect(mgmt_name: str, host: str) -> tuple[set[str], list[DomainInfo]]:
+        # Even an exact textual match in the trusted set must not bypass IP pinning.
+        return {"mgmt.example.com", "10.0.0.1"}, []
+
+    async def _refresh(mgmt_name: str, domain: str) -> DomainInfo | None:
+        return None
+
+    with pytest.raises(ValidationError, match="Untrusted explicit server_ip"):
+        await validate_explicit_server_ip(
+            mgmt_name="mds1",
+            domain=None,
+            explicit_server_ip="mgmt.example.com",
+            endpoint=ServerEndpointConfig(name="mds1", host="10.0.0.1"),
+            collect_hosts_fn=_collect,
+            refresh_domain_fn=_refresh,
+        )
+
+
 @pytest.mark.spec("SCN-SESS-009-1")
 async def test_user_context_attributes_dedicated_session_and_restores_outer_scope(tmp_path: Path) -> None:
     """SCN-SESS-009-1: `UserContext` applies attribution to dedicated sessions and isolates concurrent tasks."""
@@ -466,5 +568,111 @@ async def test_user_context_attributes_dedicated_session_and_restores_outer_scop
         sibling_after = asyncio.create_task(_sibling_task())
         await sibling_after
         assert concurrent_seen[-1] is None
+    finally:
+        await client.close(logout=False)
+
+
+@pytest.mark.spec("SCN-SESS-012-1")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tls_mode", ["pinned", "tofu"])
+async def test_hostname_pinned_and_tofu_fingerprints_enforced_across_ip_pinning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tls_mode: str,
+) -> None:
+    """SCN-SESS-012-1: Hostname-pinned and TOFU-learned fingerprints are enforced when connecting via resolved IP."""
+    from arodonata.adapters.checkpoint import target_resolver
+    from arodonata.adapters.checkpoint.tls import compute_der_fingerprint
+    from arodonata.core.errors import CertificateMismatchError
+
+    rig = _FakeTimeRig()
+    server = _ScriptedServer()
+    expected_der = b"expected-mgmt-example-com-cert"
+    rogue_der = b"rogue-mitm-cert-bytes"
+    expected_fp = compute_der_fingerprint(expected_der)
+    rogue_fp = compute_der_fingerprint(rogue_der)
+
+    async def _fake_resolve(host: str) -> set[str]:
+        if host == "mgmt.example.com":
+            return {"10.0.0.50"}
+        return set()
+
+    monkeypatch.setattr(target_resolver, "_resolve_hostname_ips", _fake_resolve)
+
+    known_hosts = tmp_path / "tls_known_hosts.json"
+    if tls_mode == "pinned":
+        policy = TrustPolicy(
+            mode="pinned",
+            known_hosts_path=known_hosts,
+            pinned_fingerprints=f"mgmt.example.com:443={expected_fp},other.example.com:443={rogue_fp}",
+        )
+    else:
+        policy = TrustPolicy(
+            mode="tofu",
+            known_hosts_path=known_hosts,
+        )
+        # Pre-learn mgmt.example.com:443 via TOFU; 10.0.0.50:443 is unseen.
+        assert policy.verify_der("mgmt.example.com", 443, expected_der) == expected_fp
+
+    presented_cert = {"der": expected_der}
+    dialed_hosts: list[str] = []
+
+    async def _recording_sender(**kwargs: Any) -> Any:
+        dialed_hosts.append(kwargs["host"])
+        return await server.sender(**kwargs)
+
+    cfg = ArodonataSettings(
+        mgmt_name="mds1",
+        mgmt_ip="10.0.0.50",
+        api_key="static-secret-key",
+        tls_trust=tls_mode,  # type: ignore[arg-type]
+    )
+    transport = ApiTransport(
+        settings=cfg,
+        trust_policy=policy,
+        peer_cert_getter=lambda _h, _p: presented_cert["der"],
+        request_sender=_recording_sender,
+    )
+    client = AMgmtClient(
+        settings=cfg,
+        engine=None,
+        transport=transport,
+        trust_policy=policy,
+        monotonic_fn=rig.monotonic,
+        now_fn=rig.now,
+        sleep_fn=rig.sleep,
+    )
+    await client.initialize()
+    try:
+        # 1. Matching cert on resolved canonical IP 10.0.0.50 succeeds and dials IP directly.
+        res = await client.api_call("mds1", "show-domains", {}, sid="sid-1", server_ip="mgmt.example.com")
+        assert res.success is True
+        assert dialed_hosts and all(h == "10.0.0.50" for h in dialed_hosts)
+
+        # 2. Mismatched cert (even if pinned under another host or unseen in TOFU) fails before HTTP write.
+        client._transport.connection_pool.close_all()
+        presented_cert["der"] = rogue_der
+        calls_before = len(server.calls)
+
+        with pytest.raises(CertificateMismatchError):
+            await client.api_call("mds1", "show-domains", {}, sid="sid-1", server_ip="mgmt.example.com")
+        assert len(server.calls) == calls_before
+
+        with pytest.raises(CertificateMismatchError):
+            await client._login_coordinator._perform_gated_login(
+                "mds1",
+                None,
+                auth=await client._login_coordinator.resolve_credentials("mds1", None),
+                explicit_server_ip="mgmt.example.com",
+            )
+        assert len(server.calls) == calls_before
+
+        with pytest.raises(CertificateMismatchError):
+            await client._login_coordinator.keepalive_sid("mds1", None, sid="sid-1", server_ip="mgmt.example.com")
+        assert len(server.calls) == calls_before
+
+        with pytest.raises(CertificateMismatchError):
+            await client._login_coordinator.logout_sid("mds1", "sid-1", server_ip="mgmt.example.com")
+        assert len(server.calls) == calls_before
     finally:
         await client.close(logout=False)

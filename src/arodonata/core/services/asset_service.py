@@ -1033,7 +1033,7 @@ class AssetRefreshService:
         cluster_enriched = self._cluster_manager.enrich(raw_assets)
         fully_enriched = await self._vsx_manager.enrich(mgmt_name, dom_name, cluster_enriched)
 
-        now = self._now()
+        synced_at = probe.probe_started_at or self._now()
         sync_state = DomainSyncState(
             mgmt_name=mgmt_name,
             domain_name=dom_name,
@@ -1041,7 +1041,7 @@ class AssetRefreshService:
             item_type="*",
             last_published_at=probe.remote_published_at,
             last_session_uid=probe.remote_session_uid,
-            synced_at=now,
+            synced_at=synced_at,
             status="ok",
             object_count=len(fully_enriched),
             last_error=None,

@@ -10,7 +10,7 @@ Provides:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -21,6 +21,7 @@ from arodonata.core.events import DomainSyncProgressEvent, SyncProgressEvent
 from arodonata.core.models.common import (
     DEFAULT_SERVICE_TYPES,
     CacheMode,
+    normalize_service_type,
     to_naive_utc,
     utc_now,
 )
@@ -54,7 +55,7 @@ SERVICE_TYPE_TO_SHOW_COMMAND: dict[str, str] = {
 
 def resolve_service_query_command(item_type: str) -> tuple[str, dict[str, Any]]:
     """Map a service `item_type` to `(command, extra_payload)` for `api_query`."""
-    clean = item_type.strip().lower()
+    clean = normalize_service_type(item_type)
     if clean in SERVICE_TYPE_TO_SHOW_COMMAND:
         return SERVICE_TYPE_TO_SHOW_COMMAND[clean], {}
     if clean.startswith("service-"):
@@ -86,7 +87,10 @@ class ServiceCacheService:
             return list(DEFAULT_SERVICE_TYPES)
         seen: list[str] = []
         for t in types:
-            clean = str(t).strip().lower()
+            raw = str(t).strip()
+            if not raw:
+                continue
+            clean = normalize_service_type(raw)
             if clean and clean not in seen:
                 seen.append(clean)
         return seen or list(DEFAULT_SERVICE_TYPES)
@@ -218,9 +222,6 @@ class ServiceCacheService:
             if total_changes > self._settings.max_incremental_changes:
                 return None
 
-            if deleted_uids:
-                await self._cache.delete_services_by_uids(mgmt_name, dom_name, deleted_uids)
-
             fetched_services: list[CPService] = []
             for uid, _hint_type in upserts_meta:
                 svc_res = await self._api.api_call(
@@ -238,19 +239,20 @@ class ServiceCacheService:
                 if cp_svc.type in stale_set:
                     fetched_services.append(cp_svc)
 
-            now = self._now()
             existing_by_type: dict[str, list[CPService]] = {}
             for item_type in probe.stale_types:
                 existing_by_type[item_type] = await self._cache.get_services(mgmt_name, dom_name, types=[item_type])
 
+            deleted_uid_set = set(deleted_uids)
             fetched_by_type: dict[str, dict[str, CPService]] = {t: {} for t in probe.stale_types}
             for svc in fetched_services:
                 if svc.type in fetched_by_type:
                     fetched_by_type[svc.type][svc.uid] = svc
 
+            synced_at = probe.probe_started_at or self._now()
             sync_states: list[DomainSyncState] = []
             for item_type in probe.stale_types:
-                uid_set = {s.uid for s in existing_by_type.get(item_type, [])}
+                uid_set = {s.uid for s in existing_by_type.get(item_type, []) if s.uid not in deleted_uid_set}
                 uid_set.update(fetched_by_type.get(item_type, {}).keys())
                 sync_states.append(
                     DomainSyncState(
@@ -260,18 +262,20 @@ class ServiceCacheService:
                         item_type=item_type,
                         last_published_at=probe.remote_published_at,
                         last_session_uid=probe.remote_session_uid,
-                        synced_at=now,
+                        synced_at=synced_at,
                         status="ok",
                         object_count=len(uid_set),
                         last_error=None,
                     )
                 )
 
-            if fetched_services:
-                await self._cache.upsert_services(fetched_services, sync_states=sync_states)
-            else:
-                for st in sync_states:
-                    await self._cache.upsert_sync_state(st)
+            await self._cache.apply_service_diff(
+                mgmt_name,
+                dom_name,
+                deleted_uids=deleted_uids,
+                services=fetched_services,
+                sync_states=sync_states,
+            )
 
             await emit(
                 DomainSyncProgressEvent(
@@ -346,7 +350,7 @@ class ServiceCacheService:
                 )
             )
 
-        now = self._now()
+        synced_at = probe.probe_started_at or self._now()
         sync_states = [
             DomainSyncState(
                 mgmt_name=mgmt_name,
@@ -355,7 +359,7 @@ class ServiceCacheService:
                 item_type=item_type,
                 last_published_at=probe.remote_published_at,
                 last_session_uid=probe.remote_session_uid,
-                synced_at=now,
+                synced_at=synced_at,
                 status="ok",
                 object_count=len(collected_by_type.get(item_type, [])),
                 last_error=None,
@@ -386,6 +390,8 @@ class ServiceCacheService:
         cache_ttl: float | None = None,
     ) -> list[CPService]:
         """Ensure requested service types are fresh (unless `cache_mode="cache"`), then return services with active `WriteSession` overlay applied."""
+        if types is not None and not types:
+            return []
         target_types = self._normalize_types(types) if types is not None else list(DEFAULT_SERVICE_TYPES)
         if cache_mode != "cache":
             await self.refresh_services(
@@ -397,10 +403,11 @@ class ServiceCacheService:
                 cache_ttl=cache_ttl,
             )
 
+        norm_types = self._normalize_types(types) if types is not None else None
         cached = await self._cache.get_services(
             mgmt_name=mgmt_name,
             domain_name=domain,
-            types=types,
+            types=norm_types,
             names=names,
             uids=uids,
         )
@@ -411,7 +418,8 @@ class ServiceCacheService:
             cached,
             mgmt_name=mgmt_name,
             domain_name=domain,
-            types=types,
+            include_global=include_global,
+            types=norm_types,
             names=names,
             uids=uids,
         )
@@ -454,6 +462,8 @@ class ServiceCacheService:
         *,
         mgmt_name: str | None = None,
         domain_name: str | None = None,
+        allowed_domains: Collection[str] | None = None,
+        include_global: bool = True,
         types: Sequence[str] | None = None,
         names: Sequence[str] | None = None,
         uids: Sequence[str] | None = None,
@@ -464,7 +474,13 @@ class ServiceCacheService:
             return list(cached_services)
         if mgmt_name is not None and ws.mgmt_name != mgmt_name:
             return list(cached_services)
-        if domain_name is not None and ws.domain_name != domain_name:
+        if allowed_domains is not None:
+            if ws.domain_name not in allowed_domains:
+                return list(cached_services)
+        elif domain_name is not None:
+            if ws.domain_name != domain_name:
+                return list(cached_services)
+        elif not include_global and ws.domain_name == "Global":
             return list(cached_services)
 
         in_scope: list[CPService] = []

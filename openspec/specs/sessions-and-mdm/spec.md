@@ -183,3 +183,48 @@ The client SHALL cap in-flight API requests per MDS member to `concurrent_limit`
 - **WHEN** `create_dedicated_session` or `write_session` runs inside `async with` / `with client.user_context(session_name="change-42", session_description="ticket", username="alice"):` without explicit session metadata overrides
 - **THEN** the opened session SHALL receive `session_name` and `session_description` from the active `UserContext` (`login` / `set-session`)
 - **AND** exiting the `user_context` block SHALL restore the previous `UserContext` without mutating concurrent tasks
+
+### Requirement: Fail-Closed DNS Pinning for Unresolvable Explicit Hostnames
+
+**ID**: REQ-SESS-010\
+**Intent**: Prevent unpinned hostname forwarding to transport when DNS resolution returns no answers during explicit server validation.\
+**Non-goals**: Subset validation when DNS resolves or explicit IP literals (`REQ-SESS-008`).
+
+When `AMgmtClient` validates an explicit non-IP hostname `server_ip` whose DNS lookup yields zero A/AAAA answers, validation SHALL fail closed with `ValidationError` before any connection attempt rather than forwarding an unresolved hostname to transport.
+
+#### Scenario: SCN-SESS-010-1 — Unresolvable explicit hostname raises ValidationError before transport connect
+
+- **GIVEN** a management endpoint configured with a hostname (`mgmt.example.com`) whose DNS resolution returns zero A/AAAA records during validation
+- **WHEN** `AMgmtClient` (`api_call`, `get_readonly_session`, `create_dedicated_session`, `keepalive_sid`, or `logout_sid`) receives `explicit_server_ip="mgmt.example.com"`
+- **THEN** validation SHALL raise `ValidationError` before opening a TLS connection or transmitting `X-chkp-sid`
+- **AND** callers SHALL never receive an unpinned raw hostname for transport connect-time re-resolution
+
+### Requirement: Unconditional Startup Stale-Session Inspection
+
+**ID**: REQ-SESS-011\
+**Intent**: Guarantee startup stale-session cleanup always inspects and discards abandoned Arodonata sessions even when a previous run left an unexpired read-only System Data SID in cache.\
+**Non-goals**: Read-only SID cache reuse (`REQ-SESS-003`) or RW cleanup logout/filtering rules (`REQ-SESS-004`).
+
+On startup cleanup when static credentials exist, `AMgmtClient` and `SessionCleaner` SHALL open a temporary read-write session, inspect `show-sessions`, discard eligible abandoned Arodonata-owned sessions, and log out via `logout_sid` without short-circuiting on cached read-only System Data SIDs.
+
+#### Scenario: SCN-SESS-011-1 — Startup cleanup inspects and discards abandoned sessions despite cached read-only System Data SID
+
+- **GIVEN** static credentials and an unexpired read-only System Data `SIDCacheEntry` persisted in `arodonata_sid_cache` alongside an abandoned Arodonata-owned session (`changes == 0`, `locks == 0`) on the server
+- **WHEN** startup session cleanup runs (`run_startup_cleanup()` or `schedule_startup_cleanup()`)
+- **THEN** cleanup SHALL NOT return early on the cached read-only SID and SHALL query `show-sessions`, discard eligible abandoned sessions, and close its temporary read-write session via `logout_sid`
+- **AND** the pre-existing fresh cached read-only System Data SID SHALL remain preserved in `arodonata_sid_cache`
+
+### Requirement: Hostname-Bound TLS Fingerprint Enforcement Across Canonical IP Pinning
+
+**ID**: REQ-SESS-012\
+**Intent**: Prevent TOFU first-contact bypass or cross-host pin substitution when an explicit hostname is resolved and connected via its pinned canonical IP literal.\
+**Non-goals**: Unresolvable hostname rejection (`REQ-SESS-010`) or DNS-rebinding subset validation (`REQ-SESS-008`).
+
+When an explicit `server_ip` hostname is resolved and pinned to a canonical trusted IP literal before connecting, TLS certificate fingerprint verification (`TrustPolicy` in `"pinned"`, `"tofu"`, and `"lab-memory"` modes) SHALL also enforce any certificate fingerprint pinned or previously persisted under that hostname (`<hostname>:<port>`), rejecting mismatched peer certificates with `CertificateMismatchError` before transmitting any HTTP request or `X-chkp-sid`.
+
+#### Scenario: SCN-SESS-012-1 — Hostname-pinned and TOFU-learned TLS fingerprints remain enforced when connecting to a resolved canonical IP
+
+- **GIVEN** a management endpoint with a certificate fingerprint pinned in `ARODONATA_TLS_FINGERPRINTS` or previously persisted in `tls_known_hosts.json` under `mgmt.example.com:443` while `mgmt.example.com` resolves to trusted IP `10.0.0.50`
+- **WHEN** `AMgmtClient` executes an API call, read-only login, keepalive, or logout with `server_ip="mgmt.example.com"` and `10.0.0.50:443` presents either the expected fingerprint or a different certificate (including another server's pinned fingerprint or an unknown MITM certificate in `"tofu"` mode)
+- **THEN** the connection SHALL dial `10.0.0.50:443` directly without connect-time DNS re-resolution and succeed when `10.0.0.50:443` presents `mgmt.example.com:443`'s fingerprint
+- **AND** any certificate mismatch against `mgmt.example.com:443`'s pinned or TOFU-stored fingerprint SHALL raise `CertificateMismatchError` before sending HTTP headers or `X-chkp-sid`

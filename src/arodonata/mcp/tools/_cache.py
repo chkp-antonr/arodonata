@@ -100,11 +100,23 @@ async def _upgrade_uninitialized_cache_mode(
     return "smart"
 
 
-def _is_sync_state_fresh(st: DomainSyncState, *, now: datetime, eff_ttl: float) -> bool:
+def _is_sync_state_fresh(
+    st: DomainSyncState,
+    *,
+    now: datetime,
+    eff_ttl: float,
+    coord: Any = None,
+) -> bool:
     if st.status != "ok" or st.synced_at is None:
         return False
     synced_naive = to_naive_utc(st.synced_at)
     if synced_naive is None:
+        return False
+    if (
+        coord is not None
+        and hasattr(coord, "is_slice_invalidated")
+        and coord.is_slice_invalidated(st.mgmt_name, st.domain_name, st.scope, st.item_type, synced_naive)
+    ):
         return False
     return (now - synced_naive).total_seconds() < eff_ttl
 
@@ -115,6 +127,7 @@ def _domain_states_fresh(
     item_types: Sequence[str] | None,
     now: datetime,
     eff_ttl: float,
+    coord: Any = None,
 ) -> bool:
     if not dom_states:
         return False
@@ -123,10 +136,10 @@ def _domain_states_fresh(
         wildcard = by_type.get("*")
         for req_type in item_types:
             st = by_type.get(req_type) or wildcard
-            if st is None or not _is_sync_state_fresh(st, now=now, eff_ttl=eff_ttl):
+            if st is None or not _is_sync_state_fresh(st, now=now, eff_ttl=eff_ttl, coord=coord):
                 return False
         return True
-    return all(_is_sync_state_fresh(st, now=now, eff_ttl=eff_ttl) for st in dom_states)
+    return all(_is_sync_state_fresh(st, now=now, eff_ttl=eff_ttl, coord=coord) for st in dom_states)
 
 
 async def _enforce_live_quota_if_sync_required(
@@ -158,19 +171,6 @@ async def _enforce_live_quota_if_sync_required(
         return
 
     coord = getattr(client, "sync_coordinator", None)
-    if coord is not None:
-        if mgmt_name is not None:
-            if domains:
-                if any(coord.is_domain_invalidated(mgmt_name, d) for d in domains):
-                    consume_live_quota_if_needed()
-                    return
-            elif coord.is_domain_invalidated(mgmt_name, domain):
-                consume_live_quota_if_needed()
-                return
-        elif coord.invalidated_domains:
-            consume_live_quota_if_needed()
-            return
-
     states = await client.cache.list_sync_states(
         mgmt_name=mgmt_name,
         domain_name=domain if domain else None,
@@ -196,6 +196,7 @@ async def _enforce_live_quota_if_sync_required(
                     item_types=item_types,
                     now=now,
                     eff_ttl=eff_ttl,
+                    coord=coord,
                 ):
                     consume_live_quota_if_needed()
                     return
@@ -203,7 +204,7 @@ async def _enforce_live_quota_if_sync_required(
         for dom_name in target_doms:
             matched_keys = [k for k in by_dom if k[1] == dom_name]
             if not matched_keys or any(
-                not _domain_states_fresh(by_dom[k], item_types=item_types, now=now, eff_ttl=eff_ttl)
+                not _domain_states_fresh(by_dom[k], item_types=item_types, now=now, eff_ttl=eff_ttl, coord=coord)
                 for k in matched_keys
             ):
                 consume_live_quota_if_needed()
@@ -218,12 +219,13 @@ async def _enforce_live_quota_if_sync_required(
                 item_types=item_types,
                 now=now,
                 eff_ttl=eff_ttl,
+                coord=coord,
             ):
                 consume_live_quota_if_needed()
                 return
 
     for dom_states in by_dom.values():
-        if not _domain_states_fresh(dom_states, item_types=item_types, now=now, eff_ttl=eff_ttl):
+        if not _domain_states_fresh(dom_states, item_types=item_types, now=now, eff_ttl=eff_ttl, coord=coord):
             consume_live_quota_if_needed()
             return
 

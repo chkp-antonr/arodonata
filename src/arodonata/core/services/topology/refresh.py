@@ -72,7 +72,17 @@ async def _collect_routes_for_refresh(
     if mode == "cache":
         return
     if mode == "force":
-        await collect_routes_fn(
+        force_domains = await coordinator.resolve_target_domains(
+            mgmt_name=mgmt_name,
+            domains=domains,
+            include_global=include_global,
+            mode="cache",
+        )
+        inv_before_force = {
+            (dom.mgmt_name, dom.name): coordinator._effective_invalidation(dom.mgmt_name, dom.name)
+            for dom in force_domains
+        }
+        outcome = await collect_routes_fn(
             mgmt_name=mgmt_name,
             domains=domains,
             include_global=include_global,
@@ -80,6 +90,22 @@ async def _collect_routes_for_refresh(
             repository_script_name=repository_script_name,
             repository_script_args_fn=repository_script_args_fn,
         )
+        failed_doms = (
+            {(st.mgmt_name, st.domain_name) for st in outcome.gateways if not st.success}
+            if hasattr(outcome, "gateways")
+            else set()
+        )
+        for (m_name, d_name), inv_before in inv_before_force.items():
+            if (m_name, d_name) not in failed_doms and coordinator._effective_invalidation(
+                m_name, d_name
+            ) == inv_before:
+                coordinator._record_slice_synced(
+                    m_name,
+                    d_name,
+                    "topology",
+                    ["routes"],
+                    target_seq=inv_before[1],
+                )
         return
 
     target_domains = await coordinator.resolve_target_domains(
@@ -101,15 +127,21 @@ async def _collect_routes_for_refresh(
         if (dom.mgmt_name, dom.name) not in domains_with_gateways:
             continue
         dom_label = f"{dom.mgmt_name}:{dom.name}"
-        if dom_label in refreshed_set or coordinator.is_domain_invalidated(dom.mgmt_name, dom.name):
-            domains_to_collect[dom.mgmt_name].append(dom.name)
-            continue
         route_state = await cache.get_sync_state(
             dom.mgmt_name,
             dom.name,
             "topology",
             "routes",
         )
+        if dom_label in refreshed_set or coordinator.is_domain_invalidated(
+            dom.mgmt_name,
+            dom.name,
+            scope="topology",
+            item_type="routes",
+            synced_at=route_state.synced_at if route_state is not None else None,
+        ):
+            domains_to_collect[dom.mgmt_name].append(dom.name)
+            continue
         if route_state is None or route_state.status != "ok" or route_state.synced_at is None:
             domains_to_collect[dom.mgmt_name].append(dom.name)
             continue
@@ -119,7 +151,8 @@ async def _collect_routes_for_refresh(
                 domains_to_collect[dom.mgmt_name].append(dom.name)
 
     for m_name, dom_names in domains_to_collect.items():
-        await collect_routes_fn(
+        inv_before_by_dom = {d_name: coordinator._effective_invalidation(m_name, d_name) for d_name in dom_names}
+        outcome = await collect_routes_fn(
             mgmt_name=m_name,
             domains=dom_names,
             include_global=include_global or ("Global" in dom_names),
@@ -127,6 +160,20 @@ async def _collect_routes_for_refresh(
             repository_script_name=repository_script_name,
             repository_script_args_fn=repository_script_args_fn,
         )
+        failed_dom_names = (
+            {st.domain_name for st in outcome.gateways if not st.success and st.mgmt_name == m_name}
+            if hasattr(outcome, "gateways")
+            else set()
+        )
+        for d_name, inv_before in inv_before_by_dom.items():
+            if d_name not in failed_dom_names and coordinator._effective_invalidation(m_name, d_name) == inv_before:
+                coordinator._record_slice_synced(
+                    m_name,
+                    d_name,
+                    "topology",
+                    ["routes"],
+                    target_seq=inv_before[1],
+                )
 
 
 async def _stream_targeted_gateway_refresh(

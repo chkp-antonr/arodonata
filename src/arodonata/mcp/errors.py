@@ -32,30 +32,48 @@ from arodonata.mcp.quota import MCPToolQuotaManager, QuotaDecision
 logger = arlogi.get_logger(__name__)
 
 
+_ACTIVE_MCP_EXTRA_SIDS: ContextVar[set[str] | None] = ContextVar(
+    "arodonata_active_mcp_extra_sids",
+    default=None,
+)
+
+
+def register_active_mcp_sid(sid: str | None) -> None:
+    """Register a session identifier created during the current MCP tool call for guaranteed redaction."""
+    sids = _ACTIVE_MCP_EXTRA_SIDS.get()
+    if sids is not None and isinstance(sid, str) and sid:
+        sids.add(sid)
+
+
 async def collect_known_sids(
     client: ArodonataClient | None,
     mgmt_name: str | None = None,
 ) -> list[str]:
-    """Collect active session tokens from the SID cache and public client dedicated-SID registry."""
-    if client is None:
-        return []
+    """Collect active session tokens from the SID cache, public dedicated-SID registry, and active MCP context."""
     sids: list[str] = []
-    try:
-        cached = await client.cache.list_sids(mgmt_name=mgmt_name)
-        for entry in cached:
-            if entry.sid and entry.sid not in sids:
-                sids.append(entry.sid)
-    except Exception:
-        pass
-
-    get_dedicated = getattr(client, "get_active_dedicated_sids", None)
-    if callable(get_dedicated):
+    if client is not None:
         try:
-            for sid_val in get_dedicated(mgmt_name=mgmt_name):
-                if isinstance(sid_val, str) and sid_val and sid_val not in sids:
-                    sids.append(sid_val)
+            cached = await client.cache.list_sids(mgmt_name=mgmt_name)
+            for entry in cached:
+                if entry.sid and entry.sid not in sids:
+                    sids.append(entry.sid)
         except Exception:
             pass
+
+        get_dedicated = getattr(client, "get_active_dedicated_sids", None)
+        if callable(get_dedicated):
+            try:
+                for sid_val in get_dedicated(mgmt_name=mgmt_name):
+                    if isinstance(sid_val, str) and sid_val and sid_val not in sids:
+                        sids.append(sid_val)
+            except Exception:
+                pass
+
+    extra_sids = _ACTIVE_MCP_EXTRA_SIDS.get()
+    if extra_sids:
+        for sid_val in extra_sids:
+            if sid_val and sid_val not in sids:
+                sids.append(sid_val)
     return sids
 
 
@@ -86,7 +104,13 @@ class _ActiveQuotaState:
     quota_manager: MCPToolQuotaManager
     client_id: str
     tool_name: str
-    live_consumed: bool = False
+    general_units_consumed: int = 0
+    live_units_consumed: int = 0
+
+    @property
+    def live_consumed(self) -> bool:
+        """Whether at least one live quota slot has already been consumed for this call."""
+        return self.live_units_consumed > 0
 
 
 _ACTIVE_MCP_QUOTA_STATE: ContextVar[_ActiveQuotaState | None] = ContextVar(
@@ -143,15 +167,68 @@ def _emit_rate_limit_failure(tool_name: str, client_id: str, decision: QuotaDeci
     )
 
 
-def consume_live_quota_if_needed() -> None:
-    """Consume a `live` quota slot for the active guarded tool call when remote sync is required."""
+def _rollback_active_quota(state: _ActiveQuotaState) -> None:
+    """Roll back all general and live quota slots consumed by the current invocation."""
+    if state.general_units_consumed > 0 or state.live_units_consumed > 0:
+        state.quota_manager.rollback_consumed(
+            state.client_id,
+            general=state.general_units_consumed,
+            live=state.live_units_consumed,
+        )
+        state.general_units_consumed = 0
+        state.live_units_consumed = 0
+
+
+def consume_live_quota_if_needed(*, cost: int = 1, cap_at_limit_if_empty: bool = False) -> None:
+    """Ensure at least `cost` `live` quota slots are consumed for the active guarded tool call."""
+    eff_cost = max(1, int(cost))
     state = _ACTIVE_MCP_QUOTA_STATE.get()
-    if state is None or state.live_consumed:
+    if state is None:
         return
-    decision = state.quota_manager.check_and_consume_live_only(state.client_id)
+
+    live_limit = state.quota_manager.live_rate_limit_per_minute
+    if live_limit > 0:
+        if cap_at_limit_if_empty and eff_cost >= live_limit:
+            if state.quota_manager.live_bucket_count(state.client_id) <= state.live_units_consumed:
+                eff_cost = live_limit
+        elif not cap_at_limit_if_empty and eff_cost > live_limit:
+            _rollback_active_quota(state)
+            span_attrs(
+                mcp_rate_limited=True,
+                mcp_client_id=state.client_id,
+                mcp_tool=state.tool_name,
+                mcp_quota_bucket="live",
+            )
+            logger.warning(
+                "MCP tool fan-out exceeds per-minute live rate limit",
+                tool=state.tool_name,
+                client_id=state.client_id,
+                bucket="live",
+                limit=live_limit,
+                requested_cost=eff_cost,
+            )
+            raise ToolFailure(
+                f"Rate limit exceeded for MCP tool {state.tool_name!r}: requested fan-out cost ({eff_cost}) "
+                f"exceeds per-minute live limit ({live_limit}/min). Pass batches of <= {live_limit} items.",
+                error_code="rate_limit_exceeded",
+                details={
+                    "client_id": state.client_id,
+                    "bucket": "live",
+                    "limit_per_minute": live_limit,
+                    "requested_cost": eff_cost,
+                    "retry_after_seconds": 0.0,
+                    "exceeds_per_minute_limit": True,
+                },
+            )
+
+    delta = eff_cost - state.live_units_consumed
+    if delta <= 0:
+        return
+    decision = state.quota_manager.check_and_consume_live_only(state.client_id, cost=delta)
     if not decision.allowed:
+        _rollback_active_quota(state)
         raise _emit_rate_limit_failure(state.tool_name, state.client_id, decision)
-    state.live_consumed = True
+    state.live_units_consumed += delta
 
 
 def resolve_mgmt_name(client: ArodonataClient, mgmt_name: str | None = None) -> str:
@@ -205,12 +282,15 @@ async def validate_domain_or_fail(
     client: ArodonataClient,
     mgmt_name: str,
     domain: str | None,
+    *,
+    allow_refresh: bool = True,
 ) -> str | None:
     """Pre-validate `domain` against the cached `domains` table before attempting a domain login.
 
-    If `domain` is not present in the cached `domains` table, performs a single domain-list
-    refresh (`client.get_domains(..., cache_mode="force")`). If still not present and the
-    server has known domains, raises an actionable `ToolFailure` listing known domains.
+    If `domain` is not present in the cached `domains` table and `allow_refresh` is `True`, performs a single
+    domain-list refresh (`client.get_domains(..., cache_mode="force")`). With `allow_refresh=False` (caller
+    `cache_mode="cache"`) no live call or quota charge occurs and only cached rows are consulted. If still not
+    present and the server has known domains, raises an actionable `ToolFailure` listing known domains.
     """
     if domain is None or not domain.strip():
         return None
@@ -223,6 +303,16 @@ async def validate_domain_or_fail(
     cached_domains = await client.cache.get_domains(mgmt_name=mgmt_name, include_global=True)
     cached_names = {d.name for d in cached_domains}
     if clean_domain in cached_names:
+        return clean_domain
+
+    if not allow_refresh:
+        if cached_names:
+            raise ToolFailure(
+                f"Unknown domain {clean_domain!r} on management server {mgmt_name!r}. "
+                f"Known cached domains on {mgmt_name!r}: {', '.join(sorted(cached_names))}.",
+                mgmt_name=mgmt_name,
+                domain=clean_domain,
+            )
         return clean_domain
 
     # 2. Perform at most a single domain-list refresh on a miss
@@ -353,119 +443,126 @@ def mcp_tool_guard(
                 else (kwargs.get("domain_name") if isinstance(kwargs.get("domain_name"), str) else None)
             )
             quota_token: Any = None
+            extra_sids_token = _ACTIVE_MCP_EXTRA_SIDS.set(set())
             try:
-                if quota_manager is not None:
-                    client_id = redact_sid(resolve_mcp_caller_id())
-                    is_live = is_live_tool(kwargs) if callable(is_live_tool) else bool(is_live_tool)
-                    decision = quota_manager.check_and_consume(client_id, is_live=is_live)
-                    if not decision.allowed:
-                        raise _emit_rate_limit_failure(tool_name, client_id, decision)
-                    quota_token = _ACTIVE_MCP_QUOTA_STATE.set(
-                        _ActiveQuotaState(
-                            quota_manager=quota_manager,
-                            client_id=client_id,
-                            tool_name=tool_name,
-                            live_consumed=is_live,
+                try:
+                    if quota_manager is not None:
+                        client_id = redact_sid(resolve_mcp_caller_id())
+                        is_live = is_live_tool(kwargs) if callable(is_live_tool) else bool(is_live_tool)
+                        decision = quota_manager.check_and_consume(client_id, is_live=is_live)
+                        if not decision.allowed:
+                            raise _emit_rate_limit_failure(tool_name, client_id, decision)
+                        quota_token = _ACTIVE_MCP_QUOTA_STATE.set(
+                            _ActiveQuotaState(
+                                quota_manager=quota_manager,
+                                client_id=client_id,
+                                tool_name=tool_name,
+                                general_units_consumed=1 if quota_manager.rate_limit_per_minute > 0 else 0,
+                                live_units_consumed=(
+                                    1 if (is_live and quota_manager.live_rate_limit_per_minute > 0) else 0
+                                ),
+                            )
                         )
+                    try:
+                        return await fn(*args, **kwargs)
+                    finally:
+                        if quota_token is not None:
+                            _ACTIVE_MCP_QUOTA_STATE.reset(quota_token)
+                except ToolFailure as tf:
+                    eff_mgmt = tf.mgmt_name or mgmt_arg
+                    eff_dom = tf.domain or domain_arg
+                    try:
+                        known_sids = await collect_known_sids(client_getter(), eff_mgmt)
+                    except Exception:
+                        known_sids = await collect_known_sids(None, eff_mgmt)
+                    sanitized_reason = redact_sid(tf.message, known_sids=known_sids)
+                    if tf.error_code != "rate_limit_exceeded":
+                        logger.warning(
+                            "MCP ToolFailure",
+                            tool=tool_name,
+                            mgmt_name=eff_mgmt,
+                            domain=eff_dom,
+                            error=sanitized_reason,
+                        )
+                    if tf.error_code is not None:
+                        err_payload = _format_structured_tool_failure(
+                            tf, tool_name=tool_name, sanitized_reason=sanitized_reason
+                        )
+                        return json_tool_result(err_payload, is_error=True, known_sids=known_sids)
+                    return CallToolResult(
+                        content=[TextContent(type="text", text=sanitized_reason)],
+                        is_error=True,
                     )
-                try:
-                    return await fn(*args, **kwargs)
-                finally:
-                    if quota_token is not None:
-                        _ACTIVE_MCP_QUOTA_STATE.reset(quota_token)
-            except ToolFailure as tf:
-                eff_mgmt = tf.mgmt_name or mgmt_arg
-                eff_dom = tf.domain or domain_arg
-                try:
-                    known_sids = await collect_known_sids(client_getter(), eff_mgmt)
-                except Exception:
-                    known_sids = []
-                sanitized_reason = redact_sid(tf.message, known_sids=known_sids)
-                if tf.error_code != "rate_limit_exceeded":
+                except InvalidCredentialsError as cred_exc:
+                    client = client_getter()
+                    eff_mgmt = (
+                        resolve_mgmt_name(client, mgmt_arg)
+                        if mgmt_arg
+                        else (client.settings.mgmt_names[0] if client.settings.mgmt_names else "default")
+                    )
+                    known = await get_known_domain_names(client, eff_mgmt, refresh_if_empty=False)
+                    known_sids = await collect_known_sids(client, eff_mgmt)
+                    cred_failure = format_invalid_credentials_failure(
+                        mgmt_name=eff_mgmt,
+                        domain=domain_arg,
+                        known_domains=known,
+                        exc=cred_exc,
+                        known_sids=known_sids,
+                    )
                     logger.warning(
                         "MCP ToolFailure",
                         tool=tool_name,
                         mgmt_name=eff_mgmt,
-                        domain=eff_dom,
-                        error=sanitized_reason,
+                        domain=domain_arg,
+                        error=cred_failure.message,
                     )
-                if tf.error_code is not None:
-                    err_payload = _format_structured_tool_failure(
-                        tf, tool_name=tool_name, sanitized_reason=sanitized_reason
+                    return CallToolResult(
+                        content=[TextContent(type="text", text=cred_failure.message)],
+                        is_error=True,
                     )
-                    return json_tool_result(err_payload, is_error=True, known_sids=known_sids)
-                return CallToolResult(
-                    content=[TextContent(type="text", text=sanitized_reason)],
-                    is_error=True,
-                )
-            except InvalidCredentialsError as cred_exc:
-                client = client_getter()
-                eff_mgmt = (
-                    resolve_mgmt_name(client, mgmt_arg)
-                    if mgmt_arg
-                    else (client.settings.mgmt_names[0] if client.settings.mgmt_names else "default")
-                )
-                known = await get_known_domain_names(client, eff_mgmt, refresh_if_empty=False)
-                known_sids = await collect_known_sids(client, eff_mgmt)
-                cred_failure = format_invalid_credentials_failure(
-                    mgmt_name=eff_mgmt,
-                    domain=domain_arg,
-                    known_domains=known,
-                    exc=cred_exc,
-                    known_sids=known_sids,
-                )
-                logger.warning(
-                    "MCP ToolFailure",
-                    tool=tool_name,
-                    mgmt_name=eff_mgmt,
-                    domain=domain_arg,
-                    error=cred_failure.message,
-                )
-                return CallToolResult(
-                    content=[TextContent(type="text", text=cred_failure.message)],
-                    is_error=True,
-                )
-            except (
-                DomainNotFoundError,
-                AmbiguousLayerName,
-                ChangeReportInputError,
-                UnsupportedFormat,
-                ConfigurationError,
-                ValidationError,
-            ) as dom_exc:
-                client = client_getter()
-                eff_mgmt = mgmt_arg or (client.settings.mgmt_names[0] if client.settings.mgmt_names else "default")
-                known = await get_known_domain_names(client, eff_mgmt, refresh_if_empty=False)
-                known_sids = await collect_known_sids(client, eff_mgmt)
-                extra_known = f" Known domains on {eff_mgmt!r}: {', '.join(known)}." if known else ""
-                msg = redact_sid(f"{dom_exc}{extra_known}", known_sids=known_sids)
-                logger.warning(
-                    "MCP ToolFailure",
-                    tool=tool_name,
-                    mgmt_name=eff_mgmt,
-                    domain=domain_arg,
-                    error=msg,
-                )
-                return CallToolResult(
-                    content=[TextContent(type="text", text=msg)],
-                    is_error=True,
-                )
-            except Exception as exc:
-                exc_class = type(exc).__name__
-                try:
-                    known_sids = await collect_known_sids(client_getter(), mgmt_arg)
-                except Exception:
-                    known_sids = []
-                logger.error(
-                    "MCP tool internal error",
-                    tool=tool_name,
-                    exception_class=exc_class,
-                    detail=redact_sid(str(exc), known_sids=known_sids),
-                )
-                return CallToolResult(
-                    content=[TextContent(type="text", text=f"internal error: {exc_class}")],
-                    is_error=True,
-                )
+                except (
+                    DomainNotFoundError,
+                    AmbiguousLayerName,
+                    ChangeReportInputError,
+                    UnsupportedFormat,
+                    ConfigurationError,
+                    ValidationError,
+                ) as dom_exc:
+                    client = client_getter()
+                    eff_mgmt = mgmt_arg or (client.settings.mgmt_names[0] if client.settings.mgmt_names else "default")
+                    known = await get_known_domain_names(client, eff_mgmt, refresh_if_empty=False)
+                    known_sids = await collect_known_sids(client, eff_mgmt)
+                    extra_known = f" Known domains on {eff_mgmt!r}: {', '.join(known)}." if known else ""
+                    msg = redact_sid(f"{dom_exc}{extra_known}", known_sids=known_sids)
+                    logger.warning(
+                        "MCP ToolFailure",
+                        tool=tool_name,
+                        mgmt_name=eff_mgmt,
+                        domain=domain_arg,
+                        error=msg,
+                    )
+                    return CallToolResult(
+                        content=[TextContent(type="text", text=msg)],
+                        is_error=True,
+                    )
+                except Exception as exc:
+                    exc_class = type(exc).__name__
+                    try:
+                        known_sids = await collect_known_sids(client_getter(), mgmt_arg)
+                    except Exception:
+                        known_sids = await collect_known_sids(None, mgmt_arg)
+                    logger.error(
+                        "MCP tool internal error",
+                        tool=tool_name,
+                        exception_class=exc_class,
+                        detail=redact_sid(str(exc), known_sids=known_sids),
+                    )
+                    return CallToolResult(
+                        content=[TextContent(type="text", text=f"internal error: {exc_class}")],
+                        is_error=True,
+                    )
+            finally:
+                _ACTIVE_MCP_EXTRA_SIDS.reset(extra_sids_token)
 
         return wrapper
 
@@ -480,6 +577,7 @@ __all__ = [
     "get_known_domain_names",
     "json_tool_result",
     "mcp_tool_guard",
+    "register_active_mcp_sid",
     "resolve_mcp_caller_id",
     "resolve_mgmt_name",
     "validate_domain_or_fail",

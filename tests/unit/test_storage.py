@@ -1217,3 +1217,22 @@ async def test_sql_cache_adapter_package_catalog_and_targeted_rulebase_layers() 
         assert await cache.get_sync_state("mds1", "Corp", "rulebase", "*") is None
     finally:
         await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-001-4")
+async def test_local_sqlite_cache_permissions_0700_dir_and_0600_file(tmp_path: Path) -> None:
+    """SCN-CACHE-001-4: Local file-backed SQLite DB enforces 0700 parent dir and 0600 file permissions."""
+    import os
+
+    if os.name == "nt":  # pragma: no cover
+        pytest.skip("POSIX permissions required")
+
+    db_file = tmp_path / "secure_cache_dir" / "sub" / "arodonata_cache.db"
+    db = DatabaseManager(engine=f"sqlite+aiosqlite:///{db_file}")
+    try:
+        await db.initialize()
+        assert (os.stat(db_file.parent).st_mode & 0o777) == 0o700
+        assert (os.stat(db_file.parent.parent).st_mode & 0o777) == 0o700
+        assert (os.stat(db_file).st_mode & 0o777) == 0o600
+    finally:
+        await db.close()

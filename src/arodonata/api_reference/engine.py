@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from arodonata.api_reference.models import ApiPayloadValidationResult, ApiValidationIssue
+from arodonata.core.errors import ValidationError
 
 DEFAULT_API_VERSION = "v2.2"
 
@@ -192,14 +193,27 @@ class ApiReferenceEngine:
                 include_examples=include_examples,
             )
 
-        commands_out: dict[str, dict[str, Any]] = {}
-        not_found: list[str] = []
+        deduped_items: list[tuple[str, str]] = []
+        seen_commands: set[str] = set()
         for item in command:
             if not isinstance(item, str) or not item.strip():
                 continue
-            clean_name = item.strip().lower().replace(" ", "-")
+            clean_name = item.strip().lower().replace("_", "-").replace(" ", "-")
+            if clean_name in seen_commands:
+                continue
+            seen_commands.add(clean_name)
+            deduped_items.append((item, clean_name))
+
+        if len(deduped_items) > 50:
+            raise ValidationError(
+                f"Batch describe_command supports at most 50 unique commands per call (got {len(deduped_items)})."
+            )
+
+        commands_out: dict[str, dict[str, Any]] = {}
+        not_found: list[str] = []
+        for raw_item, clean_name in deduped_items:
             desc = self._describe_single(
-                item,
+                raw_item,
                 version=eff_version,
                 resolve_nested=resolve_nested,
                 include_examples=include_examples,
@@ -518,6 +532,17 @@ class ApiReferenceEngine:
         )
         return res.model_dump(mode="json")
 
+    def _allowed_enum_values(self, enum_descriptors: Sequence[dict[str, Any]]) -> list[str]:
+        allowed: list[str] = []
+        for et in enum_descriptors:
+            vals = et.get("valid_values") or []
+            if not vals and et.get("enum_ref") and str(et["enum_ref"]) in self.enums:
+                vals = self.enums[str(et["enum_ref"])].get("values") or []
+            for v in vals:
+                if v not in allowed:
+                    allowed.append(v)
+        return allowed
+
     def _validate_field_value(
         self,
         field_name: str,
@@ -532,7 +557,7 @@ class ApiReferenceEngine:
         # Check if value matches any declared type descriptor
         for t in types:
             if self._matches_type_descriptor(value, t):
-                # If matched an enum or primitive string when an enum type exists, check enum values if applicable
+                # If matched an enum/list[enum], verify allowed values when no unrestricted string alternative applies
                 if isinstance(value, str):
                     enum_types = [
                         et
@@ -543,14 +568,7 @@ class ApiReferenceEngine:
                         et for et in types if et.get("kind") == "primitive" and et.get("primitive") in ("string", None)
                     ]
                     if enum_types and not non_enum_str_types:
-                        allowed: list[str] = []
-                        for et in enum_types:
-                            vals = et.get("valid_values") or []
-                            if not vals and et.get("enum_ref") and str(et["enum_ref"]) in self.enums:
-                                vals = self.enums[str(et["enum_ref"])].get("values") or []
-                            for v in vals:
-                                if v not in allowed:
-                                    allowed.append(v)
+                        allowed = self._allowed_enum_values(enum_types)
                         if allowed and value not in allowed and value.lower() not in {a.lower() for a in allowed}:
                             issues.append(
                                 ApiValidationIssue(
@@ -563,6 +581,36 @@ class ApiReferenceEngine:
                                     allowed_values=allowed,
                                 )
                             )
+                elif isinstance(value, list):
+                    list_enum_types: list[dict[str, Any]] = []
+                    list_free_str = False
+                    for lt in types:
+                        if lt.get("kind") != "list":
+                            continue
+                        el_type = lt.get("element_type")
+                        if not isinstance(el_type, dict):
+                            list_free_str = True
+                        elif el_type.get("kind") == "enum" and (el_type.get("valid_values") or el_type.get("enum_ref")):
+                            list_enum_types.append(el_type)
+                        elif el_type.get("kind") == "primitive" and el_type.get("primitive") in ("string", None):
+                            list_free_str = True
+                    if list_enum_types and not list_free_str:
+                        allowed = self._allowed_enum_values(list_enum_types)
+                        allowed_lower = {a.lower() for a in allowed}
+                        if allowed:
+                            for idx, item in enumerate(value):
+                                if isinstance(item, str) and item not in allowed and item.lower() not in allowed_lower:
+                                    issues.append(
+                                        ApiValidationIssue(
+                                            code="invalid_enum_value",
+                                            field=field_name,
+                                            message=(
+                                                f"Invalid item {item!r} at index {idx} for list enum parameter "
+                                                f"{field_name!r}. Allowed values: {allowed}."
+                                            ),
+                                            allowed_values=allowed,
+                                        )
+                                    )
                 return
 
         expected_labels = [self._format_type_label(t) for t in types]

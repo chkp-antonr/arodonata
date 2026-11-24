@@ -13,7 +13,7 @@ Provides:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -339,9 +339,6 @@ class ObjectService:
                 )
                 return None
 
-            if deleted_uids:
-                await self._cache.delete_objects_by_uids(mgmt_name, dom_name, deleted_uids)
-
             fetched_objects: list[CPObject] = []
             for uid, _hint_type in upserts_meta:
                 obj_res = await self._api.api_call(
@@ -359,19 +356,20 @@ class ObjectService:
                 if cp_obj.type in stale_set:
                     fetched_objects.append(cp_obj)
 
-            now = self._now()
             existing_by_type: dict[str, list[CPObject]] = {}
             for item_type in probe.stale_types:
                 existing_by_type[item_type] = await self._cache.get_objects(mgmt_name, dom_name, types=[item_type])
 
+            deleted_uid_set = set(deleted_uids)
             fetched_by_type: dict[str, dict[str, CPObject]] = {t: {} for t in probe.stale_types}
             for obj in fetched_objects:
                 if obj.type in fetched_by_type:
                     fetched_by_type[obj.type][obj.uid] = obj
 
+            synced_at = probe.probe_started_at or self._now()
             sync_states: list[DomainSyncState] = []
             for item_type in probe.stale_types:
-                uid_set = {o.uid for o in existing_by_type.get(item_type, [])}
+                uid_set = {o.uid for o in existing_by_type.get(item_type, []) if o.uid not in deleted_uid_set}
                 uid_set.update(fetched_by_type.get(item_type, {}).keys())
                 sync_states.append(
                     DomainSyncState(
@@ -381,18 +379,20 @@ class ObjectService:
                         item_type=item_type,
                         last_published_at=probe.remote_published_at,
                         last_session_uid=probe.remote_session_uid,
-                        synced_at=now,
+                        synced_at=synced_at,
                         status="ok",
                         object_count=len(uid_set),
                         last_error=None,
                     )
                 )
 
-            if fetched_objects:
-                await self._cache.upsert_objects(fetched_objects, sync_states=sync_states)
-            else:
-                for st in sync_states:
-                    await self._cache.upsert_sync_state(st)
+            await self._cache.apply_object_diff(
+                mgmt_name,
+                dom_name,
+                deleted_uids=deleted_uids,
+                objects=fetched_objects,
+                sync_states=sync_states,
+            )
 
             await emit(
                 DomainSyncProgressEvent(
@@ -470,7 +470,7 @@ class ObjectService:
                 )
             )
 
-        now = self._now()
+        synced_at = probe.probe_started_at or self._now()
         sync_states = [
             DomainSyncState(
                 mgmt_name=mgmt_name,
@@ -479,7 +479,7 @@ class ObjectService:
                 item_type=item_type,
                 last_published_at=probe.remote_published_at,
                 last_session_uid=probe.remote_session_uid,
-                synced_at=now,
+                synced_at=synced_at,
                 status="ok",
                 object_count=len(collected_by_type.get(item_type, [])),
                 last_error=None,
@@ -536,6 +536,7 @@ class ObjectService:
             cached,
             mgmt_name=mgmt_name,
             domain_name=domain,
+            include_global=include_global,
             types=norm_types,
             names=names,
             uids=uids,
@@ -579,6 +580,8 @@ class ObjectService:
         *,
         mgmt_name: str | None = None,
         domain_name: str | None = None,
+        allowed_domains: Collection[str] | None = None,
+        include_global: bool = True,
         types: Sequence[str] | None = None,
         names: Sequence[str] | None = None,
         uids: Sequence[str] | None = None,
@@ -589,7 +592,13 @@ class ObjectService:
             return list(cached_objects)
         if mgmt_name is not None and ws.mgmt_name != mgmt_name:
             return list(cached_objects)
-        if domain_name is not None and ws.domain_name != domain_name:
+        if allowed_domains is not None:
+            if ws.domain_name not in allowed_domains:
+                return list(cached_objects)
+        elif domain_name is not None:
+            if ws.domain_name != domain_name:
+                return list(cached_objects)
+        elif not include_global and ws.domain_name == "Global":
             return list(cached_objects)
 
         # Partition objects belonging to the WriteSession's (mgmt_name, domain_name) vs other domains

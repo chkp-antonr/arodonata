@@ -1023,3 +1023,24 @@ async def test_emulator_repository_script_staging_isolation_and_permission_toggl
     assert (
         await mock.api_call("mds", "delete-repository-script", {"name": "spec-script"}, domain="Branch", sid=sid_a)
     ).success
+
+
+@pytest.mark.spec("SCN-ITEST-007-3")
+async def test_replay_mock_enforces_strict_command_name_validation_parity() -> None:
+    """SCN-ITEST-007-3: Malformed commands raise `ValidationError` before recording; `web_api/` prefixes normalize."""
+    from arodonata.core.errors import ValidationError
+
+    mock = FileReplayApiMock()
+    bad_commands = ["/show-hosts", " show-hosts ", "SHOW-HOSTS", "show-hosts/../publish", "show-hosts?x=1"]
+    for bad in bad_commands:
+        with pytest.raises(ValidationError):
+            await mock.api_call("mds1", bad, {})
+        with pytest.raises(ValidationError):
+            await mock.api_query("mds1", bad)
+    assert not mock.command_counts
+
+    res = await mock.api_call("mds1", "/web_api/login", {})
+    assert res.success is True
+    assert mock.command_counts["login"] == 1
+    await mock.api_call("mds1", "web_api/show-session", {})
+    assert mock.command_counts["show-session"] == 1

@@ -177,11 +177,13 @@ async def exact_match_result(
     eff_mgmt: str,
     target_domain: str,
     details_level: str,
+    known_sids: Sequence[str] | None = None,
 ) -> CallToolResult:
     matched_domain = getattr(entity, "domain_name", None) or target_domain
     scope_name, item_type_val = _entity_scope_and_type(entity)
     age = await _compute_cache_age(client, eff_mgmt, matched_domain, scope_name, item_type_val)
     obj_dict = _serialize_any_entity(entity, details_level=details_level)
+    eff_sids = list(known_sids) if known_sids is not None else await collect_known_sids(client, eff_mgmt)
     return json_tool_result(
         {
             "from": 1,
@@ -194,11 +196,18 @@ async def exact_match_result(
             "domain": matched_domain,
             "object": obj_dict,
             "objects": [obj_dict],
-        }
+        },
+        known_sids=eff_sids,
     )
 
 
-def ambiguous_show_result(eff_mgmt: str, serialized: list[dict[str, Any]], hint: str) -> CallToolResult:
+def ambiguous_show_result(
+    eff_mgmt: str,
+    serialized: list[dict[str, Any]],
+    hint: str,
+    *,
+    known_sids: Sequence[str] | None = None,
+) -> CallToolResult:
     return json_tool_result(
         {
             "from": 1 if serialized else 0,
@@ -212,7 +221,8 @@ def ambiguous_show_result(eff_mgmt: str, serialized: list[dict[str, Any]], hint:
             "object": None,
             "objects": serialized,
             "hint": hint,
-        }
+        },
+        known_sids=known_sids,
     )
 
 
@@ -227,6 +237,7 @@ def sliced_candidate_result(
     limit: int,
     single_object: dict[str, Any] | None = None,
     hint: str | None = None,
+    known_sids: Sequence[str] | None = None,
 ) -> CallToolResult:
     eff_offset = max(0, offset)
     eff_limit = max(1, min(limit, 500))
@@ -246,7 +257,7 @@ def sliced_candidate_result(
     }
     if hint is not None:
         payload["hint"] = hint
-    return json_tool_result(payload)
+    return json_tool_result(payload, known_sids=known_sids)
 
 
 async def live_show_object(

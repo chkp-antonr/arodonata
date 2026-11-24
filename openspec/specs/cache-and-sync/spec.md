@@ -36,6 +36,11 @@ The SQL persistence layer SHALL support PostgreSQL (`asyncpg`) and SQLite (`aios
 - **THEN** it SHALL drop only positively fingerprinted legacy v1 tables and recreate incompatible `arodonata_*` tables
 - **AND** it SHALL leave unprefixed host tables completely untouched
 
+#### Scenario: SCN-CACHE-001-4 — Local SQLite cache directory and database file enforce owner-only permissions
+
+- **WHEN** `DatabaseManager` initializes a file-backed local SQLite cache database (`sqlite+aiosqlite:///...`, non-memory)
+- **THEN** its parent directory SHALL be created with mode `0700` and the database file SHALL enforce owner-only read/write permissions (`0600`) to protect cached `arodonata_sid_cache` rows at rest
+
 ### Requirement: Human-Readable Composite Identifiers Across Cached Entities
 
 **ID**: REQ-CACHE-002\
@@ -107,6 +112,12 @@ The SQL persistence layer SHALL support PostgreSQL (`asyncpg`) and SQLite (`aios
 - **THEN** genuine errors (including failed server domain discovery) SHALL be recorded in `RefreshOutcome.failed_domains`, `arodonata_domain_sync_state.last_error`, and `DomainSyncFailedEvent` (`WARNING` log) with `sid`s redacted
 - **AND** previously cached objects SHALL remain intact and synchronization SHALL continue on all reachable servers
 - **AND** `LockAcquisitionError` SHALL NOT overwrite `arodonata_domain_sync_state.status` as `"failed"` or emit a false failure event
+
+#### Scenario: SCN-CACHE-004-3 — Domain and wildcard invalidation persists across scopes until each scope refreshes
+
+- **GIVEN** `invalidate_domain(mgmt_name, domain)` or `invalidate_domain(mgmt_name, None)` (wildcard) is invoked within `cache_ttl`
+- **WHEN** only one scope or domain (`"objects"`, `"services"`, `"assets"`, `"rulebase"`, or `"topology"`) subsequently runs a `"smart"` or `"smart-fast"` sync
+- **THEN** only slices whose `synced_at` is newer than the invalidation timestamp SHALL be treated as fresh, preserving invalidation for every other invalidated domain and scope until each refreshes
 
 ### Requirement: Object Cache Refresh Modes and Incremental Sync
 
@@ -294,3 +305,33 @@ Shared `arodonata_rulebase_*` cache tables SHALL be written exclusively under `D
 - **WHEN** `SearchService.get_group_members(mgmt_name, None, "SharedGroup")` is called
 - **THEN** it SHALL execute zero remote domain refreshes (`cache_mode="cache"`, while single-domain SMC or cold caches MAY probe `show-domains` when `cache_mode != "cache"`)
 - **AND** it SHALL raise `AmbiguousObjectError` enumerating the matching domains and composite identifiers
+
+### Requirement: In-Flight Sync Probe Invalidation Preservation
+
+**ID**: REQ-CACHE-015\
+**Intent**: Prevent concurrent publish or explicit domain invalidations from being lost when an in-flight smart staleness probe or sync completes.\
+**Non-goals**: Multi-scope wildcard invalidation storage semantics (`REQ-CACHE-004`).
+
+Domain and wildcard invalidations recorded via `invalidate_domain()` while a staleness probe or slice refresh is in flight SHALL survive probe or sync completion so pre-invalidation cache states are never marked fresh for remaining `cache_ttl` windows.
+
+#### Scenario: SCN-CACHE-015-1 — Domain invalidation during in-flight smart probe survives probe completion
+
+- **GIVEN** a domain cache whose synced head matches the initial `show-last-published-session` probe response
+- **WHEN** `WriteSession` publish or `invalidate_domain(mgmt_name, domain)` executes after the staleness probe started (under advancing or frozen clocks) and the earlier probe later receives the pre-publish response
+- **THEN** probe completion SHALL NOT stamp `synced_at` or record an invalidation sequence ahead of the in-flight invalidation
+- **AND** subsequent `"smart"` or `"smart-fast"` reads within `cache_ttl` SHALL still treat the domain slice as invalidated
+
+### Requirement: Start-Epoch Slice Timestamping and Mid-Sync Invalidation Preservation
+
+**ID**: REQ-CACHE-016\
+**Intent**: Prevent domain or wildcard invalidations arriving while a slice refresh is executing from being masked by post-sync completion timestamps.\
+**Non-goals**: Fresh-slice staleness probe invalidation preservation (`REQ-CACHE-015`) or multi-scope invalidation storage (`REQ-CACHE-004`).
+
+When `ArodonataClient` synchronizes cached domain slices (`objects`, `services`, `assets`, `rulebase`, or `topology`), persisted `DomainSyncState.synced_at` timestamps SHALL record the pre-probe synchronization start time rather than completion time, and any `WriteSession` publish or `invalidate_domain()` call occurring during probe, lock acquisition, or slice execution SHALL preserve invalidation on subsequent `"smart"` and `"smart-fast"` reads.
+
+#### Scenario: SCN-CACHE-016-1 — Mid-handler domain invalidation survives slice sync completion under advancing and frozen clocks
+
+- **GIVEN** an in-flight `ArodonataClient` domain slice synchronization (`refresh_objects`, `refresh_services`, `refresh_assets`, `refresh_rulebases`, `refresh_package_rulebase`, or `refresh_topology`) whose staleness probe started at `T0`
+- **WHEN** `WriteSession` publish or `invalidate_domain(mgmt_name, domain)` runs at `T1` while slice fetching or lock acquisition is still in progress (`T0 <= T1 <= T2` under advancing or frozen clocks) and the slice completes at `T2`
+- **THEN** persisted `DomainSyncState.synced_at` SHALL reflect `T0` rather than `T2` and sequence watermarks SHALL NOT advance past the `T1` invalidation
+- **AND** a subsequent `"smart"` or `"smart-fast"` read within `cache_ttl` SHALL treat the domain slice as invalidated instead of skipping server re-verification

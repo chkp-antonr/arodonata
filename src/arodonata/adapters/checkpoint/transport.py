@@ -146,6 +146,7 @@ class ApiTransport:
         request_sender: RequestSenderProtocol | None = None,
     ) -> None:
         self._settings = settings or ArodonataSettings()
+        self._max_response_bytes = max(1024, int(getattr(self._settings, "max_response_bytes", 67_108_864)))
         self._trust_policy = trust_policy or TrustPolicy(
             mode=self._settings.tls_trust,
             known_hosts_path=self._settings.tls_known_hosts_path,
@@ -199,6 +200,7 @@ class ApiTransport:
         sid: str | None = None,
         timeout: float | None = None,
         session_scope: str | None = None,
+        tls_identity_host: str | None = None,
     ) -> ApiCallResult:
         """Execute `POST https://<host>:<port>/web_api/<command>` with pre-request TLS verification."""
         clean_cmd = validate_command_name(command)
@@ -241,6 +243,7 @@ class ApiTransport:
                 read_timeout=read_timeout,
                 known_sids=known_sids,
                 session_scope=eff_scope,
+                tls_identity_host=tls_identity_host,
             )
 
         return await self._execute_with_aiohttp(
@@ -254,6 +257,7 @@ class ApiTransport:
             read_timeout=read_timeout,
             known_sids=known_sids,
             session_scope=eff_scope,
+            tls_identity_host=tls_identity_host,
         )
 
     async def _execute_with_custom_sender(
@@ -269,6 +273,7 @@ class ApiTransport:
         read_timeout: float,
         known_sids: tuple[str, ...] | None,
         session_scope: str = "",
+        tls_identity_host: str | None = None,
     ) -> ApiCallResult:
         """Execute request through the injected `request_sender` while enforcing all pool/TLS/timeout rules."""
         assert self._request_sender is not None
@@ -282,6 +287,17 @@ class ApiTransport:
         # Step 1: If no pooled connection was reused, perform pre-request TLS verification
         # BEFORE any request headers or bytes can be sent.
         verified_fp = pooled_entry.fingerprint if pooled_entry is not None else ""
+        if pooled_entry is not None and tls_identity_host is not None:
+            try:
+                self._trust_policy.verify_fingerprint(
+                    host,
+                    port,
+                    pooled_entry.fingerprint,
+                    identity_host=tls_identity_host,
+                )
+            except ServerIdentityError:
+                pooled_entry.close()
+                raise
         if pooled_entry is None:
             if self._peer_cert_getter is None:
                 raise ConfigurationError("ApiTransport requires 'peer_cert_getter' whenever 'request_sender' is used.")
@@ -308,7 +324,12 @@ class ApiTransport:
                     request_sent=False,
                     known_sids=known_sids,
                 ) from exc
-            verified_fp = self._trust_policy.verify_der(host, port, der_cert)
+            verified_fp = self._trust_policy.verify_der(
+                host,
+                port,
+                der_cert,
+                identity_host=tls_identity_host,
+            )
 
         # Step 2: Send request and await response WITHOUT any retry after write
         try:
@@ -373,6 +394,20 @@ class ApiTransport:
                 known_sids=known_sids,
             )
 
+        if len(raw_resp.body) > self._max_response_bytes:
+            if pooled_entry is not None:
+                pooled_entry.close()
+            if new_entry is not None:
+                new_entry.close()
+            self._pool.close_host(host, port)
+            raise TransportError(
+                f"HTTP response body from {host}:{port} on {command!r} exceeded max_response_bytes "
+                f"({self._max_response_bytes} bytes). Socket closed without automatic retry.",
+                phase="read",
+                request_sent=True,
+                known_sids=known_sids,
+            )
+
         active_entry = new_entry or pooled_entry
         if active_entry is None:
             active_entry = PooledSocketEntry(
@@ -405,6 +440,7 @@ class ApiTransport:
         read_timeout: float,
         known_sids: tuple[str, ...] | None,
         session_scope: str = "",
+        tls_identity_host: str | None = None,
     ) -> ApiCallResult:
         session = await self._ensure_aiohttp_session()
         client_timeout = aiohttp.ClientTimeout(
@@ -414,7 +450,13 @@ class ApiTransport:
             sock_read=read_timeout,
         )
 
-        pool_ctx_token = _transport_pool_ctx.set(_TransportPoolContext(command=command, session_scope=session_scope))
+        pool_ctx_token = _transport_pool_ctx.set(
+            _TransportPoolContext(
+                command=command,
+                session_scope=session_scope,
+                tls_identity_host=tls_identity_host,
+            )
+        )
         try:
             async with session.post(
                 url,
@@ -423,9 +465,64 @@ class ApiTransport:
                 timeout=client_timeout,
                 allow_redirects=False,
             ) as response:
-                raw_body = await response.read()
                 status_code = response.status
                 conn_header = response.headers.get("Connection", "")
+                limit = self._max_response_bytes
+                declared_len = getattr(response, "content_length", None)
+                if declared_len is None:
+                    raw_cl = response.headers.get("Content-Length")
+                    if isinstance(raw_cl, str) and raw_cl.strip().isdigit():
+                        declared_len = int(raw_cl.strip())
+                if declared_len is not None and declared_len > limit:
+                    close_resp = getattr(response, "close", None)
+                    if callable(close_resp):
+                        close_resp()
+                    self._pool.close_host(host, port)
+                    raise TransportError(
+                        f"HTTP response Content-Length ({declared_len} bytes) from {host}:{port} on "
+                        f"{command!r} exceeds max_response_bytes ({limit} bytes). Request was NOT re-sent.",
+                        phase="read",
+                        request_sent=True,
+                        known_sids=known_sids,
+                    )
+
+                stream = getattr(response, "content", None)
+                if stream is not None and callable(getattr(stream, "read", None)):
+                    chunks: list[bytes] = []
+                    total_bytes = 0
+                    while True:
+                        chunk = await stream.read(min(65536, (limit + 1) - total_bytes))
+                        if not chunk:
+                            break
+                        total_bytes += len(chunk)
+                        if total_bytes > limit:
+                            close_resp = getattr(response, "close", None)
+                            if callable(close_resp):
+                                close_resp()
+                            self._pool.close_host(host, port)
+                            raise TransportError(
+                                f"HTTP response body from {host}:{port} on {command!r} exceeded max_response_bytes "
+                                f"({limit} bytes). Request was NOT re-sent.",
+                                phase="read",
+                                request_sent=True,
+                                known_sids=known_sids,
+                            )
+                        chunks.append(chunk)
+                    raw_body = b"".join(chunks)
+                else:
+                    raw_body = await response.read()
+                    if len(raw_body) > limit:
+                        close_resp = getattr(response, "close", None)
+                        if callable(close_resp):
+                            close_resp()
+                        self._pool.close_host(host, port)
+                        raise TransportError(
+                            f"HTTP response body from {host}:{port} on {command!r} exceeded max_response_bytes "
+                            f"({limit} bytes). Request was NOT re-sent.",
+                            phase="read",
+                            request_sent=True,
+                            known_sids=known_sids,
+                        )
         except ServerIdentityError:
             raise
         except aiohttp.ConnectionTimeoutError as exc:

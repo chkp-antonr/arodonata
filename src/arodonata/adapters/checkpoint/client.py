@@ -58,6 +58,7 @@ from arodonata.core.context import (
 )
 from arodonata.core.errors import (
     ApiTimeoutError,
+    RateLimitTimeoutError,
     ServerIdentityError,
     SessionError,
     SessionStateError,
@@ -71,6 +72,7 @@ from arodonata.core.primitives import (
 from arodonata.core.primitives import (
     is_readonly_command as is_readonly_command,
 )
+from arodonata.core.primitives import validate_command_name
 from arodonata.core.telemetry import span_attrs, traced
 
 # Backward-compatible private alias (canonical implementation lives in `arodonata.core.context`).
@@ -288,21 +290,22 @@ class AMgmtClient:
         - Polls returned `task-id` / `tasks` via `TaskWaiter` when `wait_for_task=True`.
         - Updates `WriteSession.overlay` on `add-*` / `set-*` / `delete-*` and invalidates domain on `publish`.
         """
+        clean_cmd = validate_command_name(command)
         if not self._db.is_initialized:
             await self._db.initialize()
 
-        clean_cmd = command.strip().lstrip("/")
         dom_key = normalize_domain_key(domain)
         endpoint = self._login_coordinator.get_server_endpoint(mgmt_name)
         span_attrs(mgmt_name=mgmt_name, domain=dom_key, cp_command=clean_cmd, wait_for_task=wait_for_task)
 
-        active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key if domain is not None else None)
+        active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key)
         using_cached_sid = False
         active_auth_identity: str | None = None
         is_readonly = is_readonly_command(clean_cmd)
 
         if sid is not None:
             active_sid = sid
+            raw_target_ip = server_ip
             target_ip, mds_ip, port = await self._login_coordinator.resolve_target_ips(
                 mgmt_name,
                 domain,
@@ -310,11 +313,11 @@ class AMgmtClient:
             )
         elif active_ws is not None:
             active_sid = active_ws.sid
-            target_ip = server_ip or active_ws.server_ip
-            _, mds_ip, port = await self._login_coordinator.resolve_target_ips(
+            raw_target_ip = server_ip or active_ws.server_ip
+            target_ip, mds_ip, port = await self._login_coordinator.resolve_target_ips(
                 mgmt_name,
                 active_ws.domain_name,
-                explicit_server_ip=target_ip,
+                explicit_server_ip=raw_target_ip,
             )
         else:
             if not is_readonly:
@@ -324,17 +327,20 @@ class AMgmtClient:
                 )
             using_cached_sid = True
             active_auth_identity = (await self._login_coordinator.resolve_credentials(mgmt_name, domain)).identity_key
-            active_sid, target_ip = await self._login_coordinator.get_readonly_session(
+            active_sid, raw_target_ip = await self._login_coordinator.get_readonly_session(
                 mgmt_name,
                 domain,
                 server_ip=server_ip,
             )
-            _, mds_ip, port = await self._login_coordinator.resolve_target_ips(
+            target_ip, mds_ip, port = await self._login_coordinator.resolve_target_ips(
                 mgmt_name,
                 domain,
-                explicit_server_ip=target_ip,
+                explicit_server_ip=raw_target_ip,
             )
 
+        from arodonata.adapters.checkpoint.target_resolver import resolve_tls_identity_host
+
+        tls_identity_host = resolve_tls_identity_host(raw_target_ip, target_ip)
         call_budget = timeout if timeout is not None else self._settings.api_timeout
         session_scope = derive_session_pool_scope(active_sid) if (not using_cached_sid and active_sid) else None
 
@@ -346,6 +352,8 @@ class AMgmtClient:
             }
             if session_scope is not None:
                 exec_kwargs["session_scope"] = session_scope
+            if tls_identity_host is not None:
+                exec_kwargs["tls_identity_host"] = tls_identity_host
             async with self._rate_limiter.slot(curr_mds_ip):
                 return await self._transport.execute(
                     curr_ip,
@@ -356,7 +364,7 @@ class AMgmtClient:
 
         try:
             res = await _execute_once(active_sid, target_ip, mds_ip)
-        except ServerIdentityError:
+        except (ServerIdentityError, RateLimitTimeoutError):
             raise
         except (ApiTimeoutError, TransportError) as exc:
             # If a domain's cached active_ip became unreachable on connect for a read-only command,
@@ -459,6 +467,7 @@ class AMgmtClient:
                     _poll_show_task,
                     timeout=timeout if timeout is not None else self._settings.task_timeout,
                     initial_result=res,
+                    known_sids=[active_sid] if active_sid else None,
                 )
 
         # Update WriteSession overlay on mutation commands

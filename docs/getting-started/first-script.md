@@ -6,7 +6,7 @@ Every interaction in Arodonata v2 goes through [`ArodonataClient`](../architectu
 
 When you enter `async with ArodonataClient() as client:`, Arodonata automatically:
 
-1. Verifies and migrates the 15 `arodonata_*` tables in your SQLite or PostgreSQL database (`DatabaseManager.initialize()`).
+1. Verifies and migrates the 17 `arodonata_*` tables in your SQLite or PostgreSQL database (`DatabaseManager.initialize()`).
 2. Schedules non-blocking cleanup of any orphaned idle Arodonata read sessions (`changes == 0` and `locks == 0`).
 3. Disposes owned connections cleanly on exit (preserving persistent `arodonata_sid_cache` rows across CLI runs when using a file-backed SQLite or PostgreSQL database).
 

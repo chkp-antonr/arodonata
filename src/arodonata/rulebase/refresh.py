@@ -89,7 +89,7 @@ class RulebaseRefreshService:
             + len(snapshot.https_rules)
             + len(snapshot.threat_rules)
         )
-        now = self._now()
+        synced_at = probe.probe_started_at or self._now()
         sync_state = DomainSyncState(
             mgmt_name=mgmt_name,
             domain_name=dom_name,
@@ -97,7 +97,7 @@ class RulebaseRefreshService:
             item_type="*",
             last_published_at=probe.remote_published_at,
             last_session_uid=probe.remote_session_uid,
-            synced_at=now,
+            synced_at=synced_at,
             status="ok",
             object_count=total_rules,
             last_error=None,
@@ -170,6 +170,7 @@ class RulebaseRefreshService:
             packages,
             now=now,
         )
+        synced_at = probe.probe_started_at or now
         sync_state = DomainSyncState(
             mgmt_name=mgmt_name,
             domain_name=dom_name,
@@ -177,7 +178,7 @@ class RulebaseRefreshService:
             item_type="packages",
             last_published_at=probe.remote_published_at,
             last_session_uid=probe.remote_session_uid,
-            synced_at=now,
+            synced_at=synced_at,
             status="ok",
             object_count=len(packages),
             last_error=None,
@@ -434,7 +435,6 @@ class RulebaseRefreshService:
                     skipped_domains=[f"{mgmt_name}:{clean_dom}"],
                 )
 
-        was_invalidated = self._coordinator.is_domain_invalidated(mgmt_name, clean_dom)
         pkg_outcome = await self.refresh_policy_packages(
             mgmt_name=mgmt_name,
             domains=[clean_dom],
@@ -445,8 +445,6 @@ class RulebaseRefreshService:
         )
         if pkg_outcome.failed_domains:
             return pkg_outcome
-
-        eff_slice_ttl = 0.0 if (was_invalidated or bool(pkg_outcome.refreshed_domains)) else cache_ttl
 
         pkg_snap = await self._cache.get_domain_rulebase_packages(mgmt_name, clean_dom)
         pkgs = extract_policy_packages(pkg_snap)
@@ -465,11 +463,22 @@ class RulebaseRefreshService:
         pkg_uid = matched_pkg.uid if matched_pkg is not None else clean_pkg
         slice_item_type = f"package:{rulebase_type}:{pkg_uid}"
 
+        # Slice-scoped invalidation check so persistent invalidation maps do not zero `cache_ttl` forever.
+        slice_state = await self._cache.get_sync_state(mgmt_name, clean_dom, "rulebase", slice_item_type)
+        was_invalidated = self._coordinator.is_domain_invalidated(
+            mgmt_name,
+            clean_dom,
+            scope="rulebase",
+            item_type=slice_item_type,
+            synced_at=slice_state.synced_at if slice_state is not None else None,
+        )
+        eff_slice_ttl = 0.0 if (was_invalidated or bool(pkg_outcome.refreshed_domains)) else cache_ttl
+
         async def _sync_single_package(
             probe: DomainProbeResult,
             emit: Callable[[SyncProgressEvent], Awaitable[None]],
         ) -> int:
-            now = self._now()
+            synced_at = probe.probe_started_at or self._now()
             if matched_pkg is None:
                 empty_state = DomainSyncState(
                     mgmt_name=probe.mgmt_name,
@@ -478,7 +487,7 @@ class RulebaseRefreshService:
                     item_type=slice_item_type,
                     last_published_at=probe.remote_published_at,
                     last_session_uid=probe.remote_session_uid,
-                    synced_at=now,
+                    synced_at=synced_at,
                     status="ok",
                     object_count=0,
                     last_error=None,
@@ -511,7 +520,7 @@ class RulebaseRefreshService:
                 item_type=slice_item_type,
                 last_published_at=probe.remote_published_at,
                 last_session_uid=probe.remote_session_uid,
-                synced_at=now,
+                synced_at=synced_at,
                 status="ok",
                 object_count=total_rules,
                 last_error=None,

@@ -816,3 +816,43 @@ async def test_collect_snapshot_degrades_gracefully_when_show_packages_fails_whi
         assert len(snap.access_rules) >= 1
     finally:
         await db.close()
+
+
+@pytest.mark.spec("SCN-RULE-003-3")
+@pytest.mark.asyncio
+async def test_package_rulebase_refresh_honors_cache_ttl_after_invalidation_is_satisfied() -> None:
+    """A persistent domain invalidation must not zero `cache_ttl` once the package slice synced after it."""
+    db = DatabaseManager()
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        lock_port = SqlLockAdapter(db)
+        api = RulebaseRefreshFakeApi()
+        api.include_branch_package = True
+
+        settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=3600)
+        domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+        domain_service.tracker.mark_refreshed("mds1")
+        await cache.upsert_domains(
+            [DomainInfo(mgmt_name="mds1", uid="dom1", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1")]
+        )
+        coordinator = DomainSyncCoordinator(
+            settings=settings, api=api, cache=cache, lock_port=lock_port, domain_service=domain_service
+        )
+        refresh_svc = RulebaseRefreshService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+
+        coordinator.invalidate_domain("mds1", "Corp")
+        first = await refresh_svc.refresh_package_rulebase(
+            "mds1", "Corp", "Branch_Pkg", rulebase_type="access", mode="smart"
+        )
+        assert first.refreshed_domains == ["mds1:Corp"]
+
+        api.calls.clear()
+        api.query_calls.clear()
+        second = await refresh_svc.refresh_package_rulebase(
+            "mds1", "Corp", "Branch_Pkg", rulebase_type="access", mode="smart"
+        )
+        assert not second.failed_domains
+        assert not any(cmd.endswith("-rulebase") or cmd.endswith("-layers") for cmd, _ in api.calls)
+    finally:
+        await db.close()

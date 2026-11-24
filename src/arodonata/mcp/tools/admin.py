@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Literal
 
+import arlogi
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult
 
@@ -17,8 +19,10 @@ from arodonata.mcp.config import ArodonataMCPSettings
 from arodonata.mcp.errors import (
     ToolFailure,
     collect_known_sids,
+    consume_live_quota_if_needed,
     json_tool_result,
     mcp_tool_guard,
+    register_active_mcp_sid,
     resolve_mgmt_name,
     validate_domain_or_fail,
 )
@@ -29,6 +33,8 @@ from arodonata.mcp.tools._common import (
     _validate_optional_domains,
 )
 from arodonata.reports import RangeScope, RenderOptions, ReportScope, SessionScope
+
+logger = arlogi.get_logger(__name__)
 
 
 def _parse_iso_datetime(
@@ -96,14 +102,20 @@ def register_admin_tools(
                 domain_name=domain.strip() if domain else None,
                 scope=scope,
             )
-            return json_tool_result(status_data)
+            known_sids = await collect_known_sids(client, eff_mgmt)
+            return json_tool_result(status_data, known_sids=known_sids)
 
         if action != "refresh":
             raise ToolFailure(f"Invalid cache_control action {action!r}. Expected 'status' or 'refresh'.")
 
         target_scope: SyncScope = scope or "objects"
         target_domains = domains if domains is not None else ([domain] if domain else None)
-        await _validate_optional_domains(client, eff_mgmt, target_domains)
+        if target_domains and len(target_domains) > 50:
+            raise ToolFailure(
+                "cache_control(action='refresh') supports at most 50 explicit domains per call.",
+                mgmt_name=eff_mgmt,
+            )
+        await _validate_optional_domains(client, eff_mgmt, target_domains, cache_mode=mode)
 
         if target_scope == "domains":
             refreshed_domains = await client.get_domains(
@@ -111,14 +123,27 @@ def register_admin_tools(
                 include_global=include_global,
                 cache_mode="force" if mode == "force" else "smart",
             )
+            known_sids = await collect_known_sids(client, eff_mgmt)
             return json_tool_result(
                 {
                     "scope": "domains",
                     "mgmt_name": eff_mgmt,
                     "refreshed_count": len(refreshed_domains),
                     "domains": [d.name for d in refreshed_domains],
-                }
+                },
+                known_sids=known_sids,
             )
+        if mode != "cache":
+            if target_domains is not None:
+                fanout_count = max(1, len(target_domains))
+            else:
+                cached_doms = await client.cache.get_domains(mgmt_name=eff_mgmt, include_global=include_global)
+                fanout_count = min(max(1, len(cached_doms)), 50)
+            if fanout_count > 1:
+                consume_live_quota_if_needed(
+                    cost=fanout_count,
+                    cap_at_limit_if_empty=(domain is None and domains is None),
+                )
         if target_scope == "objects":
             normalized_obj_types = [normalize_object_type(t) for t in types if t and t.strip()] if types else None
             outcome = await client.refresh_objects(
@@ -160,7 +185,8 @@ def register_admin_tools(
                 include_global=include_global,
                 mode=mode,
             )
-        return json_tool_result(outcome.model_dump(mode="json"))
+        known_sids = await collect_known_sids(client, eff_mgmt)
+        return json_tool_result(outcome.model_dump(mode="json"), known_sids=known_sids)
 
     @server.tool(
         name="change_report",
@@ -192,6 +218,12 @@ def register_admin_tools(
 
         parsed_scopes: list[ReportScope | dict[str, Any]] = []
         if scopes:
+            if len(scopes) > 20:
+                raise ToolFailure(
+                    "change_report supports at most 20 scopes per request.",
+                    mgmt_name=eff_mgmt,
+                    domain=eff_domain,
+                )
             for raw_sc in scopes:
                 sc_mgmt = resolve_mgmt_name(client, raw_sc.get("mgmt_name") or eff_mgmt)
                 sc_dom = await validate_domain_or_fail(client, sc_mgmt, raw_sc.get("domain") or eff_domain)
@@ -234,6 +266,9 @@ def register_admin_tools(
                 domain=eff_domain,
             )
 
+        if len(parsed_scopes) > 1:
+            consume_live_quota_if_needed(cost=len(parsed_scopes))
+
         options = RenderOptions(
             title=title,
             include_object_changes=include_object_changes,
@@ -249,15 +284,17 @@ def register_admin_tools(
         else:
             rendered = bundle.markdown or ""
 
+        known_sids = await collect_known_sids(client, eff_mgmt)
         return json_tool_result(
             {
                 "format": format,
                 "title": bundle.report.title,
                 "session_count": len(bundle.report.sessions),
                 "warning_count": len(bundle.report.warnings),
-                "rendered": redact_sid(rendered),
+                "rendered": redact_sid(rendered, known_sids=known_sids),
                 "report": bundle.report.model_dump(mode="json"),
-            }
+            },
+            known_sids=known_sids,
         )
 
     @server.tool(
@@ -323,6 +360,7 @@ def register_admin_tools(
                 session_description=f"MCP api_call: {clean_cmd}",
             )
             dedicated_sid = sid
+            register_active_mcp_sid(sid)
             try:
                 res = await client.api_call(
                     eff_mgmt,
@@ -336,7 +374,16 @@ def register_admin_tools(
                 )
             finally:
                 if clean_cmd != "logout":
-                    await client.api.logout_sid(eff_mgmt, sid, server_ip=srv_ip)
+                    try:
+                        await asyncio.shield(client.api.logout_sid(eff_mgmt, sid, server_ip=srv_ip))
+                    except Exception as logout_exc:
+                        logout_sids = await collect_known_sids(client, eff_mgmt)
+                        logger.warning(
+                            "MCP dedicated session logout failed",
+                            mgmt_name=eff_mgmt,
+                            domain=eff_domain,
+                            error=redact_sid(str(logout_exc), known_sids=logout_sids),
+                        )
 
         known_sids = await collect_known_sids(client, eff_mgmt)
         if dedicated_sid and dedicated_sid not in known_sids:

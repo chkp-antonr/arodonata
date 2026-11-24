@@ -192,9 +192,11 @@ class TrustStore:
         path: str | Path = DEFAULT_TLS_KNOWN_HOSTS_PATH,
         *,
         in_memory: bool = False,
+        trust_mode: TlsTrustMode | None = None,
     ) -> None:
         self._path = Path(path).expanduser()
         self._in_memory = in_memory
+        self._trust_mode: TlsTrustMode | None = trust_mode
         self._entries: dict[str, KnownHostEntry] = {}
         self._loaded = False
 
@@ -214,21 +216,63 @@ class TrustStore:
         self.load()
         return dict(self._entries)
 
-    def _validate_file_security(self) -> None:
-        """Verify ownership and absence of group/world write permissions on `self._path`."""
+    def _validate_parent_dir_security(self, parent: Path) -> None:
+        """Verify parent directory is not a symlink, owned safely, and not non-sticky group/world writable."""
+        if not os.path.lexists(parent):
+            return
         try:
-            st = os.stat(self._path, follow_symlinks=False)
+            st = os.lstat(parent)
         except OSError as exc:
             raise TrustStoreError(
-                f"Failed to stat TLS trust store at {str(self._path)!r}: {exc}. No request was sent."
+                f"Failed to stat TLS trust store directory {str(parent)!r}: {exc}. No request was sent."
             ) from exc
+        if stat.S_ISLNK(st.st_mode):
+            raise TrustStoreError(
+                f"Unsafe symlink TLS trust store directory {str(parent)!r}: symlinks are forbidden. No request was sent."
+            )
+        if not stat.S_ISDIR(st.st_mode):
+            raise TrustStoreError(
+                f"Unsafe TLS trust store directory {str(parent)!r}: expected directory. No request was sent."
+            )
         if hasattr(os, "geteuid"):
             euid = os.geteuid()
             if st.st_uid not in (euid, 0):
                 raise TrustStoreError(
-                    f"Unsafe ownership on TLS trust store {str(self._path)!r}: owned by uid {st.st_uid}, "
+                    f"Unsafe ownership on TLS trust store directory {str(parent)!r}: owned by uid {st.st_uid}, "
                     f"expected {euid}. No request was sent."
                 )
+        if os.name != "nt":
+            mode = stat.S_IMODE(st.st_mode)
+            is_sticky = bool(mode & stat.S_ISVTX)
+            if (mode & (stat.S_IWGRP | stat.S_IWOTH)) and not is_sticky:
+                raise TrustStoreError(
+                    f"Unsafe permissions {oct(mode)} on TLS trust store directory {str(parent)!r}: "
+                    "non-sticky group or world write permissions are forbidden (expected 0700). No request was sent."
+                )
+
+    def _validate_file_security(self) -> None:
+        """Verify symlink refusal, ownership, and safe permissions on `self._path` and its parent directory."""
+        self._validate_parent_dir_security(self._path.parent)
+        try:
+            st = os.lstat(self._path)
+        except OSError as exc:
+            raise TrustStoreError(
+                f"Failed to stat TLS trust store at {str(self._path)!r}: {exc}. No request was sent."
+            ) from exc
+        if stat.S_ISLNK(st.st_mode):
+            raise TrustStoreError(
+                f"Unsafe symlink TLS trust store at {str(self._path)!r}: symlinks are forbidden. No request was sent."
+            )
+        if not stat.S_ISREG(st.st_mode):
+            raise TrustStoreError(
+                f"Unsafe TLS trust store at {str(self._path)!r}: expected regular file. No request was sent."
+            )
+        euid = os.geteuid() if hasattr(os, "geteuid") else None
+        if euid is not None and st.st_uid not in (euid, 0):
+            raise TrustStoreError(
+                f"Unsafe ownership on TLS trust store {str(self._path)!r}: owned by uid {st.st_uid}, "
+                f"expected {euid}. No request was sent."
+            )
         if os.name != "nt":
             mode = stat.S_IMODE(st.st_mode)
             if mode & (stat.S_IWGRP | stat.S_IWOTH):
@@ -236,10 +280,24 @@ class TrustStore:
                     f"Unsafe permissions {oct(mode)} on TLS trust store {str(self._path)!r}: "
                     "group or world write permissions are forbidden (expected 0600). No request was sent."
                 )
+            # Preserve uid=0 read-only ConfigMap mounts (0444/0644), while warning on euid-owned TOFU stores
+            # whose group/world read bits expose local trust-store metadata.
+            is_owner_managed_tofu = (self._trust_mode or "tofu") == "tofu" and (
+                euid is None or (euid != 0 and st.st_uid == euid)
+            )
+            if is_owner_managed_tofu and (mode & (stat.S_IRGRP | stat.S_IROTH)):
+                logger.warning(
+                    "tls_trust_store_over_readable",
+                    event="tls_trust_store_over_readable",
+                    path=str(self._path),
+                    mode=oct(mode),
+                    expected_mode="0o600",
+                )
 
     def _read_entries_from_disk(self) -> dict[str, KnownHostEntry]:
         """Read and validate entries from `self._path` if present on disk."""
-        if not self._path.exists():
+        self._validate_parent_dir_security(self._path.parent)
+        if not os.path.lexists(self._path):
             return {}
         self._validate_file_security()
         try:
@@ -347,8 +405,29 @@ class TrustStore:
         parent = self._path.parent
         lock_path = parent / f".{self._path.name}.lock"
         try:
-            parent.mkdir(parents=True, exist_ok=True)
-            lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+            self._validate_parent_dir_security(parent)
+            if not parent.exists():
+                missing_parents: list[Path] = []
+                cur = parent
+                while not cur.exists() and cur != cur.parent:
+                    missing_parents.append(cur)
+                    cur = cur.parent
+                parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                if os.name != "nt" and hasattr(os, "chmod"):
+                    for created_dir in missing_parents:
+                        os.chmod(created_dir, 0o700)
+            self._validate_parent_dir_security(parent)
+            if os.path.lexists(lock_path):
+                lock_st = os.lstat(lock_path)
+                if stat.S_ISLNK(lock_st.st_mode):
+                    raise TrustStoreError(
+                        f"Unsafe symlink TLS trust store lock at {str(lock_path)!r}: symlinks are forbidden. "
+                        "No request was sent."
+                    )
+            if os.path.lexists(self._path):
+                self._validate_file_security()
+            open_flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+            lock_fd = os.open(str(lock_path), open_flags, 0o600)
             try:
                 if sys.platform == "win32":  # pragma: no cover
                     os.lseek(lock_fd, 0, os.SEEK_SET)
@@ -444,7 +523,7 @@ class TrustPolicy:
         self._store = (
             trust_store
             if trust_store is not None
-            else TrustStore(path=known_hosts_path, in_memory=(mode == "lab-memory"))
+            else TrustStore(path=known_hosts_path, in_memory=(mode == "lab-memory"), trust_mode=mode)
         )
         raw_pins = (
             pinned_fingerprints if pinned_fingerprints is not None else os.environ.get("ARODONATA_TLS_FINGERPRINTS", "")
@@ -489,7 +568,14 @@ class TrustPolicy:
         return self._store.has_fingerprint_anywhere(fingerprint)
 
     @traced
-    def verify_der(self, host: str, port: int, der_cert: bytes | None) -> str:
+    def verify_der(
+        self,
+        host: str,
+        port: int,
+        der_cert: bytes | None,
+        *,
+        identity_host: str | None = None,
+    ) -> str:
         """Verify raw DER certificate bytes presented by `(host, port)` before sending any HTTP request."""
         if not der_cert:
             span_attrs(tls_host=host, tls_port=port, tls_mode=self._mode, tls_decision="missing_cert")
@@ -502,56 +588,102 @@ class TrustPolicy:
             )
             raise TrustStoreError(f"Server at {host}:{port} did not present a peer certificate. No request was sent.")
         fp = compute_der_fingerprint(der_cert)
-        return self.verify_fingerprint(host, port, fp)
+        return self.verify_fingerprint(host, port, fp, identity_host=identity_host)
 
     @traced
-    def verify_fingerprint(self, host: str, port: int, presented_fingerprint: str) -> str:
+    def verify_fingerprint(
+        self,
+        host: str,
+        port: int,
+        presented_fingerprint: str,
+        *,
+        identity_host: str | None = None,
+    ) -> str:
         """Verify a normalized or hex SHA-256 fingerprint for `(host, port)` according to `self.mode`."""
         key = format_host_port(host, port)
+        clean_identity = identity_host.strip() if isinstance(identity_host, str) and identity_host.strip() else None
+        id_host = clean_identity if (clean_identity is not None and clean_identity != host) else None
+        id_key = format_host_port(id_host, port) if id_host is not None else None
         presented = normalize_fingerprint(presented_fingerprint)
         span_attrs(tls_host=host, tls_port=port, tls_mode=self._mode, tls_fingerprint=presented[:17])
 
-        # 1. Check explicit per-address pin in ARODONATA_TLS_FINGERPRINTS first
+        # 1. Check explicit per-address pins in ARODONATA_TLS_FINGERPRINTS (both resolved IP and identity_host)
         pinned_for_addr = self._pinned.get(key)
-        if pinned_for_addr is not None:
-            if presented != pinned_for_addr:
-                span_attrs(tls_decision="mismatch")
-                logger.error(
-                    "tls_certificate_mismatch",
-                    event="tls_certificate_mismatch",
-                    host=host,
-                    port=port,
-                    expected_fingerprint=pinned_for_addr,
-                    presented_fingerprint=presented,
-                    mode=self._mode,
-                    source="pinned",
-                )
-                raise CertificateMismatchError(
-                    f"TLS certificate fingerprint mismatch for {key}: expected pinned {pinned_for_addr}, "
-                    f"got {presented}. No request was sent."
-                )
+        pinned_for_id = self._pinned.get(id_key) if id_key is not None else None
+        if pinned_for_addr is not None and presented != pinned_for_addr:
+            span_attrs(tls_decision="mismatch")
+            logger.error(
+                "tls_certificate_mismatch",
+                event="tls_certificate_mismatch",
+                host=host,
+                port=port,
+                expected_fingerprint=pinned_for_addr,
+                presented_fingerprint=presented,
+                mode=self._mode,
+                source="pinned",
+            )
+            raise CertificateMismatchError(
+                f"TLS certificate fingerprint mismatch for {key}: expected pinned {pinned_for_addr}, "
+                f"got {presented}. No request was sent."
+            )
+        if pinned_for_id is not None and presented != pinned_for_id:
+            span_attrs(tls_decision="mismatch")
+            logger.error(
+                "tls_certificate_mismatch",
+                event="tls_certificate_mismatch",
+                host=id_host,
+                port=port,
+                expected_fingerprint=pinned_for_id,
+                presented_fingerprint=presented,
+                mode=self._mode,
+                source="pinned",
+            )
+            raise CertificateMismatchError(
+                f"TLS certificate fingerprint mismatch for {id_key} (resolved to {key}): "
+                f"expected pinned {pinned_for_id}, got {presented}. No request was sent."
+            )
+        if pinned_for_addr is not None or pinned_for_id is not None:
             span_attrs(tls_decision="pinned_match")
             return presented
 
-        # 2. Check existing entry for this address in TrustStore
+        # 2. Check existing entries for this address and identity_host in TrustStore
         stored_entry = self._store.get(host, port)
-        if stored_entry is not None:
-            if presented != stored_entry.fingerprint:
-                span_attrs(tls_decision="mismatch")
-                logger.error(
-                    "tls_certificate_mismatch",
-                    event="tls_certificate_mismatch",
-                    host=host,
-                    port=port,
-                    expected_fingerprint=stored_entry.fingerprint,
-                    presented_fingerprint=presented,
-                    mode=self._mode,
-                    source=stored_entry.source,
-                )
-                raise CertificateMismatchError(
-                    f"TLS certificate fingerprint mismatch for {key}: expected {stored_entry.fingerprint} "
-                    f"({stored_entry.source}), got {presented}. No request was sent."
-                )
+        stored_id_entry = self._store.get(id_host, port) if id_host is not None else None
+        if stored_entry is not None and presented != stored_entry.fingerprint:
+            span_attrs(tls_decision="mismatch")
+            logger.error(
+                "tls_certificate_mismatch",
+                event="tls_certificate_mismatch",
+                host=host,
+                port=port,
+                expected_fingerprint=stored_entry.fingerprint,
+                presented_fingerprint=presented,
+                mode=self._mode,
+                source=stored_entry.source,
+            )
+            raise CertificateMismatchError(
+                f"TLS certificate fingerprint mismatch for {key}: expected {stored_entry.fingerprint} "
+                f"({stored_entry.source}), got {presented}. No request was sent."
+            )
+        if stored_id_entry is not None and presented != stored_id_entry.fingerprint:
+            span_attrs(tls_decision="mismatch")
+            logger.error(
+                "tls_certificate_mismatch",
+                event="tls_certificate_mismatch",
+                host=id_host,
+                port=port,
+                expected_fingerprint=stored_id_entry.fingerprint,
+                presented_fingerprint=presented,
+                mode=self._mode,
+                source=stored_id_entry.source,
+            )
+            raise CertificateMismatchError(
+                f"TLS certificate fingerprint mismatch for {id_key} (resolved to {key}): "
+                f"expected {stored_id_entry.fingerprint} ({stored_id_entry.source}), got {presented}. "
+                "No request was sent."
+            )
+        matched_entry = stored_entry if stored_entry is not None else stored_id_entry
+        if matched_entry is not None:
             decision_by_source = {
                 "tofu": "tofu_match",
                 "stored": "stored_match",
@@ -559,7 +691,7 @@ class TrustPolicy:
                 "known-identity": "known_identity_match",
                 "pinned": "pinned_match",
             }
-            span_attrs(tls_decision=decision_by_source.get(stored_entry.source, "stored_match"))
+            span_attrs(tls_decision=decision_by_source.get(matched_entry.source, "stored_match"))
             return presented
 
         # 3. Check if this certificate belongs to a known MDS member already trusted on another IP

@@ -2079,3 +2079,322 @@ async def test_public_method_wrappers_preserve_monkeypatch_consistency(
         await client.search_service._resolve_implicit_domain_mode("mds1", None, "smart")
         await client.find_object("mds1", None, "web-srv-1", cache_mode="cache")
         assert mode_calls == ["mds1:None:smart", "mds1:None:cache"]
+
+
+@pytest.mark.spec("SCN-MCP-002-2", "SCN-MCP-004-1", "SCN-MCP-009-4", "SCN-MCP-010-1", "SCN-MCP-010-2")
+@pytest.mark.asyncio
+async def test_mcp_wave7_cache_mode_domain_validation_sid_redaction_and_cpcrud_hardening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wave 7 MCP hardening: show_object offline cache, default-mgmt domain check, TaskPollError SID scrub, and CPCRUD plan_id/eviction."""
+    from arodonata.core.errors import TaskPollError
+    from arodonata.core.models.domains import DomainInfo
+
+    fake_api = MCPFakeApi()
+    fake_api.unique_dedicated_sids = True
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        await client.cache.upsert_domains(
+            [
+                DomainInfo(id="mds1:Corp", mgmt_name="mds1", uid="d-c", name="Corp"),
+                DomainInfo(id="mds1:Branch", mgmt_name="mds1", uid="d-b", name="Branch"),
+            ]
+        )
+        server = create_mcp_server(client, auth_mode="host", allow_write_api=True, cpcrud=True)
+
+        # 1. DA-044 / SCN-MCP-002-2: show_object cache_mode="cache" and multi-domain MDS downgrade do NOT call live show-object
+        calls_before = len(fake_api.calls)
+        miss_cache = await server.call_tool(
+            "show_object",
+            {"uid_or_name": "no-such-host", "mgmt_name": "mds1", "domain": "Corp", "cache_mode": "cache"},
+        )
+        assert miss_cache.is_error is True
+        miss_mds = await server.call_tool(
+            "show_object",
+            {"uid_or_name": "no-such-host", "mgmt_name": "mds1"},
+        )
+        assert miss_mds.is_error is True
+        assert len(fake_api.calls) == calls_before
+
+        # 2. DA-045 / SCN-MCP-010-1: omitted mgmt_name still validates explicit domain across query_objects/locate_gateways/cache_control
+        for tname, targs in (
+            ("query_objects", {"domain": "UnknownDom"}),
+            ("query_objects", {"domains": ["UnknownDom"]}),
+            ("locate_gateways", {"sources": ["10.0.0.1"], "destinations": ["10.0.0.2"], "domain": "UnknownDom"}),
+            ("cache_control", {"action": "refresh", "domain": "UnknownDom", "scope": "objects"}),
+        ):
+            bad_dom_res = await server.call_tool(tname, targs)
+            assert bad_dom_res.is_error is True
+            assert "Unknown domain" in _get_tool_text(bad_dom_res)
+
+        # 3. VVAH-SEARCH-01 / SCN-MCP-004-1: query_objects bounds limit=99999 -> 1000 and negative offset -> 0
+        bulk = [
+            CPObject(uid=f"m-{i:04d}", name=f"mh-{i:04d}", type="host", mgmt_name="mds1", domain_name="Corp")
+            for i in range(1005)
+        ]
+        await client.cache.replace_domain_objects("mds1", "Corp", bulk, types=["host"])
+        q_clamped = await server.call_tool(
+            "query_objects",
+            {
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "types": ["host"],
+                "limit": 99999,
+                "offset": -5,
+                "cache_mode": "cache",
+            },
+        )
+        assert q_clamped.is_error is False
+        q_data = _parse_tool_json(q_clamped)
+        assert len(q_data["objects"]) == 1000
+        assert q_data["from"] == 1
+
+        # 4. DA-037 / SCN-MCP-010-2: just-closed dedicated SID stays redacted on TaskPollError and logout_sid errors don't mask
+        closed_leak_sid = "dedicated-sid-1"
+        orig_api_call = client.api.api_call
+        orig_logout_sid = client.api.logout_sid
+
+        async def _poll_fail_with_sid(
+            mgmt_name: str,
+            command: str,
+            payload: dict[str, Any] | None = None,
+            *,
+            domain: str | None = None,
+            sid: str | None = None,
+            server_ip: str | None = None,
+            wait_for_task: bool = True,
+            timeout: float | None = None,
+        ) -> ApiCallResult:
+            if command == "add-host":
+                raise TaskPollError(f"Polling failed for token {sid or closed_leak_sid}")
+            return ApiCallResult(success=True, data={})
+
+        monkeypatch.setattr(client.api, "api_call", _poll_fail_with_sid)
+
+        async def _broken_logout(mgmt_name: str, sid_val: str, *, server_ip: str | None = None) -> bool:
+            fake_api.logged_out_sids.append((mgmt_name, sid_val))
+            raise RuntimeError("cleanup boom")
+
+        monkeypatch.setattr(client.api, "logout_sid", _broken_logout)
+        api_err = await server.call_tool(
+            "api_call",
+            {
+                "command": "add-host",
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "payload": {"name": "h-fail", "ip-address": "10.0.0.2"},
+            },
+        )
+        assert api_err.is_error is True
+        err_body = _get_tool_text(api_err)
+        assert closed_leak_sid not in err_body
+        assert "internal error: TaskPollError" in err_body
+
+        # 5. VVAH-MCP-CPCRUD-01 / SCN-MCP-009-4: plan_id HMAC binding & same-caller staged session eviction
+        monkeypatch.setattr(client.api, "api_call", orig_api_call)
+        monkeypatch.setattr(client.api, "logout_sid", orig_logout_sid)
+        tpl = {
+            "version": 1,
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "objects": [{"type": "host", "name": "cp-host", "ipv4-address": "10.70.0.1"}],
+        }
+        with user_context(user_id="TEAM_A", client_id="TEAM_A"):
+            plan_a = _parse_tool_json(await server.call_tool("cpcrud_plan", {"template": tpl}))
+            rekeyed = dict(plan_a)
+            rekeyed["plan_id"] = "tampered-plan-id"
+            rekey_res = await server.call_tool("cpcrud_apply", {"plan": rekeyed})
+            assert rekey_res.is_error is True
+            assert "Untrusted or tampered CPCRUD plan" in _get_tool_text(rekey_res)
+
+        monkeypatch.setattr(cpcrud_mod, "MAX_STORED_PLANS", 2)
+        with user_context(user_id="TEAM_A", client_id="TEAM_A"):
+            fake_api.staged_uid_sequence.append("sess-keep-a")
+            app_a = await server.call_tool(
+                "cpcrud_apply",
+                {"plan_id": plan_a["plan_id"], "no_publish": True, "keep_session": True},
+            )
+            assert app_a.is_error is False
+            assert _parse_tool_json(app_a)["staged_sessions"][0]["session_uid"] == "sess-keep-a"
+        with user_context(user_id="TEAM_B", client_id="TEAM_B"):
+            plan_b = _parse_tool_json(await server.call_tool("cpcrud_plan", {"template": tpl}))
+            fake_api.staged_uid_sequence.extend(["sess-evict-b1", "sess-keep-b2"])
+            app_b1 = await server.call_tool(
+                "cpcrud_apply",
+                {"plan_id": plan_b["plan_id"], "no_publish": True, "keep_session": True},
+            )
+            assert app_b1.is_error is False
+            app_b2 = await server.call_tool(
+                "cpcrud_apply",
+                {"plan_id": plan_b["plan_id"], "no_publish": True, "keep_session": True},
+            )
+            assert app_b2.is_error is False
+        # TEAM_A's staged session MUST survive when TEAM_B caused capacity overflow
+        with user_context(user_id="TEAM_A", client_id="TEAM_A"):
+            pub_a = await server.call_tool(
+                "cpcrud_staged_session",
+                {"mgmt_name": "mds1", "domain": "Corp", "session_uid": "sess-keep-a", "action": "publish"},
+            )
+            assert pub_a.is_error is False
+
+
+@pytest.mark.spec("SCN-MCP-013-1")
+@pytest.mark.asyncio
+async def test_cache_mode_cache_domain_prevalidation_is_offline_and_charges_no_live_quota() -> None:
+    """`cache_mode="cache"` domain pre-validation consults only cached `arodonata_domains` rows."""
+    from arodonata.core.models.domains import DomainInfo
+    from arodonata.mcp.errors import validate_domain_or_fail
+    from arodonata.mcp.tools._common import _validate_optional_domains
+
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        server = create_mcp_server(client, auth_mode="host")
+
+        # Cold cache: no live show-domains call, domain accepted as-is.
+        assert await validate_domain_or_fail(client, "mds1", "Anything", allow_refresh=False) == "Anything"
+        await _validate_optional_domains(client, "mds1", ["Anything"], cache_mode="cache")
+        await _validate_optional_domains(client, None, ["Anything"], cache_mode="cache")
+        assert not any(c[1] == "show-domains" for c in fake_api.calls)
+
+        # Warm cache: unknown domain fails with cached known domains and still no live traffic.
+        await client.cache.upsert_domains(
+            [
+                DomainInfo(id="mds1:Corp", mgmt_name="mds1", uid="d-c", name="Corp"),
+                DomainInfo(id="mds1:Branch", mgmt_name="mds1", uid="d-b", name="Branch"),
+            ]
+        )
+        res = await server.call_tool(
+            "list_objects",
+            {"mgmt_name": "mds1", "domain": "NonExistentDom", "types": ["host"], "cache_mode": "cache"},
+        )
+        assert res.is_error is True
+        text = _get_tool_text(res)
+        assert "Unknown domain 'NonExistentDom'" in text
+        assert "Corp" in text and "Branch" in text
+        assert not any(c[1] == "show-domains" for c in fake_api.calls)
+
+
+@pytest.mark.spec("SCN-MCP-015-1")
+@pytest.mark.asyncio
+async def test_multi_scope_query_and_search_report_max_cache_age() -> None:
+    """SCN-MCP-015-1: Multi-scope query_objects and search_objects report max cache_age_seconds across touched scopes."""
+    from datetime import UTC, datetime, timedelta
+
+    from arodonata.core.models.domains import DomainInfo, DomainSyncState
+
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        await client.cache.upsert_domains([DomainInfo(id="mds1:Corp", mgmt_name="mds1", uid="d-c", name="Corp")])
+        now = datetime.now(UTC).replace(tzinfo=None)
+        old_ts = now - timedelta(seconds=7200)
+        fresh_ts = now - timedelta(seconds=120)
+
+        await client.cache.upsert_sync_state(
+            DomainSyncState(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                scope="objects",
+                item_type="host",
+                synced_at=old_ts,
+                status="ok",
+                object_count=1,
+            )
+        )
+        await client.cache.upsert_sync_state(
+            DomainSyncState(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                scope="services",
+                item_type="service-tcp",
+                synced_at=fresh_ts,
+                status="ok",
+                object_count=1,
+            )
+        )
+        await client.cache.upsert_sync_state(
+            DomainSyncState(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                scope="assets",
+                item_type="*",
+                synced_at=fresh_ts,
+                status="ok",
+                object_count=1,
+            )
+        )
+
+        server = create_mcp_server(client, auth_mode="host")
+
+        # 1. query_objects with service-tcp first (120s) and host second (7200s) must report >= 7200s
+        q_res = await server.call_tool(
+            "query_objects",
+            {
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "types": ["service-tcp", "host"],
+                "cache_mode": "cache",
+            },
+        )
+        assert q_res.is_error is False
+        q_payload = json.loads(_get_tool_text(q_res))
+        assert q_payload["cache_age_seconds"] is not None
+        assert q_payload["cache_age_seconds"] >= 7200
+
+        # 2. search_objects spanning objects (7200s) and assets (120s) must report >= 7200s
+        s_res = await server.call_tool(
+            "search_objects",
+            {
+                "query": "gw",
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "types": ["host", "gateway"],
+                "cache_mode": "cache",
+            },
+        )
+        assert s_res.is_error is False
+        s_payload = json.loads(_get_tool_text(s_res))
+        assert s_payload["cache_age_seconds"] is not None
+        assert s_payload["cache_age_seconds"] >= 7200
+
+        # 3. Reverse: objects fresh (120s) and assets stale (7200s) -> search_objects still reports >= 7200s
+        await client.cache.upsert_sync_state(
+            DomainSyncState(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                scope="objects",
+                item_type="host",
+                synced_at=fresh_ts,
+                status="ok",
+                object_count=1,
+            )
+        )
+        await client.cache.upsert_sync_state(
+            DomainSyncState(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                scope="assets",
+                item_type="*",
+                synced_at=old_ts,
+                status="ok",
+                object_count=1,
+            )
+        )
+        s_res_rev = await server.call_tool(
+            "search_objects",
+            {
+                "query": "gw",
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "types": ["host", "gateway"],
+                "cache_mode": "cache",
+            },
+        )
+        assert s_res_rev.is_error is False
+        s_payload_rev = json.loads(_get_tool_text(s_res_rev))
+        assert s_payload_rev["cache_age_seconds"] is not None
+        assert s_payload_rev["cache_age_seconds"] >= 7200

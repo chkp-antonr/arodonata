@@ -155,6 +155,38 @@ class InventoryCacheMixin(SqlCacheBase):
             return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     @traced
+    async def apply_object_diff(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        deleted_uids: Sequence[str] = (),
+        objects: Sequence[CPObject] = (),
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
+        """Atomically delete `deleted_uids`, upsert `objects`, and update `sync_states` in one transaction."""
+        del_list = list(deleted_uids)
+        rows = [_cp_object_to_row(obj) for obj in objects]
+        if not del_list and not rows and not sync_states:
+            return 0
+        span_attrs(mgmt_name=mgmt_name, domain=domain_name, deleted=len(del_list), upserted=len(rows))
+        async with self._db.session() as session:
+            if del_list:
+                await session.execute(
+                    delete(CPObjectRecord).where(
+                        CPObjectRecord.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+                        CPObjectRecord.domain_name == domain_name,  # type: ignore[arg-type]
+                        CPObjectRecord.uid.in_(del_list),  # type: ignore[attr-defined]
+                    )
+                )
+            if rows:
+                await self._dialect_upsert(session, CPObjectRecord, rows)
+            if sync_states:
+                await self._upsert_sync_states_in_session(session, sync_states)
+            await session.commit()
+        return len(rows) + len(del_list)
+
+    @traced
     async def get_services(
         self,
         mgmt_name: str | None = None,
@@ -279,6 +311,38 @@ class InventoryCacheMixin(SqlCacheBase):
             )
             await session.commit()
             return int(result.rowcount or 0)  # type: ignore[attr-defined]
+
+    @traced
+    async def apply_service_diff(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        deleted_uids: Sequence[str] = (),
+        services: Sequence[CPService] = (),
+        sync_states: Sequence[DomainSyncState] | None = None,
+    ) -> int:
+        """Atomically delete `deleted_uids`, upsert `services`, and update `sync_states` in one transaction."""
+        del_list = list(deleted_uids)
+        rows = [_cp_service_to_row(svc) for svc in services]
+        if not del_list and not rows and not sync_states:
+            return 0
+        span_attrs(mgmt_name=mgmt_name, domain=domain_name, deleted=len(del_list), upserted=len(rows))
+        async with self._db.session() as session:
+            if del_list:
+                await session.execute(
+                    delete(CPServiceRecord).where(
+                        CPServiceRecord.mgmt_name == mgmt_name,  # type: ignore[arg-type]
+                        CPServiceRecord.domain_name == domain_name,  # type: ignore[arg-type]
+                        CPServiceRecord.uid.in_(del_list),  # type: ignore[attr-defined]
+                    )
+                )
+            if rows:
+                await self._dialect_upsert(session, CPServiceRecord, rows)
+            if sync_states:
+                await self._upsert_sync_states_in_session(session, sync_states)
+            await session.commit()
+        return len(rows) + len(del_list)
 
     @traced
     async def get_assets(

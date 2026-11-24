@@ -21,6 +21,7 @@ from arodonata.core.context import auth_context as _ctx_auth_context
 from arodonata.core.context import user_context as _ctx_user_context
 from arodonata.core.events import CPCRUDEvent
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
+from arodonata.core.primitives import validate_command_name
 from arodonata.core.telemetry import traced
 
 
@@ -78,11 +79,11 @@ class ClientLifecycleMixin(ClientBase):
         timeout: float | None = None,
     ) -> ApiCallResult:
         """Execute a Check Point Management API command, updating active `WriteSession` overlay and invalidating domain on `publish`."""
+        clean_cmd = validate_command_name(command)
         await self._ensure_initialized()
 
-        clean_cmd = command.strip().lstrip("/")
         dom_key = normalize_domain_key(domain)
-        active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key if domain is not None else None)
+        active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key)
 
         eff_sid = sid
         eff_ip = server_ip
@@ -92,7 +93,7 @@ class ClientLifecycleMixin(ClientBase):
 
         res = await self._api.api_call(
             mgmt_name,
-            command,
+            clean_cmd,
             payload,
             domain=domain,
             sid=eff_sid,
@@ -245,6 +246,8 @@ class ClientLifecycleMixin(ClientBase):
                 publish_on_exit=publish_on_exit,
             ) as ws:
                 yield ws
+            if not self._amgmt_invalidation_wired and ws.published:
+                self.invalidate_domain(mgmt_name, domain)
             return
 
         # Fallback for custom ApiPort implementations injected in tests

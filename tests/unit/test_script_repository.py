@@ -970,3 +970,119 @@ def test_repository_script_body_base64_decoding_and_short_token_regressions() ->
     # 4. Check Point legacy script-body-base64 continues to work when script-body is absent
     b64_legacy = RepositoryScript.from_cp_dict("mds1", "Corp", {"name": "legacy_s1", "script-body-base64": b64_payload})
     assert b64_legacy.script_body == bash_script
+
+
+@pytest.mark.spec("SCN-CLIENT-012-1", "SCN-CLIENT-012-3")
+async def test_script_repository_boundary_models_and_session_branches_redact_sids() -> None:
+    """SCN-CLIENT-012-1 & SCN-CLIENT-012-3 (DA-011): Scrub patterned and bare SIDs across outputs and all session exception branches."""
+    from arodonata.core.context import SessionOverlay, WriteSession, write_session_context
+    from arodonata.core.models.common import ApiCallResult
+    from arodonata.core.services.script_service import ScriptRepositoryService
+
+    # 1. Model boundaries scrub patterned SIDs in stdout and status_description
+    tgt = ScriptTargetExecutionResult(
+        target="gw-01",
+        success=True,
+        stdout="ok X-chkp-sid: PatOutSid1234",
+        status_description="desc Authorization: Bearer PatDescTok5678",
+    )
+    assert "PatOutSid1234" not in tgt.stdout
+    assert "PatDescTok5678" not in tgt.status_description
+    assert REDACTED_PLACEHOLDER in tgt.stdout
+    assert REDACTED_PLACEHOLDER in tgt.status_description
+
+    out = RepositoryScriptExecutionOutcome(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        script_ref="app-diag",
+        success=True,
+        stdout='{"sid": "PatOutcomeSid999"}',
+    )
+    assert "PatOutcomeSid999" not in out.stdout
+    assert REDACTED_PLACEHOLDER in out.stdout
+
+    # 2. run_repository_script scrubs bare dedicated SID from responseMessage and statusDescription
+    stub = _ScriptApiStub()
+    ded_token = "DedBareSidToken7788"
+
+    class _LeakOutputApi(_ScriptApiStub):
+        async def create_dedicated_session(
+            self, mgmt_name: str, domain: str | None = None, **kw: object
+        ) -> tuple[str, str]:
+            self.calls.append({"command": "create_dedicated_session", "mgmt": mgmt_name, "domain": domain})
+            return ded_token, "10.0.0.1"
+
+        async def api_call(
+            self, mgmt_name: str, command: str, payload: dict[str, object] | None = None, **kw: object
+        ) -> ApiCallResult:
+            if command == "run-script":
+                return ApiCallResult(
+                    success=True,
+                    status_code=200,
+                    data={
+                        "tasks": [
+                            {
+                                "task-id": "t-leak",
+                                "status": "succeeded",
+                                "task-details": [
+                                    {
+                                        "gatewayName": "gw-01",
+                                        "statusCode": "succeeded",
+                                        "responseMessage": f"out={ded_token}",
+                                        "statusDescription": f"status={ded_token}",
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                )
+            return await super().api_call(mgmt_name, command, payload, **kw)  # type: ignore[arg-type]
+
+    leak_api = _LeakOutputApi()
+    svc = ScriptRepositoryService(api=leak_api)  # type: ignore[arg-type]
+    run_res = await svc.run_repository_script("mds1", "app-diag", ["gw-01"], domain="Corp")
+    assert ded_token not in run_res.stdout
+    assert ded_token not in run_res.targets[0].stdout
+    assert ded_token not in run_res.targets[0].status_description
+    assert REDACTED_PLACEHOLDER in run_res.stdout
+
+    # 3. Non-dedicated branches (WriteSession, explicit sid, session_getter) scrub bare SID on exception
+    class _ExcApi(_ScriptApiStub):
+        def __init__(self, msg_sid: str) -> None:
+            super().__init__()
+            self._msg_sid = msg_sid
+
+        async def api_call(
+            self, mgmt_name: str, command: str, payload: dict[str, object] | None = None, **kw: object
+        ) -> ApiCallResult:
+            raise RuntimeError(f"boom while calling with {self._msg_sid}")
+
+    ws_sid = "WsActiveBareSid4321"
+    ws = WriteSession(
+        mgmt_name="mds1", domain_name="Corp", sid=ws_sid, server_ip="10.1.0.1", overlay=SessionOverlay("mds1", "Corp")
+    )
+    ws_svc = ScriptRepositoryService(api=_ExcApi(ws_sid))  # type: ignore[arg-type]
+    with write_session_context(ws):
+        with pytest.raises(RepositoryScriptError) as ws_exc:
+            await ws_svc.run_repository_script("mds1", "app-diag", ["gw-01"], domain="Corp")
+    assert ws_sid not in str(ws_exc.value)
+    assert REDACTED_PLACEHOLDER in str(ws_exc.value)
+
+    explicit_sid = "ExplicitBareSid6543"
+    exp_svc = ScriptRepositoryService(api=_ExcApi(explicit_sid))  # type: ignore[arg-type]
+    with pytest.raises(RepositoryScriptError) as exp_exc:
+        await exp_svc.run_repository_script("mds1", "app-diag", ["gw-01"], domain="Corp", sid=explicit_sid)
+    assert explicit_sid not in str(exp_exc.value)
+    assert REDACTED_PLACEHOLDER in str(exp_exc.value)
+
+    getter_sid = "GetterBareSid9876"
+    get_svc = ScriptRepositoryService(api=_ExcApi(getter_sid))  # type: ignore[arg-type]
+
+    async def _getter(_m: str, _d: str | None) -> tuple[str, str]:
+        return getter_sid, "10.0.0.1"
+
+    with pytest.raises(RepositoryScriptError) as get_exc:
+        await get_svc.run_repository_script("mds1", "app-diag", ["gw-01"], domain="Corp", session_getter=_getter)
+    assert getter_sid not in str(get_exc.value)
+    assert REDACTED_PLACEHOLDER in str(get_exc.value)
+    _ = stub

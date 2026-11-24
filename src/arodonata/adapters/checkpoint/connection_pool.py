@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable
@@ -25,6 +26,17 @@ NON_POOLABLE_SESSION_COMMANDS: frozenset[str] = frozenset(
         "disconnect",
     }
 )
+
+
+def canonicalize_pool_host(host: str) -> str:
+    """Normalize IPv4/IPv6 literals (unbracketed compressed RFC-5952) and lowercase DNS hostnames."""
+    cleaned = host.strip()
+    if cleaned.startswith("[") and cleaned.endswith("]"):
+        cleaned = cleaned[1:-1].strip()
+    try:
+        return ipaddress.ip_address(cleaned).compressed
+    except ValueError:
+        return cleaned.lower()
 
 
 def is_readonly_poolable_command(command: str) -> bool:
@@ -130,8 +142,9 @@ class VerifiedConnectionPool:
         now = self._monotonic()
         closed_count = 0
         if host is not None and port is not None:
+            norm_host = canonicalize_pool_host(host)
             target_port = int(port)
-            keys = [k for k in self._pool if k[0] == host and k[1] == target_port]
+            keys = [k for k in self._pool if k[0] == norm_host and k[1] == target_port]
         else:
             keys = list(self._pool.keys())
         for key in keys:
@@ -165,17 +178,18 @@ class VerifiedConnectionPool:
         Always evicts expired connections first. For non-pooled commands, closes idle sockets
         before returning `None` so a fresh TLS-verified connection is established cleanly.
         """
+        norm_host = canonicalize_pool_host(host)
         target_port = int(port)
-        self.evict_expired(host, target_port)
+        self.evict_expired(norm_host, target_port)
         scope = session_scope or ""
         if not is_poolable_command(command, session_scope=scope or None):
             if scope:
-                self.close_scope(host, target_port, scope)
-            self.close_scope(host, target_port, "")
+                self.close_scope(norm_host, target_port, scope)
+            self.close_scope(norm_host, target_port, "")
             self._fresh_count += 1
             return None
 
-        key = (host, target_port, scope)
+        key = (norm_host, target_port, scope)
         queue = self._pool.get(key)
         now = self._monotonic()
         while queue:
@@ -192,7 +206,7 @@ class VerifiedConnectionPool:
         self._pool.pop(key, None)
         if scope:
             # Close idle shared read-only sockets on this host before opening a dedicated connection.
-            self.close_scope(host, target_port, "")
+            self.close_scope(norm_host, target_port, "")
         self._fresh_count += 1
         return None
 
@@ -207,6 +221,8 @@ class VerifiedConnectionPool:
         """Return a healthy verified connection to the pool if eligible, else close it."""
         eff_scope = entry.pool_scope if session_scope is None else session_scope
         entry.pool_scope = eff_scope
+        norm_host = canonicalize_pool_host(entry.host)
+        entry.host = norm_host
         now = self._monotonic()
         if (
             should_close
@@ -216,12 +232,12 @@ class VerifiedConnectionPool:
             entry.close()
             return False
         entry.last_used_at = now
-        self._pool[(entry.host, int(entry.port), eff_scope)].append(entry)
+        self._pool[(norm_host, int(entry.port), eff_scope)].append(entry)
         return True
 
     def close_scope(self, host: str, port: int, session_scope: str = "") -> int:
         """Close all pooled connections for `(host, port, session_scope)`."""
-        key = (host, int(port), session_scope)
+        key = (canonicalize_pool_host(host), int(port), session_scope)
         queue = self._pool.pop(key, None)
         if not queue:
             return 0
@@ -244,10 +260,11 @@ class VerifiedConnectionPool:
 
     def close_host(self, host: str, port: int) -> int:
         """Close all pooled connections across all scopes for `(host, port)`."""
+        norm_host = canonicalize_pool_host(host)
         target_port = int(port)
         total = 0
         for h, p, scope in list(self._pool.keys()):
-            if h == host and p == target_port:
+            if h == norm_host and p == target_port:
                 total += self.close_scope(h, p, scope)
         return total
 
@@ -266,10 +283,11 @@ class VerifiedConnectionPool:
         session_scope: str | None = None,
     ) -> int:
         """Return the number of currently pooled idle connections."""
+        norm_host = canonicalize_pool_host(host) if host is not None else None
         target_port = int(port) if port is not None else None
         total = 0
         for (h, p, s), queue in self._pool.items():
-            if host is not None and h != host:
+            if norm_host is not None and h != norm_host:
                 continue
             if target_port is not None and p != target_port:
                 continue
@@ -281,10 +299,11 @@ class VerifiedConnectionPool:
 
 @dataclass(frozen=True)
 class _TransportPoolContext:
-    """Per-request command and derived session scope propagated via `ContextVar` to the connector."""
+    """Per-request command, session scope, and optional TLS identity host propagated via `ContextVar`."""
 
     command: str
     session_scope: str = ""
+    tls_identity_host: str | None = None
 
 
 _transport_pool_ctx: ContextVar[_TransportPoolContext | None] = ContextVar(

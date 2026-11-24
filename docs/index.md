@@ -36,7 +36,7 @@ asyncio.run(main())
 | Capability | Primary Entry Point | Description |
 | --- | --- | --- |
 | **Unified Async Facade** | `ArodonataClient` | Single composition root wiring transport, SQL cache, distributed locks, rulebase numbering, CPCRUD, and change reports |
-| **Database-Backed Cache** | `DatabaseManager`, `SqlCacheAdapter` | 15 `arodonata_*`-prefixed SQLModel tables on PostgreSQL (`asyncpg`) or SQLite (`aiosqlite`) with SHA-256 auto-migration and cross-process locks |
+| **Database-Backed Cache** | `DatabaseManager`, `SqlCacheAdapter` | 17 `arodonata_*`-prefixed SQLModel tables on PostgreSQL (`asyncpg`) or SQLite (`aiosqlite`) with SHA-256 auto-migration and cross-process locks |
 | **Smart & Incremental Sync** | `refresh_objects`, `stream_refresh_*` | Four cache modes (`cache`, `smart`, `smart-fast`, `force`) with `show-changes` incremental diffs and parallel per-MDS-member execution |
 | **Search & Aggregation** | `search_objects`, `query_objects` | IP/CIDR/range/wildcard/exact search with recursive group membership traversal and SQL-free cross-domain aggregation (`list`, `count`, `describe`) |
 | **Rulebase Introspection** | `get_package_rulebase`, `filter_rulebase` | Normalized 6-table rulebase cache with exact SmartConsole hierarchical numbering (`1`, `2.1`, `3`), reverse UID lookup (`locate_rules`), and local filtering |
@@ -52,7 +52,7 @@ asyncio.run(main())
 - **Downstream Integration Contract**: [Capabilities & Integration Guide (`CAPABILITIES.md`)](CAPABILITIES.md) — mandatory reading for host applications (e.g., FPCR v2).
 - **Architecture Deep Dives**:
   - [Architecture Overview](architecture/index.md) & [Hexagonal Ports & Adapters](architecture/ports-and-adapters.md)
-  - [Database Schema Reference (15 `arodonata_*` Tables)](architecture/database-schema.md)
+  - [Database Schema Reference (17 `arodonata_*` Tables)](architecture/database-schema.md)
   - [Caching, Incremental Sync & Search](architecture/caching-and-sync.md)
   - [Sessions, MDSM & `SessionOverlay`](architecture/sessions-and-mdm.md)
   - [CPCRUD Engine Internals](architecture/cpcrud.md)

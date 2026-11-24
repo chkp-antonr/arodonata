@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from arodonata.core.errors import (
@@ -133,6 +133,7 @@ class TaskWaiter:
         *,
         timeout: float | None = None,
         initial_result: ApiCallResult | None = None,
+        known_sids: Sequence[str] | None = None,
     ) -> ApiCallResult:
         """Poll `show-task` via `poll_fn` until all `task_ids` complete.
 
@@ -161,7 +162,8 @@ class TaskWaiter:
             remaining = deadline - now
             if remaining <= 0:
                 raise TaskTimeoutError(
-                    f"Server task(s) {ids} did not complete within task_timeout={budget}s (polls={polls})."
+                    f"Server task(s) {ids} did not complete within task_timeout={budget}s (polls={polls}).",
+                    known_sids=known_sids,
                 )
 
             sleep_duration = min(delay, remaining)
@@ -170,7 +172,8 @@ class TaskWaiter:
 
             if self._monotonic() >= deadline:
                 raise TaskTimeoutError(
-                    f"Server task(s) {ids} did not complete within task_timeout={budget}s (polls={polls})."
+                    f"Server task(s) {ids} did not complete within task_timeout={budget}s (polls={polls}).",
+                    known_sids=known_sids,
                 )
 
             polls += 1
@@ -188,7 +191,8 @@ class TaskWaiter:
                 consecutive_errors += 1
                 if consecutive_errors >= self._max_consecutive_errors:
                     raise TaskPollError(
-                        f"Task polling for {ids} failed after {consecutive_errors} consecutive transport errors: {exc}"
+                        f"Task polling for {ids} failed after {consecutive_errors} consecutive transport errors: {exc}",
+                        known_sids=known_sids,
                     ) from exc
                 delay = min(self._max_delay, delay * self._backoff_factor)
                 continue
@@ -198,7 +202,8 @@ class TaskWaiter:
                 if consecutive_errors >= self._max_consecutive_errors:
                     raise TaskPollError(
                         f"Task polling for {ids} failed after {consecutive_errors} consecutive poll failures: "
-                        f"{poll_res.error_message or f'HTTP {poll_res.status_code}'}"
+                        f"{poll_res.error_message or f'HTTP {poll_res.status_code}'}",
+                        known_sids=known_sids,
                     )
                 delay = min(self._max_delay, delay * self._backoff_factor)
                 continue
@@ -209,7 +214,8 @@ class TaskWaiter:
                 if consecutive_errors >= self._max_consecutive_errors:
                     raise TaskPollError(
                         f"Task polling for {ids} returned empty or malformed 'tasks' payload "
-                        f"{consecutive_errors} consecutive times."
+                        f"{consecutive_errors} consecutive times.",
+                        known_sids=known_sids,
                     )
                 delay = min(self._max_delay, delay * self._backoff_factor)
                 continue

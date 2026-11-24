@@ -633,10 +633,11 @@ async def test_mcp_caller_identity_composite_and_smart_sync_live_quota() -> None
             )
             assert cold_smart.is_error is False
 
-            # Unknown domain triggers a live domain-list refresh -> consumes Alice's 2nd live slot
+            # Unknown domain in smart mode triggers a live domain-list refresh -> consumes Alice's 2nd live slot
+            # (cache_mode="cache" pre-validation is offline and charges nothing, REQ-MCP-013)
             unk_dom = await srv.call_tool(
                 "list_objects",
-                {"mgmt_name": "mds1", "domain": "MissingDom", "types": ["host"], "cache_mode": "cache"},
+                {"mgmt_name": "mds1", "domain": "MissingDom", "types": ["host"], "cache_mode": "smart"},
             )
             assert unk_dom.is_error is True
             assert "Unknown domain" in unk_dom.content[0].text  # type: ignore[union-attr]
@@ -660,3 +661,254 @@ async def test_mcp_caller_identity_composite_and_smart_sync_live_quota() -> None
             )
             assert bob_res.is_error is True
             assert "not found" in bob_res.content[0].text  # type: ignore[union-attr]
+
+
+@pytest.mark.spec("SCN-MCP-001-5")
+def test_origin_matches_allowed_rejects_present_but_blank_origin() -> None:
+    """SCN-MCP-001-5: Present-but-blank `Origin` headers MUST be rejected while `Origin is None` is allowed."""
+    assert origin_matches_allowed(None, ["http://localhost:*"]) is True
+    assert origin_matches_allowed("", ["http://localhost:*", "*"]) is False
+    assert origin_matches_allowed("   \t", ["http://localhost:*"]) is False
+
+    app = create_asgi_app(
+        ArodonataClient(ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="k1")),
+        mcp_settings=ArodonataMCPSettings(auth_mode="none"),
+    )
+    with TestClient(app) as tc:
+        resp = tc.get("/mcp", headers={"Host": "localhost:8000", "Origin": "   "})
+        assert resp.status_code == 403
+
+
+@pytest.mark.spec("SCN-MCP-012-2")
+@pytest.mark.asyncio
+async def test_mcp_multi_scope_and_proportional_fanout_live_quota() -> None:
+    """SCN-MCP-012-2 (DA-016, VVAH-MCP-QUOTA-01): Enforce live quota across services/assets, composite IDs, and fan-out."""
+    clock = [400.0]
+    mcp_cfg = ArodonataMCPSettings(
+        auth_mode="host",
+        tool_rate_limit_per_minute=20,
+        live_tool_rate_limit_per_minute=2,
+    )
+    qm = MCPToolQuotaManager.from_settings(mcp_cfg, monotonic_fn=lambda: clock[0])
+
+    async with ArodonataClient(
+        ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="k1", cache_ttl=300),
+        api=_SmartQuotaFakeApi(),
+    ) as client:
+        await client.cache.upsert_domains(
+            [
+                DomainInfo(id="mds1:Corp", mgmt_name="mds1", uid="dom-corp", name="Corp"),
+                DomainInfo(id="mds1:Branch", mgmt_name="mds1", uid="dom-branch", name="Branch"),
+                DomainInfo(id="mds1:DMZ", mgmt_name="mds1", uid="dom-dmz", name="DMZ"),
+            ]
+        )
+        # Warm ONLY scope="objects" on Corp; leave scope="services" and "assets" cold
+        await client.cache.replace_domain_objects(
+            "mds1",
+            "Corp",
+            [CPObject(uid="h-1", name="warm-h", type="host", mgmt_name="mds1", domain_name="Corp")],
+            types=["host"],
+        )
+        await client.cache.upsert_sync_state(
+            DomainSyncState(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                scope="objects",
+                item_type="*",
+                synced_at=utc_now(),
+                status="ok",
+                last_session_uid="pub-w",
+            )
+        )
+        srv = create_mcp_server(client, mcp_settings=mcp_cfg, quota_manager=qm)
+
+        # 1. query_objects requesting service-tcp on warm-objects/cold-services Corp consumes 1 live slot
+        with user_context(user_id="svc-user", client_id="CLIENT_X"):
+            q_svc = await srv.call_tool(
+                "query_objects",
+                {"mgmt_name": "mds1", "domain": "Corp", "types": ["service-tcp"], "cache_mode": "smart"},
+            )
+            assert q_svc.is_error is False
+
+            # query_objects requesting gateway (cold assets) consumes 2nd live slot
+            q_asset = await srv.call_tool(
+                "query_objects",
+                {"mgmt_name": "mds1", "domain": "Corp", "types": ["gateway"], "cache_mode": "smart"},
+            )
+            assert q_asset.is_error is False
+
+            # Exhausted live quota blocks cold-service-other query_objects
+            q_blocked = await srv.call_tool(
+                "query_objects",
+                {"mgmt_name": "mds1", "domain": "Corp", "types": ["service-other"], "cache_mode": "smart"},
+            )
+            assert q_blocked.is_error is True
+            assert json.loads(q_blocked.content[0].text)["error_code"] == "rate_limit_exceeded"  # type: ignore[union-attr]
+
+        # 1b. Unknown composite-ID domain on get_group_members fails domain pre-validation before resolve_group
+        with user_context(user_id="comp-user", client_id="CLIENT_COMP"):
+            bad_comp = await srv.call_tool(
+                "get_group_members",
+                {"group_name_or_uid": "mds1:MissingDom:SomeGroup", "mgmt_name": "mds1", "cache_mode": "smart"},
+            )
+            assert bad_comp.is_error is True
+            assert "Unknown domain" in bad_comp.content[0].text  # type: ignore[union-attr]
+
+        # 2. Proportional live quota on multi-domain cache_control(action="refresh") rejects > remaining slots and caps > 50 domains
+        with user_context(user_id="fanout-user", client_id="CLIENT_Y"):
+            fanout_denied = await srv.call_tool(
+                "cache_control",
+                {
+                    "action": "refresh",
+                    "mgmt_name": "mds1",
+                    "domains": ["Corp", "Branch", "DMZ"],
+                    "scope": "objects",
+                    "mode": "smart",
+                },
+            )
+            assert fanout_denied.is_error is True
+            assert json.loads(fanout_denied.content[0].text)["error_code"] == "rate_limit_exceeded"  # type: ignore[union-attr]
+
+            too_many = await srv.call_tool(
+                "cache_control",
+                {
+                    "action": "refresh",
+                    "mgmt_name": "mds1",
+                    "domains": [f"D{i}" for i in range(51)],
+                    "scope": "objects",
+                },
+            )
+            assert too_many.is_error is True
+            assert "at most 50" in too_many.content[0].text  # type: ignore[union-attr]
+
+
+@pytest.mark.spec("SCN-MCP-014-1")
+@pytest.mark.asyncio
+async def test_implicit_all_domain_refresh_caps_at_live_limit_on_empty_bucket() -> None:
+    """SCN-MCP-014-1: Implicit all-domain cache_control refresh succeeds once on empty live bucket when domains > limit."""
+    clock = [500.0]
+    mcp_cfg = ArodonataMCPSettings(
+        auth_mode="host",
+        tool_rate_limit_per_minute=10,
+        live_tool_rate_limit_per_minute=2,
+    )
+    qm = MCPToolQuotaManager.from_settings(mcp_cfg, monotonic_fn=lambda: clock[0])
+
+    async with ArodonataClient(
+        ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="k1", cache_ttl=300),
+        api=_SmartQuotaFakeApi(),
+    ) as client:
+        await client.cache.upsert_domains(
+            [
+                DomainInfo(
+                    id=f"mds1:D{i}",
+                    mgmt_name="mds1",
+                    uid=f"uid-{i}",
+                    name=f"D{i}",
+                    active_ip=f"10.1.0.{i + 1}",
+                    active_mds_ip="10.0.0.1",
+                )
+                for i in range(5)
+            ]
+        )
+        srv = create_mcp_server(client, mcp_settings=mcp_cfg, quota_manager=qm)
+
+        with user_context(user_id="mds-user", client_id="CLIENT_MDS"):
+            res = await srv.call_tool(
+                "cache_control",
+                {"action": "refresh", "mgmt_name": "mds1", "scope": "objects", "mode": "smart"},
+            )
+            assert res.is_error is False
+
+            # A second live call in the same window must be throttled.
+            second = await srv.call_tool(
+                "cache_control",
+                {"action": "refresh", "mgmt_name": "mds1", "domain": "D0", "scope": "objects", "mode": "smart"},
+            )
+            assert second.is_error is True
+            assert json.loads(second.content[0].text)["error_code"] == "rate_limit_exceeded"  # type: ignore[union-attr]
+
+
+@pytest.mark.spec("SCN-MCP-014-2")
+@pytest.mark.asyncio
+async def test_oversize_explicit_fanout_rejects_upfront_with_full_slot_rollback() -> None:
+    """SCN-MCP-014-2: Explicit fan-out > live_limit rejects upfront with retry_after_seconds=0.0 and zero leaked slots."""
+    clock = [600.0]
+    mcp_cfg = ArodonataMCPSettings(
+        auth_mode="host",
+        tool_rate_limit_per_minute=10,
+        live_tool_rate_limit_per_minute=2,
+    )
+    qm = MCPToolQuotaManager.from_settings(mcp_cfg, monotonic_fn=lambda: clock[0])
+
+    async with ArodonataClient(
+        ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="k1", cache_ttl=300),
+        api=_SmartQuotaFakeApi(),
+    ) as client:
+        await client.cache.upsert_domains(
+            [
+                DomainInfo(
+                    id=f"mds1:D{i}",
+                    mgmt_name="mds1",
+                    uid=f"uid-{i}",
+                    name=f"D{i}",
+                    active_ip=f"10.1.0.{i + 1}",
+                    active_mds_ip="10.0.0.1",
+                )
+                for i in range(4)
+            ]
+        )
+        srv = create_mcp_server(client, mcp_settings=mcp_cfg, quota_manager=qm)
+
+        with user_context(user_id="batch-user", client_id="CLIENT_BATCH"):
+            denied_refresh = await srv.call_tool(
+                "cache_control",
+                {
+                    "action": "refresh",
+                    "mgmt_name": "mds1",
+                    "domains": ["D0", "D1", "D2"],
+                    "scope": "objects",
+                    "mode": "smart",
+                },
+            )
+            assert denied_refresh.is_error is True
+            payload = json.loads(denied_refresh.content[0].text)  # type: ignore[union-attr]
+            assert payload["error_code"] == "rate_limit_exceeded"
+            assert payload["retry_after_seconds"] == 0.0
+            assert payload["exceeds_per_minute_limit"] is True
+            assert "<= 2" in payload["message"]
+
+            denied_report = await srv.call_tool(
+                "change_report",
+                {
+                    "scopes": [
+                        {"mgmt_name": "mds1", "domain": "D0"},
+                        {"mgmt_name": "mds1", "domain": "D1"},
+                        {"mgmt_name": "mds1", "domain": "D2"},
+                    ],
+                },
+            )
+            assert denied_report.is_error is True
+            rep_payload = json.loads(denied_report.content[0].text)  # type: ignore[union-attr]
+            assert rep_payload["error_code"] == "rate_limit_exceeded"
+            assert rep_payload["retry_after_seconds"] == 0.0
+            assert rep_payload["exceeds_per_minute_limit"] is True
+
+            # Verify zero general or live slots leaked by the two rejected calls.
+            cid = "CLIENT_BATCH:batch-user"
+            general_dq, live_dq = qm._get_buckets(cid)
+            assert len(general_dq) == 0
+            assert len(live_dq) == 0
+
+            # A valid batch of <= 2 domains still succeeds on the untouched buckets.
+            ok_batch = await srv.call_tool(
+                "cache_control",
+                {
+                    "action": "refresh",
+                    "mgmt_name": "mds1",
+                    "domains": ["D0", "D1"],
+                    "scope": "objects",
+                    "mode": "smart",
+                },
+            )
+            assert ok_batch.is_error is False

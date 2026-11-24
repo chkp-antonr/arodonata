@@ -987,3 +987,475 @@ async def test_search_service_find_object_cache_fallbacks_and_single_asset_scan(
         assert get_assets_calls == 1
     finally:
         await db.close()
+
+
+@pytest.mark.spec("SCN-CLIENT-003-1", "SCN-CACHE-013-1")
+async def test_search_and_overlay_domain_isolation_and_global_membership_merge() -> None:
+    """SCN-CLIENT-003-1 & SCN-CACHE-013-1: Isolate WriteSession overlays and merge Global UID memberships."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = SearchFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+    domain_svc = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    coord = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=domain_svc,
+    )
+    obj_svc = ObjectService(settings=settings, api=api, cache=cache, coordinator=coord)
+    svc_svc = ServiceCacheService(settings=settings, api=api, cache=cache, coordinator=coord)
+    search_service = SearchService(
+        cache=cache,
+        object_service=obj_svc,
+        service_cache=svc_svc,
+    )
+    try:
+        await cache.upsert_domains(
+            [
+                DomainInfo(mgmt_name="mds1", uid="d-a", name="DomainA"),
+                DomainInfo(mgmt_name="mds1", uid="d-b", name="DomainB"),
+                DomainInfo(mgmt_name="mds1", uid="d-c", name="Corp"),
+            ]
+        )
+        # Global object u-global-1 present in both DomainA and DomainB with domain-specific parent groups
+        await cache.replace_domain_objects(
+            "mds1",
+            "DomainA",
+            [
+                CPObject(
+                    uid="u-global-1",
+                    name="g_DNS_Server",
+                    type="host",
+                    mgmt_name="mds1",
+                    domain_name="DomainA",
+                    original_domain="Global",
+                    ipv4_address="10.0.0.53",
+                ),
+                CPObject(
+                    uid="g-dom-a",
+                    name="Grp_DomainA_DNS",
+                    type="group",
+                    mgmt_name="mds1",
+                    domain_name="DomainA",
+                    members=["u-global-1"],
+                ),
+            ],
+            types=["host", "group"],
+        )
+        await cache.replace_domain_objects(
+            "mds1",
+            "DomainB",
+            [
+                CPObject(
+                    uid="u-global-1",
+                    name="g_DNS_Server",
+                    type="host",
+                    mgmt_name="mds1",
+                    domain_name="DomainB",
+                    original_domain="Global",
+                    ipv4_address="10.0.0.53",
+                ),
+                CPObject(
+                    uid="g-dom-b",
+                    name="Grp_DomainB_DNS",
+                    type="group",
+                    mgmt_name="mds1",
+                    domain_name="DomainB",
+                    members=["u-global-1"],
+                ),
+            ],
+            types=["host", "group"],
+        )
+        await cache.replace_domain_objects(
+            "mds1",
+            "Global",
+            [
+                CPObject(
+                    uid="u-glob-only",
+                    name="h-glob-only",
+                    type="host",
+                    mgmt_name="mds1",
+                    domain_name="Global",
+                    ipv4_address="10.99.99.99",
+                )
+            ],
+            types=["host"],
+        )
+
+        # DA-030: Search across domains retains BOTH DomainA and DomainB parent groups for u-global-1
+        res = await search_service.search_objects("10.0.0.53", mgmt_name="mds1", cache_mode="cache")
+        assert "u-global-1" in res.memberships
+        group_ids = {n.id for n in res.memberships["u-global-1"]}
+        assert group_ids == {"mds1:DomainA:g-dom-a", "mds1:DomainB:g-dom-b"}
+
+        # DA-024: Global WriteSession overlay must not leak when include_global=False or domain excluded
+        glob_overlay = SessionOverlay("mds1", "Global")
+        glob_overlay.record_object_upsert(
+            CPObject(
+                uid="u-glob-ov",
+                name="h-glob-overlay",
+                type="host",
+                mgmt_name="mds1",
+                domain_name="Global",
+                ipv4_address="10.0.0.53",
+            )
+        )
+        ws_glob = WriteSession(
+            mgmt_name="mds1", domain_name="Global", sid="s-glob", server_ip="10.0.0.1", overlay=glob_overlay
+        )
+        with write_session_context(ws_glob):
+            objs_no_glob = await obj_svc.get_objects("mds1", None, include_global=False, cache_mode="cache")
+            assert all(o.uid != "u-glob-ov" for o in objs_no_glob)
+            s_no_glob = await search_service.search_objects(
+                "10.0.0.53",
+                mgmt_name="mds1",
+                include_global=False,
+                cache_mode="cache",
+            )
+            assert all(m.uid != "u-glob-ov" for m in s_no_glob.matches)
+            desc_no_glob = await search_service.describe_objects(mgmt_name="mds1", include_global=False)
+            assert "Global" not in desc_no_glob["domains"]
+
+        # Multi-domain search_objects excludes overlay from unlisted domain "Corp"
+        corp_overlay = SessionOverlay("mds1", "Corp")
+        corp_overlay.record_object_upsert(
+            CPObject(
+                uid="u-corp-ov",
+                name="h-corp-overlay",
+                type="host",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                ipv4_address="10.0.0.53",
+            )
+        )
+        ws_corp = WriteSession(
+            mgmt_name="mds1", domain_name="Corp", sid="s-corp", server_ip="10.0.0.1", overlay=corp_overlay
+        )
+        with write_session_context(ws_corp):
+            multi_dom_search = await search_service.search_objects(
+                "10.0.0.53",
+                mgmt_name="mds1",
+                domains=["DomainA", "DomainB"],
+                cache_mode="cache",
+            )
+            assert all(m.uid != "u-corp-ov" for m in multi_dom_search.matches)
+            q_multi = await search_service.query_objects(
+                mgmt_name="mds1",
+                domains=["DomainA", "DomainB"],
+                cache_mode="cache",
+            )
+            assert all(item["uid"] != "u-corp-ov" for item in q_multi["objects"])
+    finally:
+        await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-006-2", "SCN-CLIENT-005-1")
+async def test_find_object_on_demand_types_and_single_force_refresh() -> None:
+    """SCN-CACHE-006-2 & SCN-CLIENT-005-1 (DA-005): On-demand non-default obj_type sync and single force reload."""
+
+    class _TrackingApi(SearchFakeApi):
+        def __init__(self) -> None:
+            self.queried: list[str] = []
+
+        async def api_call(
+            self,
+            mgmt_name: str,
+            command: str,
+            payload: dict[str, Any] | None = None,
+            *,
+            domain: str | None = None,
+            sid: str | None = None,
+            server_ip: str | None = None,
+            wait_for_task: bool = True,
+            timeout: float | None = None,
+        ) -> ApiCallResult:
+            if command == "show-last-published-session":
+                return ApiCallResult(
+                    success=True,
+                    data={"uid": "sess-app-1", "publish-time": {"iso-8601": "2026-10-23T12:00:00Z"}},
+                )
+            return ApiCallResult(success=True, data={})
+
+        async def api_query(
+            self,
+            mgmt_name: str,
+            command: str,
+            *,
+            domain: str | None = None,
+            details_level: str = "standard",
+            payload: dict[str, Any] | None = None,
+            sid: str | None = None,
+            server_ip: str | None = None,
+            limit: int = 300,
+        ) -> ApiQueryResult:
+            self.queried.append(command)
+            if command == "show-application-sites":
+                return ApiQueryResult(
+                    success=True,
+                    objects=[{"uid": "app-1", "name": "MyAppSite", "type": "application-site"}],
+                    total=1,
+                )
+            if command == "show-services-other":
+                return ApiQueryResult(
+                    success=True,
+                    objects=[{"uid": "so-1", "name": "CustomProto", "type": "service-other", "ip-protocol": 47}],
+                    total=1,
+                )
+            if command == "show-hosts":
+                return ApiQueryResult(
+                    success=True,
+                    objects=[{"uid": "h-1", "name": "ForceHost", "type": "host", "ipv4-address": "10.0.0.10"}],
+                    total=1,
+                )
+            return ApiQueryResult(success=True, objects=[], total=0)
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = _TrackingApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=300)
+    domain_svc = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    domain_svc.tracker.mark_refreshed("mds1")
+    await cache.upsert_domains([DomainInfo(mgmt_name="mds1", uid="d1", name="Corp")])
+    coord = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=domain_svc,
+    )
+    obj_svc = ObjectService(settings=settings, api=api, cache=cache, coordinator=coord)
+    svc_svc = ServiceCacheService(settings=settings, api=api, cache=cache, coordinator=coord)
+    search_service = SearchService(
+        cache=cache,
+        object_service=obj_svc,
+        service_cache=svc_svc,
+    )
+    try:
+        # 1. smart mode refreshes non-default obj_type="application-site" on demand
+        app = await search_service.find_object(
+            "mds1",
+            "Corp",
+            "MyAppSite",
+            obj_type="application-site",
+            cache_mode="smart",
+        )
+        assert isinstance(app, CPObject) and app.uid == "app-1"
+        assert "show-application-sites" in api.queried
+
+        # 2. smart mode refreshes non-default obj_type="service-other" on demand
+        api.queried.clear()
+        svc_other = await search_service.find_object(
+            "mds1",
+            "Corp",
+            "CustomProto",
+            obj_type="service-other",
+            cache_mode="smart",
+        )
+        assert isinstance(svc_other, CPService) and svc_other.uid == "so-1"
+        assert api.queried == ["show-services-other"]
+
+        # 3. force mode with obj_type="host" name lookup reloads show-hosts exactly ONCE
+        api.queried.clear()
+        forced = await search_service.find_object("mds1", "Corp", "ForceHost", obj_type="host", cache_mode="force")
+        assert isinstance(forced, CPObject) and forced.uid == "h-1"
+        assert api.queried == ["show-hosts"]
+    finally:
+        await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-014-1", "SCN-CLIENT-005-1")
+async def test_resolve_group_with_members_isolation_precedence_and_query_bounds() -> None:
+    """SCN-CACHE-014-1 & SCN-CLIENT-005-1 (DA-031, VVAH-SEARCH-01): Cluster isolation, container precedence, and query bounds."""
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = SearchFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+    domain_svc = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    coord = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=domain_svc,
+    )
+    obj_svc = ObjectService(settings=settings, api=api, cache=cache, coordinator=coord)
+    svc_svc = ServiceCacheService(settings=settings, api=api, cache=cache, coordinator=coord)
+    search_service = SearchService(
+        cache=cache,
+        object_service=obj_svc,
+        service_cache=svc_svc,
+    )
+    try:
+        await cache.upsert_domains(
+            [
+                DomainInfo(mgmt_name="mds1", uid="d-a", name="DomainA"),
+                DomainInfo(mgmt_name="mds1", uid="d-b", name="DomainB"),
+            ]
+        )
+        # Non-group host "DNS" in DomainA alongside service-group "DNS" in DomainA + group "CrossScope" in DomainA
+        await cache.replace_domain_objects(
+            "mds1",
+            "DomainA",
+            [
+                CPObject(uid="h-dns", name="DNS", type="host", mgmt_name="mds1", domain_name="DomainA"),
+                CPObject(
+                    uid="h-1",
+                    name="h-1",
+                    type="host",
+                    mgmt_name="mds1",
+                    domain_name="DomainA",
+                    ipv4_address="10.0.0.1",
+                ),
+                CPObject(
+                    uid="grp-cross",
+                    name="CrossScope",
+                    type="group",
+                    mgmt_name="mds1",
+                    domain_name="DomainA",
+                    members=["h-1"],
+                ),
+            ],
+            types=["host", "group"],
+        )
+        await cache.replace_domain_services(
+            "mds1",
+            "DomainA",
+            [
+                CPService(
+                    uid="s-53", name="udp-53", type="service-udp", mgmt_name="mds1", domain_name="DomainA", port="53"
+                ),
+                CPService(
+                    uid="sg-dns",
+                    name="DNS",
+                    type="service-group",
+                    mgmt_name="mds1",
+                    domain_name="DomainA",
+                    members=["s-53"],
+                ),
+                CPService(
+                    uid="s-non-grp",
+                    name="Cluster01",
+                    type="service-tcp",
+                    mgmt_name="mds1",
+                    domain_name="DomainA",
+                    port="80",
+                ),
+            ],
+            types=["service-udp", "service-group", "service-tcp"],
+        )
+        await cache.replace_domain_services(
+            "mds1",
+            "DomainB",
+            [
+                CPService(
+                    uid="sg-cross-b",
+                    name="CrossScope",
+                    type="service-group",
+                    mgmt_name="mds1",
+                    domain_name="DomainB",
+                    members=[],
+                )
+            ],
+            types=["service-group"],
+        )
+        # Two clusters named Cluster01 in DomainA and DomainB with parent_name="Cluster01"
+        await cache.replace_domain_assets(
+            "mds1",
+            "DomainA",
+            [
+                Asset(
+                    uid="clu-a", name="Cluster01", type="CpmiGatewayCluster", mgmt_name="mds1", domain_name="DomainA"
+                ),
+                Asset(
+                    uid="mA1",
+                    name="NodeA1",
+                    type="CpmiClusterMember",
+                    mgmt_name="mds1",
+                    domain_name="DomainA",
+                    parent_name="Cluster01",
+                ),
+            ],
+        )
+        await cache.replace_domain_assets(
+            "mds1",
+            "DomainB",
+            [
+                Asset(
+                    uid="clu-b", name="Cluster01", type="CpmiGatewayCluster", mgmt_name="mds1", domain_name="DomainB"
+                ),
+                Asset(
+                    uid="mB1",
+                    name="NodeB1",
+                    type="CpmiClusterMember",
+                    mgmt_name="mds1",
+                    domain_name="DomainB",
+                    parent_uid="clu-b",
+                    parent_name="Cluster01",
+                ),
+                Asset(
+                    uid="mB2-noname",
+                    name="NodeB2",
+                    type="CpmiClusterMember",
+                    mgmt_name="mds1",
+                    domain_name="DomainB",
+                    parent_name="Cluster01",
+                ),
+            ],
+        )
+
+        # 1. Host "DNS" does NOT shadow service-group "DNS"
+        dns_target, dns_members = await search_service.resolve_group_with_members(
+            "mds1",
+            "DomainA",
+            "DNS",
+            cache_mode="cache",
+        )
+        assert isinstance(dns_target, CPService) and dns_target.uid == "sg-dns"
+        assert [m.uid for m in dns_members] == ["s-53"]
+
+        # 2. Non-group service "Cluster01" does NOT shadow Cluster01 asset, and DomainB members do NOT leak
+        clu_target, clu_members = await search_service.resolve_group_with_members(
+            "mds1",
+            "DomainA",
+            "Cluster01",
+            cache_mode="cache",
+        )
+        assert isinstance(clu_target, Asset) and clu_target.uid == "clu-a"
+        assert [m.uid for m in clu_members] == ["mA1"]
+
+        # 3. Cross-scope container collision (CPObject group vs CPService service-group across domains) raises AmbiguousObjectError
+        with pytest.raises(AmbiguousObjectError):
+            await search_service.resolve_group_with_members("mds1", None, "CrossScope", cache_mode="cache")
+
+        # 4. VVAH-SEARCH-01: query_objects bounds limit (<= 1000), offset (>= 0), and group_by slices
+        bulk_hosts = [
+            CPObject(uid=f"bh-{i:04d}", name=f"bulk-{i:04d}", type="host", mgmt_name="mds1", domain_name="DomainB")
+            for i in range(1005)
+        ]
+        await cache.replace_domain_objects("mds1", "DomainB", bulk_hosts, types=["host"])
+        bounded = await search_service.query_objects(mgmt_name="mds1", limit=99999, offset=-10, cache_mode="cache")
+        assert len(bounded["objects"]) == 1000
+        assert bounded["from"] == 1
+        assert bounded["to"] == 1000
+
+        grouped_page = await search_service.query_objects(
+            mgmt_name="mds1",
+            domain_name="DomainB",
+            types=["host"],
+            group_by=["name"],
+            limit=3,
+            offset=2,
+            cache_mode="cache",
+        )
+        assert grouped_page["total_groups"] == 1005
+        assert len(grouped_page["groups"]) == 3
+    finally:
+        await db.close()

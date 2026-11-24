@@ -11,9 +11,12 @@ from mcp.types import CallToolResult
 from arodonata.client import ArodonataClient
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
+    CANONICAL_ASSET_TYPES,
     DEFAULT_OBJECT_TYPES,
     DEFAULT_SERVICE_TYPES,
+    SyncScope,
     expand_asset_types,
+    normalize_any_type,
     normalize_object_type,
     normalize_service_type,
 )
@@ -22,6 +25,7 @@ from arodonata.core.services.service_cache import resolve_service_query_command
 from arodonata.mcp.config import ArodonataMCPSettings
 from arodonata.mcp.errors import (
     ToolFailure,
+    collect_known_sids,
     json_tool_result,
     mcp_tool_guard,
     resolve_mgmt_name,
@@ -127,8 +131,8 @@ def register_object_tools(
     ) -> CallToolResult:
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
         mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
+        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
         normalized_types = [normalize_object_type(t) for t in types if t and t.strip()] if types else None
 
         if is_live:
@@ -143,7 +147,8 @@ def register_object_tools(
                 limit=limit,
                 offset=offset,
             )
-            return json_tool_result(live_envelope)
+            known_sids = await collect_known_sids(client, eff_mgmt)
+            return json_tool_result(live_envelope, known_sids=known_sids)
 
         mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "objects", mode)
         await _enforce_live_quota_if_sync_required(
@@ -179,7 +184,8 @@ def register_object_tools(
             cache_age_seconds=age,
             extra={"mgmt_name": eff_mgmt, "domain": eff_domain},
         )
-        return json_tool_result(envelope)
+        known_sids = await collect_known_sids(client, eff_mgmt)
+        return json_tool_result(envelope, known_sids=known_sids)
 
     @server.tool(
         name="list_services",
@@ -204,8 +210,8 @@ def register_object_tools(
     ) -> CallToolResult:
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
         mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
+        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
         normalized_types = [normalize_service_type(t) for t in types if t and t.strip()] if types else None
 
         if is_live:
@@ -220,7 +226,8 @@ def register_object_tools(
                 limit=limit,
                 offset=offset,
             )
-            return json_tool_result(live_envelope)
+            known_sids = await collect_known_sids(client, eff_mgmt)
+            return json_tool_result(live_envelope, known_sids=known_sids)
 
         mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "services", mode)
         await _enforce_live_quota_if_sync_required(
@@ -256,7 +263,8 @@ def register_object_tools(
             cache_age_seconds=age,
             extra={"mgmt_name": eff_mgmt, "domain": eff_domain},
         )
-        return json_tool_result(envelope)
+        known_sids = await collect_known_sids(client, eff_mgmt)
+        return json_tool_result(envelope, known_sids=known_sids)
 
     @server.tool(
         name="list_assets",
@@ -282,8 +290,8 @@ def register_object_tools(
     ) -> CallToolResult:
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
         mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
+        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
         expanded_types = expand_asset_types(types) if types else None
 
         if is_live:
@@ -301,6 +309,7 @@ def register_object_tools(
                     domain=eff_domain,
                 )
             objs_raw = res.data.get("objects", []) if isinstance(res.data.get("objects"), list) else []
+            known_sids = await collect_known_sids(client, eff_mgmt)
             return json_tool_result(
                 {
                     "from": res.data.get("from", (offset + 1) if objs_raw else 0),
@@ -311,7 +320,8 @@ def register_object_tools(
                     "mgmt_name": eff_mgmt,
                     "domain": eff_domain,
                     "objects": objs_raw,
-                }
+                },
+                known_sids=known_sids,
             )
 
         # When filtering by `parent`, load all domain assets first so parent -> member_uids can be resolved
@@ -343,7 +353,8 @@ def register_object_tools(
             cache_age_seconds=age,
             extra={"mgmt_name": eff_mgmt, "domain": eff_domain},
         )
-        return json_tool_result(envelope)
+        known_sids = await collect_known_sids(client, eff_mgmt)
+        return json_tool_result(envelope, known_sids=known_sids)
 
     @server.tool(
         name="search_objects",
@@ -369,21 +380,50 @@ def register_object_tools(
     ) -> CallToolResult:
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name) if (mgmt_name or domain or domains) else None
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain) if eff_mgmt else None
+        mode, _ = _normalize_cache_mode(cache_mode, default="smart")
+        eff_domain = (
+            await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
+            if eff_mgmt
+            else None
+        )
         target_domains = domains if domains is not None else ([eff_domain] if eff_domain else None)
-        await _validate_optional_domains(client, eff_mgmt, target_domains)
+        await _validate_optional_domains(client, eff_mgmt, target_domains, cache_mode=mode)
 
         raw_types = [t.strip() for t in types if t and t.strip()] if types else None
-        mode, _ = _normalize_cache_mode(cache_mode, default="smart")
-        mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "objects", mode)
-        await _enforce_live_quota_if_sync_required(
-            client,
-            eff_mgmt,
-            eff_domain,
-            "objects",
-            mode,
-            domains=target_domains,
+        canonical_assets_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
+        want_search_assets = bool(
+            raw_types and any(normalize_any_type(t).lower() in canonical_assets_lower for t in raw_types)
         )
+        want_search_objects = raw_types is None or any(
+            not normalize_any_type(t).startswith("service-")
+            and normalize_any_type(t).lower() not in canonical_assets_lower
+            for t in raw_types
+        )
+        eff_mode = mode
+        if want_search_objects:
+            upgraded_obj = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "objects", mode)
+            if upgraded_obj != "cache" and eff_mode == "cache":
+                eff_mode = upgraded_obj
+            await _enforce_live_quota_if_sync_required(
+                client,
+                eff_mgmt,
+                eff_domain,
+                "objects",
+                upgraded_obj,
+                domains=target_domains,
+            )
+        if want_search_assets:
+            upgraded_asset = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "assets", mode)
+            if upgraded_asset != "cache" and eff_mode == "cache":
+                eff_mode = upgraded_asset
+            await _enforce_live_quota_if_sync_required(
+                client,
+                eff_mgmt,
+                eff_domain,
+                "assets",
+                upgraded_asset,
+                domains=target_domains,
+            )
         result = await client.search_objects(
             query,
             mgmt_name=eff_mgmt,
@@ -392,9 +432,18 @@ def register_object_tools(
             include_global=include_global,
             max_depth=max_depth,
             exact_match=exact_match,
-            cache_mode=mode,
+            cache_mode=eff_mode,
         )
-        age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "*")
+        search_ages: list[float] = []
+        if want_search_objects:
+            obj_age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "*")
+            if obj_age is not None:
+                search_ages.append(obj_age)
+        if want_search_assets:
+            asset_age = await _compute_cache_age(client, eff_mgmt, eff_domain, "assets", "*")
+            if asset_age is not None:
+                search_ages.append(asset_age)
+        age = max(search_ages) if search_ages else None
         envelope_mgmt = eff_mgmt or (client.settings.mgmt_names[0] if len(client.settings.mgmt_names) == 1 else None)
         serialized_matches = [_serialize_object(o, details_level="standard") for o in result.matches]
         envelope = _build_page_envelope(
@@ -412,7 +461,8 @@ def register_object_tools(
                 },
             },
         )
-        return json_tool_result(envelope)
+        known_sids = await collect_known_sids(client, eff_mgmt)
+        return json_tool_result(envelope, known_sids=known_sids)
 
     @server.tool(
         name="query_objects",
@@ -449,23 +499,84 @@ def register_object_tools(
     ) -> CallToolResult:
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name) if mgmt_name else None
-        eff_domain = (
-            await validate_domain_or_fail(client, eff_mgmt, domain)
-            if (eff_mgmt and domain)
-            else (domain.strip() if domain else None)
-        )
-        await _validate_optional_domains(client, eff_mgmt, domains)
-
         mode, _ = _normalize_cache_mode(cache_mode, default="smart")
-        mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "objects", mode)
-        await _enforce_live_quota_if_sync_required(
-            client,
-            eff_mgmt,
-            eff_domain,
-            "objects",
-            mode,
-            domains=domains,
-        )
+        if eff_mgmt and domain:
+            eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
+        else:
+            eff_domain = domain.strip() if domain and domain.strip() else None
+            if eff_domain:
+                await _validate_optional_domains(client, eff_mgmt, [eff_domain], cache_mode=mode)
+        await _validate_optional_domains(client, eff_mgmt, domains, cache_mode=mode)
+
+        canonical_asset_types_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
+        requested_types: list[str] | None = None
+        if types is not None:
+            requested_types = []
+            for raw_t in types:
+                clean_t = str(raw_t or "").strip()
+                if not clean_t:
+                    continue
+                any_t = normalize_any_type(clean_t)
+                candidates = (
+                    tuple(t.lower() for t in expand_asset_types([clean_t]))
+                    if any_t.lower() in canonical_asset_types_lower
+                    else (any_t,)
+                )
+                for c in candidates:
+                    if c not in requested_types:
+                        requested_types.append(c)
+        if aggregate == "describe":
+            want_objects, want_services, want_assets = True, False, False
+        else:
+            want_objects = requested_types is None or any(
+                not t.startswith("service-") and t not in canonical_asset_types_lower for t in requested_types
+            )
+            want_services = requested_types is not None and any(t.startswith("service-") for t in requested_types)
+            want_assets = requested_types is not None and any(t in canonical_asset_types_lower for t in requested_types)
+            if requested_types is None and (port is not None or protocol is not None):
+                want_services = True
+            if requested_types is None and (parent_id is not None or parent_asset_id is not None):
+                want_objects = False
+                want_assets = True
+
+        target_scopes: list[tuple[SyncScope, list[str] | None]] = []
+        if want_objects:
+            obj_item_types = (
+                [t for t in requested_types if not t.startswith("service-") and t not in canonical_asset_types_lower]
+                if requested_types is not None
+                else None
+            )
+            target_scopes.append(("objects", obj_item_types or None))
+        if want_services:
+            svc_item_types = (
+                [t for t in requested_types if t.startswith("service-")]
+                if requested_types is not None
+                else list(DEFAULT_SERVICE_TYPES)
+            )
+            target_scopes.append(("services", svc_item_types or None))
+        if want_assets:
+            target_scopes.append(("assets", None))
+        if not target_scopes:
+            target_scopes.append(("objects", None))
+
+        eff_mode = mode
+        for q_scope, q_types in target_scopes:
+            if q_scope in ("objects", "services", "assets"):
+                upgraded = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, q_scope, mode)
+                if upgraded != "cache" and eff_mode == "cache":
+                    eff_mode = upgraded
+                await _enforce_live_quota_if_sync_required(
+                    client,
+                    eff_mgmt,
+                    eff_domain,
+                    q_scope,
+                    upgraded,
+                    domains=domains,
+                    item_types=q_types,
+                )
+
+        eff_limit = max(1, min(int(limit), 1000))
+        eff_offset = max(0, int(offset))
         result = await client.query_objects(
             mgmt_name=eff_mgmt,
             domain_name=eff_domain,
@@ -482,11 +593,18 @@ def register_object_tools(
             include_global=include_global,
             group_by=group_by,
             aggregate=aggregate,
-            limit=limit,
-            offset=offset,
-            cache_mode=mode,
+            limit=eff_limit,
+            offset=eff_offset,
+            cache_mode=eff_mode,
         )
-        age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "*")
+        query_ages: list[float] = []
+        for q_scope, q_types in target_scopes:
+            q_item_type = q_types[0] if q_types and len(q_types) == 1 else "*"
+            scope_age = await _compute_cache_age(client, eff_mgmt, eff_domain, q_scope, q_item_type)
+            if scope_age is not None:
+                query_ages.append(scope_age)
+        age: float | None = max(query_ages) if query_ages else None
         result["source"] = "cache"
         result["cache_age_seconds"] = age
-        return json_tool_result(result)
+        known_sids = await collect_known_sids(client, eff_mgmt)
+        return json_tool_result(result, known_sids=known_sids)

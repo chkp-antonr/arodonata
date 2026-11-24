@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from fnmatch import fnmatchcase
 
 from mcp.server.mcpserver import MCPServer
@@ -12,9 +12,11 @@ from arodonata.client import ArodonataClient
 from arodonata.core.context import SERVICE_COMMAND_TYPES
 from arodonata.core.errors import AmbiguousObjectError
 from arodonata.core.models.common import CANONICAL_ASSET_TYPES, CacheMode, SyncScope
+from arodonata.core.primitives import parse_composite_id
 from arodonata.mcp.config import ArodonataMCPSettings
 from arodonata.mcp.errors import (
     ToolFailure,
+    collect_known_sids,
     json_tool_result,
     mcp_tool_guard,
     resolve_mgmt_name,
@@ -49,21 +51,26 @@ async def _resolve_lookup_mode_and_enforce_live_quota(
     eff_domain: str | None,
     mode: CacheMode,
     *,
+    scopes: Sequence[tuple[SyncScope, Sequence[str] | None]] | None = None,
     scope: SyncScope = "objects",
     item_types: list[str] | None = None,
 ) -> tuple[str | None, CacheMode]:
-    """Resolve implicit domain sync mode and enforce live quota if domain or scope sync is required."""
+    """Resolve implicit domain sync mode and enforce live quota across all candidate scopes."""
     if mode != "cache" and eff_domain is None and not await client.cache.get_domains(eff_mgmt, include_global=True):
         await _enforce_live_quota_if_sync_required(client, eff_mgmt, None, "domains", mode)
     sync_domain, eff_mode = await client.search_service.resolve_implicit_domain_mode(eff_mgmt, eff_domain, mode)
-    await _enforce_live_quota_if_sync_required(
-        client,
-        eff_mgmt,
-        sync_domain or eff_domain,
-        scope,
-        eff_mode,
-        item_types=item_types,
+    target_scopes: Sequence[tuple[SyncScope, Sequence[str] | None]] = (
+        scopes if scopes is not None else [(scope, item_types)]
     )
+    for target_scope, target_types in target_scopes:
+        await _enforce_live_quota_if_sync_required(
+            client,
+            eff_mgmt,
+            sync_domain or eff_domain,
+            target_scope,
+            eff_mode,
+            item_types=target_types,
+        )
     return sync_domain, eff_mode
 
 
@@ -102,6 +109,7 @@ def register_lookup_tools(
         )
         age = None if is_live else await _compute_cache_age(client, eff_mgmt, None, "domains", "*")
         serialized = [_serialize_domain(d, details_level=details_level) for d in domains]
+        known_sids = await collect_known_sids(client, eff_mgmt)
         return json_tool_result(
             _build_page_envelope(
                 serialized,
@@ -110,7 +118,8 @@ def register_lookup_tools(
                 source="live" if is_live else "cache",
                 cache_age_seconds=age,
                 extra={"mgmt_name": eff_mgmt},
-            )
+            ),
+            known_sids=known_sids,
         )
 
     @server.tool(
@@ -135,9 +144,9 @@ def register_lookup_tools(
     ) -> CallToolResult:
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
-        target_domain = eff_domain or "default"
         mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
+        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
+        target_domain = eff_domain or "default"
         clean_obj_type = validate_show_object_type(obj_type, eff_mgmt, eff_domain)
 
         query_str = uid_or_name.strip() if uid_or_name else ""
@@ -146,6 +155,7 @@ def register_lookup_tools(
         query_lower = query_str.lower()
         has_explicit_wildcard = "*" in query_str or "?" in query_str
 
+        eff_mode: CacheMode = mode
         if not is_live:
             is_service_type = clean_obj_type is not None and (
                 clean_obj_type in SERVICE_COMMAND_TYPES or clean_obj_type.startswith("service-")
@@ -162,25 +172,35 @@ def register_lookup_tools(
                 else "objects"
             )
             item_types = [clean_obj_type] if clean_obj_type and eff_scope in ("objects", "services") else None
+            lookup_scopes: Sequence[tuple[SyncScope, Sequence[str] | None]] = (
+                [("objects", None), ("services", None), ("assets", None)]
+                if clean_obj_type is None
+                else [(eff_scope, item_types)]
+            )
             sync_domain, eff_mode = await _resolve_lookup_mode_and_enforce_live_quota(
                 client,
                 eff_mgmt,
                 eff_domain,
                 mode,
-                scope=eff_scope,
-                item_types=item_types,
+                scopes=lookup_scopes,
             )
 
+            known_sids = await collect_known_sids(client, eff_mgmt)
             if not has_explicit_wildcard and not is_layer_or_pkg_type:
                 try:
                     found_exact = await client.find_object(
                         eff_mgmt, eff_domain, query_str, obj_type=clean_obj_type, cache_mode=eff_mode
                     )
                 except AmbiguousObjectError as exc:
-                    return ambiguous_show_result(eff_mgmt, exc.candidates, str(exc))
+                    return ambiguous_show_result(eff_mgmt, exc.candidates, str(exc), known_sids=known_sids)
                 if found_exact is not None:
                     return await exact_match_result(
-                        client, found_exact, eff_mgmt=eff_mgmt, target_domain=target_domain, details_level=details_level
+                        client,
+                        found_exact,
+                        eff_mgmt=eff_mgmt,
+                        target_domain=target_domain,
+                        details_level=details_level,
+                        known_sids=known_sids,
                     )
 
             candidates = await load_show_object_candidates(
@@ -211,6 +231,7 @@ def register_lookup_tools(
                             [_serialize_any_entity(c, details_level="standard") for c in exact_cands],
                             f"Ambiguous lookup for {uid_or_name!r} on {eff_mgmt!r} matched across "
                             f"multiple domains ({', '.join(sorted(cand_domains))}). Specify 'domain'.",
+                            known_sids=known_sids,
                         )
                     return await exact_match_result(
                         client,
@@ -218,6 +239,7 @@ def register_lookup_tools(
                         eff_mgmt=eff_mgmt,
                         target_domain=target_domain,
                         details_level=details_level,
+                        known_sids=known_sids,
                     )
 
             if has_explicit_wildcard:
@@ -238,7 +260,8 @@ def register_lookup_tools(
                             "domain": matched_domain,
                             "object": single_dict,
                             "objects": [single_dict],
-                        }
+                        },
+                        known_sids=known_sids,
                     )
                 return sliced_candidate_result(
                     wildcard_matches,
@@ -248,6 +271,7 @@ def register_lookup_tools(
                     domain=eff_domain or target_domain,
                     offset=offset,
                     limit=limit,
+                    known_sids=known_sids,
                 )
 
             substring_matches = [c for c in candidates if query_lower and query_lower in c.name.lower()]
@@ -280,6 +304,15 @@ def register_lookup_tools(
                         f"{len(substring_matches)} cached substring candidate(s). Pass an exact name/UID "
                         "or an explicit wildcard pattern (e.g. 'prefix*suffix')."
                     ),
+                    known_sids=known_sids,
+                )
+
+            if mode == "cache" or eff_mode == "cache":
+                raise ToolFailure(
+                    f"Object {uid_or_name!r} not found in cache on {eff_mgmt!r} ({target_domain}).",
+                    mgmt_name=eff_mgmt,
+                    domain=eff_domain,
+                    known_sids=known_sids,
                 )
 
         return await live_show_object(
@@ -313,17 +346,25 @@ def register_lookup_tools(
     ) -> CallToolResult:
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
-        target_domain = eff_domain or "default"
         mode, _ = _normalize_cache_mode(cache_mode, default="smart")
+        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
+        clean_group = group_name_or_uid.strip() if group_name_or_uid else ""
+        if eff_domain is None and clean_group.startswith(f"{eff_mgmt}:"):
+            parsed_target = parse_composite_id(clean_group, expected_parts=3)
+            if parsed_target is not None and parsed_target[0] == eff_mgmt:
+                eff_domain = await validate_domain_or_fail(
+                    client, eff_mgmt, parsed_target[1], allow_refresh=(mode != "cache")
+                )
+        target_domain = eff_domain or "default"
         sync_domain, eff_mode = await _resolve_lookup_mode_and_enforce_live_quota(
             client,
             eff_mgmt,
             eff_domain,
             mode,
-            scope="objects",
+            scopes=[("objects", None), ("services", None), ("assets", None)],
         )
 
+        known_sids = await collect_known_sids(client, eff_mgmt)
         try:
             resolved_group, members = await client.search_service.resolve_group_with_members(
                 eff_mgmt, eff_domain, group_name_or_uid, recursive=recursive, max_depth=max_depth, cache_mode=eff_mode
@@ -342,7 +383,8 @@ def register_lookup_tools(
                     "domain": None,
                     "objects": exc.candidates,
                     "hint": str(exc),
-                }
+                },
+                known_sids=known_sids,
             )
         matched_domain = (
             (getattr(resolved_group, "domain_name", None) if resolved_group is not None else None)
@@ -360,5 +402,6 @@ def register_lookup_tools(
                 source="cache",
                 cache_age_seconds=age,
                 extra={"group": group_name_or_uid, "mgmt_name": eff_mgmt, "domain": matched_domain},
-            )
+            ),
+            known_sids=known_sids,
         )

@@ -13,6 +13,14 @@ from arodonata.core.services.asset_service import VSX_CHILD_TYPES, _extract_inte
 from arodonata.core.services.topology._shared import _NormalizedInterface
 
 
+def _first_present(*values: Any) -> Any:
+    """Return the first value that is neither ``None`` nor an empty string."""
+    for value in values:
+        if value is not None and value != "":
+            return value
+    return None
+
+
 def _extract_anti_spoofing_mode(raw_if: dict[str, Any], *extra_dicts: dict[str, Any] | None) -> AntiSpoofingMode:
     """Extract normalized `AntiSpoofingMode` (`'prevent' | 'detect' | 'off' | 'unknown'`) from interface dictionaries."""
     containers: list[dict[str, Any]] = [raw_if]
@@ -116,13 +124,15 @@ def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -
             ipv4_address = None
 
     mask_len = mask_to_prefix_len(
-        raw_if.get("ipv4-mask-length")
-        or raw_if.get("ipv4_mask_length")
-        or raw_if.get("mask-length")
-        or raw_if.get("ipv4-network-mask")
-        or raw_if.get("ipv4_network_mask")
-        or raw_if.get("netmask")
-        or raw_if.get("subnet-mask")
+        _first_present(
+            raw_if.get("ipv4-mask-length"),
+            raw_if.get("ipv4_mask_length"),
+            raw_if.get("mask-length"),
+            raw_if.get("ipv4-network-mask"),
+            raw_if.get("ipv4_network_mask"),
+            raw_if.get("netmask"),
+            raw_if.get("subnet-mask"),
+        )
     )
 
     is_external = False
@@ -137,11 +147,13 @@ def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -
         sub4 = spec_dict.get("subnet4") or spec_dict.get("subnet")
         if sub4 and str(sub4).strip():
             plen = mask_to_prefix_len(
-                spec_dict.get("mask-length4")
-                or spec_dict.get("mask_length4")
-                or spec_dict.get("mask-length")
-                or spec_dict.get("subnet-mask")
-                or spec_dict.get("netmask")
+                _first_present(
+                    spec_dict.get("mask-length4"),
+                    spec_dict.get("mask_length4"),
+                    spec_dict.get("mask-length"),
+                    spec_dict.get("subnet-mask"),
+                    spec_dict.get("netmask"),
+                )
             )
             if plen is not None:
                 try:

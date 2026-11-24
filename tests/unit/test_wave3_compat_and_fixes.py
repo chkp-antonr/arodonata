@@ -200,7 +200,8 @@ async def test_session_cleaner_multi_identity_seeding_and_keyed_sid_eviction(tmp
         )
 
         # Even if show-sessions reports uid-live-A with 0 changes, Identity B's startup cleanup
-        # must NOT treat Identity A's SID as its own, must preserve uid-live-A, and must seed Identity B.
+        # must NOT treat Identity A's SID as its own, must preserve uid-live-A, and under DA-042
+        # must log out its temporary RW cleanup session without seeding arodonata_sid_cache.
         show_sessions_objects[:] = [
             {
                 "uid": "uid-live-A",
@@ -210,16 +211,33 @@ async def test_session_cleaner_multi_identity_seeding_and_keyed_sid_eviction(tmp
                 "locks": 0,
             }
         ]
-        ok_b = await amgmt.session_cleaner.cleanup_server_sessions("mds1", auth=auth_b, seed_system_sid=True)
+        ok_b = await amgmt.session_cleaner.cleanup_server_sessions("mds1", auth=auth_b)
         assert ok_b is True
         assert [c[1]["uid"] for c in calls if c[0] == "discard"] == []
 
         row_a = await amgmt.cache.get_sid("mds1", SYSTEM_DOMAIN_KEY, auth_identity=id_a)
         row_b = await amgmt.cache.get_sid("mds1", SYSTEM_DOMAIN_KEY, auth_identity=id_b)
         assert row_a is not None and row_a.sid == "sid_a_live"
-        assert row_b is not None and row_b.sid == "sid_clean_1_tok"
+        assert row_b is None
+        assert "sid_clean_1_tok" in logout_sids
 
-        # 2. When cleanup runs with seed_system_sid=False for Identity A:
+        # Seed Identity B's read-only cached SID (representing normal read-only session acquisition)
+        await amgmt.cache.upsert_sid(
+            SIDCacheEntry(
+                id=f"mds1:{SYSTEM_DOMAIN_KEY}:{id_b}",
+                mgmt_name="mds1",
+                domain_name=SYSTEM_DOMAIN_KEY,
+                sid="sid_b_live",
+                server_ip="10.0.0.1",
+                session_uid="uid-clean-1",
+                auth_identity=id_b,
+                created_at=now,
+                last_used_at=now,
+                expires_at=now + timedelta(seconds=600),
+            )
+        )
+
+        # 2. When cleanup runs for Identity A:
         # - Identity A's expired cached SID (uid-stale-A) is discarded, logged out, and evicted.
         # - Identity B's live fresh cached SID (uid-clean-1) is PRESERVED (never discarded or evicted).
         # - Identity C's expired cached SID (uid-stale-C) is ALSO preserved from Identity A's cleanup.
@@ -278,15 +296,15 @@ async def test_session_cleaner_multi_identity_seeding_and_keyed_sid_eviction(tmp
                 "locks": 0,
             },
         ]
-        ok_clean_a = await amgmt.session_cleaner.cleanup_server_sessions("mds1", auth=auth_a, seed_system_sid=False)
+        ok_clean_a = await amgmt.session_cleaner.cleanup_server_sessions("mds1", auth=auth_a)
         assert ok_clean_a is True
         assert [c[1]["uid"] for c in calls if c[0] == "discard"] == ["uid-stale-A"]
         assert "sid_a_stale" in logout_sids
-        assert "sid_clean_1_tok" not in logout_sids
+        assert "sid_b_live" not in logout_sids
         assert "sid_c_stale" not in logout_sids
         assert await amgmt.cache.get_sid("mds1", SYSTEM_DOMAIN_KEY, auth_identity=id_a) is None
         row_b_after = await amgmt.cache.get_sid("mds1", SYSTEM_DOMAIN_KEY, auth_identity=id_b)
-        assert row_b_after is not None and row_b_after.sid == "sid_clean_1_tok"
+        assert row_b_after is not None and row_b_after.sid == "sid_b_live"
         row_c_after = await amgmt.cache.get_sid("mds1", SYSTEM_DOMAIN_KEY, auth_identity=id_c)
         assert row_c_after is not None and row_c_after.sid == "sid_c_stale"
     finally:
@@ -376,9 +394,11 @@ async def test_session_cleaner_multi_identity_seeding_and_keyed_sid_eviction(tmp
             rate_limiter=limiter,
         )
         calls.clear()
-        assert await cleaner.cleanup_server_sessions("mds1", auth=strict_auth, seed_system_sid=True) is True
-        assert strict_cache.get_calls == [strict_auth.identity_key]
-        assert calls == []
+        assert await cleaner.cleanup_server_sessions("mds1", auth=strict_auth) is True
+        # REQ-SESS-011: no cached-SID shortcut; cleanup always inspects `show-sessions` and logs out its RW session.
+        assert "show-sessions" in [c[0] for c in calls]
+        assert "logout" in [c[0] for c in calls]
+        assert strict_cache.row.sid == "sid_strict_cached"
     finally:
         await db_strict.close()
 

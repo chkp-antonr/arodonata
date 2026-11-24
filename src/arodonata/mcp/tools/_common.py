@@ -11,7 +11,7 @@ from typing import Any, Literal
 from arodonata.client import ArodonataClient
 from arodonata.core.errors import sanitize_mapping
 from arodonata.core.models.assets import Asset
-from arodonata.core.models.common import CANONICAL_ASSET_TYPES, SyncScope
+from arodonata.core.models.common import CANONICAL_ASSET_TYPES, CacheMode, SyncScope
 from arodonata.core.models.domains import DomainInfo
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.rulebase import RulebaseLayerEntry, RulebaseType
@@ -19,7 +19,13 @@ from arodonata.core.models.services import CPService
 from arodonata.core.services.search_service import classify_search_term, matches_classified_term
 from arodonata.cpcrud import Plan
 from arodonata.cpcrud.state_reader import OBJECT_ITEM_TYPES, SERVICE_ITEM_TYPES
-from arodonata.mcp.errors import ToolFailure, validate_domain_or_fail
+from arodonata.mcp.errors import (
+    ToolFailure,
+    consume_live_quota_if_needed,
+    get_known_domain_names,
+    resolve_mgmt_name,
+    validate_domain_or_fail,
+)
 from arodonata.mcp.tools._cache import (
     _compute_cache_age as _compute_cache_age,
 )
@@ -79,11 +85,23 @@ def _canonical_plan_payload(plan_dict: dict[str, Any]) -> bytes:
     return json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
-def _sign_plan(hmac_key: bytes, plan_dict: dict[str, Any], *, owner_id: str | None = None) -> str:
-    """Compute HMAC-SHA256 hex digest over the canonical serialized `Plan` (optionally bound to `owner_id`)."""
+def _sign_plan(
+    hmac_key: bytes,
+    plan_dict: dict[str, Any],
+    *,
+    owner_id: str | None = None,
+    plan_id: str | None = None,
+) -> str:
+    """Compute HMAC-SHA256 hex digest over the canonical `Plan` bound to `owner_id` and `plan_id`."""
     payload = _canonical_plan_payload(plan_dict)
-    if owner_id is not None:
-        payload = owner_id.encode("utf-8") + b"\x00" + payload
+    eff_plan_id = (
+        plan_id
+        if plan_id is not None
+        else (plan_dict.get("plan_id") if isinstance(plan_dict.get("plan_id"), str) else "")
+    )
+    if owner_id is not None or eff_plan_id:
+        prefix = f"{owner_id or ''}\x00{eff_plan_id}".encode() + b"\x00"
+        payload = prefix + payload
     return hmac.new(hmac_key, payload, hashlib.sha256).hexdigest()
 
 
@@ -300,10 +318,41 @@ async def _validate_optional_domains(
     client: ArodonataClient,
     eff_mgmt: str | None,
     domains: Sequence[str] | None,
+    cache_mode: CacheMode = "smart",
 ) -> None:
-    if eff_mgmt and domains:
+    if not domains:
+        return
+    offline = cache_mode == "cache"
+    if eff_mgmt:
         for dom in domains:
-            await validate_domain_or_fail(client, eff_mgmt, dom)
+            await validate_domain_or_fail(client, eff_mgmt, dom, allow_refresh=not offline)
+        return
+    mgmt_names = list(client.settings.mgmt_names) or [resolve_mgmt_name(client, None)]
+    if len(mgmt_names) == 1:
+        single_mgmt = resolve_mgmt_name(client, mgmt_names[0])
+        for dom in domains:
+            await validate_domain_or_fail(client, single_mgmt, dom, allow_refresh=not offline)
+        return
+    for raw_dom in domains:
+        clean_dom = raw_dom.strip() if raw_dom else ""
+        if not clean_dom or clean_dom == "System Data":
+            continue
+        found = False
+        known_all: list[str] = []
+        for m_name in mgmt_names:
+            if not offline and not await client.cache.get_domains(mgmt_name=m_name, include_global=True):
+                consume_live_quota_if_needed()
+            names = await get_known_domain_names(client, m_name, refresh_if_empty=not offline)
+            if clean_dom in names:
+                found = True
+                break
+            known_all.extend(f"{m_name}:{n}" for n in names if f"{m_name}:{n}" not in known_all)
+        if not found and known_all:
+            raise ToolFailure(
+                f"Unknown domain {clean_dom!r} across configured management servers ({', '.join(mgmt_names)}). "
+                f"Known domains: {', '.join(known_all)}.",
+                domain=clean_dom,
+            )
 
 
 async def _fetch_live_collection(

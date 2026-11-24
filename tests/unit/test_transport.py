@@ -821,3 +821,206 @@ async def test_real_loopback_tls_dedicated_session_pooling_and_95_request_rotati
             await transport.close()
     finally:
         await runner.cleanup()
+
+
+@pytest.mark.spec("SCN-TRANS-001-1")
+async def test_amgmt_client_api_call_rejects_malformed_command_before_login_or_db_init(tmp_path: Path) -> None:
+    """SCN-TRANS-001-1 (DA-041): AMgmtClient.api_call validates command before is_readonly_command or login I/O."""
+    from arodonata import AMgmtClient
+
+    _der, fp = _make_der("amgmt-cmd-val")
+    sender_calls = 0
+
+    async def _never_called_sender(**_kwargs: Any) -> tuple[RawHttpResponse, PooledSocketEntry | None]:
+        nonlocal sender_calls
+        sender_calls += 1
+        return RawHttpResponse(status=200, body=b"{}"), None
+
+    cfg = ArodonataSettings(
+        mgmt_name="mds1",
+        mgmt_ip="10.0.0.1",
+        api_key="k",
+        tls_trust="pinned",
+        tls_fingerprints=f"10.0.0.1:443={fp}",
+    )
+    policy = TrustPolicy(
+        mode="pinned",
+        known_hosts_path=tmp_path / "known.json",
+        pinned_fingerprints=cfg.tls_fingerprints,
+    )
+    transport = ApiTransport(
+        settings=cfg,
+        trust_policy=policy,
+        peer_cert_getter=lambda _h, _p: _der,
+        request_sender=_never_called_sender,
+    )
+    client = AMgmtClient(settings=cfg, engine=None, transport=transport, trust_policy=policy)
+    try:
+        for bad_cmd in ("show-hosts/../publish", " show-hosts ", "SHOW-HOSTS", "/show-hosts", "show-hosts?x=1"):
+            with pytest.raises(ValidationError):
+                await client.api_call("mds1", bad_cmd)
+        assert sender_calls == 0
+    finally:
+        await client.close(logout=False)
+
+
+@pytest.mark.spec("SCN-TRANS-004-2")
+def test_verified_connection_pool_canonicalizes_mixed_case_and_ipv6_keys() -> None:
+    """SCN-TRANS-004-2 (DA-054): VerifiedConnectionPool canonicalizes DNS casing and IPv6 spellings."""
+    pool = VerifiedConnectionPool(max_idle_seconds=10.0, monotonic_fn=lambda: 100.0)
+    proto = FakeSocketProtocol()
+    entry = PooledSocketEntry(
+        host="2001:db8::1",
+        port=443,
+        fingerprint="AA:BB",
+        protocol=proto,
+        last_used_at=100.0,
+    )
+    assert pool.release_after_command(entry, "show-hosts") is True
+    assert pool.pooled_count("[2001:0db8:0000:0000::1]", 443) == 1
+
+    reused = pool.acquire_for_command("[2001:0DB8::1]", 443, "show-networks")
+    assert reused is entry
+    assert pool.release_after_command(entry, "show-networks") is True
+    assert pool.close_host("[2001:0db8::1]", 443) == 1
+    assert proto.closed is True
+
+    proto_dns = FakeSocketProtocol()
+    entry_dns = PooledSocketEntry(
+        host="mds.example.com",
+        port=443,
+        fingerprint="AA:BB",
+        protocol=proto_dns,
+        last_used_at=100.0,
+    )
+    assert pool.release_after_command(entry_dns, "show-hosts") is True
+    assert pool.close_scope("MDS.EXAMPLE.COM", 443, "") == 1
+    assert proto_dns.closed is True
+
+
+@pytest.mark.spec("SCN-TRANS-007-1")
+async def test_rate_limit_timeout_error_preserves_healthy_cached_sid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-TRANS-007-1 (DA-021): RateLimitTimeoutError defaults to request_sent=False and preserves cached SID."""
+    from contextlib import asynccontextmanager
+
+    from arodonata import AMgmtClient
+    from arodonata.core.errors import RateLimitTimeoutError
+
+    rlt = RateLimitTimeoutError("slot wait timeout")
+    assert rlt.phase == "connect"
+    assert rlt.request_sent is False
+
+    der, fp = _make_der("rlt-preserve")
+
+    async def _sender(**kwargs: Any) -> tuple[RawHttpResponse, PooledSocketEntry | None]:
+        if kwargs["command"] == "login":
+            return RawHttpResponse(status=200, body=b'{"sid":"healthy_sid_1","uid":"u1"}'), None
+        return RawHttpResponse(status=200, body=b'{"objects":[]}'), None
+
+    cfg = ArodonataSettings(
+        mgmt_name="mds1",
+        mgmt_ip="10.0.0.1",
+        api_key="k",
+        tls_trust="pinned",
+        tls_fingerprints=f"10.0.0.1:443={fp}",
+    )
+    policy = TrustPolicy(
+        mode="pinned", known_hosts_path=tmp_path / "known.json", pinned_fingerprints=cfg.tls_fingerprints
+    )
+    transport = ApiTransport(
+        settings=cfg, trust_policy=policy, peer_cert_getter=lambda _h, _p: der, request_sender=_sender
+    )
+    client = AMgmtClient(settings=cfg, engine=None, transport=transport, trust_policy=policy)
+    try:
+        await client.initialize(run_startup_cleanup=False)
+        res = await client.api_call("mds1", "show-hosts")
+        assert res.success is True
+        cached_before = await client.cache.get_sid(
+            "mds1",
+            "System Data",
+            auth_identity=(await client.login_coordinator.resolve_credentials("mds1", None)).identity_key,
+        )
+        assert cached_before is not None
+
+        @asynccontextmanager
+        async def _timeout_slot(_mds_ip: str, **_kw: Any):
+            raise RateLimitTimeoutError("busy")
+            yield  # pragma: no cover
+
+        monkeypatch.setattr(client._rate_limiter, "slot", _timeout_slot)
+        with pytest.raises(RateLimitTimeoutError) as exc_info:
+            await client.api_call("mds1", "show-hosts")
+        assert exc_info.value.request_sent is False
+
+        cached_after = await client.cache.get_sid("mds1", "System Data", auth_identity=cached_before.auth_identity)
+        assert cached_after is not None
+        assert cached_after.sid == "healthy_sid_1"
+    finally:
+        await client.close(logout=False)
+
+
+@pytest.mark.spec("SCN-TRANS-007-5")
+async def test_oversized_response_body_aborted_and_not_retried(tmp_path: Path) -> None:
+    """SCN-TRANS-007-5 (VVAH-CLAUDE-01): ApiTransport aborts oversized bodies cleanly without retry."""
+    cert_pem, key_pem, _der, server_fp = _generate_self_signed_cert(tmp_path, "oversize-server")
+    hits = 0
+
+    async def handle_web_api(request: web.Request) -> web.StreamResponse:
+        nonlocal hits
+        hits += 1
+        cmd = request.match_info["cmd"]
+        if cmd == "show-stream":
+            resp = web.StreamResponse(status=200, headers={"Content-Type": "application/json"})
+            await resp.prepare(request)
+            await resp.write(b'{"data":"' + b"A" * 4096 + b'"}')
+            await resp.write_eof()
+            return resp
+        return web.Response(
+            status=200,
+            body=b'{"data":"' + b"B" * 4096 + b'"}',
+            content_type="application/json",
+        )
+
+    app = web.Application()
+    app.router.add_post("/web_api/{cmd}", handle_web_api)
+    ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ssl_ctx.load_cert_chain(certfile=str(cert_pem), keyfile=str(key_pem))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0, ssl_context=ssl_ctx)
+    await site.start()
+    try:
+        assert site._server is not None
+        port = site._server.sockets[0].getsockname()[1]
+        cfg = ArodonataSettings(
+            tls_trust="pinned",
+            tls_fingerprints=f"127.0.0.1:{port}={server_fp}",
+            max_response_bytes=1024,
+        )
+        policy = TrustPolicy(
+            mode="pinned", known_hosts_path=tmp_path / "known.json", pinned_fingerprints=cfg.tls_fingerprints
+        )
+        pool = VerifiedConnectionPool()
+        transport = ApiTransport(settings=cfg, trust_policy=policy, connection_pool=pool)
+        try:
+            # 1. Content-Length exceeding max_response_bytes
+            with pytest.raises(TransportError, match="max_response_bytes") as exc1:
+                await transport.execute("127.0.0.1", "show-hosts", port=port)
+            assert exc1.value.phase == "read"
+            assert exc1.value.request_sent is True
+            assert pool.pooled_count("127.0.0.1", port) == 0
+
+            # 2. Chunked stream without Content-Length exceeding max_response_bytes
+            with pytest.raises(TransportError, match="max_response_bytes") as exc2:
+                await transport.execute("127.0.0.1", "show-stream", port=port)
+            assert exc2.value.phase == "read"
+            assert exc2.value.request_sent is True
+            assert pool.pooled_count("127.0.0.1", port) == 0
+            assert hits == 2
+        finally:
+            await transport.close()
+    finally:
+        await runner.cleanup()

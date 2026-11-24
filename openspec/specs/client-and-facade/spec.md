@@ -317,7 +317,7 @@ All major client, transport, login, lock, cache, and CPCRUD entry points SHALL b
 
 - **WHEN** `to_sse_event(event)` or `stream_as_sse(events)` processes `SyncProgressEvent`, `CPCRUDEvent`, or `StagedSessionEvent` instances
 - **THEN** `to_sse_event()` SHALL map `event.event_type` to `SSEEvent.event` and serialize `model_dump(mode="json")` into `SSEEvent.data`
-- **AND** `SSEEvent.format()` / `stream_as_sse()` SHALL emit wire-format `event:` / `data:` chunks terminated by blank lines without owning HTTP server state
+- **AND** `SSEEvent.encode()` / `stream_as_sse()` SHALL emit wire-format `event:` / `data:` chunks terminated by blank lines without owning HTTP server state
 
 ### Requirement: Extended Client Lifecycle, Streaming, Staged Session, and Service Properties Facade
 
