@@ -244,6 +244,21 @@ class ApiTimeoutError(TransportError, TimeoutError):
 class RateLimitTimeoutError(TransportError, TimeoutError):
     """Raised when acquiring a concurrency slot from RateLimiter exceeds rate_limit_slot_timeout."""
 
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        phase: TransportPhase = "connect",
+        request_sent: bool | None = False,
+        known_sids: Iterable[str] | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            phase=phase,
+            request_sent=False if request_sent is None else request_sent,
+            known_sids=known_sids,
+        )
+
 
 class TaskError(ArodonataError):
     """Base exception for asynchronous Check Point server task failures."""

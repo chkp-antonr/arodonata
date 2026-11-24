@@ -75,7 +75,7 @@ class ServerEndpointConfig(BaseModel):
 
     name: str
     host: str
-    port: int = 443
+    port: int = Field(default=443, ge=1, le=65535)
     api_key: str | None = Field(default=None, repr=False)
     api_version: str | None = Field(default=None)
 
@@ -434,7 +434,14 @@ class ArodonataSettings(BaseSettings):
     )
     mgmt_port: int = Field(
         default=443,
+        ge=1,
+        le=65535,
         validation_alias=AliasChoices("ARODONATA_MGMT_PORT", "MGMT_PORT"),
+    )
+    max_response_bytes: int = Field(
+        default=67_108_864,
+        ge=1024,
+        validation_alias=AliasChoices("ARODONATA_MAX_RESPONSE_BYTES"),
     )
     api_version: str | None = Field(
         default=None,

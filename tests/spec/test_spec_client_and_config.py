@@ -20,7 +20,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from arodonata import ArodonataClient
+from arodonata import AMgmtClient, ArodonataClient
 from arodonata import client as client_mod
 from arodonata.adapters.checkpoint.tls import TrustPolicy
 from arodonata.adapters.checkpoint.transport import ApiTransport, PooledSocketEntry, RawHttpResponse
@@ -348,6 +348,19 @@ async def test_api_call_publish_invalidates_domain_freshness_memo(tmp_path: Path
         assert "publish" in cmds_after_publish
         assert "show-last-published-session" in cmds_after_publish
 
+    # DA-002: Externally injected AMgmtClient also invalidates client freshness memo on write_session publish
+    server.calls.clear()
+    injected_amgmt = AMgmtClient(cfg, engine=None, transport=transport, trust_policy=policy)
+    async with ArodonataClient(cfg, api=injected_amgmt, engine=injected_amgmt.db._engine) as ext_client:
+        await ext_client.cache.upsert_domains([DomainInfo(id="mds1:Corp", mgmt_name="mds1", name="Corp", uid="d1")])
+        await ext_client.get_hosts("mds1", "Corp", cache_mode="smart")
+        async with ext_client.write_session("mds1", "Corp") as _ws:
+            await ext_client.api_call("mds1", "add-host", {"name": "h-ext", "ip-address": "10.0.0.9"}, domain="Corp")
+        assert ext_client.sync_coordinator.is_domain_invalidated("mds1", "Corp")
+        calls_before_ext = len(server.calls)
+        await ext_client.get_hosts("mds1", "Corp", cache_mode="smart")
+        assert any(c["command"] == "show-last-published-session" for c in server.calls[calls_before_ext:])
+
 
 @pytest.mark.spec("SCN-CLIENT-005-1")
 async def test_get_group_members_expands_vsx_parent_including_cross_domain_virtual_systems() -> None:
@@ -524,13 +537,15 @@ async def test_client_write_session_cancellation_shields_discard_and_strips_api_
     cfg, transport, policy = _build_scripted_amgmt_client(tmp_path, server)
     entered = asyncio.Event()
     never = asyncio.Event()
+    ws_sid: str | None = None
     captured_overlay_obj: CPObject | None = None
 
     async with ArodonataClient(cfg, transport=transport, trust_policy=policy) as client:
 
         async def _worker() -> None:
-            nonlocal captured_overlay_obj
-            async with client.write_session("mds1", "Corp"):
+            nonlocal captured_overlay_obj, ws_sid
+            async with client.write_session("mds1", "Corp") as ws:
+                ws_sid = ws.sid
                 await client.add_object(
                     "mds1",
                     "host",
@@ -553,12 +568,13 @@ async def test_client_write_session_cancellation_shields_discard_and_strips_api_
         with pytest.raises(asyncio.CancelledError):
             await t
 
+    assert ws_sid is not None
     assert captured_overlay_obj is not None
     assert "api-key" not in captured_overlay_obj.raw_data
     assert "password" not in captured_overlay_obj.raw_data
-    cmds = [c["command"] for c in server.calls]
-    assert "discard" in cmds and "logout" in cmds
-    assert cmds.index("discard") < cmds.index("logout")
+    ws_cmds = [c["command"] for c in server.calls if c.get("sid") == ws_sid]
+    assert "discard" in ws_cmds and "logout" in ws_cmds
+    assert ws_cmds.index("discard") < ws_cmds.index("logout")
 
 
 @pytest.mark.spec("SCN-CLIENT-010-3")
@@ -1051,7 +1067,19 @@ def test_operational_timeout_cache_and_version_settings_fields() -> None:
     assert custom.servers["m1"].api_version == "1.9"
     assert custom.servers["m2"].api_version == "2.0"
     assert custom.mgmt_port == 8443
+    assert custom.max_response_bytes == 67_108_864
     assert custom.cpcrud_schema_path == "/tmp/custom_schema.json"
+
+    for invalid_port in (0, -1, 65536):
+        with pytest.raises(PydanticValidationError):
+            ArodonataSettings(mgmt_name="m1", mgmt_ip="10.0.0.1", api_key="k", mgmt_port=invalid_port)
+        with pytest.raises(PydanticValidationError):
+            from arodonata.core.config import ServerEndpointConfig
+
+            ServerEndpointConfig(name="m1", host="10.0.0.1", port=invalid_port)
+
+    with pytest.raises(PydanticValidationError):
+        ArodonataSettings(mgmt_name="m1", mgmt_ip="10.0.0.1", api_key="k", max_response_bytes=512)
 
     with pytest.raises(PydanticValidationError):
         ArodonataSettings(mgmt_name="m1", mgmt_ip="10.0.0.1", api_key="k", max_incremental_changes=0)

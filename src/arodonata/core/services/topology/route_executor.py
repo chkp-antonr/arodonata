@@ -127,7 +127,7 @@ async def _execute_ssh_gateway_cli(
                     None,
                 )
             if raw_res.success or not fallback_to_cprid:
-                if raw_res.stderr or raw_res.error_message:
+                if raw_res.stdout or raw_res.stderr or raw_res.error_message or raw_res.bundle_stdout:
                     # Ensure boundary redaction even if raw_res was created via model_construct or mutated
                     return (
                         GatewayCliResult(
@@ -138,6 +138,7 @@ async def _execute_ssh_gateway_cli(
                             executor=raw_res.executor,
                             error_code=raw_res.error_code,
                             error_message=raw_res.error_message,
+                            bundle_stdout=raw_res.bundle_stdout,
                         ),
                         None,
                     )
@@ -274,6 +275,7 @@ async def _run_inline_cprid(
     err_out: str | None = None
     err_code: str | None = None
     known = used_sids or None
+    clean_stdout = _scrub_known_sids(stdout_str, known)
     clean_stderr = _scrub_known_sids(stderr_str, known)
     if not overall_ok:
         if not res.success and is_script_permission_error(res.error_code, res.error_message):
@@ -291,7 +293,7 @@ async def _run_inline_cprid(
 
     return GatewayCliResult(
         success=overall_ok,
-        stdout=stdout_str,
+        stdout=clean_stdout,
         stderr=clean_stderr,
         exit_code=0 if overall_ok else 1,
         executor="cprid",
@@ -406,7 +408,7 @@ async def _run_repository_cprid(
         )
 
     known = used_sids or None
-    stdout_str = outcome.stdout
+    stdout_str = _scrub_known_sids(outcome.stdout, known)
     stderr_str = _scrub_known_sids(outcome.stderr, known)
     is_vs = (target.vsid is not None and int(target.vsid) > 0) or bool(target.vs_name and target.vs_name.strip())
     is_bundle = VSX_BUNDLE_START_MARKER in stdout_str

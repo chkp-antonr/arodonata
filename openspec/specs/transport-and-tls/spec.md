@@ -82,6 +82,11 @@ TLS trust-store persistence SHALL write `tls_known_hosts.json` with `0600` permi
 - **WHEN** a management server or domain endpoint uses an IPv6 literal (`[2001:db8::1]:443` or `2001:db8::1`)
 - **THEN** both `tls_known_hosts.json` and `ARODONATA_TLS_FINGERPRINTS` SHALL normalize and match `[ipv6]:port` without splitting on internal colons
 
+#### Scenario: SCN-TRANS-003-3 — Symlinked trust store or unsafe parent directory permissions rejected before network I/O
+
+- **WHEN** `tls_known_hosts.json` or its lock target is a symlink, its parent directory has unsafe group/world write bits without a sticky bit, OR an owner-managed `euid` store in `"tofu"` mode has group/world read bits (`S_IRGRP | S_IROTH`) vs a `uid=0` read-only mounted `ConfigMap` (`0444`/`0644`)
+- **THEN** `TrustStore` SHALL raise `TrustStoreError` for symlinks and unsafe writable dirs before API requests, create new parent dirs with mode `0700`, emit a `WARNING` for over-readable `euid` `tofu` stores, and preserve compatibility with `uid=0` read-only mounts
+
 ### Requirement: Verified Connection Pooling for Read-Only and Session-Scoped Commands
 
 **ID**: REQ-TRANS-004\
@@ -183,3 +188,8 @@ The HTTPS transport SHALL pool fingerprint-verified keep-alive connections for u
 
 - **WHEN** the server responds with any `3xx` redirect status (`301`, `302`, `303`, `307`, `308`)
 - **THEN** the transport SHALL NOT follow the redirect (`allow_redirects=False`), SHALL NOT transmit `X-chkp-sid` or request bodies to `Location`, and SHALL fail the call immediately
+
+#### Scenario: SCN-TRANS-007-5 — Oversized HTTP response body rejected before unbounded memory buffering
+
+- **WHEN** a server sends a response whose `Content-Length` header or streamed byte count exceeds `ArodonataSettings.max_response_bytes`
+- **THEN** `ApiTransport` SHALL abort reading at `max_response_bytes + 1` bytes, close the socket without pooling, raise `TransportError` with `phase="read"` (`request_sent=True`), and never automatically resend the request

@@ -223,6 +223,24 @@ async def test_sid_cache_reuse_transparent_relogin_and_keepalive_eviction(tmp_pa
     assert keepalive_ok is False
     assert await client.cache.get_sid("mds1", "Corp") is None
 
+    # 5. DA-022: keepalive extends expires_at past created_at + session_expire_seconds and honors extended TTL;
+    #    failing keepalive called with sid=... and domain=None evicts cached entry by cached.domain_name.
+    res4 = await client.api_call("mds1", "show-hosts", domain="Corp")
+    assert res4.success is True
+    cached_ext = await client.cache.get_sid("mds1", "Corp")
+    assert cached_ext is not None
+    rig.advance(400.0)
+    assert await client.login_coordinator.keepalive_sid("mds1", "Corp") is True
+    rig.advance(300.0)  # total elapsed since created_at is 700s > session_expire_seconds(540), < new expires_at
+    logins_before = server.login_counter
+    res5 = await client.api_call("mds1", "show-networks", domain="Corp")
+    assert res5.success is True
+    assert server.login_counter == logins_before  # reused keepalive-extended SID!
+
+    server.handlers.append((400, {"code": "err_session_expired", "message": "Session expired"}))
+    assert await client.login_coordinator.keepalive_sid("mds1", None, sid=cached_ext.sid) is False
+    assert await client.cache.get_sid("mds1", "Corp", auth_identity=cached_ext.auth_identity) is None
+
     await client.close()
 
 
@@ -352,6 +370,22 @@ async def test_dedicated_write_session_bypasses_sid_cache_and_updates_overlay(tm
     assert "publish" not in fail_commands
     assert fail_commands[-1] == "logout"
 
+    # DA-003: domain=None (System Data) calls inside a domain-scoped WriteSession ("Corp") MUST NOT
+    # route into the Corp WriteSession, while standalone System Data WriteSession still matches domain=None.
+    server.calls.clear()
+    async with client.write_session("mds1", "Corp", auth=admin_creds, publish_on_exit=False) as ws_corp:
+        res_sys = await client.api_call("mds1", "show-domains", domain=None)
+        assert res_sys.success is True
+        sys_call = next(c for c in reversed(server.calls) if c["command"] == "show-domains")
+        assert sys_call["sid"] != ws_corp.sid
+
+    server.calls.clear()
+    async with client.write_session("mds1", None, auth=admin_creds, publish_on_exit=False) as ws_sys:
+        res_sys2 = await client.api_call("mds1", "show-domains", domain=None)
+        assert res_sys2.success is True
+        sys_call2 = next(c for c in reversed(server.calls) if c["command"] == "show-domains")
+        assert sys_call2["sid"] == ws_sys.sid
+
     await client.close()
 
 
@@ -451,15 +485,15 @@ async def test_throttled_login_waits_70s_and_transient_revision_retries(tmp_path
 
 
 @pytest.mark.spec("SCN-SESS-004-1")
-async def test_startup_cleanup_seeds_system_domain_sid_when_cache_empty(tmp_path: Path) -> None:
-    """Scenario: Startup cleanup seeds system domain SID when cache is empty."""
+async def test_startup_cleanup_logs_out_rw_session_without_seeding_sid_cache(tmp_path: Path) -> None:
+    """SCN-SESS-004-1 (DA-042): Startup cleanup logs out its RW probe session and never seeds arodonata_sid_cache."""
     server = FakeCheckpointServer()
     rig = FakeTimeRig()
     client = _build_client(tmp_path, server, rig)
     await client.db.initialize()
 
     # Configure show-sessions response with 1 stale session to discard
-    server.handlers.append((200, {"sid": "sid_seeded_system_1", "uid": "cleaner-uid"}))
+    server.handlers.append((200, {"sid": "sid_rw_cleaner_1", "uid": "cleaner-uid"}))
     server.handlers.append(
         (
             200,
@@ -477,22 +511,88 @@ async def test_startup_cleanup_seeds_system_domain_sid_when_cache_empty(tmp_path
         )
     )
     server.handlers.append((200, {"message": "OK"}))  # discard stale-sess-1
+    server.handlers.append((200, {"message": "OK"}))  # logout RW probe session
 
     outcomes = await client.session_cleaner.run_startup_cleanup()
     assert outcomes == {"mds1": True}
 
-    # The cleaner's session MUST be retained in sid_cache for System Data rather than logged out!
-    seeded = await client.cache.get_sid("mds1", SYSTEM_DOMAIN_SENTINEL)
-    assert seeded is not None
-    assert seeded.sid == "sid_seeded_system_1"
+    # The RW cleanup session MUST NOT be seeded into arodonata_sid_cache and MUST be logged out!
+    assert await client.cache.get_sid("mds1", SYSTEM_DOMAIN_SENTINEL) is None
     commands = [c["command"] for c in server.calls]
-    assert commands == ["login", "show-sessions", "discard"]  # No logout!
+    assert commands == ["login", "show-sessions", "discard", "logout"]
 
-    # Subsequent system-domain read call reuses the seeded SID without logging in again
+    # Subsequent system-domain read call acquires a fresh read-only=True session
     res = await client.api_call("mds1", "show-domains")
     assert res.success is True
-    assert server.calls[-1]["sid"] == "sid_seeded_system_1"
+    ro_login = [c for c in server.calls if c["command"] == "login"][-1]
+    assert ro_login["payload"].get("read-only") is True
+    assert server.calls[-1]["sid"] != "sid_rw_cleaner_1"
 
+    # Even when show-sessions raises an error mid-cleanup, finally STILL logs out the temporary RW session
+    server.calls.clear()
+    server.handlers.append((200, {"sid": "sid_rw_cleaner_err", "uid": "cleaner-uid-err"}))
+    server.handlers.append(lambda _rec: (_ for _ in ()).throw(RuntimeError("boom during show-sessions")))
+    server.handlers.append((200, {"message": "OK"}))  # logout
+    with pytest.raises(RuntimeError, match="boom during show-sessions"):
+        await client.session_cleaner.cleanup_server_sessions("mds1")
+    assert [c["command"] for c in server.calls] == ["login", "show-sessions", "logout"]
+    assert server.calls[-1]["sid"] == "sid_rw_cleaner_err"
+
+    await client.close()
+
+
+@pytest.mark.spec("SCN-SESS-011-1")
+async def test_startup_cleanup_inspects_sessions_despite_cached_readonly_system_sid(tmp_path: Path) -> None:
+    """SCN-SESS-011-1: A fresh cached RO System Data SID no longer short-circuits startup cleanup."""
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    client = _build_client(tmp_path, server, rig)
+    await client.db.initialize()
+
+    coordinator = client.session_cleaner._login_coordinator
+    identity = (await coordinator.resolve_credentials("mds1", None)).identity_key
+    now = coordinator.now()
+    await client.cache.upsert_sid(
+        SIDCacheEntry(
+            id=f"mds1:{SYSTEM_DOMAIN_SENTINEL}:{identity}",
+            mgmt_name="mds1",
+            domain_name=SYSTEM_DOMAIN_SENTINEL,
+            sid="sid_ro_cached",
+            server_ip="10.0.0.1",
+            session_uid="ro-uid",
+            auth_identity=identity,
+            created_at=now,
+            last_used_at=now,
+            expires_at=now + timedelta(seconds=600),
+        )
+    )
+
+    server.handlers.append((200, {"sid": "sid_rw_cleaner_1", "uid": "cleaner-uid"}))
+    server.handlers.append(
+        (
+            200,
+            {
+                "objects": [
+                    {
+                        "uid": "abandoned-1",
+                        "application": "WEB_API",
+                        "changes": 0,
+                        "locks": 0,
+                        "session-name": "arodonata-old",
+                    },
+                    {"uid": "ro-uid", "application": "WEB_API", "changes": 0, "locks": 0, "session-name": "arodonata"},
+                ]
+            },
+        )
+    )
+    server.handlers.append((200, {"message": "OK"}))  # discard abandoned-1
+    server.handlers.append((200, {"message": "OK"}))  # logout RW cleanup session
+
+    outcomes = await client.session_cleaner.run_startup_cleanup()
+    assert outcomes == {"mds1": True}
+    assert [c["command"] for c in server.calls] == ["login", "show-sessions", "discard", "logout"]
+    cached = await client.cache.get_sid("mds1", SYSTEM_DOMAIN_SENTINEL, auth_identity=identity)
+    assert cached is not None and cached.sid == "sid_ro_cached"
     await client.close()
 
 

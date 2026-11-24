@@ -99,10 +99,11 @@ def is_sid_entry_fresh(
     now: datetime,
     session_expire_seconds: float,
 ) -> bool:
-    """Return `True` if `entry` is younger than `session_expire_seconds` and not past `expires_at`."""
-    if entry.expires_at is not None and now >= entry.expires_at:
-        return False
-    age = (now - entry.created_at).total_seconds()
+    """Return `True` if `entry` is within its extended `expires_at` window (or `session_expire_seconds` fallback)."""
+    if entry.expires_at is not None:
+        return now < entry.expires_at
+    ref_time = entry.last_used_at or entry.created_at
+    age = (now - ref_time).total_seconds()
     return age < float(session_expire_seconds)
 
 

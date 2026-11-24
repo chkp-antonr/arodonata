@@ -261,10 +261,14 @@ class GatewayCliResult(BaseModel):
     bundle_stdout: str | None = None
 
     def model_post_init(self, __context: Any) -> None:
+        if self.stdout:
+            self.stdout = redact_sid(self.stdout)
         if self.stderr:
             self.stderr = redact_sid(self.stderr)
         if self.error_message:
             self.error_message = redact_sid(self.error_message)
+        if self.bundle_stdout:
+            self.bundle_stdout = redact_sid(self.bundle_stdout)
 
 
 class GatewayRouteCollectionStatus(BaseModel):

@@ -28,6 +28,7 @@ from arodonata.core.context import AuthContext
 from arodonata.core.errors import REDACTED_PLACEHOLDER, SessionError
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
 from arodonata.core.ports import ApiPort
+from arodonata.core.primitives import validate_command_name
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.testing._emulator_models import (
     PublishedDelta,
@@ -437,9 +438,7 @@ class FileReplayApiMock(ApiPort):
     ) -> ApiCallResult:
         """Execute a single Check Point Management API command with stateful sessions, overlays, and OTEL spans."""
         _ = (server_ip, timeout)
-        clean_cmd = command.strip().lstrip("/")
-        if clean_cmd.startswith("web_api/"):
-            clean_cmd = clean_cmd.removeprefix("web_api/")
+        clean_cmd = validate_command_name(command)
         req = dict(payload) if payload else {}
         binding = self._sid_bindings.get(sid) if sid is not None else None
 
@@ -528,7 +527,7 @@ class FileReplayApiMock(ApiPort):
         limit: int = DEFAULT_PAGE_LIMIT,
     ) -> ApiQueryResult:
         """Execute a continuity-verified paginated listing query via `paginate_objects`."""
-        clean_cmd = command.strip().lstrip("/")
+        clean_cmd = validate_command_name(command)
         binding = self._sid_bindings.get(sid) if sid is not None else None
         dom_name = self._normalize_domain(domain if domain is not None else (binding.domain if binding else None))
         self.api_query_counts[(dom_name, clean_cmd)] += 1

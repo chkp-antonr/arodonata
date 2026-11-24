@@ -40,7 +40,7 @@ class RateLimiter:
 
     Uses both in-process strict FIFO waiter queues and optional database-backed
     slot locks (`LockPort`) so multiple coroutines wake in exact arrival order
-    and cross-process workers coordinate over `distributed_locks`.
+    and cross-process workers coordinate over `arodonata_distributed_locks`.
     """
 
     def __init__(

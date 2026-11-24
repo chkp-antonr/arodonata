@@ -73,8 +73,10 @@ def host_matches_allowed(host: str | None, allowed_hosts: Sequence[str]) -> bool
 
 def origin_matches_allowed(origin: str | None, allowed_origins: Sequence[str]) -> bool:
     """Return `True` if `origin` is absent or matches an entry in `allowed_origins` (supporting `scheme://host:*`)."""
-    if origin is None or not origin.strip():
+    if origin is None:
         return True
+    if not origin.strip():
+        return False
     clean_origin = origin.strip().lower()
 
     for raw_allowed in allowed_origins:

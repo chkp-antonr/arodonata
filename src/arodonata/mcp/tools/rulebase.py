@@ -14,6 +14,7 @@ from arodonata.core.primitives import is_uuid
 from arodonata.mcp.config import ArodonataMCPSettings
 from arodonata.mcp.errors import (
     ToolFailure,
+    collect_known_sids,
     json_tool_result,
     mcp_tool_guard,
     resolve_mgmt_name,
@@ -175,6 +176,7 @@ async def _fetch_live_rulebase(
             domain=eff_domain,
         )
     rb_items = res.data.get("rulebase", []) if isinstance(res.data.get("rulebase"), list) else []
+    known_sids = await collect_known_sids(client, eff_mgmt)
     return json_tool_result(
         {
             "from": res.data.get("from", (offset + 1) if rb_items else 0),
@@ -187,7 +189,8 @@ async def _fetch_live_rulebase(
             "rulebase_type": rulebase_type,
             "format": format,
             "rulebase": rb_items,
-        }
+        },
+        known_sids=known_sids,
     )
 
 
@@ -240,9 +243,9 @@ def register_rulebase_tools(
         live_command = RULEBASE_TYPE_TO_COMMAND[rulebase_type]
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
-        target_domain = eff_domain or "default"
         mode, is_live_mode = _normalize_cache_mode(cache_mode, default="smart")
+        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
+        target_domain = eff_domain or "default"
 
         eff_package = package.strip() if package and package.strip() else None
         eff_layer = layer.strip() if layer and layer.strip() else None
@@ -257,6 +260,7 @@ def register_rulebase_tools(
             snap, _, _, _, snap_age = await client.rulebase_source.ensure_and_load_snapshot(
                 eff_mgmt, target_domain, cache_mode=mode
             )
+            known_sids = await collect_known_sids(client, eff_mgmt)
             return json_tool_result(
                 _build_catalog_payload(
                     snap,
@@ -264,7 +268,8 @@ def register_rulebase_tools(
                     eff_mgmt=eff_mgmt,
                     target_domain=target_domain,
                     rulebase_type=rulebase_type,
-                )
+                ),
+                known_sids=known_sids,
             )
 
         has_live_only_params = any(
@@ -316,6 +321,7 @@ def register_rulebase_tools(
             eff_layer=eff_layer,
         )
         if missing_hint is not None:
+            known_sids = await collect_known_sids(client, eff_mgmt)
             return json_tool_result(
                 _build_catalog_payload(
                     snap_check,
@@ -324,7 +330,8 @@ def register_rulebase_tools(
                     target_domain=target_domain,
                     rulebase_type=rulebase_type,
                     hint_message=missing_hint,
-                )
+                ),
+                known_sids=known_sids,
             )
 
         filtered_res = await client.filter_rulebase(
@@ -338,6 +345,7 @@ def register_rulebase_tools(
             cache_mode="cache",
         )
         sliced_raw = filtered_res.raw_items[offset : offset + max(1, limit)]
+        known_sids = await collect_known_sids(client, eff_mgmt)
         return json_tool_result(
             {
                 "from": (offset + 1) if sliced_raw else 0,
@@ -357,7 +365,8 @@ def register_rulebase_tools(
                 "query": filtered_res.query,
                 "rendered_text": filtered_res.rendered_text,
                 "rules": sliced_raw,
-            }
+            },
+            known_sids=known_sids,
         )
 
     @server.tool(
@@ -374,8 +383,8 @@ def register_rulebase_tools(
     ) -> CallToolResult:
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
         mode, _ = _normalize_cache_mode(cache_mode, default="smart")
+        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
         await _enforce_live_quota_if_sync_required(client, eff_mgmt, eff_domain, "rulebase", mode)
         locations = await client.locate_rules(
             eff_mgmt,
@@ -384,4 +393,5 @@ def register_rulebase_tools(
             layer_uids=layer_uids,
             cache_mode=mode,
         )
-        return json_tool_result(locations.model_dump(mode="json"))
+        known_sids = await collect_known_sids(client, eff_mgmt)
+        return json_tool_result(locations.model_dump(mode="json"), known_sids=known_sids)

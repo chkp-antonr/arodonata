@@ -108,7 +108,10 @@ async def _compute_trusted_object_domains(
     dom_states = await _has_complete_object_sync_states(cache, mgmt_name, domain_name)
     if dom_states is not None:
         if probe is not None:
-            if not coordinator.is_domain_invalidated(mgmt_name, domain_name) and all(
+            if not any(
+                coordinator.is_slice_invalidated(mgmt_name, domain_name, "objects", st.item_type, st.synced_at)
+                for st in dom_states
+            ) and all(
                 _does_sync_state_match_head(st, probe.remote_published_at, probe.remote_session_uid)
                 for st in dom_states
             ):
@@ -787,7 +790,7 @@ async def _sync_domain_topology(
         )
     )
 
-    now = now_fn()
+    synced_at = probe.probe_started_at or now_fn()
     sync_state = DomainSyncState(
         mgmt_name=mgmt_name,
         domain_name=dom_name,
@@ -795,7 +798,7 @@ async def _sync_domain_topology(
         item_type="*",
         last_published_at=probe.remote_published_at,
         last_session_uid=probe.remote_session_uid,
-        synced_at=now,
+        synced_at=synced_at,
         status="ok",
         object_count=len(entries),
         last_error=None,

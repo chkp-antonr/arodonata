@@ -46,7 +46,7 @@ arodonata-v2/
 - **Hexagonal Architecture (Ports & Adapters)**:
   - Business logic in `core` depends strictly on `ApiPort` and `CachePort` protocols, never directly on HTTP transport (`aiohttp`/`cpapi`) or database drivers (`asyncpg`/`aiosqlite`).
 - **Database-Backed Cache**:
-  - SQLAlchemy 2.0+ async + SQLModel on PostgreSQL or SQLite with schema hash auto-migration (`arodonata_schema_version`) and distributed locks (`distributed_locks`).
+  - SQLAlchemy 2.0+ async + SQLModel on PostgreSQL or SQLite with schema hash auto-migration (`arodonata_schema_version`) and distributed locks (`arodonata_distributed_locks`).
 - **Security Hygiene**:
   - Session identifiers (`sid`) and API keys/passwords MUST NEVER appear in logs, `repr()`, OpenTelemetry spans, error messages, or reports.
 - **Observability & Logging**:

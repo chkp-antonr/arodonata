@@ -654,24 +654,42 @@ class ScriptRepositoryService:
         used_sids: list[str] = []
 
         async def _call_run_script(eff_sid: str | None, eff_ip: str | None) -> ApiCallResult:
-            return await self._api.api_call(
-                mgmt_name,
-                "run-script",
-                payload,
-                domain=dom_key,
-                sid=eff_sid,
-                server_ip=eff_ip,
-                wait_for_task=True,
-                timeout=timeout,
-            )
+            if eff_sid and eff_sid not in used_sids:
+                used_sids.append(eff_sid)
+            try:
+                return await self._api.api_call(
+                    mgmt_name,
+                    "run-script",
+                    payload,
+                    domain=dom_key,
+                    sid=eff_sid,
+                    server_ip=eff_ip,
+                    wait_for_task=True,
+                    timeout=timeout,
+                )
+            except ServerIdentityError:
+                raise
+            except (SessionError, SessionStateError, AuthenticationError) as exc:
+                if is_script_permission_error(None, str(exc)):
+                    raise RepositoryScriptPermissionError(
+                        mgmt_name,
+                        dom_key,
+                        ref,
+                        operation="run-script",
+                        message=str(exc),
+                        known_sids=used_sids or None,
+                    ) from exc
+                if used_sids and any(len(s) >= 4 and s in str(exc) for s in used_sids):
+                    raise RepositoryScriptError(str(exc), known_sids=used_sids) from None
+                raise
+            except Exception as exc:
+                if used_sids and any(len(s) >= 4 and s in str(exc) for s in used_sids):
+                    raise RepositoryScriptError(str(exc), known_sids=used_sids) from None
+                raise
 
         if sid is not None:
-            if sid:
-                used_sids.append(sid)
             res = await _call_run_script(sid, server_ip)
         elif active_ws is not None:
-            if active_ws.sid:
-                used_sids.append(active_ws.sid)
             res = await _call_run_script(active_ws.sid, active_ws.server_ip)
         elif session_getter is not None:
             try:
@@ -686,8 +704,6 @@ class ScriptRepositoryService:
                         message=str(exc),
                     ) from exc
                 raise
-            if ded_sid:
-                used_sids.append(ded_sid)
             res = await _call_run_script(ded_sid, ded_ip)
         else:
             try:
@@ -706,16 +722,8 @@ class ScriptRepositoryService:
                         message=str(exc),
                     ) from exc
                 raise
-            if ded_sid:
-                used_sids.append(ded_sid)
             try:
                 res = await _call_run_script(ded_sid, ded_ip)
-            except ServerIdentityError:
-                raise
-            except Exception as exc:
-                if ded_sid and len(ded_sid) >= 4 and ded_sid in str(exc):
-                    raise RepositoryScriptError(str(exc), known_sids=[ded_sid]) from None
-                raise
             finally:
                 with suppress(Exception):
                     await self._api.logout_sid(mgmt_name, ded_sid, server_ip=ded_ip)
@@ -781,10 +789,14 @@ class ScriptRepositoryService:
                         or ""
                     )
                     stdout_str = decode_base64_task_message(str(raw_msg)) if raw_msg else ""
+                    if stdout_str and known_sids:
+                        stdout_str = redact_sid(stdout_str, known_sids=known_sids)
                     stderr_str = decode_base64_task_message(str(raw_err)) if raw_err else ""
                     if stderr_str and known_sids:
                         stderr_str = redact_sid(stderr_str, known_sids=known_sids)
                     status_desc = str(detail.get("statusDescription") or "").strip()
+                    if status_desc and known_sids:
+                        status_desc = redact_sid(status_desc, known_sids=known_sids)
                     detail_status = str(detail.get("statusCode") or task_status or "").strip()
                     detail_ok = (
                         detail_status.lower() in ("succeeded", "ok")
@@ -826,17 +838,22 @@ class ScriptRepositoryService:
         if not target_results and isinstance(res.data, dict):
             top_msg = res.data.get("responseMessage") or res.data.get("response-message") or res.data.get("output")
             if isinstance(top_msg, str) and top_msg.strip():
+                top_stdout = decode_base64_task_message(top_msg)
+                if top_stdout and known_sids:
+                    top_stdout = redact_sid(top_stdout, known_sids=known_sids)
                 target_results.append(
                     ScriptTargetExecutionResult(
                         target=target_list[0],
                         target_name=target_list[0],
                         status="succeeded" if res.success else "failed",
                         success=bool(res.success),
-                        stdout=decode_base64_task_message(top_msg),
+                        stdout=top_stdout,
                     )
                 )
 
         combined_stdout = "\n".join(r.stdout for r in target_results if r.stdout)
+        if combined_stdout and known_sids:
+            combined_stdout = redact_sid(combined_stdout, known_sids=known_sids)
         combined_stderr = "\n".join(r.stderr for r in target_results if r.stderr)
         if combined_stderr and known_sids:
             combined_stderr = redact_sid(combined_stderr, known_sids=known_sids)

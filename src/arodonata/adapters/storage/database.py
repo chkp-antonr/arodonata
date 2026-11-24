@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+import stat
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -251,7 +253,28 @@ class DatabaseManager:
             else:
                 db_path = make_url(url).database
                 if db_path and db_path != ":memory:":
-                    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+                    db_file = Path(db_path)
+                    parent = db_file.parent
+                    if not parent.exists():
+                        missing_parents: list[Path] = []
+                        cur = parent
+                        while not cur.exists() and cur != cur.parent:
+                            missing_parents.append(cur)
+                            cur = cur.parent
+                        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                        if os.name != "nt" and hasattr(os, "chmod"):
+                            for created_dir in missing_parents:
+                                os.chmod(created_dir, 0o700)
+                    if os.name != "nt" and not os.path.lexists(db_file):
+                        try:
+                            fd = os.open(str(db_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                            try:
+                                if hasattr(os, "fchmod"):
+                                    os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)
+                            finally:
+                                os.close(fd)
+                        except FileExistsError:
+                            pass
                 engine = create_async_engine(url, connect_args=connect_args)
             _attach_sqlite_busy_timeout(engine, busy_timeout_ms)
             return engine

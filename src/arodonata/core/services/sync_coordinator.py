@@ -77,6 +77,9 @@ class DomainProbeResult:
         remote_published_at: datetime | None = None,
         remote_session_uid: str | None = None,
         probe_error: Exception | None = None,
+        probe_started_at: datetime | None = None,
+        invalidation_seq_at_start: int = 0,
+        invalidation_at_start: tuple[datetime | None, int] = (None, 0),
     ) -> None:
         self.mgmt_name = mgmt_name
         self.domain = domain
@@ -86,6 +89,9 @@ class DomainProbeResult:
         self.remote_published_at = remote_published_at
         self.remote_session_uid = remote_session_uid
         self.probe_error = probe_error
+        self.probe_started_at = probe_started_at
+        self.invalidation_seq_at_start = invalidation_seq_at_start
+        self.invalidation_at_start = invalidation_at_start
 
     @property
     def is_stale(self) -> bool:
@@ -219,7 +225,10 @@ class DomainSyncCoordinator:
         self._lock_port = lock_port
         self._domain_service = domain_service
         self._now: Callable[[], datetime] = lambda: to_naive_utc(now_fn())
-        self._invalidated_domains: set[tuple[str, str]] = set()
+        self._invalidated_at: dict[tuple[str, str], datetime] = {}
+        self._invalidated_seq: dict[tuple[str, str], int] = {}
+        self._invalidation_counter: int = 0
+        self._slice_synced_seq: dict[tuple[str, str, str, str], int] = {}
         self._fallback_registry = _ProcessSyncRegistry()
 
     def _get_sync_registry(self) -> _ProcessSyncRegistry:
@@ -241,35 +250,122 @@ class DomainSyncCoordinator:
 
     @property
     def invalidated_domains(self) -> set[tuple[str, str]]:
-        """Set of `(mgmt_name, domain_name)` pairs whose `cache_ttl` memo was invalidated."""
-        return set(self._invalidated_domains)
+        """Set of `(mgmt_name, domain_name)` pairs invalidated via `invalidate_domain`.
+
+        Entries act as monotonic lifetime watermarks (retained across subsequent syncs and compared
+        against per-slice `synced_at` timestamps and `_slice_synced_seq` rather than deleted on sync).
+        """
+        return set(self._invalidated_at.keys())
 
     def invalidate_domain(self, mgmt_name: str, domain_name: str | None = None) -> None:
         """Invalidate freshness memo for `(mgmt_name, domain_name)` (or all domains on `mgmt_name` if None)."""
+        self._invalidation_counter += 1
+        inv_ts = self._now()
         if domain_name is None or not domain_name.strip():
-            self._invalidated_domains.add((mgmt_name, "*"))
+            key = (mgmt_name, "*")
+            self._invalidated_at[key] = inv_ts
+            self._invalidated_seq[key] = self._invalidation_counter
             self._domain_service.tracker.invalidate(mgmt_name)
         else:
-            self._invalidated_domains.add((mgmt_name, domain_name.strip()))
+            key = (mgmt_name, domain_name.strip())
+            self._invalidated_at[key] = inv_ts
+            self._invalidated_seq[key] = self._invalidation_counter
 
-    def is_domain_invalidated(self, mgmt_name: str, domain_name: str | None = None) -> bool:
-        """Return `True` if the freshness memo for `(mgmt_name, domain_name)` was explicitly invalidated."""
+    def _effective_invalidation(
+        self,
+        mgmt_name: str,
+        domain_name: str | None = None,
+    ) -> tuple[datetime | None, int]:
+        """Return `(latest_inv_ts, latest_inv_seq)` matching `(mgmt_name, domain_name)` or wildcard `*`."""
+        candidates: list[tuple[datetime, int]] = []
         if domain_name is None or not domain_name.strip():
-            return (mgmt_name, "*") in self._invalidated_domains or any(
-                m == mgmt_name for m, _ in self._invalidated_domains
-            )
-        clean_dom = domain_name.strip()
-        return (mgmt_name, clean_dom) in self._invalidated_domains or (
-            mgmt_name,
-            "*",
-        ) in self._invalidated_domains
+            for (m, _d), ts in self._invalidated_at.items():
+                if m == mgmt_name:
+                    candidates.append((ts, self._invalidated_seq.get((m, _d), 0)))
+        else:
+            clean_dom = domain_name.strip()
+            for key in ((mgmt_name, clean_dom), (mgmt_name, "*")):
+                ts_entry = self._invalidated_at.get(key)
+                if ts_entry is not None:
+                    candidates.append((ts_entry, self._invalidated_seq.get(key, 0)))
+        if not candidates:
+            return None, 0
+        return max(candidates, key=lambda pair: (pair[0], pair[1]))
+
+    def invalidation_timestamp(self, mgmt_name: str, domain_name: str | None = None) -> datetime | None:
+        """Return the latest invalidation UTC timestamp for `(mgmt_name, domain_name)` (including `*` wildcard)."""
+        ts, _ = self._effective_invalidation(mgmt_name, domain_name)
+        return ts
+
+    def is_slice_invalidated(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        scope: str,
+        item_type: str,
+        synced_at: datetime | None,
+    ) -> bool:
+        """Return `True` when `(mgmt_name, domain_name)` invalidation is newer than `(scope, item_type)` `synced_at`."""
+        inv_ts, inv_seq = self._effective_invalidation(mgmt_name, domain_name)
+        if inv_ts is None:
+            return False
+        if synced_at is None:
+            return True
+        norm_sync = to_naive_utc(synced_at)
+        if norm_sync < inv_ts:
+            return True
+        if norm_sync > inv_ts:
+            return False
+        return self._slice_synced_seq.get((mgmt_name, domain_name, scope, item_type), 0) < inv_seq
+
+    def is_domain_invalidated(
+        self,
+        mgmt_name: str,
+        domain_name: str | None = None,
+        *,
+        scope: str | None = None,
+        item_type: str | None = None,
+        synced_at: datetime | None = None,
+    ) -> bool:
+        """Return `True` if `(mgmt_name, domain_name)` has an active invalidation (optionally compared against `synced_at`)."""
+        inv_ts, inv_seq = self._effective_invalidation(mgmt_name, domain_name)
+        if inv_ts is None:
+            return False
+        if synced_at is not None:
+            norm_sync = to_naive_utc(synced_at)
+            if norm_sync < inv_ts:
+                return True
+            if norm_sync > inv_ts:
+                return False
+            if domain_name and scope is not None and item_type is not None:
+                return self._slice_synced_seq.get((mgmt_name, domain_name.strip(), scope, item_type), 0) < inv_seq
+            return True
+        if domain_name and scope is not None and item_type is not None:
+            return self._slice_synced_seq.get((mgmt_name, domain_name.strip(), scope, item_type), 0) < inv_seq
+        return True
 
     def _is_domain_invalidated(self, mgmt_name: str, domain_name: str) -> bool:
         return self.is_domain_invalidated(mgmt_name, domain_name)
 
-    def _clear_domain_invalidation(self, mgmt_name: str, domain_name: str) -> None:
-        self._invalidated_domains.discard((mgmt_name, domain_name))
-        self._invalidated_domains.discard((mgmt_name, "*"))
+    def _record_slice_synced(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        scope: str,
+        item_types: Sequence[str],
+        *,
+        target_seq: int | None = None,
+    ) -> None:
+        """Record that `(scope, item_type)` slices refreshed after invalidation sequence `target_seq`.
+
+        `target_seq` is the sequence observed *before* the probe/sync began (never the post-sync counter), so
+        invalidations that arrive mid-flight still win in `is_slice_invalidated`.
+        """
+        seq = self._invalidation_counter if target_seq is None else target_seq
+        if not seq:
+            return
+        for item_type in item_types:
+            self._slice_synced_seq[(mgmt_name, domain_name, scope, item_type)] = seq
 
     async def resolve_target_domains(
         self,
@@ -417,25 +513,30 @@ class DomainSyncCoordinator:
                 existing_states[item_type] = st
 
         if mode == "cache":
+            inv_start = self._effective_invalidation(mgmt_name, dom_name)
             return DomainProbeResult(
                 mgmt_name=mgmt_name,
                 domain=domain,
                 stale_types=[],
                 fresh_types=type_list,
                 existing_states=existing_states,
+                invalidation_seq_at_start=inv_start[1],
+                invalidation_at_start=inv_start,
             )
 
         now = self._now()
         eff_ttl = float(cache_ttl) if cache_ttl is not None else float(self._settings.cache_ttl)
-        invalidated = self._is_domain_invalidated(mgmt_name, dom_name)
 
-        # In smart/smart-fast mode, if all requested types were synced within cache_ttl and domain is not invalidated,
-        # skip the server probe completely.
-        if mode in ("smart", "smart-fast") and not invalidated and eff_ttl > 0:
+        # In smart/smart-fast mode, if all requested types were synced within cache_ttl AND none were
+        # invalidated since their last sync timestamp, skip the server probe completely.
+        if mode in ("smart", "smart-fast") and eff_ttl > 0:
             all_within_ttl = True
             for item_type in type_list:
                 st = existing_states.get(item_type)
                 if st is None or st.status != "ok" or st.synced_at is None:
+                    all_within_ttl = False
+                    break
+                if self.is_slice_invalidated(mgmt_name, dom_name, scope, item_type, st.synced_at):
                     all_within_ttl = False
                     break
                 age = (now - st.synced_at).total_seconds()
@@ -443,13 +544,22 @@ class DomainSyncCoordinator:
                     all_within_ttl = False
                     break
             if all_within_ttl:
+                inv_start = self._effective_invalidation(mgmt_name, dom_name)
                 return DomainProbeResult(
                     mgmt_name=mgmt_name,
                     domain=domain,
                     stale_types=[],
                     fresh_types=type_list,
                     existing_states=existing_states,
+                    probe_started_at=now,
+                    invalidation_seq_at_start=inv_start[1],
+                    invalidation_at_start=inv_start,
                 )
+
+        # Capture the start epoch before querying the server so mid-probe invalidations are never masked.
+        probe_started_at = now
+        inv_before = self._effective_invalidation(mgmt_name, dom_name)
+        inv_seq_before = inv_before[1]
 
         # Query show-last-published-session on the domain
         try:
@@ -472,6 +582,9 @@ class DomainSyncCoordinator:
                 fresh_types=[],
                 existing_states=existing_states,
                 probe_error=exc,
+                probe_started_at=probe_started_at,
+                invalidation_seq_at_start=inv_seq_before,
+                invalidation_at_start=inv_before,
             )
 
         if not res.success:
@@ -491,6 +604,9 @@ class DomainSyncCoordinator:
                     fresh_types=[],
                     existing_states=existing_states,
                     probe_error=probe_exc,
+                    probe_started_at=probe_started_at,
+                    invalidation_seq_at_start=inv_seq_before,
+                    invalidation_at_start=inv_before,
                 )
             data = {}
         else:
@@ -508,6 +624,9 @@ class DomainSyncCoordinator:
                 existing_states=existing_states,
                 remote_published_at=remote_pub_at,
                 remote_session_uid=remote_uid,
+                probe_started_at=probe_started_at,
+                invalidation_seq_at_start=inv_seq_before,
+                invalidation_at_start=inv_before,
             )
 
         stale_types: list[str] = []
@@ -552,8 +671,10 @@ class DomainSyncCoordinator:
             fresh_types.append(item_type)
 
         # Update synced_at on fresh types that were verified against the server so cache_ttl is reset
-        if fresh_types:
-            verified_at = self._now()
+        # Skip stamping when an invalidation arrived while the probe was in flight so it stays visible.
+        invalidated_mid_probe = self._effective_invalidation(mgmt_name, dom_name) != inv_before
+        if fresh_types and not invalidated_mid_probe:
+            verified_at = probe_started_at
             for f_type in fresh_types:
                 st = existing_states[f_type]
                 await self._cache.upsert_sync_state(
@@ -567,8 +688,7 @@ class DomainSyncCoordinator:
                         }
                     )
                 )
-            if not stale_types:
-                self._clear_domain_invalidation(mgmt_name, dom_name)
+            self._record_slice_synced(mgmt_name, dom_name, scope, fresh_types, target_seq=inv_seq_before)
 
         return DomainProbeResult(
             mgmt_name=mgmt_name,
@@ -578,6 +698,9 @@ class DomainSyncCoordinator:
             existing_states=existing_states,
             remote_published_at=remote_pub_at,
             remote_session_uid=remote_uid,
+            probe_started_at=probe_started_at,
+            invalidation_seq_at_start=inv_seq_before,
+            invalidation_at_start=inv_before,
         )
 
     async def stream_ensure(
@@ -834,7 +957,15 @@ class DomainSyncCoordinator:
                                     with _suppress(asyncio.CancelledError, Exception):
                                         await hb_task
 
-                            self._clear_domain_invalidation(dom.mgmt_name, dom.name)
+                            # Only advance slice sequence watermarks when no invalidation arrived after probe start.
+                            if self._effective_invalidation(dom.mgmt_name, dom.name) == probe.invalidation_at_start:
+                                self._record_slice_synced(
+                                    dom.mgmt_name,
+                                    dom.name,
+                                    scope,
+                                    probe.stale_types,
+                                    target_seq=probe.invalidation_seq_at_start,
+                                )
                             my_flight.completed_ok = True
                             my_flight.covered_types = req_types_set
                             async with state_lock:

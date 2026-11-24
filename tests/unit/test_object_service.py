@@ -484,3 +484,101 @@ async def test_object_service_from_date_utc_z_suffix_and_never_published_domain(
     assert {h.uid for h in cached_memo} == {"h-memo-1", "h-memo-2"}
 
     await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-005-2")
+@pytest.mark.asyncio
+async def test_object_service_smart_fast_atomic_hydration_preserves_cache_on_show_object_error() -> None:
+    """SCN-CACHE-005-2 (DA-004): smart-fast hydrates all show-object calls before DB writes so errors leave zero partial deletions."""
+    t1 = datetime(2026, 10, 23, 12, 0, 0)
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = ObjectFakeApi()
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=0)
+    domain_service = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    domain_service.tracker.mark_refreshed("mds1")
+    await cache.upsert_domains(
+        [DomainInfo(mgmt_name="mds1", uid="dom1", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1")]
+    )
+    await cache.replace_domain_objects(
+        "mds1",
+        "Corp",
+        [
+            CPObject(
+                uid="h1", name="host-1", type="host", mgmt_name="mds1", domain_name="Corp", ipv4_address="10.0.0.1"
+            ),
+            CPObject(
+                uid="h2", name="host-2", type="host", mgmt_name="mds1", domain_name="Corp", ipv4_address="10.0.0.2"
+            ),
+        ],
+        types=["host"],
+        sync_states=[
+            DomainSyncState(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                scope="objects",
+                item_type="host",
+                last_published_at=t1,
+                last_session_uid="sess-1",
+                synced_at=t1,
+                status="ok",
+                object_count=2,
+            )
+        ],
+    )
+
+    api.published_session = {"uid": "sess-2", "publish-time": {"iso-8601": "2026-10-23T12:10:00Z"}}
+    api.changes_response = ApiCallResult(
+        success=True,
+        data={
+            "changes": [
+                {
+                    "operations": {
+                        "added-objects": [{"uid": "h3", "type": "host"}],
+                        "deleted-objects": [{"uid": "h1", "type": "host"}],
+                    }
+                }
+            ]
+        },
+    )
+    # Fail show-object for h3 AND fail full reload fallback so DB state after failure is observable!
+    orig_api_call = api.api_call
+
+    async def failing_show_object(
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ApiCallResult:
+        if command == "show-object":
+            return ApiCallResult(success=False, error_message="transient show-object error")
+        return await orig_api_call(mgmt_name, command, payload, **kwargs)
+
+    async def failing_api_query(*_args: Any, **_kwargs: Any) -> ApiQueryResult:
+        return ApiQueryResult(success=False, error_message="fallback reload unavailable")
+
+    api.api_call = failing_show_object  # type: ignore[method-assign]
+    api.api_query = failing_api_query  # type: ignore[method-assign]
+
+    coordinator = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=domain_service,
+    )
+    obj_service = ObjectService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+
+    outcome = await obj_service.refresh_objects(mgmt_name="mds1", types=["host"], mode="smart-fast")
+    assert "mds1:Corp" in outcome.failed_domains
+
+    # Both h1 (marked deleted in diff) and h2 MUST still be intact in DB, and sync_state baseline unchanged!
+    cached_after = await cache.get_objects("mds1", "Corp", types=["host"])
+    assert {o.uid for o in cached_after} == {"h1", "h2"}
+    st_after = await cache.get_sync_state("mds1", "Corp", "objects", "host")
+    assert st_after is not None and st_after.last_session_uid == "sess-1"
+
+    await db.close()

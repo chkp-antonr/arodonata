@@ -573,3 +573,46 @@ async def test_domain_service_catches_authentication_and_transport_errors_and_pr
         await service.get_domains("smsNP82", cache_mode="force")
 
     await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-004-3")
+def test_domain_list_refresh_tracker_global_invalidate_none_forces_refresh() -> None:
+    """SCN-CACHE-004-3 (DA-002): DomainListRefreshTracker.invalidate(None) overrides persisted_synced_at within TTL."""
+    clock = [datetime(2026, 11, 23, 12, 0, 0)]
+    tracker = DomainListRefreshTracker(ttl_seconds=3600.0, now_fn=lambda: clock[0])
+    persisted_ts = clock[0] - timedelta(seconds=30)
+
+    # Without invalidation, persisted_synced_at 30s ago is fresh (< 3600s)
+    assert (
+        tracker.needs_refresh(
+            "mds1",
+            has_cached_domains=True,
+            persisted_synced_at=persisted_ts,
+            mode="smart",
+        )
+        is False
+    )
+
+    # Calling invalidate(None) forces refresh even when persisted_synced_at is recent (and even at frozen clock)
+    tracker.invalidate(None)
+    assert (
+        tracker.needs_refresh(
+            "mds1",
+            has_cached_domains=True,
+            persisted_synced_at=persisted_ts,
+            mode="smart",
+        )
+        is True
+    )
+
+    # Once refreshed, it becomes fresh again
+    tracker.mark_refreshed("mds1", clock[0])
+    assert (
+        tracker.needs_refresh(
+            "mds1",
+            has_cached_domains=True,
+            persisted_synced_at=clock[0],
+            mode="smart",
+        )
+        is False
+    )

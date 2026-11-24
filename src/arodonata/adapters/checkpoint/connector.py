@@ -48,6 +48,7 @@ def verify_transport_peer_certificate(
     host: str,
     port: int,
     trust_policy: TrustPolicy,
+    identity_host: str | None = None,
 ) -> str:
     """Verify the peer certificate on `transport` immediately after TLS handshake.
 
@@ -56,7 +57,7 @@ def verify_transport_peer_certificate(
     """
     der_cert = extract_peer_der_cert(transport)
     try:
-        return trust_policy.verify_der(host, port, der_cert)
+        return trust_policy.verify_der(host, port, der_cert, identity_host=identity_host)
     except ServerIdentityError:
         if transport is not None:
             transport.close()
@@ -131,11 +132,14 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
         )
         host = req.url.raw_host or req.host
         port = req.port or 443
+        call_ctx = _transport_pool_ctx.get()
+        identity_host = call_ctx.tls_identity_host if call_ctx is not None else None
         fp = verify_transport_peer_certificate(
             transp,
             host=host,
             port=port,
             trust_policy=self._trust_policy,
+            identity_host=identity_host,
         )
         self._proto_fingerprints[proto] = fp
         self._proto_state[proto] = _ProtoTrackEntry(fingerprint=fp, request_count=1)
@@ -152,6 +156,7 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
             call_ctx.command if call_ctx is not None else (req.url.path.rsplit("/", 1)[-1] if req.url.path else "")
         )
         session_scope = call_ctx.session_scope if call_ctx is not None else ""
+        identity_host = call_ctx.tls_identity_host if call_ctx is not None else None
         host = req.url.raw_host or req.host
         port = req.port or 443
         key: ConnectionKey = req.connection_key
@@ -164,6 +169,17 @@ class FingerprintTCPConnector(aiohttp.TCPConnector):
             session_scope=session_scope or None,
         )
         if pooled is not None and isinstance(pooled.protocol, ResponseHandler):
+            if identity_host is not None:
+                try:
+                    self._trust_policy.verify_fingerprint(
+                        host,
+                        port,
+                        pooled.fingerprint,
+                        identity_host=identity_host,
+                    )
+                except ServerIdentityError:
+                    pooled.close()
+                    raise
             proto = pooled.protocol
             self._proto_state[proto] = _ProtoTrackEntry(
                 fingerprint=pooled.fingerprint,

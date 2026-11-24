@@ -80,3 +80,27 @@ def test_cp_object_application_site_hydration_and_aliases() -> None:
     assert site.urls_defined_as_regular_expression is True
     assert site.description == "Baidu regex site"
     assert site.comments == "Managed by automation"
+
+
+@pytest.mark.spec("SCN-CACHE-013-2")
+def test_zero_mask_length_preserved_across_cpobject_and_topology_normalizer() -> None:
+    """SCN-CACHE-013-2 (DA-023): Preserve `mask-length4 == 0` (`0.0.0.0/0`) and interface prefix length `0`."""
+    from arodonata.core.services.topology.normalizer import _normalize_interface
+
+    net_hyphen = CPObject.from_cp_dict(
+        "mds",
+        "General",
+        {"uid": "net-any", "name": "NetAny", "type": "network", "subnet4": "0.0.0.0", "mask-length4": 0},
+    )
+    assert net_hyphen.mask_length4 == 0
+
+    net_snake = CPObject.from_cp_dict(
+        "mds",
+        "General",
+        {"uid": "net-any-2", "name": "NetAny2", "type": "network", "subnet4": "0.0.0.0", "mask_length4": 0},
+    )
+    assert net_snake.mask_length4 == 0
+
+    norm_if = _normalize_interface({"name": "eth0", "ipv4-address": "0.0.0.0", "ipv4-mask-length": 0})
+    assert norm_if is not None
+    assert norm_if.mask_length == 0

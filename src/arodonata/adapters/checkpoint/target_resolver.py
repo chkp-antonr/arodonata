@@ -55,6 +55,16 @@ def _is_ip_literal(host: str) -> bool:
         return False
 
 
+def resolve_tls_identity_host(raw_host: str | None, pinned_ip: str) -> str | None:
+    """Return `raw_host` when it is a non-IP hostname that resolved to a different `pinned_ip`."""
+    if not raw_host:
+        return None
+    cleaned = raw_host.strip()
+    if not cleaned or cleaned == pinned_ip or _is_ip_literal(cleaned):
+        return None
+    return cleaned
+
+
 async def _resolve_hostname_ips(host: str) -> set[str]:
     """Resolve a non-IP hostname to canonical IP strings (returning empty set on failure)."""
     if not host or _is_ip_literal(host):
@@ -319,7 +329,11 @@ async def validate_explicit_server_ip(
     collect_hosts_fn: Callable[[str, str], Awaitable[tuple[set[str], list[DomainInfo]]]],
     refresh_domain_fn: Callable[[str, str], Awaitable[DomainInfo | None]],
 ) -> tuple[str, str, int]:
-    """Validate `explicit_server_ip` against trusted endpoints and return `(server_ip, mds_ip, port)`."""
+    """Validate `explicit_server_ip` against trusted endpoints and return `(pinned_ip, mds_ip, port)`.
+
+    Explicit hostnames are resolved and pinned to a trusted IP literal; hostnames that cannot be resolved fail
+    closed with `ValidationError` before any connection is attempted.
+    """
     cleaned_ip = explicit_server_ip.strip()
     canonical_ip = _canonicalize_host(cleaned_ip)
     trusted_ips, cached_domains = await collect_hosts_fn(mgmt_name, endpoint.host)
@@ -335,20 +349,29 @@ async def validate_explicit_server_ip(
             )
             trusted_ips, _ = await collect_hosts_fn(mgmt_name, endpoint.host)
 
-    if canonical_ip not in trusted_ips and (not _is_ip_literal(endpoint.host) or not _is_ip_literal(cleaned_ip)):
+    if not _is_ip_literal(endpoint.host):
         endpoint_resolved = await _resolve_hostname_ips(endpoint.host)
         trusted_ips.update(endpoint_resolved)
-        explicit_resolved = await _resolve_hostname_ips(cleaned_ip)
-        if explicit_resolved and explicit_resolved.intersection(trusted_ips):
-            trusted_ips.add(canonical_ip)
 
-    if canonical_ip not in trusted_ips:
+    pinned_target: str | None = None
+    if _is_ip_literal(cleaned_ip):
+        if canonical_ip in trusted_ips:
+            pinned_target = canonical_ip
+    else:
+        # Resolve explicit hostname and require EVERY returned A/AAAA record to be a subset of trusted_ips.
+        explicit_resolved = await _resolve_hostname_ips(cleaned_ip)
+        if explicit_resolved and explicit_resolved.issubset(trusted_ips):
+            pinned_target = sorted(explicit_resolved)[0]
+        # Unresolvable non-IP hostnames fail closed: forwarding a raw hostname would reintroduce connect-time DNS
+        # resolution (TOCTOU), so `pinned_target` stays `None` and `ValidationError` is raised below.
+
+    if pinned_target is None:
         raise ValidationError(
             f"Untrusted explicit server_ip {explicit_server_ip!r} for management server {mgmt_name!r}. "
             f"Known trusted hosts: {sorted(trusted_ips)}."
         )
-    resolved_mds_ip = resolve_active_mds_ip_for_target(cleaned_ip, endpoint.host, cached_domains)
-    return cleaned_ip, resolved_mds_ip, endpoint.port
+    resolved_mds_ip = resolve_active_mds_ip_for_target(pinned_target, endpoint.host, cached_domains)
+    return pinned_target, resolved_mds_ip, endpoint.port
 
 
 async def resolve_failover_domain_ip(

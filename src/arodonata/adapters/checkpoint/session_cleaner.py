@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from arodonata.adapters.checkpoint.rate_limiter import RateLimiter
 from arodonata.adapters.checkpoint.target_resolver import logger
 from arodonata.adapters.checkpoint.transport import ApiTransport
 from arodonata.core.config import ArodonataSettings
-from arodonata.core.context import SYSTEM_DOMAIN_KEY, AuthContext, get_auth_context, normalize_domain_key
+from arodonata.core.context import AuthContext, get_auth_context, normalize_domain_key
 from arodonata.core.errors import (
     ApiTimeoutError,
     AuthenticationError,
@@ -18,7 +17,6 @@ from arodonata.core.errors import (
     ServerIdentityError,
     TransportError,
 )
-from arodonata.core.models.domains import SIDCacheEntry
 from arodonata.core.ports import SidCachePort
 from arodonata.core.telemetry import span_attrs, traced
 
@@ -30,10 +28,9 @@ class SessionCleaner:
     """Cleans up stale or abandoned Check Point API sessions on startup and max-sessions refusal.
 
     Invariants:
-    - When `schedule_startup_cleanup()` runs on client entry with static credentials and
-      no cached SID or in-flight login exists for a server's system domain, the session
-      opened by `SessionCleaner` is retained in `sid_cache` for subsequent read calls
-      rather than logged out.
+    - Opens a temporary read-write cleanup session, discards only Arodonata-owned sessions
+      with `changes == 0` and `locks == 0`, and ALWAYS logs out that temporary read-write
+      session via `logout_sid` without ever seeding a read-write SID into `arodonata_sid_cache`.
     - When `ArodonataClient` / `AMgmtClient` enters in `"dynamic"` auth mode before any
       administrator credentials have been supplied, startup session cleanup is skipped
       without raising an authentication error.
@@ -78,7 +75,7 @@ class SessionCleaner:
         for mgmt_name in self._settings.servers:
             if not self._login_coordinator.has_static_credentials(mgmt_name):
                 continue
-            task = asyncio.create_task(self.cleanup_server_sessions(mgmt_name, seed_system_sid=True))
+            task = asyncio.create_task(self.cleanup_server_sessions(mgmt_name))
             self._startup_tasks.add(task)
 
             def _on_startup_done(t: asyncio.Task[bool], server: str = mgmt_name) -> None:
@@ -106,7 +103,7 @@ class SessionCleaner:
         for mgmt_name in self._settings.servers:
             if not self._login_coordinator.has_static_credentials(mgmt_name):
                 continue
-            outcomes[mgmt_name] = await self.cleanup_server_sessions(mgmt_name, seed_system_sid=True)
+            outcomes[mgmt_name] = await self.cleanup_server_sessions(mgmt_name)
         return outcomes
 
     @traced
@@ -116,7 +113,6 @@ class SessionCleaner:
         *,
         domain: str | None = None,
         auth: AuthContext | None = None,
-        seed_system_sid: bool = False,
     ) -> bool:
         """Inspect open Web API sessions on `mgmt_name` and discard stale/abandoned sessions."""
         if self._is_cold_dynamic_mode(auth=auth):
@@ -124,7 +120,7 @@ class SessionCleaner:
 
         dom_key = normalize_domain_key(domain)
         endpoint = self._login_coordinator.get_server_endpoint(mgmt_name)
-        span_attrs(mgmt_name=mgmt_name, domain=dom_key, seed_system_sid=seed_system_sid)
+        span_attrs(mgmt_name=mgmt_name, domain=dom_key)
 
         try:
             resolved_auth = await self._login_coordinator.resolve_credentials(
@@ -140,21 +136,6 @@ class SessionCleaner:
             )
             return False
         identity = resolved_auth.identity_key
-
-        existing_cached = await self._cache.get_sid(mgmt_name, dom_key, auth_identity=identity)
-        now = self._login_coordinator.now()
-        if (
-            seed_system_sid
-            and existing_cached is not None
-            and existing_cached.expires_at is not None
-            and existing_cached.expires_at > now
-            and existing_cached.sid
-        ):
-            return True
-
-        had_cached_or_inflight = existing_cached is not None or self._login_coordinator.has_inflight_or_cached_login(
-            mgmt_name, domain
-        )
 
         # Open a dedicated session to inspect/discard stale sessions (never recurse on max-sessions)
         try:
@@ -182,7 +163,6 @@ class SessionCleaner:
             )
             return False
 
-        retain_in_cache = False
         try:
             async with self._rate_limiter.slot(endpoint.host):
                 res = await self._transport.execute(
@@ -258,32 +238,9 @@ class SessionCleaner:
                                     auth_identity=cached_entry.auth_identity,
                                 )
 
-            # Check if we should seed `arodonata_sid_cache` with this session instead of logging it out
-            if seed_system_sid and dom_key == SYSTEM_DOMAIN_KEY and not had_cached_or_inflight:
-                current_cached = await self._cache.get_sid(mgmt_name, dom_key, auth_identity=identity)
-                if current_cached is None and not self._login_coordinator.has_inflight_or_cached_login(
-                    mgmt_name, domain
-                ):
-                    now = self._login_coordinator.now()
-                    entry = SIDCacheEntry(
-                        id=f"{mgmt_name}:{dom_key}:{identity}",
-                        mgmt_name=mgmt_name,
-                        domain_name=dom_key,
-                        sid=sid,
-                        server_ip=server_ip,
-                        session_uid=session_uid,
-                        auth_identity=identity,
-                        created_at=now,
-                        last_used_at=now,
-                        expires_at=now + timedelta(seconds=self._settings.session_expire_seconds),
-                    )
-                    await self._cache.upsert_sid(entry)
-                    self._login_coordinator.adopt_dedicated_sid(mgmt_name, sid)
-                    retain_in_cache = True
             return True
         finally:
-            if not retain_in_cache:
-                await asyncio.shield(self._login_coordinator.logout_sid(mgmt_name, sid, server_ip=server_ip))
+            await asyncio.shield(self._login_coordinator.logout_sid(mgmt_name, sid, server_ip=server_ip))
 
     async def drain_startup_tasks(self, timeout: float = 5.0) -> None:
         """Wait up to `timeout` seconds for any background startup cleanup tasks to finish."""

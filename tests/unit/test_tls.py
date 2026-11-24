@@ -437,3 +437,128 @@ def test_tls_concurrent_tofu_rollback_legacy_stored_decision_and_connector_valid
             trust_policy=object(),  # type: ignore[arg-type]
             connection_pool=VerifiedConnectionPool(),
         )
+
+
+@pytest.mark.spec("SCN-TRANS-003-3")
+def test_trust_store_symlink_parent_dir_and_configmap_permissions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-TRANS-003-3: Enforce 0700 parent creation, symlink refusal, safe writable-dir check, and ConfigMap compat."""
+    if os.name == "nt":  # pragma: no cover
+        pytest.skip("POSIX file modes and symlinks required")
+
+    _der, fp = _make_der("sec-check")
+
+    # 1. New parent directories are created with mode 0700 and file with 0600
+    nested_store_path = tmp_path / "new_secure_dir" / "sub" / "tls_known_hosts.json"
+    store_new = TrustStore(path=nested_store_path, trust_mode="tofu")
+    store_new.record("10.0.0.1", 443, fp, source="tofu", persist=True)
+    assert (os.stat(nested_store_path.parent).st_mode & 0o777) == 0o700
+    assert (os.stat(nested_store_path.parent.parent).st_mode & 0o777) == 0o700
+    assert (os.stat(nested_store_path).st_mode & 0o777) == 0o600
+
+    # 2. Symlinked trust store (both valid and dangling) rejected with TrustStoreError
+    target_file = tmp_path / "real_hosts.json"
+    target_file.write_text("{}", encoding="utf-8")
+    os.chmod(target_file, 0o600)
+    symlink_store_path = tmp_path / "sym_known_hosts.json"
+    symlink_store_path.symlink_to(target_file)
+    with pytest.raises(TrustStoreError, match="symlink"):
+        TrustStore(path=symlink_store_path).load()
+
+    dangling_path = tmp_path / "dangling_known_hosts.json"
+    dangling_path.symlink_to(tmp_path / "does_not_exist.json")
+    with pytest.raises(TrustStoreError, match="symlink"):
+        TrustStore(path=dangling_path).load()
+
+    # 3. Symlinked lock file rejected before acquiring lock or writing
+    lock_dir = tmp_path / "lock_sym_dir"
+    lock_dir.mkdir(mode=0o700)
+    (lock_dir / ".known_hosts.json.lock").symlink_to(tmp_path / "other.lock")
+    with pytest.raises(TrustStoreError, match="symlink"):
+        TrustStore(path=lock_dir / "known_hosts.json").record("10.0.0.1", 443, fp, persist=True)
+
+    # 4. Unsafe non-sticky group/world-writable parent directory rejected; sticky directory allowed
+    unsafe_dir = tmp_path / "world_writable_dir"
+    unsafe_dir.mkdir()
+    os.chmod(unsafe_dir, 0o777)
+    try:
+        unsafe_kh = unsafe_dir / "known_hosts.json"
+        unsafe_kh.write_text("{}", encoding="utf-8")
+        os.chmod(unsafe_kh, 0o600)
+        with pytest.raises(TrustStoreError, match="non-sticky"):
+            TrustStore(path=unsafe_kh).load()
+    finally:
+        os.chmod(unsafe_dir, 0o700)
+
+    sticky_dir = tmp_path / "sticky_dir"
+    sticky_dir.mkdir()
+    os.chmod(sticky_dir, 0o1777)
+    try:
+        sticky_kh = sticky_dir / "known_hosts.json"
+        sticky_kh.write_text(json.dumps({"10.0.0.1:443": fp}), encoding="utf-8")
+        os.chmod(sticky_kh, 0o600)
+        assert TrustStore(path=sticky_kh).get("10.0.0.1", 443) is not None
+    finally:
+        os.chmod(sticky_dir, 0o700)
+
+    # 5. Over-readable euid-owned TOFU file (0644) emits WARNING without failing
+    warn_events: list[str] = []
+    monkeypatch.setattr(tls_mod.logger, "warning", lambda msg, **_kw: warn_events.append(str(msg)))
+    readable_dir = tmp_path / "readable_dir"
+    readable_dir.mkdir(mode=0o700)
+    readable_kh = readable_dir / "known_hosts.json"
+    readable_kh.write_text(json.dumps({"10.0.0.1:443": fp}), encoding="utf-8")
+    os.chmod(readable_kh, 0o644)
+    if os.geteuid() != 0:
+        assert TrustStore(path=readable_kh, trust_mode="tofu").get("10.0.0.1", 443) is not None
+        assert "tls_trust_store_over_readable" in warn_events
+
+    # 6. uid=0 read-only ConfigMap mount (0444/0644) works cleanly without warning or error for non-root euid
+    warn_events.clear()
+    orig_lstat = os.lstat
+
+    def _mock_root_lstat(path: Any, *args: Any, **kwargs: Any) -> Any:
+        real_st = orig_lstat(path, *args, **kwargs)
+        p = Path(path)
+        if p == readable_kh:
+            import stat as _stat
+
+            return os.stat_result(
+                (
+                    _stat.S_IFREG | 0o444,
+                    real_st.st_ino,
+                    real_st.st_dev,
+                    real_st.st_nlink,
+                    0,  # uid=0 ConfigMap mount
+                    real_st.st_gid,
+                    real_st.st_size,
+                    real_st.st_atime,
+                    real_st.st_mtime,
+                    real_st.st_ctime,
+                )
+            )
+        if p == readable_dir:
+            import stat as _stat
+
+            return os.stat_result(
+                (
+                    _stat.S_IFDIR | 0o755,
+                    real_st.st_ino,
+                    real_st.st_dev,
+                    real_st.st_nlink,
+                    0,  # uid=0 mounted parent directory
+                    real_st.st_gid,
+                    real_st.st_size,
+                    real_st.st_atime,
+                    real_st.st_mtime,
+                    real_st.st_ctime,
+                )
+            )
+        return real_st
+
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(os, "lstat", _mock_root_lstat)
+    assert TrustStore(path=readable_kh, trust_mode="tofu").get("10.0.0.1", 443) is not None
+    assert warn_events == []

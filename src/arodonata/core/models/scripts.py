@@ -209,8 +209,12 @@ class ScriptTargetExecutionResult(BaseModel):
     revision: str | None = None
 
     def model_post_init(self, __context: Any) -> None:
+        if self.stdout:
+            self.stdout = redact_sid(self.stdout)
         if self.stderr:
             self.stderr = redact_sid(self.stderr)
+        if self.status_description:
+            self.status_description = redact_sid(self.status_description)
 
 
 class RepositoryScriptExecutionOutcome(BaseModel):
@@ -231,6 +235,8 @@ class RepositoryScriptExecutionOutcome(BaseModel):
     error_message: str | None = None
 
     def model_post_init(self, __context: Any) -> None:
+        if self.stdout:
+            self.stdout = redact_sid(self.stdout)
         if self.stderr:
             self.stderr = redact_sid(self.stderr)
         if self.error_message:

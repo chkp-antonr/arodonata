@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from arodonata.core.models.common import ApiCallResult, ApiQueryResult
+from arodonata.core.primitives import validate_command_name
 from arodonata.core.telemetry import span_attrs, traced
 
 DEFAULT_PAGE_LIMIT: int = 300
@@ -126,7 +127,7 @@ async def paginate_objects(
     the listing at most once on `from`/`to`/`total` discontinuity before returning
     `ApiQueryResult(success=False, code="paging_inconsistent")`.
     """
-    clean_cmd = command.strip().lstrip("/")
+    clean_cmd = validate_command_name(command)
     effective_limit = max(1, min(int(limit), MAX_PAGE_LIMIT))
     base_payload: dict[str, Any] = dict(payload) if payload else {}
     initial_offset = int(base_payload.get("offset", 0))

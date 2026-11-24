@@ -183,8 +183,9 @@ class MCPToolQuotaManager:
             retry_after_seconds=0.0,
         )
 
-    def check_and_consume_live_only(self, client_id: str | None) -> QuotaDecision:
-        """Check and consume only the `live` quota bucket after `general` was already charged."""
+    def check_and_consume_live_only(self, client_id: str | None, *, cost: int = 1) -> QuotaDecision:
+        """Check and consume `cost` slots from the `live` quota bucket after `general` was already charged."""
+        eff_cost = max(1, int(cost))
         clean_cid = client_id.strip() if isinstance(client_id, str) and client_id.strip() else "anonymous"
         if self._live_limit == 0:
             return QuotaDecision(
@@ -202,18 +203,20 @@ class MCPToolQuotaManager:
         while live_dq and live_dq[0] <= cutoff:
             live_dq.popleft()
 
-        if len(live_dq) >= self._live_limit:
-            retry_after = max(0.001, round((live_dq[0] + self._window_seconds) - now, 3))
+        if len(live_dq) + eff_cost > self._live_limit:
+            oldest = live_dq[0] if live_dq else now
+            retry_after = max(0.001, round((oldest + self._window_seconds) - now, 3))
             return QuotaDecision(
                 allowed=False,
                 client_id=clean_cid,
                 bucket="live",
                 limit=self._live_limit,
-                remaining=0,
+                remaining=max(0, self._live_limit - len(live_dq)),
                 retry_after_seconds=retry_after,
             )
 
-        live_dq.append(now)
+        for _ in range(eff_cost):
+            live_dq.append(now)
         return QuotaDecision(
             allowed=True,
             client_id=clean_cid,
@@ -222,6 +225,32 @@ class MCPToolQuotaManager:
             remaining=max(0, self._live_limit - len(live_dq)),
             retry_after_seconds=0.0,
         )
+
+    def live_bucket_count(self, client_id: str | None) -> int:
+        """Return the number of active (non-expired) slots in `client_id`'s `live` quota bucket."""
+        clean_cid = client_id.strip() if isinstance(client_id, str) and client_id.strip() else "anonymous"
+        buckets = self._clients.get(clean_cid)
+        if buckets is None:
+            return 0
+        _general_dq, live_dq = buckets
+        cutoff = float(self._monotonic()) - self._window_seconds
+        while live_dq and live_dq[0] <= cutoff:
+            live_dq.popleft()
+        return len(live_dq)
+
+    def rollback_consumed(self, client_id: str | None, *, general: int = 0, live: int = 0) -> None:
+        """Roll back up to `general` and `live` most-recently consumed slots for `client_id`."""
+        clean_cid = client_id.strip() if isinstance(client_id, str) and client_id.strip() else "anonymous"
+        buckets = self._clients.get(clean_cid)
+        if buckets is None:
+            return
+        general_dq, live_dq = buckets
+        for _ in range(max(0, int(general))):
+            if general_dq:
+                general_dq.pop()
+        for _ in range(max(0, int(live))):
+            if live_dq:
+                live_dq.pop()
 
 
 __all__ = [
