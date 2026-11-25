@@ -116,7 +116,7 @@ async def plan_object_step(
             existing = await reader.get_object_by_name(mgmt_name, domain_name, obj_type, req_name)
 
         if verb == "delete":
-            if existing is not None and spec.get("check_where_used"):
+            if existing is not None and not str(existing.uid).startswith("planned:") and spec.get("check_where_used"):
                 _ = await reader.check_where_used(mgmt_name, domain_name, uid=existing.uid, name=existing.name)
             return _plan_entity_delete(
                 action_id=action_id,

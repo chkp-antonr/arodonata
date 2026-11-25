@@ -497,3 +497,56 @@ def test_build_inverse_template_rule_incremental_update_and_rename() -> None:
             "track": "Log",
         }
     ]
+
+
+@pytest.mark.spec("SCN-CPCRUD-015-2")
+def test_inverse_strips_planned_uids_and_preserves_group_parents() -> None:
+    """SCN-CPCRUD-015-2: Rollback UPDATEs strip synthetic 'planned:' UIDs and group/service-group rollbacks preserve parent groups."""
+    plan = Plan(
+        actions=[
+            PlannedAction(
+                action_id="act-obj-upd",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="set",
+                object_type="host",
+                name="H_new",
+                target_uid="planned:host:H_new",
+                outcome=Outcome.UPDATE,
+                prior_state={
+                    "uid": "planned:host:H_new",
+                    "name": "H_new",
+                    "ipv4-address": "10.0.0.1",
+                },
+                payload={"name": "H_new", "ipv4-address": "10.0.0.2"},
+            ),
+            PlannedAction(
+                action_id="act-svc-grp",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="set",
+                object_type="service-group",
+                name="SG_app",
+                target_uid="sg-uid-1",
+                outcome=Outcome.UPDATE,
+                prior_state={
+                    "uid": "sg-uid-1",
+                    "name": "SG_app",
+                    "members": ["TCP_80"],
+                    "groups": ["SG_parent"],
+                },
+                payload={"name": "SG_app", "members": ["TCP_80", "TCP_443"]},
+            ),
+        ]
+    )
+
+    inverse = build_inverse_template(plan)
+    assert validate_template(inverse) == []
+    ops = inverse["operations"]
+    assert len(ops) == 2
+    obj_op = next(o for o in ops if o["type"] == "host")
+    assert "uid" not in obj_op
+    sg_op = next(o for o in ops if o["type"] == "service-group")
+    assert sg_op["uid"] == "sg-uid-1"
+    assert sg_op["groups"] == ["SG_parent"]
+    assert sg_op["members"] == ["TCP_80"]

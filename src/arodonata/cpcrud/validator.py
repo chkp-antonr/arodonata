@@ -137,11 +137,18 @@ def _validate_semantic_rules(parsed: dict[str, Any]) -> list[str]:
             if not isinstance(item, dict):
                 continue
             item_type = str(item.get("type") or "").strip().lower()
+            if not item_type:
+                if "rules" in path_prefix or "layer" in item or "package" in item or "rulebase_type" in item:
+                    item_type = str(item.get("rulebase_type") or "access-rule").strip().lower()
+                elif "groups" in path_prefix:
+                    item_type = "group"
+                elif "objects" in path_prefix:
+                    item_type = "host"
+                elif "services" in path_prefix:
+                    item_type = "service-tcp"
+            verb = _resolve_rule_semantic_verb(item)
             if item_type == "application-site":
-                action = (
-                    str(item.get("action") or item.get("operation") or item.get("state") or "present").strip().lower()
-                )
-                if action == "add":
+                if verb == "add":
                     raw_urls = item.get("url-list") if "url-list" in item else item.get("url_list")
                     if isinstance(raw_urls, list):
                         has_urls = any(str(u).strip() for u in raw_urls)
@@ -154,20 +161,16 @@ def _validate_semantic_rules(parsed: dict[str, Any]) -> list[str]:
                     has_sig = bool(str(raw_sig or "").strip())
                     if not has_urls and not has_sig:
                         errors.append(
-                            f"{path_prefix}[{idx}]: 'application-site' with action {action!r} requires "
+                            f"{path_prefix}[{idx}]: 'application-site' with action {verb!r} requires "
                             "'url-list' (or 'url_list') or 'application-signature' (or 'application_signature')."
                         )
             elif item_type in rule_types:
-                verb = _resolve_rule_semantic_verb(item)
                 if verb == "add" and rule_spec_has_delta_mapping(item):
                     errors.append(
                         f"{path_prefix}[{idx}]: {item_type!r} with action 'add' cannot use incremental "
                         "{'add', 'remove'} cell deltas; use operation 'set' / 'update' (or 'present' for existing rules)."
                     )
             elif item_type in ("group", "service-group"):
-                verb = (
-                    str(item.get("action") or item.get("operation") or item.get("state") or "present").strip().lower()
-                )
                 raw_members = item.get("members")
                 if verb == "add" and isinstance(raw_members, dict) and "remove" in raw_members:
                     errors.append(

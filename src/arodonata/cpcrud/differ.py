@@ -579,7 +579,12 @@ def _compute_rule_list_cell_diff(
     update_payload: dict[str, Any],
 ) -> None:
     if isinstance(raw_desired_val, Mapping):
-        exist_names = deref_rule_list(exist_list, raw_exist.get(field_key), eff_obj_dict, default_any=True)
+        exist_names = deref_rule_list(
+            exist_list,
+            raw_exist.get(field_key),
+            eff_obj_dict,
+            default_any=(field_key in ("source", "destination", "service")),
+        )
         req_adds = _resolve_rule_delta_items(
             raw_desired_val.get("add"),
             eff_obj_dict=eff_obj_dict,
@@ -636,6 +641,20 @@ def _compute_rule_list_cell_diff(
             )
             update_payload[field_key] = delta_op
         return
+
+    if isinstance(raw_desired_val, str):
+        if not raw_desired_val.strip():
+            raise DiffSafetyError(
+                f"Refusing empty string replacement on rule field {field_key!r}: "
+                "an empty rule cell silently widens to 'Any' in Check Point; pass ['Any'] explicitly."
+            )
+    elif isinstance(raw_desired_val, Sequence) and (
+        not raw_desired_val or not any(str(x).strip() for x in raw_desired_val)
+    ):
+        raise DiffSafetyError(
+            f"Refusing empty list replacement on rule field {field_key!r}: "
+            "an empty rule cell silently widens to 'Any' in Check Point; pass ['Any'] explicitly."
+        )
 
     norm_des_t = normalize_traffic_list(raw_desired_val, name_resolutions=name_resolutions)
     norm_exist_t = normalize_traffic_list(
@@ -763,7 +782,7 @@ def compute_rule_diff(
                 norm_exist = normalize_nat_traffic_ref(
                     exist_attr if exist_attr is not None else raw_exist.get(kebab_k),
                     is_translated=is_trans,
-                    obj_dict=obj_dict,
+                    obj_dict=eff_obj_dict,
                 )
                 if norm_des != norm_exist:
                     diffs[kebab_k] = FieldChange(field=kebab_k, old_value=norm_exist, new_value=norm_des)
@@ -801,12 +820,27 @@ def compute_rule_diff(
                 update_payload["action"] = req_act
 
         if "track" in desired and desired["track"] is not None:
-            req_track = desired["track"]
-            req_track_str = str(req_track.get("type") or "") if isinstance(req_track, dict) else str(req_track).strip()
-            exist_track_str = str(existing.track or "").strip()
-            if req_track_str.lower() != exist_track_str.lower():
-                diffs["track"] = FieldChange(field="track", old_value=existing.track, new_value=req_track)
-                update_payload["track"] = req_track
+            from arodonata.cpcrud.rule_identity import encode_track_for_rulebase, normalize_track_dict
+
+            req_wire = encode_track_for_rulebase(desired["track"], rulebase_type)
+            if rulebase_type == "access":
+                req_norm = normalize_track_dict(req_wire)
+                exist_raw_track = raw_exist.get("track") if raw_exist.get("track") is not None else existing.track
+                exist_norm = normalize_track_dict(exist_raw_track, eff_obj_dict)
+                track_changed = req_norm.get("type") != exist_norm.get("type") or any(
+                    exist_norm.get(k) != v for k, v in req_norm.items() if k != "type"
+                )
+                if track_changed:
+                    diffs["track"] = FieldChange(field="track", old_value=exist_raw_track, new_value=req_wire)
+                    update_payload["track"] = req_wire
+            else:
+                req_str = str(req_wire).strip()
+                raw_t = raw_exist.get("track")
+                exist_t = raw_t.get("type") if isinstance(raw_t, Mapping) else raw_t
+                exist_str = str(existing.track or exist_t or "").strip()
+                if req_str.lower() != exist_str.lower():
+                    diffs["track"] = FieldChange(field="track", old_value=existing.track, new_value=req_str)
+                    update_payload["track"] = req_str
 
     if isinstance(existing, AccessRuleEntry):
         for snake_k, kebab_k, exist_neg in (

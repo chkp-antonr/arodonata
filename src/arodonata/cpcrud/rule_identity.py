@@ -124,18 +124,77 @@ def normalize_nat_traffic_ref(
     return ref
 
 
+DEFAULT_RULE_ACTION_BY_TYPE: dict[str, str] = {
+    "access": "Drop",
+    "https": "Inspect",
+    "threat": "Optimized",
+}
+
+
+def resolve_desired_rule_action(spec: Mapping[str, Any], rulebase_type: str = "access") -> str:
+    """Resolve the desired Check Point rule action, defaulting fail-closed per `rulebase_type`."""
+    raw_act = spec.get("rule_action")
+    if raw_act is None and "action" in spec:
+        cand = spec["action"]
+        if isinstance(cand, str) and cand.lower() not in ("present", "absent", "add", "set", "update", "delete"):
+            raw_act = cand
+    default_act = DEFAULT_RULE_ACTION_BY_TYPE.get(rulebase_type, "Drop")
+    return str(raw_act or default_act).strip()
+
+
+def encode_track_for_rulebase(value: Any, rulebase_type: str) -> Any:
+    """Encode `track` into Check Point's per-rulebase wire representation."""
+    if rulebase_type == "access":
+        if isinstance(value, str):
+            return {"type": value.strip()}
+        if isinstance(value, Mapping):
+            return dict(value)
+        return {"type": str(value).strip()}
+    if isinstance(value, Mapping):
+        return str(value.get("type") or "").strip()
+    return str(value).strip()
+
+
+def normalize_track_dict(
+    value: Any,
+    obj_dict: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Normalize an `access` `track` value (str or TrackSettingsForRequest dict) for equality comparison."""
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        raw_t = value.strip()
+        if obj_dict and raw_t in obj_dict:
+            raw_t = str(obj_dict[raw_t].get("name") or raw_t).strip()
+        return {"type": raw_t.lower()} if raw_t else {}
+    if isinstance(value, Mapping):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if v is None:
+                continue
+            if k == "type":
+                t_val = str(v.get("name") or v.get("uid") or "").strip() if isinstance(v, Mapping) else str(v).strip()
+                if obj_dict and t_val in obj_dict:
+                    t_val = str(obj_dict[t_val].get("name") or t_val).strip()
+                if t_val:
+                    out["type"] = t_val.lower()
+            else:
+                out[str(k)] = v
+        return out
+    return {"type": str(value).strip().lower()}
+
+
 def desired_access_traffic_tuple(
     spec: Mapping[str, Any],
     name_resolutions: Mapping[str, str] | None = None,
+    *,
+    rulebase_type: str = "access",
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], str]:
     """Compute canonical `(source, destination, service, action)` tuple for a desired access/HTTPS/threat rule."""
     src = normalize_traffic_list(spec.get("source"), name_resolutions=name_resolutions)
     dst = normalize_traffic_list(spec.get("destination"), name_resolutions=name_resolutions)
     svc = normalize_traffic_list(spec.get("service"), name_resolutions=name_resolutions)
-    raw_act = spec.get("rule_action") or spec.get("action")
-    if isinstance(raw_act, str) and raw_act.lower() in ("present", "absent", "add", "set", "update", "delete"):
-        raw_act = spec.get("rule_action") or "Drop"
-    act = str(raw_act or "Drop").strip().capitalize()
+    act = resolve_desired_rule_action(spec, rulebase_type=rulebase_type).capitalize()
     return (src, dst, svc, act)
 
 
@@ -145,10 +204,17 @@ def existing_access_traffic_tuple(
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], str]:
     """Compute canonical `(source, destination, service, action)` tuple for an existing access/HTTPS/threat rule."""
     raw = rule.raw_data or {}
-    src = normalize_traffic_list(rule.source or raw.get("source"), obj_dict=obj_dict)
-    dst = normalize_traffic_list(rule.destination or raw.get("destination"), obj_dict=obj_dict)
-    svc = normalize_traffic_list(rule.service or raw.get("service"), obj_dict=obj_dict)
-    act = str(rule.action or "Drop").strip().capitalize()
+    eff_obj_dict = build_effective_obj_dict(raw, obj_dict)
+    src = normalize_traffic_list(rule.source or raw.get("source"), obj_dict=eff_obj_dict)
+    dst = normalize_traffic_list(rule.destination or raw.get("destination"), obj_dict=eff_obj_dict)
+    svc = normalize_traffic_list(rule.service or raw.get("service"), obj_dict=eff_obj_dict)
+    if isinstance(rule, HttpsRuleEntry):
+        default_act = "Inspect"
+    elif isinstance(rule, ThreatRuleEntry):
+        default_act = "Optimized"
+    else:
+        default_act = "Drop"
+    act = str(rule.action or default_act).strip().capitalize()
     return (src, dst, svc, act)
 
 
@@ -197,35 +263,36 @@ def existing_nat_traffic_tuple(
 ) -> tuple[str, str, str, str, str, str, str]:
     """Compute canonical 7-tuple for an existing `NatRuleEntry`, normalizing `NAT_ORIGINAL_OBJECT_UID` and `NAT_ANY_OBJECT_UID`."""
     raw = rule.raw_data or {}
+    eff_obj_dict = build_effective_obj_dict(raw, obj_dict)
     orig_src = normalize_nat_traffic_ref(
         rule.original_source if rule.original_source is not None else raw.get("original-source"),
         is_translated=False,
-        obj_dict=obj_dict,
+        obj_dict=eff_obj_dict,
     )
     orig_dst = normalize_nat_traffic_ref(
         rule.original_destination if rule.original_destination is not None else raw.get("original-destination"),
         is_translated=False,
-        obj_dict=obj_dict,
+        obj_dict=eff_obj_dict,
     )
     orig_svc = normalize_nat_traffic_ref(
         rule.original_service if rule.original_service is not None else raw.get("original-service"),
         is_translated=False,
-        obj_dict=obj_dict,
+        obj_dict=eff_obj_dict,
     )
     trans_src = normalize_nat_traffic_ref(
         rule.translated_source if rule.translated_source is not None else raw.get("translated-source"),
         is_translated=True,
-        obj_dict=obj_dict,
+        obj_dict=eff_obj_dict,
     )
     trans_dst = normalize_nat_traffic_ref(
         rule.translated_destination if rule.translated_destination is not None else raw.get("translated-destination"),
         is_translated=True,
-        obj_dict=obj_dict,
+        obj_dict=eff_obj_dict,
     )
     trans_svc = normalize_nat_traffic_ref(
         rule.translated_service if rule.translated_service is not None else raw.get("translated-service"),
         is_translated=True,
-        obj_dict=obj_dict,
+        obj_dict=eff_obj_dict,
     )
     method = str(rule.method or raw.get("method") or "static").strip().lower()
     return (orig_src, orig_dst, orig_svc, trans_src, trans_dst, trans_svc, method)
@@ -292,7 +359,11 @@ def match_rule(
         )
     )
     if not req_name or has_traffic_fields:
-        des_acc = desired_access_traffic_tuple(spec, name_resolutions=name_resolutions)
+        des_acc = desired_access_traffic_tuple(
+            spec,
+            name_resolutions=name_resolutions,
+            rulebase_type=rulebase_type,
+        )
         for r in rules:
             if isinstance(r, (AccessRuleEntry, HttpsRuleEntry, ThreatRuleEntry)):
                 # Skip matching the trailing Cleanup rule unless explicitly named "Cleanup rule"

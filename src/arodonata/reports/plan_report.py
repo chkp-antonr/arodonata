@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Mapping
 from typing import Any
@@ -256,8 +257,16 @@ def _action_to_rule_entry(act: PlannedAction, field_diffs: list[FieldDiff]) -> R
     layer_name = str(act.layer or merged.get("layer") or "")
     package_name = str(act.package or merged.get("package") or "") or None
 
-    raw_pos = merged.get("rule_number") or merged.get("rule-number") or merged.get("position")
-    rule_number = str(raw_pos) if isinstance(raw_pos, int) else None
+    raw_rule_num = merged.get("rule_number") if "rule_number" in merged else merged.get("rule-number")
+    rule_number: str | None = None
+    if isinstance(raw_rule_num, int) and not isinstance(raw_rule_num, bool):
+        rule_number = str(raw_rule_num)
+    elif isinstance(raw_rule_num, str) and re.fullmatch(r"\d+(?:\.\d+)*", raw_rule_num.strip()):
+        rule_number = raw_rule_num.strip()
+    else:
+        raw_pos = merged.get("position")
+        if isinstance(raw_pos, int) and not isinstance(raw_pos, bool):
+            rule_number = str(raw_pos)
 
     raw_act = merged.get("rule_action") or merged.get("action")
     if isinstance(raw_act, str) and raw_act.lower() in ("present", "absent", "add", "set", "update", "delete"):

@@ -183,6 +183,8 @@ class StagedSessionInfo(BaseModel):
     server_ip: str
     session_uid: str | None = None
     session_name: str | None = None
+    baseline_session_uid: str | None = None
+    baseline_published_at: datetime | None = None
     _sid: str = PrivateAttr(default="")
 
     def __init__(self, *, sid: str = "", **data: Any) -> None:

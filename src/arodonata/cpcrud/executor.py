@@ -15,6 +15,7 @@ Implements `Executor`:
 
 from __future__ import annotations
 
+import asyncio
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
@@ -41,7 +42,7 @@ from arodonata.cpcrud._executor_helpers import (
     check_current_domain_head,
     resolve_allowlisted_command,
 )
-from arodonata.cpcrud._executor_pass import execute_single_pass
+from arodonata.cpcrud._executor_pass import _HeadCheckFn, execute_single_pass
 from arodonata.cpcrud._executor_staged import adopt_staged_session
 from arodonata.cpcrud.models import ApplyReport, Outcome, Plan, StagedSessionInfo
 
@@ -55,10 +56,12 @@ class Executor:
         api: ApiPort,
         on_domain_invalidated: Callable[[str, str | None], None] | None = None,
         now_fn: Callable[[], datetime] = utc_now,
+        check_domain_head: _HeadCheckFn | None = None,
     ) -> None:
         self._api = api
         self._on_domain_invalidated = on_domain_invalidated
         self._now = now_fn
+        self._check_domain_head = check_domain_head
         self._last_report: ApplyReport | None = None
         self._last_staged_publish_result: ApiCallResult | None = None
         self._staged_sessions: OrderedDict[tuple[str, str, str], StagedSessionInfo] = OrderedDict()
@@ -293,6 +296,7 @@ class Executor:
         force_disconnect: bool = False,
         expected_session_name: str | None = None,
         allow_foreign: bool = False,
+        allow_stale: bool = False,
     ) -> AsyncIterator[CPCRUDEvent]:
         """Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate domain cache."""
         dom_label = f"{mgmt_name}:{domain}" if domain else mgmt_name
@@ -339,17 +343,49 @@ class Executor:
             return
 
         known_sids = [s for s in (sid, active_sid) if s]
+        staged_entry = self._staged_sessions.get((mgmt_name, dom_key, session_uid))
         try:
-            pub_res = await self._api.api_call(
-                mgmt_name,
-                "publish",
-                {},
-                domain=domain or None,
-                sid=active_sid,
-                server_ip=active_ip,
-                wait_for_task=True,
-                timeout=timeout,
-            )
+            is_stale = False
+            stale_reason = ""
+            if (
+                not allow_stale
+                and staged_entry is not None
+                and self._check_domain_head is not None
+                and (staged_entry.baseline_session_uid is not None or staged_entry.baseline_published_at is not None)
+            ):
+                from arodonata.cpcrud.models import DomainStamp
+
+                head_readable, curr_uid, curr_pub, head_err = await self._check_domain_head(mgmt_name, domain or "")
+                baseline_stamp = DomainStamp(
+                    mgmt_name=mgmt_name,
+                    domain_name=dom_key,
+                    readable=True,
+                    last_session_uid=staged_entry.baseline_session_uid,
+                    last_published_at=staged_entry.baseline_published_at,
+                    captured_at=self._now(),
+                )
+                if _is_domain_head_stale(baseline_stamp, curr_uid, curr_pub, head_readable):
+                    is_stale = True
+                    stale_reason = head_err or f"published head drifted to {curr_uid or curr_pub}"
+
+            if is_stale:
+                pub_res = ApiCallResult(
+                    success=False,
+                    status_code=409,
+                    error_message=f"Refusing to publish stale staged session {session_uid}: {stale_reason}",
+                    error_code="stale_plan",
+                )
+            else:
+                pub_res = await self._api.api_call(
+                    mgmt_name,
+                    "publish",
+                    {},
+                    domain=domain or None,
+                    sid=active_sid,
+                    server_ip=active_ip,
+                    wait_for_task=True,
+                    timeout=timeout,
+                )
         except ServerIdentityError:
             raise
         except Exception as exc:
@@ -361,11 +397,11 @@ class Executor:
                 error_code="publish_failed",
             )
         finally:
-            with suppress(Exception):
-                await self._api.logout_sid(mgmt_name, active_sid, server_ip=active_ip)
+            with suppress(BaseException):
+                await asyncio.shield(self._api.logout_sid(mgmt_name, active_sid, server_ip=active_ip))
             if sid and sid != active_sid:
-                with suppress(Exception):
-                    await self._api.logout_sid(mgmt_name, sid, server_ip=server_ip)
+                with suppress(BaseException):
+                    await asyncio.shield(self._api.logout_sid(mgmt_name, sid, server_ip=server_ip))
 
         if pub_res.success:
             self._staged_sessions.pop((mgmt_name, dom_key, session_uid), None)
@@ -427,6 +463,7 @@ class Executor:
         force_disconnect: bool = False,
         expected_session_name: str | None = None,
         allow_foreign: bool = False,
+        allow_stale: bool = False,
     ) -> ApiCallResult:
         """Adopt `session_uid`, publish it, log out, and invalidate the domain cache."""
         span_attrs(mgmt_name=mgmt_name, domain=domain, session_uid=session_uid)
@@ -441,6 +478,7 @@ class Executor:
             force_disconnect=force_disconnect,
             expected_session_name=expected_session_name,
             allow_foreign=allow_foreign,
+            allow_stale=allow_stale,
         ):
             pass
         assert self._last_staged_publish_result is not None
@@ -514,11 +552,11 @@ class Executor:
                 error_code="discard_failed",
             )
         finally:
-            with suppress(Exception):
-                await self._api.logout_sid(mgmt_name, active_sid, server_ip=active_ip)
+            with suppress(BaseException):
+                await asyncio.shield(self._api.logout_sid(mgmt_name, active_sid, server_ip=active_ip))
             if sid and sid != active_sid:
-                with suppress(Exception):
-                    await self._api.logout_sid(mgmt_name, sid, server_ip=server_ip)
+                with suppress(BaseException):
+                    await asyncio.shield(self._api.logout_sid(mgmt_name, sid, server_ip=server_ip))
 
 
 __all__ = [

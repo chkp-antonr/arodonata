@@ -868,3 +868,64 @@ async def test_executor_extracts_published_session_uid_from_polled_show_task_pay
         pub_events = [e for e in emitted_events if isinstance(e, CPCRUDDomainPublishedEvent)]
         assert len(pub_events) == 1
         assert pub_events[0].session_uid == expected_uid
+
+
+@pytest.mark.spec("SCN-CPCRUD-015-1")
+@pytest.mark.asyncio
+async def test_staged_publish_head_staleness_and_arodonata_provenance() -> None:
+    """SCN-CPCRUD-015-1: Staged publish rejects stale domain head and adopts post-restart arodonata* session."""
+    from datetime import datetime
+
+    from arodonata.cpcrud.models import StagedSessionInfo
+
+    api = ExecutorFakeApi()
+    executor = Executor(
+        api=api,
+        check_domain_head=lambda _m, _d: _const_head("sess-head-new", datetime(2026, 11, 24, 12, 0, 0)),
+    )
+    executor._staged_sessions[("mds1", "Corp", "staged-1")] = StagedSessionInfo(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        session_uid="staged-1",
+        session_name="arodonata-cpcrud-staged-1",
+        server_ip="10.0.0.1",
+        baseline_session_uid="sess-head-old",
+        baseline_published_at=datetime(2026, 11, 24, 11, 0, 0),
+        created_at=datetime(2026, 11, 24, 11, 5, 0),
+    )
+    stale_res = await executor.publish_staged_session("mds1", "Corp", session_uid="staged-1", allow_stale=False)
+    assert stale_res.success is False
+    assert stale_res.error_code == "stale_plan"
+    assert "secret-ws-sid-999" in api.logged_out_sids
+
+    # Post-restart arodonata* session with empty user-name is still adopted when not conflicting with a known creator.
+    api2 = ExecutorFakeApi()
+    orig_call = api2.api_call
+
+    async def _arodonata_session_call(
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ApiCallResult:
+        if command == "show-session" and (payload or {}).get("uid") == "aro-restart-uid":
+            return ApiCallResult(
+                success=True,
+                data={
+                    "uid": "aro-restart-uid",
+                    "name": "arodonata-cpcrud-draft",
+                    "application": "WEB_API",
+                    "user-name": "",
+                    "state": "open",
+                },
+            )
+        return await orig_call(mgmt_name, command, payload, **kwargs)
+
+    api2.api_call = _arodonata_session_call  # type: ignore[method-assign]
+    exec2 = Executor(api=api2)
+    pub_ok = await exec2.publish_staged_session("mds1", "Corp", session_uid="aro-restart-uid")
+    assert pub_ok.success is True
+
+
+async def _const_head(uid: str, ts: Any) -> tuple[bool, str | None, Any, str | None]:
+    return True, uid, ts, None

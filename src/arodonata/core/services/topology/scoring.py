@@ -133,7 +133,7 @@ def _build_effective_gateway_entries(
         filtered.append(entry)
 
     # Synthesize manual entries from annotations with `disposition="manual"`
-    if first is not None or gateway_asset is not None:
+    if first is not None or gateway_asset is not None or gw_annotations:
         if first is not None:
             mgmt_val = first.mgmt_name
             dom_val = first.domain_name
@@ -144,8 +144,7 @@ def _build_effective_gateway_entries(
             gw_type_val = first.gateway_type
             inst_pol_val = first.installed_access_policy
             pkgs_val = list(first.policy_packages)
-        else:
-            assert gateway_asset is not None
+        elif gateway_asset is not None:
             mgmt_val = gateway_asset.mgmt_name
             dom_val = gateway_asset.domain_name
             gw_id_val = gateway_asset.id
@@ -153,6 +152,17 @@ def _build_effective_gateway_entries(
             gw_uid_val = gateway_asset.uid
             gw_name_val = gateway_asset.name
             gw_type_val = gateway_asset.type
+            inst_pol_val = None
+            pkgs_val = []
+        else:
+            ann0 = gw_annotations[0]
+            mgmt_val = ann0.mgmt_name
+            dom_val = ann0.domain_name
+            gw_id_val = f"{ann0.mgmt_name}:{ann0.domain_name}:{ann0.gateway_uid}"
+            gw_aid_val = gw_id_val
+            gw_uid_val = ann0.gateway_uid
+            gw_name_val = ann0.gateway_name or ann0.gateway_uid
+            gw_type_val = "simple-gateway"
             inst_pol_val = None
             pkgs_val = []
         existing_if_cidrs = {(e.interface_name, e.cidr_or_range) for e in filtered}
@@ -717,7 +727,11 @@ async def export_topology_prefixes(
 
     exported: list[ExportedTopologyPrefix] = []
 
-    for gw_key, raw_gw_entries in sorted(entries_by_gw.items()):
+    all_gw_keys = sorted(
+        set(entries_by_gw) | {k for k in anns_by_gw if not gw_tokens or k in entries_by_gw or k[2].lower() in gw_tokens}
+    )
+    for gw_key in all_gw_keys:
+        raw_gw_entries = entries_by_gw.get(gw_key, [])
         gw_anns = anns_by_gw.get(gw_key, [])
         (
             eff_entries,
@@ -739,7 +753,11 @@ async def export_topology_prefixes(
             if e.source_type in ("interface_connected", "interface_specific", "vpn_domain")
             and e.topology_zone == "internal"
         ]
-        source_pool = raw_gw_entries if include_ignored else eff_entries
+        if include_ignored:
+            manual_entries = [e for e in eff_entries if e.source_type == "manual"]
+            source_pool = [*raw_gw_entries, *manual_entries]
+        else:
+            source_pool = eff_entries
         grouped: dict[tuple[str, str], list[GatewayTopologyEntry]] = defaultdict(list)
         for e in source_pool:
             if not include_external and e.topology_zone == "external":

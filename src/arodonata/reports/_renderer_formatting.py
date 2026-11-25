@@ -13,14 +13,17 @@ from arodonata.reports.models import FieldDiff, ObjectChangeEntry, RuleChangeEnt
 
 SUPPORTED_REPORT_FORMATS: frozenset[str] = frozenset({"html", "json", "markdown"})
 
-_INLINE_TOKEN_RE = re.compile(r"(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\))")
+_INLINE_TOKEN_RE = re.compile(r"(`[^`\r\n]+`|\*\*[^*\r\n]+\*\*|\*[^*\r\n]+\*|\[[^\]\r\n]+\]\([^)\r\n]+\))")
 _SUMMARY_SPLIT_RE = re.compile(
     r", (?=(?:ipv4-address|ipv6-address|subnet4|subnet6|range|range6|port|protocol|fqdn|members|comments)=)"
 )
 
 
 def _is_safe_href(url: str) -> bool:
-    clean = url.strip().lower()
+    stripped = url.strip()
+    if any(ch.isspace() or ch in "<>\"'" or ord(ch) < 32 for ch in stripped):
+        return False
+    clean = stripped.lower()
     return clean.startswith(("http://", "https://", "mailto:"))
 
 
@@ -65,7 +68,7 @@ def render_safe_inline_markdown_md(text: str) -> str:
         if not part:
             continue
         if part.startswith("`") and part.endswith("`") and len(part) >= 2:
-            out.append(f"`{part[1:-1]}`")
+            out.append(f"`{html.escape(part[1:-1], quote=False)}`")
         elif part.startswith("**") and part.endswith("**") and len(part) >= 4:
             out.append(f"**{html.escape(part[2:-2], quote=False)}**")
         elif part.startswith("*") and part.endswith("*") and len(part) >= 2:
@@ -75,9 +78,9 @@ def render_safe_inline_markdown_md(text: str) -> str:
             label = html.escape(part[1:bracket_end], quote=False)
             href = part[bracket_end + 2 : -1].strip()
             if _is_safe_href(href):
-                out.append(f"[{label}]({href})")
+                out.append(f"[{label}]({html.escape(href, quote=True)})")
             else:
-                out.append(html.escape(part, quote=False))
+                out.append(html.escape(part, quote=True).replace("[", "\\[").replace("]", "\\]"))
         else:
             out.append(html.escape(part, quote=False))
     return "".join(out)
@@ -96,7 +99,7 @@ def _esc_md(val: Any) -> str:
         return ""
     raw = ", ".join(str(x) for x in val) if isinstance(val, list) else str(val)
     escaped = html.escape(raw, quote=False)
-    return escaped.replace("|", "\\|").replace("\n", " ")
+    return escaped.replace("|", "\\|").replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
 
 
 def _format_dt_utc(dt: datetime | None) -> str:

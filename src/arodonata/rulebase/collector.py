@@ -645,25 +645,24 @@ async def collect_domain_rulebase_snapshot(
         ("threat", "show-threat-layers", "threat-layers"),
     )
     for r_type, list_cmd, list_key in layer_list_specs:
-        l_res = await api.api_call(
-            mgmt_name, list_cmd, {"details-level": "full"}, domain=domain_name, sid=sid, server_ip=server_ip
+        raw_list: list[Any] = []
+        q_res = await api.api_query(
+            mgmt_name, list_cmd, domain=domain_name, details_level="full", sid=sid, server_ip=server_ip
         )
-        if l_res.success and isinstance(l_res.data, dict):
-            raw_list = l_res.data.get(list_key) or l_res.data.get("objects") or l_res.data.get("layers") or []
-            if isinstance(raw_list, list):
-                for l_dict in raw_list:
-                    if not isinstance(l_dict, dict):
-                        continue
-                    l_uid = str(l_dict.get("uid") or l_dict.get("name") or "")
-                    if l_uid:
-                        initial_layers.append(
-                            _QueuedLayer(
-                                rulebase_type=r_type,
-                                layer_uid=l_uid,
-                                layer_name=str(l_dict.get("name") or l_uid),
-                                raw_meta=dict(l_dict),
-                            )
-                        )
+        if q_res.success and q_res.objects:
+            raw_list = list(q_res.objects)
+        else:
+            l_res = await api.api_call(
+                mgmt_name, list_cmd, {"details-level": "full"}, domain=domain_name, sid=sid, server_ip=server_ip
+            )
+            if l_res.success and isinstance(l_res.data, dict):
+                cand = l_res.data.get(list_key) or l_res.data.get("objects") or l_res.data.get("layers") or []
+                raw_list = cand if isinstance(cand, list) else []
+        for l_dict in raw_list:
+            if isinstance(l_dict, dict) and (l_uid := str(l_dict.get("uid") or l_dict.get("name") or "")):
+                initial_layers.append(
+                    _QueuedLayer(r_type, l_uid, str(l_dict.get("name") or l_uid), raw_meta=dict(l_dict))
+                )
 
     traversed = await _traverse_rulebase_layers(
         api,

@@ -289,7 +289,7 @@ def dispatch_api_call(
                 f"Cannot mutate in session [{active_ws.uid}] with state {active_ws.state!r}",
                 status_code=400,
             )
-        if active_ws.read_only:
+        if active_ws.read_only or (binding is not None and binding.read_only):
             return cp_error("err_validation_failed", "Cannot modify database in read-only session", status_code=400)
         if binding is not None and binding.domain != dom_name:
             if dom_name == "Global" and binding.domain != "System Data":
@@ -326,6 +326,7 @@ def dispatch_api_call(
             target_files = mock._ensure_overlay(active_ws)
             user_name = active_ws.user_name
         elif is_write:
+            mock._get_clean_domain_baseline(dom_name)
             target_files = mock._domain_data[dom_name]
             user_name = "admin"
         else:

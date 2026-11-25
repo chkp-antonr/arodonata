@@ -251,10 +251,14 @@ def handle_switch_session(
     """Switch the caller's SID binding to another open or disconnected session."""
     if binding is None or active_ws is None:
         return cp_error("generic_err_wrong_session_id", "Active session is required", status_code=400)
+    if binding.read_only or active_ws.read_only:
+        return cp_error("err_validation_failed", "Cannot switch session from a read-only session", status_code=400)
     target_uid = str(req.get("uid") or "").strip()
     target_ws = mock._work_sessions.get(target_uid)
     if target_ws is None:
         return cp_error("generic_err_object_not_found", f"Session [{target_uid}] not found", status_code=404)
+    if target_ws.read_only:
+        return cp_error("err_validation_failed", "Cannot switch to a read-only session", status_code=400)
     if binding.domain not in ("System Data", target_ws.domain):
         return cp_error(
             "err_validation_failed",
@@ -284,7 +288,7 @@ def handle_discard(
     active_ws: WorkSession | None,
 ) -> ApiCallResult:
     """Discard uncommitted changes for the target or active session and rotate if active."""
-    if active_ws is not None and active_ws.read_only:
+    if (binding is not None and binding.read_only) or (active_ws is not None and active_ws.read_only):
         return cp_error("err_validation_failed", "Cannot discard from a read-only session", status_code=400)
     target_uid = str(req.get("uid") or "").strip()
     if target_uid:
@@ -307,6 +311,9 @@ def handle_discard(
         target_ws = active_ws
     else:
         return cp_ok({"message": "OK"})
+
+    if target_ws.read_only:
+        return cp_error("err_validation_failed", "Cannot discard a read-only session", status_code=400)
 
     discarded_changes = target_ws.changes_count
     target_ws.overlay_data = None
@@ -507,6 +514,7 @@ def handle_publish(
         rotate_sid_bindings_for_session(mock, ws)
         return record_publish_task(mock, ws.uid, 0, wait_for_task=wait_for_task)
 
+    mock._get_clean_domain_baseline(target_dom)
     before_dom = copy.deepcopy(mock._domain_data[target_dom])
     current_pub_uid = mock._published_session_by_domain.get(target_dom, "")
 

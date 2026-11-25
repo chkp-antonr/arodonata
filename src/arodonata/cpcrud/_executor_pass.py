@@ -385,19 +385,20 @@ async def _execute_domain_batch(
     session_uid: str | None = ws.session_uid
     resolved_sess_name = eff_session_name
 
-    if no_publish and keep_session:
-        session_uid, resolved_sess_name = await _register_staged_session(
-            api,
-            mgmt_name,
-            dom_name,
-            dom_key,
-            ws,
-            eff_session_name,
-            staged_sessions,
-            staged_registry,
-        )
-
+    registration_ok = not (no_publish and keep_session)
     try:
+        if no_publish and keep_session:
+            session_uid, resolved_sess_name = await _register_staged_session(
+                api,
+                mgmt_name,
+                dom_name,
+                dom_key,
+                ws,
+                eff_session_name,
+                staged_sessions,
+                staged_registry,
+            )
+            registration_ok = True
         with write_session_context(ws):
             for act in dom_actions:
                 if not act.is_write_action:
@@ -502,7 +503,13 @@ async def _execute_domain_batch(
                 update_overlay_from_command(ws.overlay, cmd, act.payload, call_res)
                 any_write_succeeded = True
                 resp_dict = call_res.data if isinstance(call_res.data, dict) else {}
-                returned_uid = str(resp_dict.get("uid") or act.target_uid or "") or None
+                raw_ret_uid = str(resp_dict.get("uid") or "").strip()
+                fallback_uid = str(act.target_uid or "").strip()
+                returned_uid = (
+                    raw_ret_uid
+                    or (fallback_uid if fallback_uid and not fallback_uid.startswith("planned:") else "")
+                    or None
+                )
                 res_item, ev = _make_action_result_and_event(
                     act,
                     outcome=act.outcome,
@@ -538,11 +545,11 @@ async def _execute_domain_batch(
                 stale_domains=stale_domains,
             )
     except BaseException:
-        if not (no_publish and keep_session) and not ws.published and not ws.discarded:
+        if (not registration_ok or not (no_publish and keep_session)) and not ws.published and not ws.discarded:
             await _shielded_discard(api, mgmt_name, dom_name, ws)
         raise
     finally:
-        if not (no_publish and keep_session):
+        if not registration_ok or not (no_publish and keep_session):
             ws.overlay.clear()
             if not ws.published and not ws.discarded:
                 await _shielded_discard(api, mgmt_name, dom_name, ws)

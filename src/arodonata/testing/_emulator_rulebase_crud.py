@@ -226,6 +226,9 @@ def handle_rulebase_crud(
             if isinstance(act, ApiCallResult):
                 return act, None
             default_track = NONE_TRACK_UID if act == "Drop" else LOG_TRACK_UID
+            trk = normalize_track(req.get("track", default_track), rule_kind=rule_kind)
+            if isinstance(trk, ApiCallResult):
+                return trk, None
             new_rule: dict[str, Any] = {
                 "uid": assigned_uid,
                 "name": str(req.get("name") or ""),
@@ -233,7 +236,7 @@ def handle_rulebase_crud(
                 "domain": format_domain_meta(dom_name),
                 "enabled": bool(req.get("enabled", True)),
                 "action": act,
-                "track": normalize_track(req.get("track", default_track)),
+                "track": trk,
                 "comments": str(req.get("comments") or ""),
                 "meta-info": meta,
             }
@@ -389,7 +392,11 @@ def handle_rulebase_crud(
                     return act, None
                 rule["action"] = act
             if "track" in req:
-                rule["track"] = normalize_track(req["track"])
+                trk = normalize_track(req["track"], rule_kind=rule_kind)
+                if isinstance(trk, ApiCallResult):
+                    parent_list[parent_idx] = snapshot_rule
+                    return trk, None
+                rule["track"] = trk
             if rule_kind == "access":
                 for neg_key in ("source-negate", "destination-negate", "service-negate"):
                     if neg_key in req:

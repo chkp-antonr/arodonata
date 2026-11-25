@@ -649,7 +649,7 @@ class VSXRelationshipManager:
         `parent_asset_id`, `virtual_system_uids`, or `virtual_system_asset_ids` changed.
         """
         by_id: dict[str, Asset] = {a.id: a for a in assets}
-        by_uid: dict[str, Asset] = {a.uid: a for a in assets}
+        by_mgmt_uid: dict[tuple[str, str], Asset] = {(a.mgmt_name, a.uid): a for a in assets}
         by_asset_id: dict[str, Asset] = {a.asset_id: a for a in assets}
         by_name: dict[str, list[Asset]] = {}
         for a in assets:
@@ -663,8 +663,8 @@ class VSXRelationshipManager:
                     return by_id[ref]
                 if ref in by_asset_id:
                     return by_asset_id[ref]
-                if ref in by_uid:
-                    return by_uid[ref]
+                if (mgmt_name, ref) in by_mgmt_uid:
+                    return by_mgmt_uid[(mgmt_name, ref)]
                 candidates = [c for c in by_name.get(ref, []) if c.mgmt_name == mgmt_name]
                 if prefer_vsx_parent:
                     vsx_candidates = [c for c in candidates if c.type in VSX_PARENT_TYPES or "vsx" in c.type.lower()]
@@ -676,8 +676,8 @@ class VSXRelationshipManager:
                 r_name = str(ref.get("name") or "")
                 r_dom = ref.get("domain")
                 r_dom_name = str(r_dom.get("name") or "") if isinstance(r_dom, dict) else str(r_dom or "")
-                if r_uid and r_uid in by_uid:
-                    return by_uid[r_uid]
+                if r_uid and (mgmt_name, r_uid) in by_mgmt_uid:
+                    return by_mgmt_uid[(mgmt_name, r_uid)]
                 if r_dom_name and r_name:
                     comp_asset_id = f"{mgmt_name}:{r_dom_name}:{r_name}"
                     if comp_asset_id in by_asset_id:
@@ -704,7 +704,7 @@ class VSXRelationshipManager:
                     }
                 )
                 by_id[updated_child.id] = updated_child
-                by_uid[updated_child.uid] = updated_child
+                by_mgmt_uid[(updated_child.mgmt_name, updated_child.uid)] = updated_child
                 by_asset_id[updated_child.asset_id] = updated_child
                 modified_ids.add(updated_child.id)
                 child = updated_child
@@ -723,7 +723,7 @@ class VSXRelationshipManager:
                     }
                 )
                 by_id[updated_parent.id] = updated_parent
-                by_uid[updated_parent.uid] = updated_parent
+                by_mgmt_uid[(updated_parent.mgmt_name, updated_parent.uid)] = updated_parent
                 by_asset_id[updated_parent.asset_id] = updated_parent
                 modified_ids.add(updated_parent.id)
 
@@ -739,7 +739,7 @@ class VSXRelationshipManager:
                     if vs_asset is not None and vs_asset.mgmt_name == asset.mgmt_name:
                         _link(asset.id, vs_asset.id)
             for v_uid in list(asset.virtual_system_uids):
-                vs_asset = by_uid.get(v_uid)
+                vs_asset = by_mgmt_uid.get((asset.mgmt_name, v_uid))
                 if vs_asset is not None and vs_asset.mgmt_name == asset.mgmt_name:
                     _link(asset.id, vs_asset.id)
 
@@ -757,7 +757,7 @@ class VSXRelationshipManager:
             )
             parent_asset: Asset | None = None
             if asset.parent_uid and is_vs:
-                parent_asset = by_uid.get(asset.parent_uid)
+                parent_asset = by_mgmt_uid.get((asset.mgmt_name, asset.parent_uid))
             if parent_asset is None and vsx_ref is not None:
                 parent_asset = _find_by_ref(vsx_ref, asset.mgmt_name, prefer_vsx_parent=True)
             if parent_asset is None and asset.parent_name and is_vs:
@@ -833,7 +833,7 @@ class VSXRelationshipManager:
                     merged_vs, changed = _merge_vs_slot_data(curr_vs, slot)
                     if changed:
                         by_id[merged_vs.id] = merged_vs
-                        by_uid[merged_vs.uid] = merged_vs
+                        by_mgmt_uid[(merged_vs.mgmt_name, merged_vs.uid)] = merged_vs
                         by_asset_id[merged_vs.asset_id] = merged_vs
                         modified_ids.add(merged_vs.id)
 
@@ -898,14 +898,30 @@ class AssetRefreshService:
         """Return the `VSXRelationshipManager`."""
         return self._vsx_manager
 
+    async def _reconcile_cross_domain_vsx_for_mgmt(self, mgmt_name: str) -> None:
+        lock_provider = getattr(self._coordinator, "_lock_port", None)
+        if lock_provider is not None and hasattr(lock_provider, "lock"):
+            lock_ctx: Any = lock_provider.lock(f"vsx-reconcile:{mgmt_name}")
+        elif hasattr(self._cache, "lock"):
+            lock_ctx = self._cache.lock(f"vsx-reconcile:{mgmt_name}")
+        else:
+            lock_ctx = contextlib.nullcontext()
+        async with lock_ctx:
+            all_assets = await self._cache.get_assets(mgmt_name=mgmt_name)
+            if not all_assets:
+                return
+            modified = self._vsx_manager.reconcile_cross_domain(all_assets)
+            if modified:
+                await self._cache.upsert_assets(modified)
+
     async def _reconcile_cross_domain_vsx(self, mgmt_name: str | None) -> None:
         """Reconcile cross-domain VSX parent/child relationships across cached domains."""
-        all_assets = await self._cache.get_assets(mgmt_name=mgmt_name)
-        if not all_assets:
+        if mgmt_name is not None:
+            await self._reconcile_cross_domain_vsx_for_mgmt(mgmt_name)
             return
-        modified = self._vsx_manager.reconcile_cross_domain(all_assets)
-        if modified:
-            await self._cache.upsert_assets(modified)
+        all_assets = await self._cache.get_assets(mgmt_name=None)
+        for m_name in sorted({a.mgmt_name for a in all_assets}):
+            await self._reconcile_cross_domain_vsx_for_mgmt(m_name)
 
     async def stream_refresh_assets(
         self,
@@ -941,11 +957,12 @@ class AssetRefreshService:
                 cache_ttl=cache_ttl,
             ):
                 if event.event_type == "sync_completed":
-                    await self._reconcile_cross_domain_vsx(mgmt_name)
+                    if mode != "cache" and wrote_any:
+                        await self._reconcile_cross_domain_vsx(mgmt_name)
                     reconciled = True
                 yield event
         finally:
-            if wrote_any and not reconciled:
+            if mode != "cache" and wrote_any and not reconciled:
                 with contextlib.suppress(Exception, asyncio.CancelledError):
                     await asyncio.shield(self._reconcile_cross_domain_vsx(mgmt_name))
 
@@ -984,11 +1001,12 @@ class AssetRefreshService:
                 mode=mode,
                 cache_ttl=cache_ttl,
             )
-            await self._reconcile_cross_domain_vsx(mgmt_name)
+            if mode != "cache" and wrote_any:
+                await self._reconcile_cross_domain_vsx(mgmt_name)
             reconciled = True
             return outcome
         finally:
-            if wrote_any and not reconciled:
+            if mode != "cache" and wrote_any and not reconciled:
                 with contextlib.suppress(Exception, asyncio.CancelledError):
                     await asyncio.shield(self._reconcile_cross_domain_vsx(mgmt_name))
 

@@ -351,7 +351,7 @@ def parse_https_rule_entry(
     rule_number = str(rule_num_raw) if rule_num_raw is not None else None
     enabled = bool(raw_rule.get("enabled", True))
     action = _resolve_ref_name(raw_rule.get("action"), od)
-    inline_uid = _resolve_ref_uid(raw_rule.get("inline-layer") or raw_rule.get(" blade"), od)
+    inline_uid = _resolve_ref_uid(raw_rule.get("inline-layer"), od)
 
     return HttpsRuleEntry(
         mgmt_name=mgmt_name,
@@ -617,7 +617,7 @@ async def fetch_paged_rulebase(
             break
 
         if total_reported is not None:
-            if next_offset < total_reported and rules_seen_in_page > 0:
+            if next_offset < total_reported and next_offset > offset:
                 offset = next_offset
                 continue
             # If we just reached total_reported on a full page boundary (e.g. 100 of 100),
@@ -642,6 +642,12 @@ async def fetch_paged_rulebase(
     final_layer_name = resolved_layer_name or target_layer_name or (package_name or "")
     final_pkg_uid = package_uid or final_layer_uid
     final_pkg_name = package_name or final_layer_name
+
+    if total_reported is not None and len(ordered_raw_rules) < total_reported:
+        raise RuntimeError(
+            f"Incomplete rulebase pagination for {rulebase_type} ({final_layer_name or final_layer_uid}): "
+            f"collected {len(ordered_raw_rules)} of {total_reported} reported rules."
+        )
 
     # Finalize section entries with resolved layer_uid/layer_name and from_rule/to_rule bounds
     rule_pos_by_uid: dict[str, int] = {}

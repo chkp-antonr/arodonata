@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import ipaddress
 from collections import deque
 from collections.abc import Sequence
@@ -125,7 +124,7 @@ async def _enrich_group_raw_if_needed(
         return enriched
     o_type = str(enriched.get("type") or "")
     if o_type == "group" and "members" not in enriched:
-        with contextlib.suppress(Exception):
+        try:
             g_res = await api.api_call(
                 mgmt_name,
                 "show-group",
@@ -134,8 +133,12 @@ async def _enrich_group_raw_if_needed(
             )
             if g_res.success and isinstance(g_res.data, dict) and g_res.data.get("uid"):
                 enriched.update(g_res.data)
+        except ServerIdentityError:
+            raise
+        except Exception:
+            pass
     elif o_type == "group-with-exclusion" and "include" not in enriched:
-        with contextlib.suppress(Exception):
+        try:
             ge_res = await api.api_call(
                 mgmt_name,
                 "show-group-with-exclusion",
@@ -144,6 +147,10 @@ async def _enrich_group_raw_if_needed(
             )
             if ge_res.success and isinstance(ge_res.data, dict) and ge_res.data.get("uid"):
                 enriched.update(ge_res.data)
+        except ServerIdentityError:
+            raise
+        except Exception:
+            pass
     return enriched
 
 

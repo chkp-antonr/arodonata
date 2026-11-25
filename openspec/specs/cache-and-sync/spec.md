@@ -335,3 +335,18 @@ When `ArodonataClient` synchronizes cached domain slices (`objects`, `services`,
 - **WHEN** `WriteSession` publish or `invalidate_domain(mgmt_name, domain)` runs at `T1` while slice fetching or lock acquisition is still in progress (`T0 <= T1 <= T2` under advancing or frozen clocks) and the slice completes at `T2`
 - **THEN** persisted `DomainSyncState.synced_at` SHALL reflect `T0` rather than `T2` and sequence watermarks SHALL NOT advance past the `T1` invalidation
 - **AND** a subsequent `"smart"` or `"smart-fast"` read within `cache_ttl` SHALL treat the domain slice as invalidated instead of skipping server re-verification
+
+### Requirement: Lock-Serialized Per-Management Cross-Domain VSX Reconciliation
+
+**ID**: REQ-CACHE-017\
+**Intent**: Prevent unlocked cross-domain VSX asset overwrites, unintended writes during `cache` mode, and bare-UID collisions across multiple management servers.\
+**Non-goals**: Single-domain asset synchronization (`REQ-CACHE-008`) or cluster enrichment (`REQ-CACHE-009`).
+
+`AssetRefreshService` SHALL skip cross-domain VSX reconciliation when `mode == "cache"` or no domains were written, partition asset lookups by `(mgmt_name, uid)` to avoid cross-management UID collisions, and serialize cross-domain VSX updates under a per-management distributed lock.
+
+#### Scenario: SCN-CACHE-017-1 — Cross-domain VSX reconciliation skips cache mode and serializes per management server
+
+- **GIVEN** multi-management cached assets with overlapping UIDs across `mgmt_name`s or concurrent `refresh_assets()` calls
+- **WHEN** `get_assets(cache_mode="cache")` or `refresh_assets()` executes
+- **THEN** `mode == "cache"` (and no-op refreshes) SHALL perform zero cross-domain asset writes
+- **AND** active refreshes SHALL key assets by `(mgmt_name, uid)` and serialize cross-domain VSX updates under a per-management distributed lock

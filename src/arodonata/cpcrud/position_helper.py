@@ -30,31 +30,32 @@ def is_cleanup_rule(
     obj_dict: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> bool:
     """Return `True` if `rule` is an `Any / Any / Any` cleanup rule."""
+    from arodonata.cpcrud.rule_identity import build_effective_obj_dict
+
+    raw = rule.raw_data or {}
+    eff_obj_dict = build_effective_obj_dict(raw, obj_dict)
     name_low = (rule.name or "").strip().lower()
     if "cleanup" in name_low:
-        # Verify traffic is Any / Any / Any if traffic fields are present
+        # Verify traffic is Any / Any / Any
         if isinstance(rule, (AccessRuleEntry, HttpsRuleEntry, ThreatRuleEntry)):
-            raw = rule.raw_data or {}
-            src = normalize_traffic_list(rule.source or raw.get("source"), obj_dict=obj_dict)
-            dst = normalize_traffic_list(rule.destination or raw.get("destination"), obj_dict=obj_dict)
-            svc = normalize_traffic_list(rule.service or raw.get("service"), obj_dict=obj_dict)
+            src = normalize_traffic_list(rule.source or raw.get("source"), obj_dict=eff_obj_dict)
+            dst = normalize_traffic_list(rule.destination or raw.get("destination"), obj_dict=eff_obj_dict)
+            svc = normalize_traffic_list(rule.service or raw.get("service"), obj_dict=eff_obj_dict)
             if src == ("Any",) and dst == ("Any",) and svc == ("Any",):
                 return True
         elif isinstance(rule, NatRuleEntry):
-            raw = rule.raw_data or {}
-            o_src = normalize_any_sentinel(rule.original_source or raw.get("original-source"), obj_dict)
-            o_dst = normalize_any_sentinel(rule.original_destination or raw.get("original-destination"), obj_dict)
-            o_svc = normalize_any_sentinel(rule.original_service or raw.get("original-service"), obj_dict)
+            o_src = normalize_any_sentinel(rule.original_source or raw.get("original-source"), eff_obj_dict)
+            o_dst = normalize_any_sentinel(rule.original_destination or raw.get("original-destination"), eff_obj_dict)
+            o_svc = normalize_any_sentinel(rule.original_service or raw.get("original-service"), eff_obj_dict)
             if o_src == "Any" and o_dst == "Any" and o_svc == "Any":
                 return True
-        return True
+        return False
 
     # Even without "Cleanup" in the rule name, a trailing Any / Any / Any Drop/Accept rule at the end of a layer
     if isinstance(rule, (AccessRuleEntry, HttpsRuleEntry, ThreatRuleEntry)):
-        raw = rule.raw_data or {}
-        src = normalize_traffic_list(rule.source or raw.get("source"), obj_dict=obj_dict)
-        dst = normalize_traffic_list(rule.destination or raw.get("destination"), obj_dict=obj_dict)
-        svc = normalize_traffic_list(rule.service or raw.get("service"), obj_dict=obj_dict)
+        src = normalize_traffic_list(rule.source or raw.get("source"), obj_dict=eff_obj_dict)
+        dst = normalize_traffic_list(rule.destination or raw.get("destination"), obj_dict=eff_obj_dict)
+        svc = normalize_traffic_list(rule.service or raw.get("service"), obj_dict=eff_obj_dict)
         if src == ("Any",) and dst == ("Any",) and svc == ("Any",):
             return True
 

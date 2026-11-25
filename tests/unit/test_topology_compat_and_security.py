@@ -675,7 +675,6 @@ async def test_sid_redaction_in_route_collection_and_targeted_refresh(
         failed_routes = await topo_svc.collect_gateway_routes(
             mgmt_name="mds1",
             domain="Corp",
-            gateways=["cl-sec"],
             cprid_script_mode="inline",
         )
         assert failed_routes.failed_gateways == 1

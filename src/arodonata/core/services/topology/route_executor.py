@@ -444,7 +444,7 @@ async def _run_repository_cprid(
         return base_res
 
     # Non-bundle output:
-    if args_val is None and is_vs:
+    if outcome.success and args_val is None and is_vs:
         err_msg = _format_cli_error(
             ssh_error,
             f"Virtual System {target.vs_name or target.vsid} expected VSX bundle output, but no "

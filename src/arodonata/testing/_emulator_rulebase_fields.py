@@ -181,8 +181,20 @@ def normalize_action(val: Any, *, rule_kind: str = "access") -> str | ApiCallRes
     return lookup
 
 
-def normalize_track(val: Any) -> dict[str, Any]:
-    """Normalize a rule `track` field into `{"type": <track_uid>}`."""
+def normalize_track(val: Any, *, rule_kind: str = "access") -> dict[str, Any] | str | ApiCallResult:
+    """Normalize a rule `track` field into per-rulebase wire format (`dict` for access, `str` for https/threat)."""
+    if rule_kind in ("https", "threat"):
+        if isinstance(val, Mapping):
+            return cp_error(
+                "err_validation_failed",
+                f"Invalid track wire type for {rule_kind} rulebase: expected string",
+                status_code=400,
+            )
+        raw_t = str(val or LOG_TRACK_UID).strip()
+        lowered = raw_t.lower()
+        t_uid = TRACK_NAME_TO_UID.get(lowered, raw_t if raw_t in TRACK_UID_TO_NAME else LOG_TRACK_UID)
+        return TRACK_UID_TO_NAME.get(t_uid, "Log")
+
     if isinstance(val, Mapping):
         raw_t = ref_uid(val.get("type") or val.get("name") or LOG_TRACK_UID)
     else:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import OrderedDict
 from contextlib import suppress
 from typing import Any
@@ -115,13 +116,10 @@ async def _inspect_and_verify_provenance(
             raw_self_user = str(self_res.data.get("user-name") or self_res.data.get("user") or "").strip().lower()
             if raw_self_user:
                 current_user = raw_self_user
-    except ServerIdentityError:
-        with suppress(Exception):
-            await api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+    except BaseException:
+        with suppress(BaseException):
+            await asyncio.shield(api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip))
         raise
-    except Exception:
-        pass
-
     try:
         info_res = await api.api_call(
             mgmt_name,
@@ -132,12 +130,12 @@ async def _inspect_and_verify_provenance(
             server_ip=fresh_ip,
         )
     except ServerIdentityError:
-        with suppress(Exception):
-            await api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+        with suppress(BaseException):
+            await asyncio.shield(api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip))
         raise
     except Exception as exc:
-        with suppress(Exception):
-            await api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+        with suppress(BaseException):
+            await asyncio.shield(api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip))
         safe_err = redact_sid(str(exc), known_sids=known_sids)
         return (
             None,
@@ -198,22 +196,18 @@ async def _inspect_and_verify_provenance(
 
     is_web_api_app = s_app in ("web_api", "arodonata", "")
     has_known_identities = bool(current_user and s_user)
-    creator_mismatch = not has_known_identities or current_user != s_user
+    known_creator_mismatch = has_known_identities and current_user != s_user
     same_creator = has_known_identities and current_user == s_user
     is_arodonata_tagged = (
         staged_entry is not None or s_name.startswith("arodonata") or s_app == "arodonata" or "arodonata" in s_desc
     )
-    is_own_web_session = (
-        is_web_api_app
-        and not creator_mismatch
-        and (s_app in ("web_api", "arodonata") or same_creator or is_arodonata_tagged)
-    )
+    is_own_web_session = is_web_api_app and not known_creator_mismatch and (same_creator or is_arodonata_tagged)
     is_trusted_session = allow_foreign or (
         is_web_api_app and (staged_entry is not None or name_matches_expected or is_own_web_session)
     )
     if not is_trusted_session:
-        with suppress(Exception):
-            await api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
+        with suppress(BaseException):
+            await asyncio.shield(api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip))
         return (
             None,
             ApiCallResult(
