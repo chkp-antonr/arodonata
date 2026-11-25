@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
@@ -53,14 +53,13 @@ from arodonata.core.context import (
     WriteSession,
     get_user_context,
     get_write_session,
+    run_write_session_lifecycle,
     update_overlay_from_command,
-    write_session_context,
 )
 from arodonata.core.errors import (
     ApiTimeoutError,
     RateLimitTimeoutError,
     ServerIdentityError,
-    SessionError,
     SessionStateError,
     TransportError,
 )
@@ -327,24 +326,25 @@ class AMgmtClient:
                 )
             using_cached_sid = True
             active_auth_identity = (await self._login_coordinator.resolve_credentials(mgmt_name, domain)).identity_key
-            active_sid, raw_target_ip = await self._login_coordinator.get_readonly_session(
+            active_sid, ro_ip = await self._login_coordinator.get_readonly_session(
                 mgmt_name,
                 domain,
                 server_ip=server_ip,
             )
+            raw_target_ip = server_ip or (endpoint.host if dom_key == SYSTEM_DOMAIN_SENTINEL else ro_ip)
             target_ip, mds_ip, port = await self._login_coordinator.resolve_target_ips(
                 mgmt_name,
                 domain,
-                explicit_server_ip=raw_target_ip,
+                explicit_server_ip=ro_ip,
             )
 
         from arodonata.adapters.checkpoint.target_resolver import resolve_tls_identity_host
 
-        tls_identity_host = resolve_tls_identity_host(raw_target_ip, target_ip)
         call_budget = timeout if timeout is not None else self._settings.api_timeout
         session_scope = derive_session_pool_scope(active_sid) if (not using_cached_sid and active_sid) else None
 
         async def _execute_once(curr_sid: str, curr_ip: str, curr_mds_ip: str) -> ApiCallResult:
+            curr_tls_identity = resolve_tls_identity_host(raw_target_ip, curr_ip)
             exec_kwargs: dict[str, Any] = {
                 "port": port,
                 "sid": curr_sid,
@@ -352,8 +352,8 @@ class AMgmtClient:
             }
             if session_scope is not None:
                 exec_kwargs["session_scope"] = session_scope
-            if tls_identity_host is not None:
-                exec_kwargs["tls_identity_host"] = tls_identity_host
+            if curr_tls_identity is not None:
+                exec_kwargs["tls_identity_host"] = curr_tls_identity
             async with self._rate_limiter.slot(curr_mds_ip):
                 return await self._transport.execute(
                     curr_ip,
@@ -447,6 +447,7 @@ class AMgmtClient:
             if task_ids:
 
                 async def _poll_show_task(poll_payload: dict[str, Any]) -> ApiCallResult:
+                    poll_tls_identity = resolve_tls_identity_host(raw_target_ip, target_ip)
                     poll_kwargs: dict[str, Any] = {
                         "port": port,
                         "sid": active_sid,
@@ -454,6 +455,8 @@ class AMgmtClient:
                     }
                     if session_scope is not None:
                         poll_kwargs["session_scope"] = session_scope
+                    if poll_tls_identity is not None:
+                        poll_kwargs["tls_identity_host"] = poll_tls_identity
                     async with self._rate_limiter.slot(mds_ip):
                         return await self._transport.execute(
                             target_ip,
@@ -592,62 +595,15 @@ class AMgmtClient:
             overlay=SessionOverlay(mgmt_name, dom_key),
         )
 
-        try:
-            with write_session_context(ws):
-                try:
-                    yield ws
-                except BaseException:
-                    if not ws.discarded and not ws.published:
-                        with suppress(BaseException):
-                            await asyncio.shield(
-                                self.api_call(
-                                    mgmt_name,
-                                    "discard",
-                                    {},
-                                    domain=domain,
-                                    sid=ws.sid,
-                                    server_ip=ws.server_ip,
-                                )
-                            )
-                        ws.discarded = True
-                        ws.overlay.clear()
-                    raise
-
-                if publish_on_exit and not ws.published and not ws.discarded:
-                    pub_res = await self.api_call(
-                        mgmt_name,
-                        "publish",
-                        {},
-                        domain=domain,
-                        sid=ws.sid,
-                        server_ip=ws.server_ip,
-                        wait_for_task=True,
-                    )
-                    if not pub_res.success:
-                        with suppress(BaseException):
-                            await asyncio.shield(
-                                self.api_call(
-                                    mgmt_name,
-                                    "discard",
-                                    {},
-                                    domain=domain,
-                                    sid=ws.sid,
-                                    server_ip=ws.server_ip,
-                                )
-                            )
-                        ws.discarded = True
-                        ws.overlay.clear()
-                        raise SessionError(
-                            f"Failed to publish WriteSession on {mgmt_name!r} ({dom_key!r}): "
-                            f"{pub_res.error_message or 'publish failed'}"
-                        )
-                    ws.published = True
-                    ws.overlay.clear()
-                    self.invalidate_domain(mgmt_name, domain)
-        finally:
-            ws.overlay.clear()
-            with suppress(BaseException):
-                await asyncio.shield(self.logout_sid(mgmt_name, ws.sid, server_ip=ws.server_ip))
+        async with run_write_session_lifecycle(
+            ws,
+            api_call_fn=self.api_call,
+            logout_fn=self.logout_sid,
+            domain=domain,
+            publish_on_exit=publish_on_exit,
+            on_domain_invalidated=self.invalidate_domain,
+        ) as bound_ws:
+            yield bound_ws
 
     def logout_sid(
         self,

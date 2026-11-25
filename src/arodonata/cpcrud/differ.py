@@ -49,9 +49,11 @@ def resolve_member_reference(
 def parse_existing_member_entries(
     existing_members: Sequence[str],
     raw_data: Mapping[str, Any] | None,
+    *,
+    key: str = "members",
 ) -> list[dict[str, Any]]:
-    """Normalize existing group/service-group members into ordered `{uid, name, ...}` dicts."""
-    raw_members = raw_data.get("members") if isinstance(raw_data, Mapping) else None
+    """Normalize existing group `members` or `groups` into ordered `{uid, name, ...}` dicts."""
+    raw_members = raw_data.get(key) if isinstance(raw_data, Mapping) else None
     if isinstance(raw_members, list):
         entries: list[dict[str, Any]] = []
         for item in raw_members:
@@ -79,13 +81,243 @@ def parse_existing_member_entries(
 def _resolve_existing_member_names(
     existing_members: Sequence[str],
     raw_data: Mapping[str, Any] | None,
+    *,
+    key: str = "members",
 ) -> list[str]:
-    """Resolve existing group `members` into a list of member names (or UIDs if names are unavailable)."""
+    """Resolve existing group `members` or `groups` into a list of names (or UIDs if names are unavailable)."""
     return [
         str(entry.get("name") or entry.get("uid"))
-        for entry in parse_existing_member_entries(existing_members, raw_data)
+        for entry in parse_existing_member_entries(existing_members, raw_data, key=key)
         if entry.get("name") or entry.get("uid")
     ]
+
+
+def _extract_existing_group_ids(raw_data: Mapping[str, Any] | None) -> list[str]:
+    """Extract existing parent group UIDs/names from `raw_data['groups']`."""
+    raw_grps = raw_data.get("groups") if isinstance(raw_data, Mapping) else None
+    if not isinstance(raw_grps, list):
+        return []
+    out: list[str] = []
+    for item in raw_grps:
+        if isinstance(item, Mapping):
+            val = str(item.get("uid") or item.get("name") or "").strip()
+        else:
+            val = str(item or "").strip()
+        if val:
+            out.append(val)
+    return out
+
+
+def _diff_host(
+    desired: Mapping[str, Any],
+    existing: CPObject,
+    diffs: dict[str, FieldChange],
+    update_payload: dict[str, Any],
+) -> None:
+    req_ipv4 = (
+        desired.get("ipv4_address")
+        or desired.get("ipv4-address")
+        or desired.get("ip_address")
+        or desired.get("ip-address")
+    )
+    if isinstance(req_ipv4, str) and req_ipv4.strip():
+        clean_ip = req_ipv4.strip()
+        if clean_ip != existing.ipv4_address:
+            diffs["ipv4-address"] = FieldChange(
+                field="ipv4-address",
+                old_value=existing.ipv4_address,
+                new_value=clean_ip,
+            )
+            update_payload["ipv4-address"] = clean_ip
+
+    req_ipv6 = desired.get("ipv6_address") or desired.get("ipv6-address")
+    if isinstance(req_ipv6, str) and req_ipv6.strip():
+        clean_ip6 = req_ipv6.strip()
+        if clean_ip6 != existing.ipv6_address:
+            diffs["ipv6-address"] = FieldChange(
+                field="ipv6-address",
+                old_value=existing.ipv6_address,
+                new_value=clean_ip6,
+            )
+            update_payload["ipv6-address"] = clean_ip6
+
+
+def _diff_network(
+    desired: Mapping[str, Any],
+    existing: CPObject,
+    diffs: dict[str, FieldChange],
+    update_payload: dict[str, Any],
+) -> None:
+    req_sub = desired.get("subnet4") or desired.get("subnet")
+    if isinstance(req_sub, str) and req_sub.strip():
+        clean_sub = req_sub.strip()
+        if clean_sub != existing.subnet4:
+            diffs["subnet4"] = FieldChange(
+                field="subnet4",
+                old_value=existing.subnet4,
+                new_value=clean_sub,
+            )
+            update_payload["subnet4"] = clean_sub
+
+    req_mask = desired.get("mask_length4") if "mask_length4" in desired else desired.get("mask-length4")
+    req_submask = desired.get("subnet_mask") or desired.get("subnet-mask")
+    norm_req_mask = normalize_mask_length(req_mask, req_submask, strict=True)
+    norm_exist_mask = normalize_mask_length(existing.mask_length4, existing.subnet_mask)
+    if norm_req_mask is not None and norm_req_mask != norm_exist_mask:
+        diffs["mask-length4"] = FieldChange(
+            field="mask-length4",
+            old_value=norm_exist_mask,
+            new_value=norm_req_mask,
+        )
+        update_payload["mask-length4"] = norm_req_mask
+
+
+def _diff_address_range(
+    desired: Mapping[str, Any],
+    existing: CPObject,
+    diffs: dict[str, FieldChange],
+    update_payload: dict[str, Any],
+) -> None:
+    req_first = desired.get("ipv4_address_first") or desired.get("ipv4-address-first")
+    if isinstance(req_first, str) and req_first.strip():
+        clean_first = req_first.strip()
+        if clean_first != existing.ipv4_address_first:
+            diffs["ipv4-address-first"] = FieldChange(
+                field="ipv4-address-first",
+                old_value=existing.ipv4_address_first,
+                new_value=clean_first,
+            )
+            update_payload["ipv4-address-first"] = clean_first
+
+    req_last = desired.get("ipv4_address_last") or desired.get("ipv4-address-last")
+    if isinstance(req_last, str) and req_last.strip():
+        clean_last = req_last.strip()
+        if clean_last != existing.ipv4_address_last:
+            diffs["ipv4-address-last"] = FieldChange(
+                field="ipv4-address-last",
+                old_value=existing.ipv4_address_last,
+                new_value=clean_last,
+            )
+            update_payload["ipv4-address-last"] = clean_last
+
+
+def _diff_application_site(
+    desired: Mapping[str, Any],
+    existing: CPObject,
+    diffs: dict[str, FieldChange],
+    update_payload: dict[str, Any],
+) -> None:
+    req_cat = desired.get("primary-category") or desired.get("primary_category")
+    if isinstance(req_cat, str) and req_cat.strip():
+        clean_cat = req_cat.strip()
+        exist_cat = str(
+            existing.primary_category
+            or (existing.raw_data.get("primary-category") if isinstance(existing.raw_data, dict) else None)
+            or ""
+        ).strip()
+        if clean_cat != exist_cat:
+            diffs["primary-category"] = FieldChange(
+                field="primary-category",
+                old_value=existing.primary_category or exist_cat or None,
+                new_value=clean_cat,
+            )
+            update_payload["primary-category"] = clean_cat
+
+    raw_req_urls = desired.get("url-list") if "url-list" in desired else desired.get("url_list")
+    if raw_req_urls is not None:
+        raw_exist_urls: Sequence[Any] = existing.url_list
+        if not raw_exist_urls and isinstance(existing.raw_data, Mapping):
+            fallback_urls = existing.raw_data.get("url-list") or existing.raw_data.get("url_list")
+            if isinstance(fallback_urls, list):
+                raw_exist_urls = fallback_urls
+        exist_urls = list(dict.fromkeys(str(u).strip() for u in raw_exist_urls if str(u).strip()))
+        raw_req_regex_for_url = (
+            desired.get("urls-defined-as-regular-expression")
+            if "urls-defined-as-regular-expression" in desired
+            else desired.get("urls_defined_as_regular_expression")
+        )
+        eff_is_regex = (
+            bool(raw_req_regex_for_url)
+            if raw_req_regex_for_url is not None
+            else bool(existing.urls_defined_as_regular_expression)
+        )
+        req_sig_raw = desired.get("application-signature") or desired.get("application_signature")
+        exist_sig_raw = (
+            existing.raw_data.get("application-signature") or existing.raw_data.get("application_signature")
+            if isinstance(existing.raw_data, Mapping)
+            else None
+        )
+        effective_has_sig = bool(str(req_sig_raw or "").strip() or str(exist_sig_raw or "").strip())
+        _compute_url_list_diff(
+            existing.name,
+            raw_req_urls,
+            exist_urls,
+            is_regex=eff_is_regex,
+            has_signature=effective_has_sig,
+            diffs=diffs,
+            update_payload=update_payload,
+        )
+
+    if "urls-defined-as-regular-expression" in desired or "urls_defined_as_regular_expression" in desired:
+        raw_req_regex = (
+            desired.get("urls-defined-as-regular-expression")
+            if "urls-defined-as-regular-expression" in desired
+            else desired.get("urls_defined_as_regular_expression")
+        )
+        if raw_req_regex is not None:
+            req_regex = bool(raw_req_regex)
+            exist_regex = bool(existing.urls_defined_as_regular_expression)
+            if req_regex != exist_regex:
+                diffs["urls-defined-as-regular-expression"] = FieldChange(
+                    field="urls-defined-as-regular-expression",
+                    old_value=existing.urls_defined_as_regular_expression,
+                    new_value=req_regex,
+                )
+                update_payload["urls-defined-as-regular-expression"] = req_regex
+
+    if "description" in desired and desired["description"] is not None:
+        req_desc = str(desired["description"])
+        exist_desc = str(existing.description or "")
+        if req_desc != exist_desc:
+            diffs["description"] = FieldChange(
+                field="description",
+                old_value=existing.description,
+                new_value=req_desc,
+            )
+            update_payload["description"] = req_desc
+
+    req_sig = desired.get("application-signature") or desired.get("application_signature")
+    if isinstance(req_sig, str) and req_sig.strip():
+        clean_sig = req_sig.strip()
+        exist_sig = str(
+            (existing.raw_data.get("application-signature") if isinstance(existing.raw_data, dict) else None) or ""
+        ).strip()
+        if clean_sig != exist_sig:
+            diffs["application-signature"] = FieldChange(
+                field="application-signature",
+                old_value=exist_sig or None,
+                new_value=clean_sig,
+            )
+            update_payload["application-signature"] = clean_sig
+
+    raw_add_cats = (
+        desired.get("additional-categories")
+        if "additional-categories" in desired
+        else desired.get("additional_categories")
+    )
+    if isinstance(raw_add_cats, list):
+        req_add_cats = [str(c).strip() for c in raw_add_cats if str(c).strip()]
+        raw_exist_cats = existing.raw_data.get("additional-categories") if isinstance(existing.raw_data, dict) else None
+        exist_add_cats = (
+            [str(c).strip() for c in raw_exist_cats if str(c).strip()] if isinstance(raw_exist_cats, list) else []
+        )
+        if set(req_add_cats) != set(exist_add_cats):
+            diffs["additional-categories"] = FieldChange(
+                field="additional-categories",
+                old_value=exist_add_cats,
+                new_value=req_add_cats,
+            )
+            update_payload["additional-categories"] = req_add_cats
 
 
 def compute_object_diff(
@@ -105,80 +337,11 @@ def compute_object_diff(
         update_payload["new-name"] = new_name.strip()
 
     if obj_type == "host":
-        req_ipv4 = (
-            desired.get("ipv4_address")
-            or desired.get("ipv4-address")
-            or desired.get("ip_address")
-            or desired.get("ip-address")
-        )
-        if isinstance(req_ipv4, str) and req_ipv4.strip():
-            clean_ip = req_ipv4.strip()
-            if clean_ip != existing.ipv4_address:
-                diffs["ipv4-address"] = FieldChange(
-                    field="ipv4-address",
-                    old_value=existing.ipv4_address,
-                    new_value=clean_ip,
-                )
-                update_payload["ipv4-address"] = clean_ip
-
-        req_ipv6 = desired.get("ipv6_address") or desired.get("ipv6-address")
-        if isinstance(req_ipv6, str) and req_ipv6.strip():
-            clean_ip6 = req_ipv6.strip()
-            if clean_ip6 != existing.ipv6_address:
-                diffs["ipv6-address"] = FieldChange(
-                    field="ipv6-address",
-                    old_value=existing.ipv6_address,
-                    new_value=clean_ip6,
-                )
-                update_payload["ipv6-address"] = clean_ip6
-
+        _diff_host(desired, existing, diffs, update_payload)
     elif obj_type == "network":
-        req_sub = desired.get("subnet4") or desired.get("subnet")
-        if isinstance(req_sub, str) and req_sub.strip():
-            clean_sub = req_sub.strip()
-            if clean_sub != existing.subnet4:
-                diffs["subnet4"] = FieldChange(
-                    field="subnet4",
-                    old_value=existing.subnet4,
-                    new_value=clean_sub,
-                )
-                update_payload["subnet4"] = clean_sub
-
-        req_mask = desired.get("mask_length4") if "mask_length4" in desired else desired.get("mask-length4")
-        req_submask = desired.get("subnet_mask") or desired.get("subnet-mask")
-        norm_req_mask = normalize_mask_length(req_mask, req_submask, strict=True)
-        norm_exist_mask = normalize_mask_length(existing.mask_length4, existing.subnet_mask)
-        if norm_req_mask is not None and norm_req_mask != norm_exist_mask:
-            diffs["mask-length4"] = FieldChange(
-                field="mask-length4",
-                old_value=norm_exist_mask,
-                new_value=norm_req_mask,
-            )
-            update_payload["mask-length4"] = norm_req_mask
-
+        _diff_network(desired, existing, diffs, update_payload)
     elif obj_type == "address-range":
-        req_first = desired.get("ipv4_address_first") or desired.get("ipv4-address-first")
-        if isinstance(req_first, str) and req_first.strip():
-            clean_first = req_first.strip()
-            if clean_first != existing.ipv4_address_first:
-                diffs["ipv4-address-first"] = FieldChange(
-                    field="ipv4-address-first",
-                    old_value=existing.ipv4_address_first,
-                    new_value=clean_first,
-                )
-                update_payload["ipv4-address-first"] = clean_first
-
-        req_last = desired.get("ipv4_address_last") or desired.get("ipv4-address-last")
-        if isinstance(req_last, str) and req_last.strip():
-            clean_last = req_last.strip()
-            if clean_last != existing.ipv4_address_last:
-                diffs["ipv4-address-last"] = FieldChange(
-                    field="ipv4-address-last",
-                    old_value=existing.ipv4_address_last,
-                    new_value=clean_last,
-                )
-                update_payload["ipv4-address-last"] = clean_last
-
+        _diff_address_range(desired, existing, diffs, update_payload)
     elif obj_type == "dns-domain":
         req_sub_dom = desired.get("is_sub_domain") if "is_sub_domain" in desired else desired.get("is-sub-domain")
         if isinstance(req_sub_dom, bool) and req_sub_dom != bool(existing.is_sub_domain):
@@ -188,128 +351,23 @@ def compute_object_diff(
                 new_value=req_sub_dom,
             )
             update_payload["is-sub-domain"] = req_sub_dom
-
     elif obj_type == "group":
         _compute_group_members_diff(
             desired, existing.members, existing.raw_data, diffs, update_payload, name_resolutions
         )
-
     elif obj_type == "application-site":
-        req_cat = desired.get("primary-category") or desired.get("primary_category")
-        if isinstance(req_cat, str) and req_cat.strip():
-            clean_cat = req_cat.strip()
-            exist_cat = str(
-                existing.primary_category
-                or (existing.raw_data.get("primary-category") if isinstance(existing.raw_data, dict) else None)
-                or ""
-            ).strip()
-            if clean_cat != exist_cat:
-                diffs["primary-category"] = FieldChange(
-                    field="primary-category",
-                    old_value=existing.primary_category or exist_cat or None,
-                    new_value=clean_cat,
-                )
-                update_payload["primary-category"] = clean_cat
+        _diff_application_site(desired, existing, diffs, update_payload)
 
-        raw_req_urls = desired.get("url-list") if "url-list" in desired else desired.get("url_list")
-        if raw_req_urls is not None:
-            raw_exist_urls: Sequence[Any] = existing.url_list
-            if not raw_exist_urls and isinstance(existing.raw_data, Mapping):
-                fallback_urls = existing.raw_data.get("url-list") or existing.raw_data.get("url_list")
-                if isinstance(fallback_urls, list):
-                    raw_exist_urls = fallback_urls
-            exist_urls = list(dict.fromkeys(str(u).strip() for u in raw_exist_urls if str(u).strip()))
-            raw_req_regex_for_url = (
-                desired.get("urls-defined-as-regular-expression")
-                if "urls-defined-as-regular-expression" in desired
-                else desired.get("urls_defined_as_regular_expression")
-            )
-            eff_is_regex = (
-                bool(raw_req_regex_for_url)
-                if raw_req_regex_for_url is not None
-                else bool(existing.urls_defined_as_regular_expression)
-            )
-            req_sig_raw = desired.get("application-signature") or desired.get("application_signature")
-            exist_sig_raw = (
-                existing.raw_data.get("application-signature") or existing.raw_data.get("application_signature")
-                if isinstance(existing.raw_data, Mapping)
-                else None
-            )
-            effective_has_sig = bool(str(req_sig_raw or "").strip() or str(exist_sig_raw or "").strip())
-            _compute_url_list_diff(
-                existing.name,
-                raw_req_urls,
-                exist_urls,
-                is_regex=eff_is_regex,
-                has_signature=effective_has_sig,
-                diffs=diffs,
-                update_payload=update_payload,
-            )
-
-        if "urls-defined-as-regular-expression" in desired or "urls_defined_as_regular_expression" in desired:
-            raw_req_regex = (
-                desired.get("urls-defined-as-regular-expression")
-                if "urls-defined-as-regular-expression" in desired
-                else desired.get("urls_defined_as_regular_expression")
-            )
-            if raw_req_regex is not None:
-                req_regex = bool(raw_req_regex)
-                exist_regex = bool(existing.urls_defined_as_regular_expression)
-                if req_regex != exist_regex:
-                    diffs["urls-defined-as-regular-expression"] = FieldChange(
-                        field="urls-defined-as-regular-expression",
-                        old_value=existing.urls_defined_as_regular_expression,
-                        new_value=req_regex,
-                    )
-                    update_payload["urls-defined-as-regular-expression"] = req_regex
-
-        if "description" in desired and desired["description"] is not None:
-            req_desc = str(desired["description"])
-            exist_desc = str(existing.description or "")
-            if req_desc != exist_desc:
-                diffs["description"] = FieldChange(
-                    field="description",
-                    old_value=existing.description,
-                    new_value=req_desc,
-                )
-                update_payload["description"] = req_desc
-
-        req_sig = desired.get("application-signature") or desired.get("application_signature")
-        if isinstance(req_sig, str) and req_sig.strip():
-            clean_sig = req_sig.strip()
-            exist_sig = str(
-                (existing.raw_data.get("application-signature") if isinstance(existing.raw_data, dict) else None) or ""
-            ).strip()
-            if clean_sig != exist_sig:
-                diffs["application-signature"] = FieldChange(
-                    field="application-signature",
-                    old_value=exist_sig or None,
-                    new_value=clean_sig,
-                )
-                update_payload["application-signature"] = clean_sig
-
-        raw_add_cats = (
-            desired.get("additional-categories")
-            if "additional-categories" in desired
-            else desired.get("additional_categories")
-        )
-        if isinstance(raw_add_cats, list):
-            req_add_cats = [str(c).strip() for c in raw_add_cats if str(c).strip()]
-            raw_exist_cats = (
-                existing.raw_data.get("additional-categories") if isinstance(existing.raw_data, dict) else None
-            )
-            exist_add_cats = (
-                [str(c).strip() for c in raw_exist_cats if str(c).strip()] if isinstance(raw_exist_cats, list) else []
-            )
-            if set(req_add_cats) != set(exist_add_cats):
-                diffs["additional-categories"] = FieldChange(
-                    field="additional-categories",
-                    old_value=exist_add_cats,
-                    new_value=req_add_cats,
-                )
-                update_payload["additional-categories"] = req_add_cats
-
-    # Common optional metadata fields
+    # Common optional metadata fields and parent groups
+    _compute_group_members_diff(
+        desired,
+        _extract_existing_group_ids(existing.raw_data),
+        existing.raw_data,
+        diffs,
+        update_payload,
+        name_resolutions,
+        field_key="groups",
+    )
     _compute_common_metadata_diff(
         desired,
         existing_comments=existing.comments,
@@ -396,6 +454,15 @@ def compute_service_diff(
             desired, existing.members, existing.raw_data, diffs, update_payload, name_resolutions
         )
 
+    _compute_group_members_diff(
+        desired,
+        _extract_existing_group_ids(existing.raw_data),
+        existing.raw_data,
+        diffs,
+        update_payload,
+        name_resolutions,
+        field_key="groups",
+    )
     _compute_common_metadata_diff(
         desired,
         existing_comments=existing.comments,
@@ -412,9 +479,11 @@ def _build_member_uid_to_name_map(
     existing_members: Sequence[str],
     raw_data: Mapping[str, Any],
     current_names: Sequence[str],
+    *,
+    key: str = "members",
 ) -> dict[str, str]:
     uid_to_name: dict[str, str] = {}
-    for elem in parse_existing_member_entries(existing_members, raw_data):
+    for elem in parse_existing_member_entries(existing_members, raw_data, key=key):
         u = str(elem.get("uid") or "").strip()
         n = str(elem.get("name") or "").strip()
         if u and n:
@@ -433,18 +502,20 @@ def _compute_group_members_diff(
     diffs: dict[str, FieldChange],
     update_payload: dict[str, Any],
     name_resolutions: Mapping[str, str] | None = None,
+    *,
+    field_key: str = "members",
 ) -> None:
-    if "members" not in desired or desired["members"] is None:
+    if field_key not in desired or desired[field_key] is None:
         return
 
-    req_members = desired["members"]
-    current_names = _resolve_existing_member_names(existing_members, raw_data)
+    req_members = desired[field_key]
+    current_names = _resolve_existing_member_names(existing_members, raw_data, key=field_key)
     current_uids = set(existing_members)
     current_set = set(current_names) | current_uids
 
     if isinstance(req_members, list):
         resolved_req = [resolve_member_reference(str(m), name_resolutions) for m in req_members]
-        uid_to_name = _build_member_uid_to_name_map(existing_members, raw_data, current_names)
+        uid_to_name = _build_member_uid_to_name_map(existing_members, raw_data, current_names, key=field_key)
         canonical_req = [uid_to_name.get(m, m) for m in resolved_req]
         # Compare order-insensitively across both resolved names and UIDs
         if (
@@ -457,14 +528,14 @@ def _compute_group_members_diff(
                 dict.fromkeys(m for m in canonical_req if m not in current_set and m not in set(current_names))
             )
             removed_items = list(dict.fromkeys(m for m in current_names if m not in canonical_req_set))
-            diffs["members"] = FieldChange(
-                field="members",
+            diffs[field_key] = FieldChange(
+                field=field_key,
                 old_value=list(current_names),
                 new_value=resolved_req,
                 added_items=added_items,
                 removed_items=removed_items,
             )
-            update_payload["members"] = resolved_req
+            update_payload[field_key] = resolved_req
     elif isinstance(req_members, dict):
         to_add = [resolve_member_reference(str(m), name_resolutions) for m in (req_members.get("add") or [])]
         to_remove = [resolve_member_reference(str(m), name_resolutions) for m in (req_members.get("remove") or [])]
@@ -476,14 +547,14 @@ def _compute_group_members_diff(
                 member_op["add"] = missing_adds
             if present_removes:
                 member_op["remove"] = present_removes
-            diffs["members"] = FieldChange(
-                field="members",
+            diffs[field_key] = FieldChange(
+                field=field_key,
                 old_value=list(current_names),
                 new_value=member_op,
                 added_items=missing_adds,
                 removed_items=present_removes,
             )
-            update_payload["members"] = member_op
+            update_payload[field_key] = member_op
 
 
 def _dedup_urls_by_key(urls: Sequence[str], *, is_regex: bool) -> list[str]:
@@ -549,7 +620,24 @@ def _compute_url_list_diff(
         update_payload["url-list"] = merged_urls
 
 
+def validate_non_blank_rule_items(field_key: str, raw_val: Any) -> None:
+    """Reject empty or blank/whitespace-only elements that Check Point or sentinels would coerce to 'Any'."""
+    if isinstance(raw_val, str):
+        if not raw_val.strip():
+            raise DiffSafetyError(
+                f"Refusing empty string on rule field {field_key!r}: "
+                "an empty or blank rule cell silently widens to 'Any' in Check Point; pass ['Any'] explicitly."
+            )
+        return
+    if isinstance(raw_val, Sequence) and (not raw_val or any(x is None or not str(x).strip() for x in raw_val)):
+        raise DiffSafetyError(
+            f"Refusing empty or blank item on rule field {field_key!r}: "
+            "blank list elements silently widen to 'Any' in Check Point; pass ['Any'] explicitly."
+        )
+
+
 def _resolve_rule_delta_items(
+    field_key: str,
     raw_items: Any,
     *,
     eff_obj_dict: Mapping[str, Mapping[str, Any]],
@@ -558,6 +646,12 @@ def _resolve_rule_delta_items(
     if raw_items is None:
         return []
     seq = raw_items if isinstance(raw_items, (list, tuple, set)) else [raw_items]
+    for item in seq:
+        if item is None or not str(item).strip():
+            raise DiffSafetyError(
+                f"Refusing blank item in incremental delta on rule field {field_key!r}: "
+                "blank elements silently widen to 'Any' in Check Point."
+            )
     out: list[str] = []
     for item in seq:
         norm = normalize_any_sentinel(item, eff_obj_dict)
@@ -578,19 +672,22 @@ def _compute_rule_list_cell_diff(
     diffs: dict[str, FieldChange],
     update_payload: dict[str, Any],
 ) -> None:
+    is_traffic_field = field_key in ("source", "destination", "service")
     if isinstance(raw_desired_val, Mapping):
         exist_names = deref_rule_list(
             exist_list,
             raw_exist.get(field_key),
             eff_obj_dict,
-            default_any=(field_key in ("source", "destination", "service")),
+            default_any=is_traffic_field,
         )
         req_adds = _resolve_rule_delta_items(
+            field_key,
             raw_desired_val.get("add"),
             eff_obj_dict=eff_obj_dict,
             name_resolutions=name_resolutions,
         )
         req_removes = _resolve_rule_delta_items(
+            field_key,
             raw_desired_val.get("remove"),
             eff_obj_dict=eff_obj_dict,
             name_resolutions=name_resolutions,
@@ -642,25 +739,16 @@ def _compute_rule_list_cell_diff(
             update_payload[field_key] = delta_op
         return
 
-    if isinstance(raw_desired_val, str):
-        if not raw_desired_val.strip():
-            raise DiffSafetyError(
-                f"Refusing empty string replacement on rule field {field_key!r}: "
-                "an empty rule cell silently widens to 'Any' in Check Point; pass ['Any'] explicitly."
-            )
-    elif isinstance(raw_desired_val, Sequence) and (
-        not raw_desired_val or not any(str(x).strip() for x in raw_desired_val)
-    ):
-        raise DiffSafetyError(
-            f"Refusing empty list replacement on rule field {field_key!r}: "
-            "an empty rule cell silently widens to 'Any' in Check Point; pass ['Any'] explicitly."
-        )
+    validate_non_blank_rule_items(field_key, raw_desired_val)
 
     norm_des_t = normalize_traffic_list(raw_desired_val, name_resolutions=name_resolutions)
-    norm_exist_t = normalize_traffic_list(
-        exist_list or raw_exist.get(field_key),
-        obj_dict=eff_obj_dict,
+    exist_resolved = deref_rule_list(
+        exist_list,
+        raw_exist.get(field_key),
+        eff_obj_dict,
+        default_any=is_traffic_field,
     )
+    norm_exist_t = tuple(sorted(dict.fromkeys(exist_resolved)))
     if norm_des_t != norm_exist_t:
         old_set = set(norm_exist_t)
         new_set = set(norm_des_t)
@@ -717,130 +805,111 @@ def _compute_common_metadata_diff(
             update_payload["tags"] = req_tags
 
 
-def compute_rule_diff(
+def _diff_nat_rule(
     desired: Mapping[str, Any],
-    existing: RuleEntryUnion,
+    existing: NatRuleEntry,
+    raw_exist: Mapping[str, Any],
+    *,
+    eff_obj_dict: Mapping[str, Mapping[str, Any]],
+    name_resolutions: Mapping[str, str] | None,
+    diffs: dict[str, FieldChange],
+    update_payload: dict[str, Any],
+) -> None:
+    if "method" in desired and desired["method"] is not None:
+        req_method = str(desired["method"]).strip().lower()
+        exist_method = str(existing.method or raw_exist.get("method") or "static").strip().lower()
+        if req_method != exist_method:
+            diffs["method"] = FieldChange(field="method", old_value=existing.method, new_value=req_method)
+            update_payload["method"] = req_method
+
+    nat_fields: list[tuple[str, str, str | None, bool]] = [
+        ("original_source", "original-source", existing.original_source, False),
+        ("original_destination", "original-destination", existing.original_destination, False),
+        ("original_service", "original-service", existing.original_service, False),
+        ("translated_source", "translated-source", existing.translated_source, True),
+        ("translated_destination", "translated-destination", existing.translated_destination, True),
+        ("translated_service", "translated-service", existing.translated_service, True),
+    ]
+    for snake_k, kebab_k, exist_attr, is_trans in nat_fields:
+        if snake_k in desired or kebab_k in desired:
+            raw_des_val = desired.get(snake_k) if snake_k in desired else desired.get(kebab_k)
+            norm_des = normalize_nat_traffic_ref(
+                raw_des_val,
+                is_translated=is_trans,
+                name_resolutions=name_resolutions,
+            )
+            norm_exist = normalize_nat_traffic_ref(
+                exist_attr if exist_attr is not None else raw_exist.get(kebab_k),
+                is_translated=is_trans,
+                obj_dict=eff_obj_dict,
+            )
+            if norm_des != norm_exist:
+                diffs[kebab_k] = FieldChange(field=kebab_k, old_value=norm_exist, new_value=norm_des)
+                update_payload[kebab_k] = norm_des
+
+
+def _diff_policy_rule(
+    desired: Mapping[str, Any],
+    existing: AccessRuleEntry | HttpsRuleEntry | ThreatRuleEntry,
+    raw_exist: Mapping[str, Any],
     *,
     rulebase_type: RulebaseType,
-    obj_dict: Mapping[str, Mapping[str, Any]] | None = None,
-    name_resolutions: Mapping[str, str] | None = None,
-) -> tuple[dict[str, FieldChange], dict[str, Any]]:
-    """Compute field diffs and `set-*-rule` update payload between `desired` spec and `existing` rule."""
-    diffs: dict[str, FieldChange] = {}
-    update_payload: dict[str, Any] = {}
+    eff_obj_dict: Mapping[str, Mapping[str, Any]],
+    name_resolutions: Mapping[str, str] | None,
+    diffs: dict[str, FieldChange],
+    update_payload: dict[str, Any],
+) -> None:
+    for field_key, exist_list in (
+        ("source", existing.source),
+        ("destination", existing.destination),
+        ("service", existing.service),
+    ):
+        if field_key in desired and desired[field_key] is not None:
+            _compute_rule_list_cell_diff(
+                field_key,
+                desired[field_key],
+                exist_list,
+                raw_exist,
+                eff_obj_dict=eff_obj_dict,
+                name_resolutions=name_resolutions,
+                diffs=diffs,
+                update_payload=update_payload,
+            )
 
-    new_name = desired.get("new_name") or desired.get("new-name")
-    if isinstance(new_name, str) and new_name.strip() and new_name.strip() != existing.name:
-        diffs["name"] = FieldChange(field="name", old_value=existing.name, new_value=new_name.strip())
-        update_payload["new-name"] = new_name.strip()
-    elif "name" in desired and desired["name"] is not None:
-        req_name = str(desired["name"]).strip()
-        if req_name and req_name != existing.name:
-            diffs["name"] = FieldChange(field="name", old_value=existing.name, new_value=req_name)
-            update_payload["new-name"] = req_name
+    raw_act = desired.get("rule_action")
+    if raw_act is None and "action" in desired:
+        cand = desired["action"]
+        if isinstance(cand, str) and cand.lower() not in ("present", "absent", "add", "set", "update", "delete"):
+            raw_act = cand
+    if raw_act is not None:
+        req_act = str(raw_act).strip()
+        exist_act = str(existing.action or "").strip()
+        if req_act.lower() != exist_act.lower():
+            diffs["action"] = FieldChange(field="action", old_value=existing.action, new_value=req_act)
+            update_payload["action"] = req_act
 
-    if "enabled" in desired and desired["enabled"] is not None:
-        req_en = bool(desired["enabled"])
-        if req_en != existing.enabled:
-            diffs["enabled"] = FieldChange(field="enabled", old_value=existing.enabled, new_value=req_en)
-            update_payload["enabled"] = req_en
+    if "track" in desired and desired["track"] is not None:
+        from arodonata.cpcrud.rule_identity import encode_track_for_rulebase, normalize_track_dict
 
-    if "comments" in desired and desired["comments"] is not None:
-        req_comm = str(desired["comments"])
-        if req_comm != (existing.comments or ""):
-            diffs["comments"] = FieldChange(field="comments", old_value=existing.comments, new_value=req_comm)
-            update_payload["comments"] = req_comm
-
-    raw_exist = existing.raw_data or {}
-    eff_obj_dict = build_effective_obj_dict(raw_exist, obj_dict)
-
-    if rulebase_type == "nat" and isinstance(existing, NatRuleEntry):
-        # NAT rule diff with Original and Any sentinel normalization
-        if "method" in desired and desired["method"] is not None:
-            req_method = str(desired["method"]).strip().lower()
-            exist_method = str(existing.method or raw_exist.get("method") or "static").strip().lower()
-            if req_method != exist_method:
-                diffs["method"] = FieldChange(field="method", old_value=existing.method, new_value=req_method)
-                update_payload["method"] = req_method
-
-        nat_fields: list[tuple[str, str, str | None, bool]] = [
-            ("original_source", "original-source", existing.original_source, False),
-            ("original_destination", "original-destination", existing.original_destination, False),
-            ("original_service", "original-service", existing.original_service, False),
-            ("translated_source", "translated-source", existing.translated_source, True),
-            ("translated_destination", "translated-destination", existing.translated_destination, True),
-            ("translated_service", "translated-service", existing.translated_service, True),
-        ]
-        for snake_k, kebab_k, exist_attr, is_trans in nat_fields:
-            if snake_k in desired or kebab_k in desired:
-                raw_des_val = desired.get(snake_k) if snake_k in desired else desired.get(kebab_k)
-                norm_des = normalize_nat_traffic_ref(
-                    raw_des_val,
-                    is_translated=is_trans,
-                    name_resolutions=name_resolutions,
-                )
-                norm_exist = normalize_nat_traffic_ref(
-                    exist_attr if exist_attr is not None else raw_exist.get(kebab_k),
-                    is_translated=is_trans,
-                    obj_dict=eff_obj_dict,
-                )
-                if norm_des != norm_exist:
-                    diffs[kebab_k] = FieldChange(field=kebab_k, old_value=norm_exist, new_value=norm_des)
-                    update_payload[kebab_k] = norm_des
-
-    elif isinstance(existing, (AccessRuleEntry, HttpsRuleEntry, ThreatRuleEntry)):
-        for field_key, exist_list in (
-            ("source", existing.source),
-            ("destination", existing.destination),
-            ("service", existing.service),
-        ):
-            if field_key in desired and desired[field_key] is not None:
-                _compute_rule_list_cell_diff(
-                    field_key,
-                    desired[field_key],
-                    exist_list,
-                    raw_exist,
-                    eff_obj_dict=eff_obj_dict,
-                    name_resolutions=name_resolutions,
-                    diffs=diffs,
-                    update_payload=update_payload,
-                )
-
-        # Action diff
-        raw_act = desired.get("rule_action")
-        if raw_act is None and "action" in desired:
-            cand = desired["action"]
-            if isinstance(cand, str) and cand.lower() not in ("present", "absent", "add", "set", "update", "delete"):
-                raw_act = cand
-        if raw_act is not None:
-            req_act = str(raw_act).strip()
-            exist_act = str(existing.action or "").strip()
-            if req_act.lower() != exist_act.lower():
-                diffs["action"] = FieldChange(field="action", old_value=existing.action, new_value=req_act)
-                update_payload["action"] = req_act
-
-        if "track" in desired and desired["track"] is not None:
-            from arodonata.cpcrud.rule_identity import encode_track_for_rulebase, normalize_track_dict
-
-            req_wire = encode_track_for_rulebase(desired["track"], rulebase_type)
-            if rulebase_type == "access":
-                req_norm = normalize_track_dict(req_wire)
-                exist_raw_track = raw_exist.get("track") if raw_exist.get("track") is not None else existing.track
-                exist_norm = normalize_track_dict(exist_raw_track, eff_obj_dict)
-                track_changed = req_norm.get("type") != exist_norm.get("type") or any(
-                    exist_norm.get(k) != v for k, v in req_norm.items() if k != "type"
-                )
-                if track_changed:
-                    diffs["track"] = FieldChange(field="track", old_value=exist_raw_track, new_value=req_wire)
-                    update_payload["track"] = req_wire
-            else:
-                req_str = str(req_wire).strip()
-                raw_t = raw_exist.get("track")
-                exist_t = raw_t.get("type") if isinstance(raw_t, Mapping) else raw_t
-                exist_str = str(existing.track or exist_t or "").strip()
-                if req_str.lower() != exist_str.lower():
-                    diffs["track"] = FieldChange(field="track", old_value=existing.track, new_value=req_str)
-                    update_payload["track"] = req_str
+        req_wire = encode_track_for_rulebase(desired["track"], rulebase_type)
+        if rulebase_type == "access":
+            req_norm = normalize_track_dict(req_wire)
+            exist_raw_track = raw_exist.get("track") if raw_exist.get("track") is not None else existing.track
+            exist_norm = normalize_track_dict(exist_raw_track, eff_obj_dict)
+            track_changed = req_norm.get("type") != exist_norm.get("type") or any(
+                exist_norm.get(k) != v for k, v in req_norm.items() if k != "type"
+            )
+            if track_changed:
+                diffs["track"] = FieldChange(field="track", old_value=exist_raw_track, new_value=req_wire)
+                update_payload["track"] = req_wire
+        else:
+            req_str = str(req_wire).strip()
+            raw_t = raw_exist.get("track")
+            exist_t = raw_t.get("type") if isinstance(raw_t, Mapping) else raw_t
+            exist_str = str(existing.track or exist_t or "").strip()
+            if req_str.lower() != exist_str.lower():
+                diffs["track"] = FieldChange(field="track", old_value=existing.track, new_value=req_str)
+                update_payload["track"] = req_str
 
     if isinstance(existing, AccessRuleEntry):
         for snake_k, kebab_k, exist_neg in (
@@ -898,6 +967,66 @@ def compute_rule_diff(
                 diffs=diffs,
                 update_payload=update_payload,
             )
+
+
+def compute_rule_diff(
+    desired: Mapping[str, Any],
+    existing: RuleEntryUnion,
+    *,
+    rulebase_type: RulebaseType,
+    obj_dict: Mapping[str, Mapping[str, Any]] | None = None,
+    name_resolutions: Mapping[str, str] | None = None,
+) -> tuple[dict[str, FieldChange], dict[str, Any]]:
+    """Compute field diffs and `set-*-rule` update payload between `desired` spec and `existing` rule."""
+    diffs: dict[str, FieldChange] = {}
+    update_payload: dict[str, Any] = {}
+
+    new_name = desired.get("new_name") or desired.get("new-name")
+    if isinstance(new_name, str) and new_name.strip() and new_name.strip() != existing.name:
+        diffs["name"] = FieldChange(field="name", old_value=existing.name, new_value=new_name.strip())
+        update_payload["new-name"] = new_name.strip()
+    elif "name" in desired and desired["name"] is not None:
+        req_name = str(desired["name"]).strip()
+        if req_name and req_name != existing.name:
+            diffs["name"] = FieldChange(field="name", old_value=existing.name, new_value=req_name)
+            update_payload["new-name"] = req_name
+
+    if "enabled" in desired and desired["enabled"] is not None:
+        req_en = bool(desired["enabled"])
+        if req_en != existing.enabled:
+            diffs["enabled"] = FieldChange(field="enabled", old_value=existing.enabled, new_value=req_en)
+            update_payload["enabled"] = req_en
+
+    if "comments" in desired and desired["comments"] is not None:
+        req_comm = str(desired["comments"])
+        if req_comm != (existing.comments or ""):
+            diffs["comments"] = FieldChange(field="comments", old_value=existing.comments, new_value=req_comm)
+            update_payload["comments"] = req_comm
+
+    raw_exist = existing.raw_data or {}
+    eff_obj_dict = build_effective_obj_dict(raw_exist, obj_dict)
+
+    if rulebase_type == "nat" and isinstance(existing, NatRuleEntry):
+        _diff_nat_rule(
+            desired,
+            existing,
+            raw_exist,
+            eff_obj_dict=eff_obj_dict,
+            name_resolutions=name_resolutions,
+            diffs=diffs,
+            update_payload=update_payload,
+        )
+    elif isinstance(existing, (AccessRuleEntry, HttpsRuleEntry, ThreatRuleEntry)):
+        _diff_policy_rule(
+            desired,
+            existing,
+            raw_exist,
+            rulebase_type=rulebase_type,
+            eff_obj_dict=eff_obj_dict,
+            name_resolutions=name_resolutions,
+            diffs=diffs,
+            update_payload=update_payload,
+        )
 
     if "install_on" in desired or "install-on" in desired:
         raw_inst = desired.get("install_on") if "install_on" in desired else desired.get("install-on")

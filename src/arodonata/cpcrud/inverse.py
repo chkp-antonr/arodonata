@@ -10,10 +10,87 @@ Implements `build_inverse_template` (`CPCRUDService.inverse(plan, report)`):
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from typing import Any
 
 from arodonata.cpcrud.models import ActionResult, ApplyReport, Outcome, Plan, PlannedAction
 from arodonata.cpcrud.state_reader import OBJECT_ITEM_TYPES, SERVICE_ITEM_TYPES
+
+_OBJECT_INVERSE_FIELDS: tuple[str, ...] = (
+    "ipv4-address",
+    "ipv6-address",
+    "subnet4",
+    "mask-length4",
+    "ipv4-address-first",
+    "ipv4-address-last",
+    "is-sub-domain",
+    "primary-category",
+    "url-list",
+    "urls-defined-as-regular-expression",
+    "description",
+    "application-signature",
+    "additional-categories",
+    "comments",
+    "color",
+    "tags",
+    "groups",
+    "nat-settings",
+    "ignore-warnings",
+    "set-if-exists",
+)
+
+_SERVICE_INVERSE_FIELDS: tuple[str, ...] = (
+    "port",
+    "protocol",
+    "icmp-type",
+    "icmp-code",
+    "session-timeout",
+    "match-for-any",
+    "comments",
+    "color",
+    "tags",
+    "groups",
+    "ignore-warnings",
+    "set-if-exists",
+)
+
+_GROUP_INVERSE_FIELDS: tuple[str, ...] = ("comments", "color", "tags", "groups")
+
+_RULE_INVERSE_FIELDS: tuple[str, ...] = (
+    "enabled",
+    "comments",
+    "source",
+    "destination",
+    "service",
+    "source-negate",
+    "destination-negate",
+    "service-negate",
+    "rule_action",
+    "track",
+    "install-on",
+    "inline-layer",
+    "protected-scope",
+    "site-category",
+    "certificate",
+    "method",
+    "original-source",
+    "original-destination",
+    "original-service",
+    "translated-source",
+    "translated-destination",
+    "translated-service",
+)
+
+
+def _copy_prior_fields(
+    op: dict[str, Any],
+    prior: Mapping[str, Any],
+    field_keys: tuple[str, ...],
+) -> None:
+    """Copy non-None keys listed in `field_keys` from `prior` into rollback payload `op`."""
+    for field_key in field_keys:
+        if field_key in prior and prior[field_key] is not None:
+            op[field_key] = prior[field_key]
 
 
 def _real_uid(*candidates: Any) -> str | None:
@@ -104,30 +181,7 @@ def _invert_object_action(
             op["new-name"] = prior_name
 
         # Restore prior field values
-        for field_key in (
-            "ipv4-address",
-            "ipv6-address",
-            "subnet4",
-            "mask-length4",
-            "ipv4-address-first",
-            "ipv4-address-last",
-            "is-sub-domain",
-            "primary-category",
-            "url-list",
-            "urls-defined-as-regular-expression",
-            "description",
-            "application-signature",
-            "additional-categories",
-            "comments",
-            "color",
-            "tags",
-            "groups",
-            "nat-settings",
-            "ignore-warnings",
-            "set-if-exists",
-        ):
-            if field_key in prior and prior[field_key] is not None:
-                op[field_key] = prior[field_key]
+        _copy_prior_fields(op, prior, _OBJECT_INVERSE_FIELDS)
         return op
 
     if outcome == Outcome.DELETE:
@@ -138,30 +192,7 @@ def _invert_object_action(
             "type": obj_type,
             "name": str(prior.get("name") or action.name),
         }
-        for field_key in (
-            "ipv4-address",
-            "ipv6-address",
-            "subnet4",
-            "mask-length4",
-            "ipv4-address-first",
-            "ipv4-address-last",
-            "is-sub-domain",
-            "primary-category",
-            "url-list",
-            "urls-defined-as-regular-expression",
-            "description",
-            "application-signature",
-            "additional-categories",
-            "comments",
-            "color",
-            "tags",
-            "groups",
-            "nat-settings",
-            "ignore-warnings",
-            "set-if-exists",
-        ):
-            if field_key in prior and prior[field_key] is not None:
-                op[field_key] = prior[field_key]
+        _copy_prior_fields(op, prior, _OBJECT_INVERSE_FIELDS)
         return op
 
     return None
@@ -200,22 +231,7 @@ def _invert_service_action(
         if prior_name != current_name:
             op["new-name"] = prior_name
 
-        for field_key in (
-            "port",
-            "protocol",
-            "icmp-type",
-            "icmp-code",
-            "session-timeout",
-            "match-for-any",
-            "comments",
-            "color",
-            "tags",
-            "groups",
-            "ignore-warnings",
-            "set-if-exists",
-        ):
-            if field_key in prior and prior[field_key] is not None:
-                op[field_key] = prior[field_key]
+        _copy_prior_fields(op, prior, _SERVICE_INVERSE_FIELDS)
         return op
 
     if outcome == Outcome.DELETE:
@@ -226,22 +242,7 @@ def _invert_service_action(
             "type": svc_type,
             "name": str(prior.get("name") or action.name),
         }
-        for field_key in (
-            "port",
-            "protocol",
-            "icmp-type",
-            "icmp-code",
-            "session-timeout",
-            "match-for-any",
-            "comments",
-            "color",
-            "tags",
-            "groups",
-            "ignore-warnings",
-            "set-if-exists",
-        ):
-            if field_key in prior and prior[field_key] is not None:
-                op[field_key] = prior[field_key]
+        _copy_prior_fields(op, prior, _SERVICE_INVERSE_FIELDS)
         return op
 
     return None
@@ -281,9 +282,7 @@ def _invert_group_action(
             op["new-name"] = prior_name
         if "members" in prior and isinstance(prior["members"], list):
             op["members"] = [str(m) for m in prior["members"]]
-        for field_key in ("comments", "color", "tags", "groups"):
-            if field_key in prior and prior[field_key] is not None:
-                op[field_key] = prior[field_key]
+        _copy_prior_fields(op, prior, _GROUP_INVERSE_FIELDS)
         return op
 
     if outcome == Outcome.DELETE:
@@ -296,9 +295,7 @@ def _invert_group_action(
         }
         if "members" in prior and isinstance(prior["members"], list):
             op["members"] = [str(m) for m in prior["members"]]
-        for field_key in ("comments", "color", "tags", "groups"):
-            if field_key in prior and prior[field_key] is not None:
-                op[field_key] = prior[field_key]
+        _copy_prior_fields(op, prior, _GROUP_INVERSE_FIELDS)
         return op
 
     return None
@@ -351,32 +348,7 @@ def _invert_rule_action(
         elif prior.get("name") is not None:
             op["name"] = str(prior["name"])
 
-        for k in (
-            "enabled",
-            "comments",
-            "source",
-            "destination",
-            "service",
-            "source-negate",
-            "destination-negate",
-            "service-negate",
-            "rule_action",
-            "track",
-            "install-on",
-            "inline-layer",
-            "protected-scope",
-            "site-category",
-            "certificate",
-            "method",
-            "original-source",
-            "original-destination",
-            "original-service",
-            "translated-source",
-            "translated-destination",
-            "translated-service",
-        ):
-            if k in prior and prior[k] is not None:
-                op[k] = prior[k]
+        _copy_prior_fields(op, prior, _RULE_INVERSE_FIELDS)
         return op
 
     if outcome == Outcome.DELETE:
@@ -399,32 +371,7 @@ def _invert_rule_action(
         else:
             op["position"] = "bottom"
 
-        for k in (
-            "enabled",
-            "comments",
-            "source",
-            "destination",
-            "service",
-            "source-negate",
-            "destination-negate",
-            "service-negate",
-            "rule_action",
-            "track",
-            "install-on",
-            "inline-layer",
-            "protected-scope",
-            "site-category",
-            "certificate",
-            "method",
-            "original-source",
-            "original-destination",
-            "original-service",
-            "translated-source",
-            "translated-destination",
-            "translated-service",
-        ):
-            if k in prior and prior[k] is not None:
-                op[k] = prior[k]
+        _copy_prior_fields(op, prior, _RULE_INVERSE_FIELDS)
         return op
 
     return None

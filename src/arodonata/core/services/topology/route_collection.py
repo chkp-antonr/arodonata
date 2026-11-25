@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -55,6 +54,280 @@ from arodonata.core.services.topology.route_scripts import (
     resolve_gateway_cli_targets,
 )
 from arodonata.core.telemetry import span_attrs
+
+
+async def _execute_coalesced_target(
+    target: GatewayCliTarget,
+    *,
+    api: ApiPort,
+    eff_cli: GatewayCliPort | GatewayCliCallable | None,
+    fallback_to_cprid: bool,
+    timeout: float,
+    eff_concurrency: int,
+    eff_script_mode: CpridScriptMode,
+    eff_script_name: str,
+    repository_script_args_fn: RepositoryScriptArgsCallable | None,
+    max_routes: int,
+    script_service: ScriptRepositoryService,
+    cprid_session_getter: Callable[[str, str], Any],
+    auto_mode_resolver: AutoScriptModeResolver,
+    repo_node_flights: dict[tuple[str, str, str], asyncio.Future[GatewayCliResult]],
+    repo_node_locks: dict[tuple[str, str, str], asyncio.Lock],
+    get_node_lock: Callable[[str, str], Any],
+    get_semaphore: Callable[[str, int], Any],
+) -> tuple[GatewayCliTarget, GatewayCliResult]:
+    """Execute or coalesce a single target's CLI route collection across concurrent VSX targets."""
+    preclaimed = False
+    if eff_script_mode == "auto" and eff_cli is None:
+        preclaimed = await auto_mode_resolver.acquire_probe_turn(target.mgmt_name, target.domain_name)
+
+    probe_exc: BaseException | None = None
+    node_key = str(target.node_uid or target.node_ipv4 or target.node_name or target.gateway_uid)
+    coalesce_key = (target.mgmt_name, target.domain_name, node_key)
+
+    should_coalesce = (
+        eff_cli is None
+        and repository_script_args_fn is None
+        and (
+            eff_script_mode == "repository"
+            or (
+                eff_script_mode == "auto"
+                and (
+                    preclaimed or auto_mode_resolver.get_resolved(target.mgmt_name, target.domain_name) == "repository"
+                )
+            )
+        )
+    )
+
+    flight_fut: asyncio.Future[GatewayCliResult] | None = None
+    is_leader = False
+    if should_coalesce:
+        async with repo_node_locks[coalesce_key]:
+            existing_fut = repo_node_flights.get(coalesce_key)
+            if existing_fut is None or (preclaimed and existing_fut.done() and existing_fut.exception() is not None):
+                flight_fut = asyncio.get_running_loop().create_future()
+                repo_node_flights[coalesce_key] = flight_fut
+                is_leader = True
+            else:
+                flight_fut = existing_fut
+                is_leader = False
+
+        if not is_leader:
+            try:
+                bundle_res = await asyncio.shield(flight_fut)
+            except ServerIdentityError:
+                raise
+            except asyncio.CancelledError:
+                cur_task = asyncio.current_task()
+                if cur_task is not None and cur_task.cancelling() > 0:
+                    raise
+                bundle_res = GatewayCliResult(
+                    success=False,
+                    error_code="leader_cancelled",
+                    error_message="Coalescing leader flight was cancelled",
+                    executor="cprid",
+                )
+            except Exception as exc:
+                bundle_res = GatewayCliResult(
+                    success=False,
+                    error_code="coalesce_leader_failed",
+                    error_message=f"Coalescing leader flight failed: {exc}",
+                    executor="cprid",
+                )
+
+            raw_bundle = bundle_res.bundle_stdout or bundle_res.stdout
+            res = extract_vs_slice_from_bundle(
+                raw_bundle,
+                vsid=target.vsid,
+                vs_name=target.vs_name,
+                executor=bundle_res.executor,
+                base_result=bundle_res,
+            )
+            return target, res
+
+    try:
+        node_lock = get_node_lock(target.mgmt_name, node_key)
+        mgmt_sem = get_semaphore(target.mgmt_name, eff_concurrency)
+        # Acquire per-node lock BEFORE management concurrency slot so multiple VSX Virtual Systems
+        # hosted on the same physical VSX chassis serialize cleanly without starving other gateways.
+        async with node_lock, mgmt_sem:
+            script = build_route_collection_script(
+                vsid=target.vsid,
+                vs_name=target.vs_name,
+                max_routes=max_routes,
+            )
+            res = await execute_gateway_cli(
+                target,
+                script,
+                api=api,
+                gateway_cli=eff_cli,
+                fallback_to_cprid=fallback_to_cprid,
+                timeout=timeout,
+                cprid_session_getter=cprid_session_getter,
+                cprid_script_mode=eff_script_mode,
+                repository_script_name=eff_script_name,
+                repository_script_args_fn=repository_script_args_fn,
+                max_routes=max_routes,
+                script_service=script_service,
+                auto_mode_resolver=auto_mode_resolver,
+                preclaimed_auto_probe=preclaimed,
+            )
+            if should_coalesce and is_leader and flight_fut is not None and not flight_fut.done():
+                flight_fut.set_result(res)
+            return target, res
+    except BaseException as exc:
+        probe_exc = exc
+        if should_coalesce and is_leader and flight_fut is not None and not flight_fut.done():
+            if isinstance(exc, asyncio.CancelledError):
+                flight_fut.set_exception(RuntimeError("Coalescing leader flight was cancelled"))
+            else:
+                flight_fut.set_exception(exc)
+        raise
+    finally:
+        if preclaimed:
+            auto_mode_resolver.abort_probe_if_unresolved(
+                target.mgmt_name,
+                target.domain_name,
+                exc=probe_exc,
+            )
+
+
+async def _persist_gateway_routes(
+    gw_asset: Asset,
+    parsed_by_node: dict[str, list[ParsedCliRoute]],
+    *,
+    cache: _TopologyServiceCachePort,
+    rulebase_refresh: RulebaseRefreshPort | None,
+    dom_assets: list[Asset],
+    dom_pkg_snapshot: DomainRulebaseSnapshot,
+    now: datetime,
+    executors_used: list[str],
+    truncation_warnings: list[str],
+    node_errors: list[str],
+) -> tuple[GatewayRouteCollectionStatus, int]:
+    """Normalize routes for one gateway, persist them in cache, and build its status summary."""
+    if_meta: dict[str, tuple[str | None, int | None, bool, str, bool]] = {
+        norm.interface_name: (
+            norm.ipv4_address,
+            norm.mask_length,
+            norm.leads_to_dmz,
+            norm.anti_spoofing_mode,
+            norm.is_external,
+        )
+        for norm in _normalize_gateway_interfaces(gw_asset)
+    }
+
+    inst_pol, pkg_names, _ = await _resolve_gateway_policy_metadata(
+        cache,
+        rulebase_refresh,
+        gw_asset.mgmt_name,
+        gw_asset.domain_name,
+        gw_asset,
+        gw_asset.uid,
+        gw_asset.name,
+        all_assets=dom_assets,
+        snapshot=dom_pkg_snapshot,
+    )
+
+    route_entries, drift_detected, drift_map = routes_to_topology_entries(
+        gateway_asset=gw_asset,
+        parsed_routes_by_node=parsed_by_node,
+        interface_meta=if_meta,
+        installed_access_policy=inst_pol,
+        policy_packages=pkg_names,
+        now=now,
+    )
+    parsed_by_node.clear()
+    entry_count = len(route_entries)
+
+    await cache.replace_domain_topology(
+        gw_asset.mgmt_name,
+        gw_asset.domain_name,
+        route_entries,
+        gateway_uids=[gw_asset.uid],
+        source_types=list(LIVE_ROUTE_SOURCES),
+        sync_states=None,
+    )
+    route_entries.clear()
+
+    gw_warnings: list[str] = []
+    if drift_detected:
+        for (d_if, d_cidr), present_nodes in sorted(drift_map.items()):
+            gw_warnings.append(
+                f"Cluster member route drift on {gw_asset.name} :: {d_if} ({d_cidr}): "
+                f"present only on {', '.join(present_nodes)}"
+            )
+    if truncation_warnings:
+        gw_warnings.extend(truncation_warnings)
+    if node_errors:
+        gw_warnings.extend(node_errors)
+
+    return (
+        GatewayRouteCollectionStatus(
+            mgmt_name=gw_asset.mgmt_name,
+            domain_name=gw_asset.domain_name,
+            gateway_id=gw_asset.id,
+            gateway_asset_id=gw_asset.asset_id,
+            gateway_uid=gw_asset.uid,
+            gateway_name=gw_asset.name,
+            gateway_type=gw_asset.type,
+            success=True,
+            executor=",".join(executors_used) if executors_used else "ssh",
+            routes_collected=entry_count,
+            member_drift_detected=drift_detected,
+            warnings=gw_warnings,
+            error=None,
+        ),
+        entry_count,
+    )
+
+
+async def _finalize_domain_route_sync_states(
+    results: list[tuple[GatewayRouteCollectionStatus, int]],
+    *,
+    cache: _TopologyServiceCachePort,
+    gw_tokens: Collection[str],
+    total_gateways: int,
+    now: datetime,
+) -> RouteCollectionOutcome:
+    """Persist domain-level `routes` sync states after TaskGroup completion and return the outcome."""
+    statuses = [st for st, _ in results]
+    succeeded_count = sum(1 for st in statuses if st.success)
+    failed_count = len(statuses) - succeeded_count
+    total_routes_count = sum(cnt for _, cnt in results)
+
+    # If any gateway in a domain failed route collection, downgrade the domain-level `routes` sync state
+    # so subsequent `smart` refreshes retry route collection for that domain.
+    failed_by_dom: dict[tuple[str, str], list[str]] = defaultdict(list)
+    routes_count_by_dom: dict[tuple[str, str], int] = defaultdict(int)
+    for st, cnt in results:
+        routes_count_by_dom[(st.mgmt_name, st.domain_name)] += cnt
+        if not st.success:
+            failed_by_dom[(st.mgmt_name, st.domain_name)].append(f"{st.gateway_name}: {st.error or 'failed'}")
+
+    if not gw_tokens:
+        for (m_name, d_name), total_cnt in routes_count_by_dom.items():
+            errs = failed_by_dom.get((m_name, d_name), [])
+            await cache.upsert_sync_state(
+                DomainSyncState(
+                    mgmt_name=m_name,
+                    domain_name=d_name,
+                    scope="topology",
+                    item_type="routes",
+                    synced_at=now,
+                    status="failed" if errs else "ok",
+                    object_count=total_cnt,
+                    last_error="; ".join(errs) if errs else None,
+                )
+            )
+
+    return RouteCollectionOutcome(
+        total_gateways=total_gateways,
+        succeeded_gateways=succeeded_count,
+        failed_gateways=failed_count,
+        total_routes=total_routes_count,
+        gateways=statuses,
+    )
 
 
 async def collect_gateway_routes(
@@ -245,122 +518,25 @@ async def _collect_gateway_routes_impl(
     repo_node_locks: dict[tuple[str, str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def _run_target(target: GatewayCliTarget) -> tuple[GatewayCliTarget, GatewayCliResult]:
-        preclaimed = False
-        if eff_script_mode == "auto" and eff_cli is None:
-            preclaimed = await auto_mode_resolver.acquire_probe_turn(target.mgmt_name, target.domain_name)
-
-        probe_exc: BaseException | None = None
-        node_key = str(target.node_uid or target.node_ipv4 or target.node_name or target.gateway_uid)
-        coalesce_key = (target.mgmt_name, target.domain_name, node_key)
-
-        should_coalesce = (
-            eff_cli is None
-            and repository_script_args_fn is None
-            and (
-                eff_script_mode == "repository"
-                or (
-                    eff_script_mode == "auto"
-                    and (
-                        preclaimed
-                        or auto_mode_resolver.get_resolved(target.mgmt_name, target.domain_name) == "repository"
-                    )
-                )
-            )
+        return await _execute_coalesced_target(
+            target,
+            api=api,
+            eff_cli=eff_cli,
+            fallback_to_cprid=fallback_to_cprid,
+            timeout=timeout,
+            eff_concurrency=eff_concurrency,
+            eff_script_mode=eff_script_mode,
+            eff_script_name=eff_script_name,
+            repository_script_args_fn=repository_script_args_fn,
+            max_routes=max_routes,
+            script_service=script_service,
+            cprid_session_getter=_get_cprid_session,
+            auto_mode_resolver=auto_mode_resolver,
+            repo_node_flights=repo_node_flights,
+            repo_node_locks=repo_node_locks,
+            get_node_lock=get_node_lock,
+            get_semaphore=get_semaphore,
         )
-
-        flight_fut: asyncio.Future[GatewayCliResult] | None = None
-        is_leader = False
-        if should_coalesce:
-            async with repo_node_locks[coalesce_key]:
-                existing_fut = repo_node_flights.get(coalesce_key)
-                if existing_fut is None or (
-                    preclaimed and existing_fut.done() and existing_fut.exception() is not None
-                ):
-                    flight_fut = asyncio.get_running_loop().create_future()
-                    repo_node_flights[coalesce_key] = flight_fut
-                    is_leader = True
-                else:
-                    flight_fut = existing_fut
-                    is_leader = False
-
-            if not is_leader:
-                try:
-                    bundle_res = await asyncio.shield(flight_fut)
-                except ServerIdentityError:
-                    raise
-                except asyncio.CancelledError:
-                    cur_task = asyncio.current_task()
-                    if cur_task is not None and cur_task.cancelling() > 0:
-                        raise
-                    bundle_res = GatewayCliResult(
-                        success=False,
-                        error_code="leader_cancelled",
-                        error_message="Coalescing leader flight was cancelled",
-                        executor="cprid",
-                    )
-                except Exception as exc:
-                    bundle_res = GatewayCliResult(
-                        success=False,
-                        error_code="coalesce_leader_failed",
-                        error_message=f"Coalescing leader flight failed: {exc}",
-                        executor="cprid",
-                    )
-
-                raw_bundle = bundle_res.bundle_stdout or bundle_res.stdout
-                res = extract_vs_slice_from_bundle(
-                    raw_bundle,
-                    vsid=target.vsid,
-                    vs_name=target.vs_name,
-                    executor=bundle_res.executor,
-                    base_result=bundle_res,
-                )
-                return target, res
-
-        try:
-            node_lock = get_node_lock(target.mgmt_name, node_key)
-            mgmt_sem = get_semaphore(target.mgmt_name, eff_concurrency)
-            # Acquire per-node lock BEFORE management concurrency slot so multiple VSX Virtual Systems
-            # hosted on the same physical VSX chassis serialize cleanly without starving other gateways.
-            async with node_lock, mgmt_sem:
-                script = build_route_collection_script(
-                    vsid=target.vsid,
-                    vs_name=target.vs_name,
-                    max_routes=max_routes,
-                )
-                res = await execute_gateway_cli(
-                    target,
-                    script,
-                    api=api,
-                    gateway_cli=eff_cli,
-                    fallback_to_cprid=fallback_to_cprid,
-                    timeout=timeout,
-                    cprid_session_getter=_get_cprid_session,
-                    cprid_script_mode=eff_script_mode,
-                    repository_script_name=eff_script_name,
-                    repository_script_args_fn=repository_script_args_fn,
-                    max_routes=max_routes,
-                    script_service=script_service,
-                    auto_mode_resolver=auto_mode_resolver,
-                    preclaimed_auto_probe=preclaimed,
-                )
-                if should_coalesce and is_leader and flight_fut is not None and not flight_fut.done():
-                    flight_fut.set_result(res)
-                return target, res
-        except BaseException as exc:
-            probe_exc = exc
-            if should_coalesce and is_leader and flight_fut is not None and not flight_fut.done():
-                if isinstance(exc, asyncio.CancelledError):
-                    flight_fut.set_exception(RuntimeError("Coalescing leader flight was cancelled"))
-                else:
-                    flight_fut.set_exception(exc)
-            raise
-        finally:
-            if preclaimed:
-                auto_mode_resolver.abort_probe_if_unresolved(
-                    target.mgmt_name,
-                    target.domain_name,
-                    exc=probe_exc,
-                )
 
     async def _collect_for_gateway(gw_asset: Asset) -> tuple[GatewayRouteCollectionStatus, int]:
         cli_targets = resolve_gateway_cli_targets(gw_asset, all_mgmt_assets)
@@ -372,7 +548,11 @@ async def _collect_gateway_routes_impl(
             raise eg.exceptions[0] from None
         except* Exception as eg:
             raise eg.exceptions[0] from None
-        known_sids = list({sid for sid, _ in cprid_sessions.values() if sid}) or None
+        known_sid_set = {sid for sid, _ in cprid_sessions.values() if sid}
+        active_gw_ws = get_write_session(mgmt_name=gw_asset.mgmt_name, domain_name=gw_asset.domain_name)
+        if active_gw_ws is not None and active_gw_ws.sid:
+            known_sid_set.add(active_gw_ws.sid)
+        known_sids = list(known_sid_set) or None
 
         parsed_by_node: dict[str, list[ParsedCliRoute]] = {}
         node_errors: list[str] = []
@@ -425,81 +605,19 @@ async def _collect_gateway_routes_impl(
                 0,
             )
 
-        if_meta: dict[str, tuple[str | None, int | None, bool, str, bool]] = {
-            norm.interface_name: (
-                norm.ipv4_address,
-                norm.mask_length,
-                norm.leads_to_dmz,
-                norm.anti_spoofing_mode,
-                norm.is_external,
-            )
-            for norm in _normalize_gateway_interfaces(gw_asset)
-        }
-
         dom_assets = dom_assets_by_key.get((gw_asset.mgmt_name, gw_asset.domain_name), [])
         dom_pkg_snapshot = await _get_pkg_snapshot(gw_asset.mgmt_name, gw_asset.domain_name)
-        inst_pol, pkg_names, _ = await _resolve_gateway_policy_metadata(
-            cache,
-            rulebase_refresh,
-            gw_asset.mgmt_name,
-            gw_asset.domain_name,
+        return await _persist_gateway_routes(
             gw_asset,
-            gw_asset.uid,
-            gw_asset.name,
-            all_assets=dom_assets,
-            snapshot=dom_pkg_snapshot,
-        )
-
-        route_entries, drift_detected, drift_map = routes_to_topology_entries(
-            gateway_asset=gw_asset,
-            parsed_routes_by_node=parsed_by_node,
-            interface_meta=if_meta,
-            installed_access_policy=inst_pol,
-            policy_packages=pkg_names,
+            parsed_by_node,
+            cache=cache,
+            rulebase_refresh=rulebase_refresh,
+            dom_assets=dom_assets,
+            dom_pkg_snapshot=dom_pkg_snapshot,
             now=now,
-        )
-        parsed_by_node.clear()
-        entry_count = len(route_entries)
-
-        await cache.replace_domain_topology(
-            gw_asset.mgmt_name,
-            gw_asset.domain_name,
-            route_entries,
-            gateway_uids=[gw_asset.uid],
-            source_types=list(LIVE_ROUTE_SOURCES),
-            sync_states=None,
-        )
-        route_entries.clear()
-
-        gw_warnings: list[str] = []
-        if drift_detected:
-            for (d_if, d_cidr), present_nodes in sorted(drift_map.items()):
-                gw_warnings.append(
-                    f"Cluster member route drift on {gw_asset.name} :: {d_if} ({d_cidr}): "
-                    f"present only on {', '.join(present_nodes)}"
-                )
-        if truncation_warnings:
-            gw_warnings.extend(truncation_warnings)
-        if node_errors:
-            gw_warnings.extend(node_errors)
-
-        return (
-            GatewayRouteCollectionStatus(
-                mgmt_name=gw_asset.mgmt_name,
-                domain_name=gw_asset.domain_name,
-                gateway_id=gw_asset.id,
-                gateway_asset_id=gw_asset.asset_id,
-                gateway_uid=gw_asset.uid,
-                gateway_name=gw_asset.name,
-                gateway_type=gw_asset.type,
-                success=True,
-                executor=",".join(executors_used) if executors_used else "ssh",
-                routes_collected=entry_count,
-                member_drift_detected=drift_detected,
-                warnings=gw_warnings,
-                error=None,
-            ),
-            entry_count,
+            executors_used=executors_used,
+            truncation_warnings=truncation_warnings,
+            node_errors=node_errors,
         )
 
     try:
@@ -512,46 +630,24 @@ async def _collect_gateway_routes_impl(
         except* Exception as eg:
             raise eg.exceptions[0] from None
     finally:
+        pending_cancel: asyncio.CancelledError | None = None
         for (m_name, _d_name), (ded_sid, ded_ip) in list(cprid_sessions.items()):
-            with contextlib.suppress(Exception):
-                await api.logout_sid(m_name, ded_sid, server_ip=ded_ip)
+            try:
+                await asyncio.shield(api.logout_sid(m_name, ded_sid, server_ip=ded_ip))
+            except asyncio.CancelledError as exc:
+                if pending_cancel is None:
+                    pending_cancel = exc
+            except Exception:
+                pass
+        if pending_cancel is not None:
+            raise pending_cancel
 
-    statuses = [st for st, _ in results]
-    succeeded_count = sum(1 for st in statuses if st.success)
-    failed_count = len(statuses) - succeeded_count
-    total_routes_count = sum(cnt for _, cnt in results)
-
-    # If any gateway in a domain failed route collection, downgrade the domain-level `routes` sync state
-    # so subsequent `smart` refreshes retry route collection for that domain.
-    failed_by_dom: dict[tuple[str, str], list[str]] = defaultdict(list)
-    routes_count_by_dom: dict[tuple[str, str], int] = defaultdict(int)
-    for st, cnt in results:
-        routes_count_by_dom[(st.mgmt_name, st.domain_name)] += cnt
-        if not st.success:
-            failed_by_dom[(st.mgmt_name, st.domain_name)].append(f"{st.gateway_name}: {st.error or 'failed'}")
-
-    if not gw_tokens:
-        for (m_name, d_name), total_cnt in routes_count_by_dom.items():
-            errs = failed_by_dom.get((m_name, d_name), [])
-            await cache.upsert_sync_state(
-                DomainSyncState(
-                    mgmt_name=m_name,
-                    domain_name=d_name,
-                    scope="topology",
-                    item_type="routes",
-                    synced_at=now,
-                    status="failed" if errs else "ok",
-                    object_count=total_cnt,
-                    last_error="; ".join(errs) if errs else None,
-                )
-            )
-
-    return RouteCollectionOutcome(
+    return await _finalize_domain_route_sync_states(
+        results,
+        cache=cache,
+        gw_tokens=gw_tokens,
         total_gateways=len(target_gateways),
-        succeeded_gateways=succeeded_count,
-        failed_gateways=failed_count,
-        total_routes=total_routes_count,
-        gateways=statuses,
+        now=now,
     )
 
 

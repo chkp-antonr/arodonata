@@ -616,3 +616,144 @@ def test_domain_list_refresh_tracker_global_invalidate_none_forces_refresh() -> 
         )
         is False
     )
+
+
+@pytest.mark.spec("SCN-SESS-013-1")
+@pytest.mark.asyncio
+async def test_canonical_domain_parser_mds_standard_fallback_and_shared_write_session_lifecycle() -> None:
+    """Verify canonical `parse_domain_entry`/`parse_domain_dict` parity, MDS RBAC fallback preserving cached CMA IPs, and shared WriteSession lifecycle."""
+    from arodonata.adapters.checkpoint import response_classifiers
+    from arodonata.adapters.checkpoint import sessions as sessions_mod
+    from arodonata.adapters.checkpoint.rate_limiter import RateLimiter
+    from arodonata.adapters.checkpoint.target_resolver import fetch_domain_topology_from_mds
+    from arodonata.core.config import ServerEndpointConfig
+    from arodonata.core.context import open_api_write_session
+    from arodonata.core.models.domains import DomainInfo, parse_domain_entry
+
+    # 1. Identity and parity of parse_domain_entry / parse_domain_dict
+    assert sessions_mod.parse_domain_entry is response_classifiers.parse_domain_entry is parse_domain_entry
+    raw_dom = {
+        "uid": "d-uid-1",
+        "name": "Corp",
+        "servers": [{"ipv4-address": "10.1.0.5", "active": True, "multi-domain-server": "mds-a"}],
+    }
+    d_entry = parse_domain_entry("mds1", raw_dom, mds_ip_by_name={"mds-a": "10.0.0.10"})
+    d_dict = parse_domain_dict("mds1", raw_dom, mds_ip_by_name={"mds-a": "10.0.0.10"})
+    assert d_entry.active_ip == d_dict.active_ip == "10.1.0.5"
+    assert d_entry.active_mds_ip == d_dict.active_mds_ip == "10.0.0.10"
+
+    # 2. fetch_domain_topology_from_mds falls back to details-level="standard" on 403 and preserves cached CMA IP
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    await cache.upsert_domains(
+        [
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="d-corp",
+                name="Corp",
+                active_ip="10.9.9.9",
+                active_mds_ip="10.0.0.1",
+                servers=[{"ipv4-address": "10.9.9.9", "active": True}],
+            )
+        ]
+    )
+
+    seen_levels: list[str] = []
+
+    class _FallbackTransport:
+        async def execute(self, host: str, cmd: str, payload: dict[str, Any], **kwargs: Any) -> ApiCallResult:
+            lvl = str(payload.get("details-level") or "")
+            seen_levels.append(lvl)
+            if cmd == "show-domains" and lvl == "full":
+                return ApiCallResult(
+                    success=False, status_code=403, error_code="err_forbidden", error_message="forbidden"
+                )
+            if cmd == "show-domains" and lvl == "standard":
+                return ApiCallResult(
+                    success=True, data={"objects": [{"uid": "d-corp", "name": "Corp", "type": "domain"}]}
+                )
+            return ApiCallResult(success=False)
+
+    async def _fake_ro(*args: Any, **kwargs: Any) -> tuple[str, str]:
+        return "sys-sid", "10.0.0.1"
+
+    async def _fake_id() -> str | None:
+        return None
+
+    matched = await fetch_domain_topology_from_mds(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        endpoint=ServerEndpointConfig(name="mds1", host="10.0.0.1"),
+        transport=_FallbackTransport(),  # type: ignore[arg-type]
+        cache=cache,
+        rate_limiter=RateLimiter(concurrent_limit=10),
+        settings=ArodonataSettings(),
+        known_mds_ips=set(),
+        get_readonly_session_fn=_fake_ro,
+        resolve_identity_fn=_fake_id,
+    )
+    assert seen_levels == ["full", "standard"]
+    assert matched is not None
+    assert matched.active_ip == "10.9.9.9"
+
+    # 3. Shared WriteSession lifecycle via open_api_write_session (publish on clean exit, discard on exception, logout)
+    calls: list[str] = []
+
+    class _FakeApi:
+        async def create_dedicated_session(self, *args: Any, **kwargs: Any) -> tuple[str, str]:
+            return "ws-sid-1", "10.1.0.1"
+
+        async def api_call(self, mgmt: str, cmd: str, *args: Any, **kwargs: Any) -> ApiCallResult:
+            calls.append(cmd)
+            return ApiCallResult(success=True, data={})
+
+        async def logout_sid(self, mgmt: str, sid: str, **kwargs: Any) -> bool:
+            calls.append(f"logout:{sid}")
+            return True
+
+    async with open_api_write_session(_FakeApi(), "mds1", "Corp"):  # type: ignore[arg-type]
+        pass
+    assert calls == ["publish", "logout:ws-sid-1"]
+    await db.close()
+
+
+async def test_discover_mds_domains_stalled_pagination_and_write_session_error_preservation() -> None:
+    """DA-021/DA-022/DA-029: Stop on stalled domain pagination and preserve body exception on discard failure."""
+    from arodonata.core.context import open_api_write_session
+    from arodonata.core.services._domain_discovery import discover_mds_domains
+
+    calls = 0
+
+    async def _stalled_exec(cmd: str, payload: dict[str, Any]) -> ApiCallResult:
+        nonlocal calls
+        if cmd == "show-domains":
+            calls += 1
+            return ApiCallResult(
+                success=True,
+                data={
+                    "total": 999,
+                    "objects": [{"uid": "d1", "name": "Corp", "type": "domain", "servers": []}],
+                },
+            )
+        return ApiCallResult(success=True, data={"objects": []})
+
+    disc = await discover_mds_domains("mds1", _stalled_exec, existing_domains=[])
+    assert len(disc.domains) == 1
+    assert calls == 2
+
+    class _FailingDiscardApi:
+        async def create_dedicated_session(self, *args: Any, **kwargs: Any) -> tuple[str, str]:
+            return "ws-sid-err", "10.0.0.1"
+
+        async def api_call(self, mgmt: str, cmd: str, *args: Any, **kwargs: Any) -> ApiCallResult:
+            if cmd == "discard":
+                raise RuntimeError("discard boom")
+            return ApiCallResult(success=True, data={})
+
+        async def logout_sid(self, mgmt: str, sid: str, **kwargs: Any) -> bool:
+            return True
+
+    with pytest.raises(ValueError, match="original body error"):
+        async with open_api_write_session(_FailingDiscardApi(), "mds1", "Corp"):  # type: ignore[arg-type]
+            raise ValueError("original body error")

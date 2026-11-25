@@ -305,6 +305,7 @@ def register_cpcrud_tools(
         mgmt_name: str | None = None,
         domain: str | None = None,
         timeout: float | None = None,
+        allow_stale: bool = False,
     ) -> CallToolResult:
         if not session_uid or not session_uid.strip():
             raise ToolFailure("session_uid must not be empty.")
@@ -342,6 +343,7 @@ def register_cpcrud_tools(
                 server_ip=stored_staged.server_ip,
                 timeout=eff_timeout,
                 force_disconnect=False,
+                allow_stale=allow_stale,
             )
             known_sids = _collect_staged_sids(await collect_known_sids(client, eff_mgmt))
             if not res.success:

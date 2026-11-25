@@ -459,3 +459,68 @@ def test_fail_closed_rule_defaults_match_across_add_and_identity() -> None:
         )
         assert add_payload["action"] == expected
         assert desired_access_traffic_tuple(spec, rulebase_type=rb_type)[3] == expected
+
+
+def test_groups_diff_and_blank_rule_item_safety() -> None:
+    """DA-024/DA-026: Diff `groups` on host/service updates, reject blank rule items, preserve unset rule cols."""
+    from arodonata.core.models.services import CPService
+    from arodonata.cpcrud.differ import (
+        DiffSafetyError,
+        compute_object_diff,
+        compute_rule_diff,
+        compute_service_diff,
+    )
+
+    host = CPObject(
+        id="mds1:Corp:h1",
+        object_id="mds1:Corp:h1",
+        uid="h1",
+        name="H1",
+        type="host",
+        mgmt_name="mds1",
+        domain_name="Corp",
+        ipv4_address="10.0.0.1",
+        raw_data={"groups": [{"uid": "g1", "name": "OldGroup"}]},
+    )
+    h_diffs, h_payload = compute_object_diff({"groups": ["NewGroup"]}, host)
+    assert "groups" in h_diffs
+    assert h_payload["groups"] == ["NewGroup"]
+
+    svc = CPService(
+        id="mds1:Corp:s1",
+        service_id="mds1:Corp:s1",
+        uid="s1",
+        name="S1",
+        type="service-tcp",
+        mgmt_name="mds1",
+        domain_name="Corp",
+        port="80",
+        raw_data={"groups": [{"uid": "sg1", "name": "OldSvcGroup"}]},
+    )
+    s_diffs, s_payload = compute_service_diff({"groups": ["NewSvcGroup"]}, svc)
+    assert "groups" in s_diffs
+    assert s_payload["groups"] == ["NewSvcGroup"]
+
+    rule = AccessRuleEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        package_name="Standard",
+        package_uid="p1",
+        layer_name="Network",
+        layer_uid="l1",
+        uid="r1",
+        rule_number="1",
+        name="R1",
+        action="Accept",
+        source=["Any"],
+        destination=["Any"],
+        service=["Any"],
+        install_on=[],
+    )
+    with pytest.raises(DiffSafetyError):
+        compute_rule_diff({"source": ["  ", "H1"]}, rule, rulebase_type="access")
+    with pytest.raises(DiffSafetyError):
+        compute_rule_diff({"source": {"add": [""]}}, rule, rulebase_type="access")
+
+    r_diffs, _ = compute_rule_diff({"install-on": ["Policy Targets"]}, rule, rulebase_type="access")
+    assert "install-on" in r_diffs

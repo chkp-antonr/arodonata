@@ -415,3 +415,139 @@ async def test_hybrid_state_reader_cold_show_objects_overlay_and_unrecognized_fa
     assert [q[1] for q in api2.queries] == ["show-objects", "show-hosts", "show-objects", "show-services-tcp"]
 
     await db.close()
+
+
+@pytest.mark.spec("SCN-CPCRUD-016-1")
+@pytest.mark.asyncio
+async def test_unified_state_reader_exact_service_name_and_shared_staged_inverse_helpers() -> None:
+    """Verify exact service name filtering, shared adopted staged-session logout shielding, and `_copy_prior_fields`."""
+    from arodonata.core.models.common import ApiCallResult, utc_now
+    from arodonata.core.models.services import CPService
+    from arodonata.cpcrud.executor import Executor
+    from arodonata.cpcrud.inverse import _copy_prior_fields, build_inverse_template
+    from arodonata.cpcrud.models import DomainStamp, Outcome, Plan, PlannedAction, StagedSessionInfo
+
+    # 1. Exact service name guard rejects mismatched cache results (matching get_object_by_name)
+    class _MismatchedServiceCache:
+        async def get_sync_state(self, mgmt_name: str, domain_name: str, scope: str, item_type: str) -> Any:
+            return DomainSyncState(
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                scope=scope,  # type: ignore[arg-type]
+                item_type=item_type,
+                status="ok",
+                synced_at=utc_now(),
+                last_session_uid="sess-1",
+                last_published_at=utc_now(),
+            )
+
+        async def get_services(self, **kwargs: Any) -> list[CPService]:
+            return [
+                CPService(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    uid="svc-wrong",
+                    name="TCP_8080",
+                    type="service-tcp",
+                    port="8080",
+                )
+            ]
+
+    now = utc_now()
+
+    class _SyncFixedCache(_MismatchedServiceCache):
+        async def get_sync_state(self, mgmt_name: str, domain_name: str, scope: str, item_type: str) -> Any:
+            return DomainSyncState(
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                scope=scope,  # type: ignore[arg-type]
+                item_type=item_type,
+                status="ok",
+                synced_at=now,
+                last_session_uid="sess-1",
+                last_published_at=now,
+            )
+
+    stamp = DomainStamp(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        readable=True,
+        last_session_uid="sess-1",
+        last_published_at=now,
+        captured_at=now,
+    )
+    reader = HybridStateReader(
+        api=ReaderFakeApi(),
+        cache=_SyncFixedCache(),  # type: ignore[arg-type]
+        domain_stamps={"mds1:Corp": stamp},
+    )
+    assert await reader.get_service_by_name("mds1", "Corp", "service-tcp", "TCP_80") is None
+
+    # 2. Shared _run_on_adopted_staged_session shields logout_sid across publish and discard failures
+    logged_out: list[str] = []
+
+    class _StagedFailApi:
+        async def api_call(
+            self, mgmt_name: str, command: str, payload: dict[str, Any] | None = None, **kw: Any
+        ) -> ApiCallResult:
+            if command == "show-session":
+                return ApiCallResult(success=True, status_code=200, data={"uid": "sess-uid-1", "state": "open"})
+            raise RuntimeError(f"boom with orig-sid-1 on {command}")
+
+        async def logout_sid(self, mgmt_name: str, sid: str, server_ip: str | None = None) -> None:
+            logged_out.append(sid)
+
+    executor = Executor(api=_StagedFailApi())  # type: ignore[arg-type]
+    executor._staged_sessions[("mds1", "Corp", "sess-uid-1")] = StagedSessionInfo(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        session_uid="sess-uid-1",
+        sid="orig-sid-1",
+        server_ip="10.0.0.1",
+        session_name="staged-1",
+        baseline_session_uid=None,
+        baseline_published_at=None,
+    )
+    disc_res = await executor.discard_staged_session("mds1", "Corp", session_uid="sess-uid-1", allow_foreign=True)
+    assert disc_res.success is False
+    assert disc_res.error_code == "discard_failed"
+    assert "orig-sid-1" not in (disc_res.error_message or "")
+    assert "orig-sid-1" in logged_out
+
+    logged_out.clear()
+    pub_events = [
+        ev
+        async for ev in executor.stream_publish_staged_session(
+            "mds1", "Corp", session_uid="sess-uid-1", allow_foreign=True, allow_stale=True
+        )
+    ]
+    assert executor._last_staged_publish_result is not None
+    assert executor._last_staged_publish_result.error_code == "publish_failed"
+    assert "orig-sid-1" not in (executor._last_staged_publish_result.error_message or "")
+    assert pub_events[-1].phase == "failed"
+    assert "orig-sid-1" in logged_out
+
+    # 3. _copy_prior_fields & build_inverse_template preserve prior field rollback
+    op: dict[str, Any] = {}
+    _copy_prior_fields(op, {"port": "8443", "comments": None, "color": "blue"}, ("port", "comments", "color"))
+    assert op == {"port": "8443", "color": "blue"}
+
+    inv_plan = Plan(
+        created_at=now,
+        actions=[
+            PlannedAction(
+                action_id="a1",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="set",
+                object_type="host",
+                name="H1",
+                outcome=Outcome.UPDATE,
+                target_uid="uid-h1",
+                prior_state={"name": "H1", "ipv4-address": "10.0.0.1", "color": "green"},
+            )
+        ],
+    )
+    inv_tpl = build_inverse_template(inv_plan)
+    assert inv_tpl["objects"][0]["ipv4-address"] == "10.0.0.1"
+    assert inv_tpl["objects"][0]["color"] == "green"

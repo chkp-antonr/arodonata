@@ -242,20 +242,34 @@ async def plan_rule_step(
             )
 
         # Create new rule with cleanup-rule-aware position resolution
-        resolved_pos = resolve_rule_position(
-            spec.get("position", "bottom"),
-            rules_list,
-            sections=paged.sections,
-            obj_dict=paged.objects_dictionary,
-        )
-        add_payload = _build_add_rule_payload(
-            rb_type=rb_type,
-            spec=spec,
-            layer=layer or paged.layer_name,
-            package=package or paged.package_name or paged.layer_name,
-            position=resolved_pos,
-            name_resolutions=res_map,
-        )
+        try:
+            resolved_pos = resolve_rule_position(
+                spec.get("position", "bottom"),
+                rules_list,
+                sections=paged.sections,
+                obj_dict=paged.objects_dictionary,
+            )
+            add_payload = _build_add_rule_payload(
+                rb_type=rb_type,
+                spec=spec,
+                layer=layer or paged.layer_name,
+                package=package or paged.package_name or paged.layer_name,
+                position=resolved_pos,
+                name_resolutions=res_map,
+            )
+        except DiffSafetyError as exc:
+            return _make_error_action(
+                action_id=action_id,
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                operation=verb,
+                object_type=rule_type,
+                name=display_name,
+                layer=layer,
+                package=package,
+                desired_spec=spec,
+                error=str(exc),
+            )
         return PlannedAction(
             action_id=action_id,
             mgmt_name=mgmt_name,

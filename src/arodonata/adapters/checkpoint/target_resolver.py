@@ -14,14 +14,15 @@ import arlogi
 from arodonata.adapters.checkpoint.rate_limiter import RateLimiter
 from arodonata.adapters.checkpoint.response_classifiers import (
     is_session_expired_result,
-    parse_domain_entry,
 )
 from arodonata.adapters.checkpoint.transport import ApiTransport
 from arodonata.core.config import ArodonataSettings, ServerEndpointConfig
 from arodonata.core.context import SYSTEM_DOMAIN_KEY, normalize_domain_key
 from arodonata.core.errors import ServerIdentityError, ValidationError
+from arodonata.core.models.common import ApiCallResult
 from arodonata.core.models.domains import DomainInfo
 from arodonata.core.ports import DomainCachePort, SidCachePort
+from arodonata.core.services._domain_discovery import discover_mds_domains, fetch_global_domain_entry
 
 # Canonical logger shared across `sessions`, `session_cleaner`, and `target_resolver` so
 # monkeypatching `arodonata.adapters.checkpoint.sessions.logger` intercepts all session logs.
@@ -166,16 +167,27 @@ async def fetch_domain_topology_from_mds(
             None,
             server_ip=endpoint.host,
         )
+    except ServerIdentityError:
+        raise
+    except Exception:
+        return None
+
+    sys_tls_identity = resolve_tls_identity_host(endpoint.host, sys_ip)
+    retried_expired = False
+
+    async def _exec_mds_cmd(cmd: str, payload: dict[str, Any]) -> ApiCallResult:
+        nonlocal sys_sid, sys_ip, sys_tls_identity, retried_expired
+        exec_kwargs: dict[str, Any] = {
+            "port": endpoint.port,
+            "sid": sys_sid,
+            "timeout": settings.api_timeout,
+        }
+        if sys_tls_identity is not None:
+            exec_kwargs["tls_identity_host"] = sys_tls_identity
         async with rate_limiter.slot(endpoint.host):
-            res = await transport.execute(
-                sys_ip,
-                "show-domains",
-                {"details-level": "full", "limit": 500, "offset": 0},
-                port=endpoint.port,
-                sid=sys_sid,
-                timeout=settings.api_timeout,
-            )
-        if is_session_expired_result(res):
+            res = await transport.execute(sys_ip, cmd, payload, **exec_kwargs)
+        if not retried_expired and cmd == "show-domains" and is_session_expired_result(res):
+            retried_expired = True
             expired_identity = await resolve_identity_fn()
             await cache.evict_sid(mgmt_name, SYSTEM_DOMAIN_KEY, auth_identity=expired_identity)
             sys_sid, sys_ip = await get_readonly_session_fn(
@@ -184,127 +196,50 @@ async def fetch_domain_topology_from_mds(
                 server_ip=endpoint.host,
                 force_new=True,
             )
+            sys_tls_identity = resolve_tls_identity_host(endpoint.host, sys_ip)
+            exec_kwargs["sid"] = sys_sid
+            if sys_tls_identity is not None:
+                exec_kwargs["tls_identity_host"] = sys_tls_identity
+            else:
+                exec_kwargs.pop("tls_identity_host", None)
             async with rate_limiter.slot(endpoint.host):
-                res = await transport.execute(
-                    sys_ip,
-                    "show-domains",
-                    {"details-level": "full", "limit": 500, "offset": 0},
-                    port=endpoint.port,
-                    sid=sys_sid,
-                    timeout=settings.api_timeout,
-                )
-    except ServerIdentityError:
-        raise
-    except Exception:
-        return None
+                res = await transport.execute(sys_ip, cmd, payload, **exec_kwargs)
+        return res
 
-    if not res.success:
-        return None
-
-    first_page_objs = res.data.get("objects")
-    if not isinstance(first_page_objs, list):
-        return None
-    raw_domains: list[Any] = list(first_page_objs)
-    total_domains = int(res.data.get("total") or len(raw_domains))
-    page_offset = len(raw_domains)
-    while page_offset < total_domains and len(first_page_objs) > 0:
-        try:
-            async with rate_limiter.slot(endpoint.host):
-                page_res = await transport.execute(
-                    sys_ip,
-                    "show-domains",
-                    {"details-level": "full", "limit": 500, "offset": page_offset},
-                    port=endpoint.port,
-                    sid=sys_sid,
-                    timeout=settings.api_timeout,
-                )
-            if not page_res.success:
-                break
-            next_objs = page_res.data.get("objects")
-            if not isinstance(next_objs, list) or not next_objs:
-                break
-            raw_domains.extend(next_objs)
-            page_offset += len(next_objs)
-        except ServerIdentityError:
-            raise
-        except Exception:
-            break
-
-    mds_ip_by_name: dict[str, str] = {}
-    needs_mdss = domain_name == "Global" or any(
-        isinstance(srv.get("multi-domain-server"), str)
-        for item in raw_domains
-        if isinstance(item, dict) and isinstance(item.get("servers"), list)
-        for srv in item["servers"]
-        if isinstance(srv, dict)
+    existing_domains = await cache.get_domains(mgmt_name, include_global=True)
+    discovery = await discover_mds_domains(
+        mgmt_name,
+        _exec_mds_cmd,
+        existing_domains=existing_domains,
+        default_host=endpoint.host,
+        use_default_host_on_parse=False,
+        fallback_uid=False,
+        need_mdss_for_global=(domain_name == "Global"),
+        on_mds_ip=lambda ip: known_mds_ips.add(_canonicalize_host(ip)),
+        log=logger,
     )
-    if needs_mdss:
-        try:
-            async with rate_limiter.slot(endpoint.host):
-                mdss_res = await transport.execute(
-                    sys_ip,
-                    "show-mdss",
-                    {"details-level": "full", "limit": 500},
-                    port=endpoint.port,
-                    sid=sys_sid,
-                    timeout=settings.api_timeout,
-                )
-            if mdss_res.success and isinstance(mdss_res.data.get("objects"), list):
-                for m_obj in mdss_res.data["objects"]:
-                    if isinstance(m_obj, dict):
-                        m_name = m_obj.get("name")
-                        m_ip = (
-                            m_obj.get("ipv4-address")
-                            or m_obj.get("ip-address")
-                            or m_obj.get("ipv6-address")
-                            or m_obj.get("ip")
-                        )
-                        if isinstance(m_ip, str) and m_ip:
-                            known_mds_ips.add(_canonicalize_host(m_ip))
-                            if isinstance(m_name, str) and m_name:
-                                mds_ip_by_name[m_name] = m_ip
-        except ServerIdentityError:
-            raise
-        except Exception:
-            pass
+    if not discovery.res.success or not discovery.saw_objects_list:
+        return None
 
-    parsed_domains: list[DomainInfo] = []
-    matched: DomainInfo | None = None
-    for item in raw_domains:
-        if isinstance(item, dict) and item.get("name"):
-            dom_info = parse_domain_entry(mgmt_name, item, mds_ip_by_name=mds_ip_by_name)
-            if not dom_info.active_mds_ip:
-                dom_info.active_mds_ip = endpoint.host
-            parsed_domains.append(dom_info)
-            if dom_info.name == domain_name:
-                matched = dom_info
+    parsed_domains = list(discovery.domains)
+    matched: DomainInfo | None = next((d for d in parsed_domains if d.name == domain_name), None)
 
     if domain_name == "Global" and matched is None:
-        try:
-            async with rate_limiter.slot(endpoint.host):
-                g_res = await transport.execute(
-                    sys_ip,
-                    "show-global-domain",
-                    {"name": "Global", "details-level": "full"},
-                    port=endpoint.port,
-                    sid=sys_sid,
-                    timeout=settings.api_timeout,
-                )
-            if g_res.success and isinstance(g_res.data, dict):
-                g_raw = dict(g_res.data)
-                g_raw.setdefault("name", "Global")
-                g_raw["is_global"] = True
-                g_info = parse_domain_entry(mgmt_name, g_raw, mds_ip_by_name=mds_ip_by_name)
-                if not g_info.active_ip:
-                    g_info.active_ip = endpoint.host
-                if not g_info.active_mds_ip:
-                    g_info.active_mds_ip = g_info.active_ip
-                parsed_domains.append(g_info)
-                matched = g_info
-        except ServerIdentityError:
-            raise
-        except Exception:
-            pass
+        g_info = await fetch_global_domain_entry(
+            mgmt_name,
+            _exec_mds_cmd,
+            default_host=None,
+            mds_ip_by_name=discovery.mds_ip_by_name,
+            require_uid=True,
+            fallback_uid=False,
+        )
+        if g_info is not None:
+            if not g_info.active_ip:
+                g_info.active_ip = endpoint.host
+            if not g_info.active_mds_ip:
+                g_info.active_mds_ip = g_info.active_ip
+            parsed_domains.append(g_info)
+            matched = g_info
 
     if parsed_domains:
         await cache.upsert_domains(parsed_domains)
@@ -347,7 +282,7 @@ async def validate_explicit_server_ip(
                 mgmt_name,
                 dom_key if dom_key != SYSTEM_DOMAIN_KEY else "Global",
             )
-            trusted_ips, _ = await collect_hosts_fn(mgmt_name, endpoint.host)
+            trusted_ips, cached_domains = await collect_hosts_fn(mgmt_name, endpoint.host)
 
     if not _is_ip_literal(endpoint.host):
         endpoint_resolved = await _resolve_hostname_ips(endpoint.host)

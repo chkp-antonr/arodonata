@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from arodonata.core.models.common import ApiCallResult
-from arodonata.core.models.domains import DomainInfo
+from arodonata.core.models.domains import parse_domain_entry
 
 
 def is_session_expired_result(result: ApiCallResult, *, command: str | None = None) -> bool:
@@ -143,72 +141,6 @@ def is_failover_or_unreachable_result(result: ApiCallResult) -> bool:
             "failover",
             "err_domain_not_active",
         )
-    )
-
-
-def parse_domain_entry(
-    mgmt_name: str,
-    raw: dict[str, Any],
-    *,
-    mds_ip_by_name: dict[str, str] | None = None,
-) -> DomainInfo:
-    """Parse a raw Check Point `show-domains` / `show-domain` / `show-global-domain` dictionary into `DomainInfo`."""
-    uid = str(raw.get("uid") or "")
-    name = str(raw.get("name") or "")
-    dom_type = str(raw.get("type") or raw.get("domain-type") or "domain")
-    is_global = dom_type in ("global", "global-domain") or name == "Global" or bool(raw.get("is_global"))
-
-    servers_raw = raw.get("servers")
-    servers_list: list[dict[str, Any]] = (
-        [s for s in servers_raw if isinstance(s, dict)] if isinstance(servers_raw, list) else []
-    )
-
-    active_ip: str | None = raw.get("active_ip") or raw.get("active-ip")
-    active_mds_ip: str | None = raw.get("active_mds_ip") or raw.get("active-mds-ip")
-    standby_ips: list[str] = []
-
-    for srv in servers_list:
-        srv_ip = srv.get("ipv4-address") or srv.get("ipv6-address") or srv.get("ip")
-        mds_obj = srv.get("multi-domain-server")
-        mds_ip: str | None = None
-        if isinstance(mds_obj, dict):
-            mds_ip = mds_obj.get("ipv4-address") or mds_obj.get("ip")
-            if not mds_ip and mds_ip_by_name and isinstance(mds_obj.get("name"), str):
-                mds_ip = mds_ip_by_name.get(mds_obj["name"])
-        elif isinstance(mds_obj, str) and mds_ip_by_name:
-            mds_ip = mds_ip_by_name.get(mds_obj)
-        elif isinstance(srv.get("multi-domain-server-ip"), str):
-            mds_ip = srv.get("multi-domain-server-ip")
-
-        is_active = bool(srv.get("active"))
-        if is_active:
-            if isinstance(srv_ip, str) and srv_ip:
-                active_ip = srv_ip
-            if isinstance(mds_ip, str) and mds_ip:
-                active_mds_ip = mds_ip
-        elif isinstance(srv_ip, str) and srv_ip:
-            standby_ips.append(srv_ip)
-
-    if active_ip is None and is_global and active_mds_ip:
-        active_ip = active_mds_ip
-
-    if active_ip is None and servers_list:
-        first_ip = servers_list[0].get("ipv4-address") or servers_list[0].get("ip")
-        if isinstance(first_ip, str) and first_ip:
-            active_ip = first_ip
-
-    return DomainInfo(
-        id=f"{mgmt_name}:{name}",
-        mgmt_name=mgmt_name,
-        uid=uid,
-        name=name,
-        domain_type="global" if is_global else dom_type,
-        active_ip=active_ip,
-        active_mds_ip=active_mds_ip or active_ip,
-        standby_ips=standby_ips,
-        servers=servers_list,
-        is_global=is_global,
-        raw_data=dict(raw),
     )
 
 

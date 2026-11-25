@@ -15,7 +15,12 @@ from arodonata.core.models.rulebase import (
     ThreatRuleEntry,
 )
 from arodonata.core.models.services import CPService
-from arodonata.cpcrud.differ import DiffSafetyError, _resolve_existing_member_names, resolve_member_reference
+from arodonata.cpcrud.differ import (
+    DiffSafetyError,
+    _resolve_existing_member_names,
+    resolve_member_reference,
+    validate_non_blank_rule_items,
+)
 from arodonata.cpcrud.models import FieldChange, Outcome, PlannedAction
 from arodonata.cpcrud.rule_identity import (
     RuleEntryUnion,
@@ -594,6 +599,10 @@ def _build_add_rule_payload(
             )
     else:
         payload["layer"] = layer
+        for cell_k in ("source", "destination", "service"):
+            raw_cell = spec.get(cell_k)
+            if raw_cell is not None:
+                validate_non_blank_rule_items(cell_k, raw_cell)
         payload["source"] = list(normalize_traffic_list(spec.get("source"), name_resolutions=name_resolutions))
         payload["destination"] = list(
             normalize_traffic_list(spec.get("destination"), name_resolutions=name_resolutions)
@@ -618,15 +627,18 @@ def _build_add_rule_payload(
             payload["inline-layer"] = inline_val.strip()
         sc_val = spec.get("site_category") if "site_category" in spec else spec.get("site-category")
         if sc_val is not None:
+            validate_non_blank_rule_items("site-category", sc_val)
             payload["site-category"] = list(normalize_traffic_list(sc_val, name_resolutions=name_resolutions))
         if isinstance(spec.get("certificate"), str) and spec["certificate"].strip():
             payload["certificate"] = spec["certificate"].strip()
         ps_val = spec.get("protected_scope") if "protected_scope" in spec else spec.get("protected-scope")
         if ps_val is not None:
+            validate_non_blank_rule_items("protected-scope", ps_val)
             payload["protected-scope"] = list(normalize_traffic_list(ps_val, name_resolutions=name_resolutions))
 
     inst_val = spec.get("install_on") if "install_on" in spec else spec.get("install-on")
     if inst_val is not None:
+        validate_non_blank_rule_items("install-on", inst_val)
         payload["install-on"] = list(normalize_traffic_list(inst_val, name_resolutions=name_resolutions))
 
     return payload

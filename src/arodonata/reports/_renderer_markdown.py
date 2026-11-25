@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from arodonata.reports._renderer_formatting import (
     _MD_FMT,
     _esc_md,
+    _esc_md_code,
     _format_dt_utc,
     _render_enabled_cell,
     _render_list_cell,
@@ -82,7 +83,7 @@ def _render_markdown_document(
             f"## Session: {_esc_md(s.session_name or s.session_uid)} ({_esc_md(s.mgmt_name)} / {_esc_md(dom_str)})"
         )
         lines.append("")
-        lines.append(f"- **UID**: `{_esc_md(s.session_uid)}`")
+        lines.append(f"- **UID**: `{_esc_md_code(s.session_uid)}`")
         lines.append(f"- **Admin**: {_esc_md(s.user_name or 'N/A')}")
         lines.append(f"- **State**: {_esc_md(s.state)}")
         lines.append(f"- **Published**: {_esc_md(_format_dt_utc(s.published_at))}")
@@ -156,7 +157,7 @@ def _render_markdown_document(
                 oc_name_md, _ = _render_scalar_cell(oc.name, oc_diffs_md.get("name"), _MD_FMT)
                 lines.append(
                     f"| {op_lbl} | {_esc_md(oc.object_type)} | {oc_name_md} | "
-                    f"`{_esc_md(oc.uid)}` | {_render_object_details(oc, _MD_FMT)} |"
+                    f"`{_esc_md_code(oc.uid)}` | {_render_object_details(oc, _MD_FMT)} |"
                 )
             lines.append("")
             if options.include_field_diffs:

@@ -9,7 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from arodonata.core.config import NamingPrefixes
-from arodonata.core.errors import REDACTED_PLACEHOLDER, sanitize_mapping
+from arodonata.core.errors import REDACTED_PLACEHOLDER, redact_sid, sanitize_mapping
 from arodonata.core.models.common import to_naive_utc, utc_now
 
 NameConflictPolicy = Literal["update", "error"]
@@ -168,6 +168,10 @@ class ActionResult(BaseModel):
             self.status = str(self.outcome.value)
         if self.response_data:
             self.response_data = sanitize_mapping(self.response_data)
+        if self.message:
+            self.message = redact_sid(self.message)
+        if self.error:
+            self.error = redact_sid(self.error)
 
 
 class StagedSessionInfo(BaseModel):
@@ -183,6 +187,7 @@ class StagedSessionInfo(BaseModel):
     server_ip: str
     session_uid: str | None = None
     session_name: str | None = None
+    baseline_readable: bool = False
     baseline_session_uid: str | None = None
     baseline_published_at: datetime | None = None
     _sid: str = PrivateAttr(default="")

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from typing import Any
 
 from ._emulator_models import BUILTIN_SENTINELS, ENTITY_SPECS, format_domain_meta
@@ -509,3 +509,122 @@ def slice_rulebase_with_sections(
     if "package" in layer_payload:
         result["package"] = layer_payload["package"]
     return result
+
+
+def build_scope_ref_to_uids(
+    scope_files: Mapping[str, Any],
+    global_files: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    """Map object UIDs and names to canonical UIDs (local objects shadow `Global` names)."""
+    ref_to_uid: dict[str, str] = {}
+    layers = (
+        [global_files, scope_files] if global_files is not None and global_files is not scope_files else [scope_files]
+    )
+    buckets = [(spec.plural_show, "objects") for spec in ENTITY_SPECS] + list(EXTRA_OBJECT_BUCKETS)
+    for layer_files in layers:
+        if not isinstance(layer_files, Mapping):
+            continue
+        for cmd, col_key in buckets:
+            items = layer_files.get(cmd, {}).get(col_key, [])
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if isinstance(item, Mapping) and item.get("uid"):
+                    uid_val = str(item["uid"])
+                    ref_to_uid[uid_val] = uid_val
+                    name_val = str(item.get("name") or "")
+                    if name_val:
+                        ref_to_uid[name_val] = uid_val
+    return ref_to_uid
+
+
+def extract_resolved_ref_uids(value: Any, ref_to_uid: Mapping[str, str]) -> set[str]:
+    """Extract UID/name tokens from `value` and map names to canonical UIDs when known."""
+    out: set[str] = set()
+    if isinstance(value, str):
+        clean = value.strip()
+        if clean:
+            out.add(ref_to_uid.get(clean, clean))
+        return out
+    if isinstance(value, Mapping):
+        for key in ("uid", "name"):
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip():
+                tok = raw.strip()
+                out.add(ref_to_uid.get(tok, tok))
+        return out
+    if isinstance(value, list):
+        for elem in value:
+            out.update(extract_resolved_ref_uids(elem, ref_to_uid))
+    return out
+
+
+def _iter_gateway_dicts(scope_files: Mapping[str, Any]) -> Iterator[Mapping[str, Any]]:
+    """Yield deduplicated gateway/cluster dicts from plural, singular detail, and generic buckets."""
+    seen_ids: set[int] = set()
+
+    def _emit(item: Any) -> Iterator[Mapping[str, Any]]:
+        if isinstance(item, Mapping) and id(item) not in seen_ids:
+            seen_ids.add(id(item))
+            yield item
+
+    for gw_cmd in (GATEWAY_SHOW_CMD, "show-simple-gateways", "show-simple-clusters"):
+        gws = scope_files.get(gw_cmd, {}).get("objects", [])
+        if isinstance(gws, list):
+            for gw in gws:
+                yield from _emit(gw)
+    for detail_cmd in ("show-simple-gateway", "show-simple-cluster", "show-generic-object"):
+        detail_map = scope_files.get(detail_cmd, {})
+        if isinstance(detail_map, Mapping):
+            for gw in detail_map.values():
+                yield from _emit(gw)
+    gen_store = scope_files.get("show-generic-objects", {})
+    if isinstance(gen_store, Mapping):
+        gen_lists = (
+            [gen_store["objects"]]
+            if isinstance(gen_store.get("objects"), list)
+            else [v for v in gen_store.values() if isinstance(v, list)]
+        )
+        for g_list in gen_lists:
+            for g_obj in g_list:
+                yield from _emit(g_obj)
+
+
+def iter_gateway_topology_refs(
+    scope_files: Mapping[str, Any],
+    ref_to_uid: Mapping[str, str],
+) -> Iterator[tuple[str, str | None, set[str]]]:
+    """Yield `(gw_label, iface_name_or_none, resolved_uids)` across gateway VPN domains and interfaces."""
+    for gw in _iter_gateway_dicts(scope_files):
+        gw_label = str(gw.get("name") or gw.get("uid") or "gateway")
+        vpn_refs = extract_resolved_ref_uids(gw.get("vpn-domain"), ref_to_uid)
+        vpn_settings = gw.get("vpn-settings")
+        if isinstance(vpn_settings, Mapping):
+            vpn_refs |= extract_resolved_ref_uids(vpn_settings.get("vpn-domain"), ref_to_uid)
+        if vpn_refs:
+            yield gw_label, None, vpn_refs
+
+        for if_key in ("interfaces", "interfaces_installed"):
+            raw_ifaces = gw.get(if_key)
+            iface_items = raw_ifaces.get("objects", []) if isinstance(raw_ifaces, Mapping) else raw_ifaces
+            if not isinstance(iface_items, list):
+                continue
+            for iface in iface_items:
+                if not isinstance(iface, Mapping):
+                    continue
+                iface_name = str(iface.get("name") or "interface")
+                containers: list[Mapping[str, Any]] = [iface]
+                for sub_key in ("owned-object", "owned_object", "topology", "topology-settings"):
+                    sub = iface.get(sub_key)
+                    if isinstance(sub, Mapping):
+                        containers.append(sub)
+                        for nested_key in ("topology", "topology-settings"):
+                            nested = sub.get(nested_key)
+                            if isinstance(nested, Mapping):
+                                containers.append(nested)
+                topo_refs: set[str] = set()
+                for container in containers:
+                    topo_refs |= extract_resolved_ref_uids(container.get("specific-network"), ref_to_uid)
+                    topo_refs |= extract_resolved_ref_uids(container.get("leads-to-specific-network"), ref_to_uid)
+                if topo_refs:
+                    yield gw_label, iface_name, topo_refs

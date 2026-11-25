@@ -582,3 +582,57 @@ async def test_object_service_smart_fast_atomic_hydration_preserves_cache_on_sho
     assert st_after is not None and st_after.last_session_uid == "sess-1"
 
     await db.close()
+
+
+async def test_object_service_single_overlay_isolation_and_empty_types_short_circuit() -> None:
+    """DA-007/DA-018: `get_object_by_uid` never returns unrelated overlay items; `types=[]` skips refresh."""
+    from arodonata.core.context import WriteSession, write_session_context
+    from arodonata.core.models.objects import CPObject
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = ObjectFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=0)
+    domain_service = DomainService(settings=settings, api=api, cache=cache)
+    coord = DomainSyncCoordinator(
+        settings=settings, api=api, cache=cache, lock_port=lock_port, domain_service=domain_service
+    )
+    obj_service = ObjectService(settings=settings, api=api, cache=cache, coordinator=coord)
+
+    # DA-018: types=[] returns [] with zero API calls
+    assert await obj_service.get_objects("mds1", "Corp", types=[], cache_mode="force") == []
+    assert len(api.query_calls) == 0
+
+    existing = CPObject(
+        id="mds1:Corp:uid-1",
+        object_id="mds1:Corp:uid-1",
+        uid="uid-1",
+        name="H1",
+        type="host",
+        mgmt_name="mds1",
+        domain_name="Corp",
+    )
+    other = CPObject(
+        id="mds1:Corp:uid-other",
+        object_id="mds1:Corp:uid-other",
+        uid="uid-other",
+        name="OtherHost",
+        type="host",
+        mgmt_name="mds1",
+        domain_name="Corp",
+    )
+    await cache.replace_domain_objects("mds1", "Corp", [existing], types=["host"])
+
+    ws = WriteSession(mgmt_name="mds1", domain_name="Corp", sid="s1", server_ip="10.0.0.1")
+    ws.overlay.record_object_upsert(other)
+    with write_session_context(ws):
+        got = await obj_service.get_object_by_uid("mds1", "Corp", "uid-1", cache_mode="cache")
+        assert got is not None and got.uid == "uid-1"
+
+        ws.overlay.record_object_delete(uid="uid-1")
+        deleted_res = await obj_service.get_object_by_uid("mds1", "Corp", "uid-1", cache_mode="cache")
+        assert deleted_res is None
+
+    await db.close()

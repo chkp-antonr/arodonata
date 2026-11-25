@@ -1341,3 +1341,136 @@ async def test_planner_incremental_url_list_and_rule_cell_updates_with_depends_o
     assert rename_by_num_plan.actions[0].payload["new-name"] == "Allow Web v2"
 
     await db.close()
+
+
+@pytest.mark.spec("SCN-CPCRUD-016-2")
+@pytest.mark.asyncio
+async def test_single_pass_planner_steps_and_split_diff_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify `_collect_ordered_steps` runs once per target and split diff helpers preserve diff parity."""
+    from arodonata.core.models.rulebase import AccessRuleEntry, NatRuleEntry
+    from arodonata.cpcrud.differ import (
+        _diff_address_range,
+        _diff_application_site,
+        _diff_host,
+        _diff_nat_rule,
+        _diff_network,
+        _diff_policy_rule,
+        compute_object_diff,
+        compute_rule_diff,
+    )
+
+    for fn in (
+        _diff_host,
+        _diff_network,
+        _diff_address_range,
+        _diff_application_site,
+        _diff_nat_rule,
+        _diff_policy_rule,
+    ):
+        assert callable(fn)
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = PlannerFakeApi()
+    await _seed_fresh_cache(cache)
+
+    planner = Planner(api=api, cache=cache, default_mgmt_name="mds1")
+    collect_calls = 0
+    orig_collect = planner._collect_ordered_steps
+
+    def _counting_collect(target: Any) -> list[tuple[str, dict[str, Any]]]:
+        nonlocal collect_calls
+        collect_calls += 1
+        return orig_collect(target)
+
+    monkeypatch.setattr(planner, "_collect_ordered_steps", _counting_collect)
+
+    plan = await planner.decide(
+        {
+            "mgmt_name": "mds1",
+            "targets": [
+                {
+                    "domain": "Corp",
+                    "objects": [{"type": "host", "name": "New_SinglePass_1", "ipv4-address": "10.9.8.1"}],
+                },
+                {
+                    "domain": "Corp",
+                    "objects": [{"type": "host", "name": "New_SinglePass_2", "ipv4-address": "10.9.8.2"}],
+                },
+            ],
+        }
+    )
+    assert collect_calls == 2
+    assert len(plan.actions) == 2
+
+    # Split object diff helpers
+    net_obj = CPObject.from_cp_dict(
+        "mds1",
+        "Corp",
+        {"uid": "net-1", "name": "Net_10_1", "type": "network", "subnet4": "10.1.0.0", "mask-length4": 24},
+    )
+    net_diffs, net_payload = compute_object_diff({"subnet4": "10.2.0.0", "mask-length4": 16}, net_obj)
+    assert set(net_diffs) == {"subnet4", "mask-length4"}
+    assert net_payload == {"subnet4": "10.2.0.0", "mask-length4": 16}
+
+    rng_obj = CPObject.from_cp_dict(
+        "mds1",
+        "Corp",
+        {
+            "uid": "rng-1",
+            "name": "Rng_1",
+            "type": "address-range",
+            "ipv4-address-first": "10.1.1.1",
+            "ipv4-address-last": "10.1.1.10",
+        },
+    )
+    rng_diffs, _ = compute_object_diff({"ipv4-address-last": "10.1.1.20"}, rng_obj)
+    assert set(rng_diffs) == {"ipv4-address-last"}
+
+    # Split rule diff helpers (NAT + policy rule)
+    nat_rule = NatRuleEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        package_name="Standard",
+        package_uid="pkg-1",
+        layer_name="NAT",
+        uid="nr-1",
+        rule_number="1",
+        name="Nat1",
+        method="static",
+        original_source="Host_A",
+        translated_source="Original",
+    )
+    nat_diffs, _ = compute_rule_diff({"translated-source": "Host_NAT"}, nat_rule, rulebase_type="nat")
+    assert set(nat_diffs) == {"translated-source"}
+
+    acc_rule = AccessRuleEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        package_name="Standard",
+        package_uid="pkg-1",
+        layer_name="Network",
+        layer_uid="layer-1",
+        uid="ar-1",
+        rule_number="1",
+        name="Allow1",
+        action="Accept",
+        source=["Any"],
+        destination=["Any"],
+        service=["Any"],
+        install_on=["Policy Targets"],
+    )
+    acc_diffs, _ = compute_rule_diff({"rule_action": "Drop"}, acc_rule, rulebase_type="access")
+    assert set(acc_diffs) == {"action"}
+
+    await db.close()
+
+
+def test_resolve_domain_name_treats_none_as_empty() -> None:
+    """DA-014: `_resolve_domain_name` must treat `{'domain': None}` as default rather than `'None'`."""
+    from arodonata.cpcrud.planner import _resolve_domain_name
+
+    assert _resolve_domain_name({"domain": None}, default="Corp") == "Corp"
+    assert _resolve_domain_name({"domain": None}, default="") == ""
+    assert _resolve_domain_name({"domain": "Global"}, default="Corp") == "Global"

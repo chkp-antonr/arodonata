@@ -19,8 +19,7 @@ from typing import Any, Protocol
 
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import get_write_session
-from arodonata.core.errors import ServerIdentityError
-from arodonata.core.events import DomainSyncProgressEvent, SyncProgressEvent
+from arodonata.core.events import SyncProgressEvent
 from arodonata.core.models.common import (
     CANONICAL_ASSET_TYPES,
     DEFAULT_OBJECT_TYPES,
@@ -30,9 +29,19 @@ from arodonata.core.models.common import (
     to_naive_utc,
     utc_now,
 )
-from arodonata.core.models.domains import DomainSyncState, RefreshOutcome
+from arodonata.core.models.domains import RefreshOutcome
 from arodonata.core.models.objects import CPObject
 from arodonata.core.ports import ApiPort, ObjectCachePort, SyncStatePort
+from arodonata.core.services._typed_cache_sync import (
+    apply_typed_context_overlay,
+    can_try_incremental,
+    extract_changes_from_show_changes,
+    full_reload_types,
+    try_incremental_sync,
+)
+from arodonata.core.services._typed_cache_sync import (
+    unwrap_change_item as _unwrap_change_item,
+)
 from arodonata.core.services.sync_coordinator import DomainProbeResult, DomainSyncCoordinator
 from arodonata.core.telemetry import span_attrs, traced
 
@@ -70,89 +79,8 @@ def resolve_object_query_command(item_type: str) -> tuple[str, dict[str, Any]]:
     return "show-objects", {"type": clean}
 
 
-def _unwrap_change_item(item: Any) -> Any:
-    """Unwrap R82+ `show-changes` modified-object wrapper (`{'new-object': {...}}` or `{'old-object': {...}}`)."""
-    if isinstance(item, dict) and not item.get("uid"):
-        for key in ("new-object", "old-object"):
-            inner = item.get(key)
-            if isinstance(inner, dict):
-                return inner
-    return item
-
-
-def extract_changes_from_show_changes(
-    data: dict[str, Any],
-    *,
-    tracked_types: set[str],
-) -> tuple[list[tuple[str, str]], list[str]]:
-    """Extract `(added_or_modified_uid_and_type, deleted_uids)` for `tracked_types` from `show-changes` response.
-
-    Returns:
-        `(upserts, deleted_uids)` where `upserts` is a list of `(uid, obj_type)` pairs and
-        `deleted_uids` is a list of deleted object UIDs.
-    """
-    upserts: dict[str, str] = {}
-    deleted: set[str] = set()
-
-    change_containers: list[dict[str, Any]] = []
-    if isinstance(data.get("tasks"), list):
-        for task in data["tasks"]:
-            if isinstance(task, dict) and isinstance(task.get("task-details"), list):
-                for detail in task["task-details"]:
-                    if isinstance(detail, dict):
-                        if isinstance(detail.get("changes"), list):
-                            for ch in detail["changes"]:
-                                if isinstance(ch, dict):
-                                    change_containers.append(ch)
-                        else:
-                            change_containers.append(detail)
-    if isinstance(data.get("changes"), list):
-        for ch in data["changes"]:
-            if isinstance(ch, dict):
-                change_containers.append(ch)
-    if isinstance(data.get("operations"), dict):
-        change_containers.append(data)
-
-    for container in change_containers:
-        ops = container.get("operations")
-        if not isinstance(ops, dict):
-            ops = container
-
-        for key in ("added-objects", "modified-objects", "added_objects", "modified_objects"):
-            items = ops.get(key)
-            if isinstance(items, list):
-                for raw_item in items:
-                    item = _unwrap_change_item(raw_item)
-                    if not isinstance(item, dict):
-                        continue
-                    uid = str(item.get("uid") or "")
-                    obj_type = str(item.get("type") or "")
-                    if not uid:
-                        continue
-                    if obj_type and obj_type not in tracked_types:
-                        continue
-                    upserts[uid] = obj_type
-                    deleted.discard(uid)
-
-        for key in ("deleted-objects", "deleted_objects"):
-            items = ops.get(key)
-            if isinstance(items, list):
-                for raw_item in items:
-                    item = _unwrap_change_item(raw_item)
-                    if isinstance(item, str) and item:
-                        deleted.add(item)
-                        upserts.pop(item, None)
-                    elif isinstance(item, dict):
-                        uid = str(item.get("uid") or "")
-                        obj_type = str(item.get("type") or "")
-                        if not uid:
-                            continue
-                        if obj_type and obj_type not in tracked_types:
-                            continue
-                        deleted.add(uid)
-                        upserts.pop(uid, None)
-
-    return list(upserts.items()), list(deleted)
+# Re-export extract_changes_from_show_changes and _unwrap_change_item for compatibility.
+_COMPAT_CHANGE_HELPERS = (_unwrap_change_item, extract_changes_from_show_changes)
 
 
 class ObjectService:
@@ -178,7 +106,7 @@ class ObjectService:
             return list(DEFAULT_OBJECT_TYPES)
         non_blank = [str(t).strip() for t in types if str(t).strip()]
         if not non_blank:
-            return list(DEFAULT_OBJECT_TYPES)
+            return []
         canonical_assets_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
         seen: list[str] = []
         for t in non_blank:
@@ -269,15 +197,7 @@ class ObjectService:
 
     def _can_try_incremental(self, probe: DomainProbeResult) -> bool:
         """Return `True` if every stale `item_type` in `probe` has a baseline `DomainSyncState`."""
-        if not probe.stale_types:
-            return False
-        for t in probe.stale_types:
-            st = probe.existing_states.get(t)
-            if st is None or st.status != "ok":
-                return False
-            if st.last_session_uid is None and st.last_published_at is None:
-                return False
-        return True
+        return can_try_incremental(probe)
 
     async def _try_incremental_sync(
         self,
@@ -285,135 +205,19 @@ class ObjectService:
         emit: Callable[[SyncProgressEvent], Awaitable[None]],
     ) -> int | None:
         """Attempt incremental refresh via `show-changes`; return `None` to fall back to full reload."""
-        mgmt_name = probe.mgmt_name
-        dom_name = probe.domain.name
-        stale_set = set(probe.stale_types)
-
-        # Pick earliest baseline across stale types
-        baseline_states = [probe.existing_states[t] for t in probe.stale_types if t in probe.existing_states]
-        if not baseline_states:
-            return None
-
-        earliest_state = min(
-            baseline_states,
-            key=lambda s: (s.last_published_at is None, s.last_published_at or datetime.max),
+        return await try_incremental_sync(
+            scope="objects",
+            probe=probe,
+            emit=emit,
+            api=self._api,
+            settings=self._settings,
+            now_fn=self._now,
+            model_from_cp_dict=CPObject.from_cp_dict,
+            get_cached_by_type=lambda m, d, types: self._cache.get_objects(m, d, types=types),
+            apply_diff_fn=lambda m, d, del_uids, objs, states: self._cache.apply_object_diff(
+                m, d, deleted_uids=del_uids, objects=objs, sync_states=states
+            ),
         )
-
-        payload: dict[str, Any] = {"details-level": "standard"}
-        if earliest_state.last_session_uid is not None:
-            payload["from-session"] = earliest_state.last_session_uid
-        elif earliest_state.last_published_at is not None:
-            payload["from-date"] = to_naive_utc(earliest_state.last_published_at).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        try:
-            res = await self._api.api_call(
-                mgmt_name,
-                "show-changes",
-                payload,
-                domain=dom_name,
-                wait_for_task=True,
-            )
-            if not res.success:
-                return None
-
-            upserts_meta, deleted_uids = extract_changes_from_show_changes(
-                res.data,
-                tracked_types=stale_set,
-            )
-            total_changes = len(upserts_meta) + len(deleted_uids)
-            if total_changes > self._settings.max_incremental_changes:
-                await emit(
-                    DomainSyncProgressEvent(
-                        scope="objects",
-                        mgmt_name=mgmt_name,
-                        domain=dom_name,
-                        item_type=",".join(probe.stale_types),
-                        processed=0,
-                        total=total_changes,
-                        message=(
-                            f"Incremental diff count ({total_changes}) exceeds "
-                            f"max_incremental_changes ({self._settings.max_incremental_changes}); "
-                            "falling back to full type-scoped reload."
-                        ),
-                    )
-                )
-                return None
-
-            fetched_objects: list[CPObject] = []
-            for uid, _hint_type in upserts_meta:
-                obj_res = await self._api.api_call(
-                    mgmt_name,
-                    "show-object",
-                    {"uid": uid, "details-level": "full"},
-                    domain=dom_name,
-                )
-                if not obj_res.success:
-                    return None
-                raw_obj = obj_res.data.get("object") if isinstance(obj_res.data.get("object"), dict) else obj_res.data
-                if not isinstance(raw_obj, dict) or not raw_obj.get("uid"):
-                    return None
-                cp_obj = CPObject.from_cp_dict(mgmt_name, dom_name, raw_obj)
-                if cp_obj.type in stale_set:
-                    fetched_objects.append(cp_obj)
-
-            existing_by_type: dict[str, list[CPObject]] = {}
-            for item_type in probe.stale_types:
-                existing_by_type[item_type] = await self._cache.get_objects(mgmt_name, dom_name, types=[item_type])
-
-            deleted_uid_set = set(deleted_uids)
-            fetched_by_type: dict[str, dict[str, CPObject]] = {t: {} for t in probe.stale_types}
-            for obj in fetched_objects:
-                if obj.type in fetched_by_type:
-                    fetched_by_type[obj.type][obj.uid] = obj
-
-            synced_at = probe.probe_started_at or self._now()
-            sync_states: list[DomainSyncState] = []
-            for item_type in probe.stale_types:
-                uid_set = {o.uid for o in existing_by_type.get(item_type, []) if o.uid not in deleted_uid_set}
-                uid_set.update(fetched_by_type.get(item_type, {}).keys())
-                sync_states.append(
-                    DomainSyncState(
-                        mgmt_name=mgmt_name,
-                        domain_name=dom_name,
-                        scope="objects",
-                        item_type=item_type,
-                        last_published_at=probe.remote_published_at,
-                        last_session_uid=probe.remote_session_uid,
-                        synced_at=synced_at,
-                        status="ok",
-                        object_count=len(uid_set),
-                        last_error=None,
-                    )
-                )
-
-            await self._cache.apply_object_diff(
-                mgmt_name,
-                dom_name,
-                deleted_uids=deleted_uids,
-                objects=fetched_objects,
-                sync_states=sync_states,
-            )
-
-            await emit(
-                DomainSyncProgressEvent(
-                    scope="objects",
-                    mgmt_name=mgmt_name,
-                    domain=dom_name,
-                    item_type=",".join(probe.stale_types),
-                    processed=total_changes,
-                    total=total_changes,
-                    message=(
-                        f"Applied incremental diff on {mgmt_name}:{dom_name} "
-                        f"({len(fetched_objects)} upserted, {len(deleted_uids)} deleted)."
-                    ),
-                )
-            )
-            return len(fetched_objects) + len(deleted_uids)
-        except ServerIdentityError:
-            raise
-        except Exception:
-            # Automatic fallback to full reload on any incremental diff error
-            return None
 
     async def _full_reload_types(
         self,
@@ -421,80 +225,18 @@ class ObjectService:
         emit: Callable[[SyncProgressEvent], Awaitable[None]],
     ) -> int:
         """Fetch all objects for `probe.stale_types` and atomically replace them in `arodonata_objects`."""
-        mgmt_name = probe.mgmt_name
-        dom_name = probe.domain.name
-        collected_by_type: dict[str, list[CPObject]] = {}
-        all_collected: list[CPObject] = []
-
-        for item_type in probe.stale_types:
-            cmd, extra_payload = resolve_object_query_command(item_type)
-            q_res = await self._api.api_query(
-                mgmt_name,
-                cmd,
-                domain=dom_name,
-                details_level="full",
-                payload=extra_payload or None,
-            )
-            if not q_res.success:
-                raise RuntimeError(
-                    f"Failed to query {item_type!r} ({cmd}) on {mgmt_name}:{dom_name}: "
-                    f"{q_res.error_message or q_res.code or 'query failed'}"
-                )
-
-            typed_objs: list[CPObject] = []
-            for raw in q_res.objects:
-                if not isinstance(raw, dict) or not raw.get("uid"):
-                    continue
-                raw_copy = dict(raw)
-                if not raw_copy.get("type"):
-                    raw_copy["type"] = item_type
-                cp_obj = CPObject.from_cp_dict(mgmt_name, dom_name, raw_copy)
-                # Normalize type to requested item_type so replace_domain_objects matches
-                if cp_obj.type != item_type:
-                    cp_obj = cp_obj.model_copy(update={"type": item_type})
-                typed_objs.append(cp_obj)
-            del q_res
-
-            collected_by_type[item_type] = typed_objs
-            all_collected.extend(typed_objs)
-
-            await emit(
-                DomainSyncProgressEvent(
-                    scope="objects",
-                    mgmt_name=mgmt_name,
-                    domain=dom_name,
-                    item_type=item_type,
-                    processed=len(typed_objs),
-                    total=len(typed_objs),
-                    message=f"Fetched {len(typed_objs)} {item_type} object(s) from {mgmt_name}:{dom_name}.",
-                )
-            )
-
-        synced_at = probe.probe_started_at or self._now()
-        sync_states = [
-            DomainSyncState(
-                mgmt_name=mgmt_name,
-                domain_name=dom_name,
-                scope="objects",
-                item_type=item_type,
-                last_published_at=probe.remote_published_at,
-                last_session_uid=probe.remote_session_uid,
-                synced_at=synced_at,
-                status="ok",
-                object_count=len(collected_by_type.get(item_type, [])),
-                last_error=None,
-            )
-            for item_type in probe.stale_types
-        ]
-        await self._cache.replace_domain_objects(
-            mgmt_name,
-            dom_name,
-            all_collected,
-            types=probe.stale_types,
-            sync_states=sync_states,
+        return await full_reload_types(
+            scope="objects",
+            probe=probe,
+            emit=emit,
+            api=self._api,
+            now_fn=self._now,
+            resolve_command_fn=resolve_object_query_command,
+            model_from_cp_dict=CPObject.from_cp_dict,
+            replace_domain_fn=lambda m, d, items, types, states: self._cache.replace_domain_objects(
+                m, d, items, types=types, sync_states=states
+            ),
         )
-
-        return len(all_collected)
 
     @traced
     async def get_objects(
@@ -510,7 +252,10 @@ class ObjectService:
         cache_ttl: float | None = None,
     ) -> list[CPObject]:
         """Ensure requested object types are fresh (unless `cache_mode="cache"`), then return objects with active `WriteSession` overlay applied."""
-        target_types = self._normalize_types(types) if types is not None else list(DEFAULT_OBJECT_TYPES)
+        norm_types = self._normalize_types(types) if types is not None else None
+        if norm_types is not None and not norm_types:
+            return []
+        target_types = list(norm_types) if norm_types is not None else list(DEFAULT_OBJECT_TYPES)
         if cache_mode != "cache":
             await self.refresh_objects(
                 mgmt_name=mgmt_name,
@@ -521,7 +266,6 @@ class ObjectService:
                 cache_ttl=cache_ttl,
             )
 
-        norm_types = self._normalize_types(types) if types is not None else None
         cached = await self._cache.get_objects(
             mgmt_name=mgmt_name,
             domain_name=domain,
@@ -570,8 +314,7 @@ class ObjectService:
 
         obj = await self._cache.get_object_by_uid(mgmt_name, domain, uid)
         if obj is not None and ws is not None:
-            merged = ws.overlay.apply_to_objects([obj])
-            return merged[0] if merged else None
+            return ws.overlay.apply_to_single_object(obj)
         return obj
 
     @staticmethod
@@ -587,38 +330,17 @@ class ObjectService:
         uids: Sequence[str] | None = None,
     ) -> list[CPObject]:
         """Merge active `WriteSession` overlay from `contextvars` onto `cached_objects`."""
-        ws = get_write_session()
-        if ws is None:
-            return list(cached_objects)
-        if mgmt_name is not None and ws.mgmt_name != mgmt_name:
-            return list(cached_objects)
-        if allowed_domains is not None:
-            if ws.domain_name not in allowed_domains:
-                return list(cached_objects)
-        elif domain_name is not None:
-            if ws.domain_name != domain_name:
-                return list(cached_objects)
-        elif not include_global and ws.domain_name == "Global":
-            return list(cached_objects)
-
-        # Partition objects belonging to the WriteSession's (mgmt_name, domain_name) vs other domains
-        in_scope: list[CPObject] = []
-        out_of_scope: list[CPObject] = []
-        for obj in cached_objects:
-            if obj.mgmt_name == ws.mgmt_name and obj.domain_name == ws.domain_name:
-                in_scope.append(obj)
-            else:
-                out_of_scope.append(obj)
-
-        merged_scope = ws.overlay.apply_to_objects(in_scope, types=types)
-        if names is not None:
-            name_set = set(names)
-            merged_scope = [o for o in merged_scope if o.name in name_set]
-        if uids is not None:
-            uid_set = set(uids)
-            merged_scope = [o for o in merged_scope if o.uid in uid_set]
-
-        return out_of_scope + merged_scope
+        return apply_typed_context_overlay(
+            cached_objects,
+            overlay_apply_fn=lambda ov, items, t: ov.apply_to_objects(items, types=t),
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            allowed_domains=allowed_domains,
+            include_global=include_global,
+            types=types,
+            names=names,
+            uids=uids,
+        )
 
 
 __all__ = [

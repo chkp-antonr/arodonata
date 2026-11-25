@@ -35,13 +35,13 @@ uv add "arodonata @ git+https://github.com/chkp-antonr/arodonata.git@master_v1"
   - [Configuration Reference](docs/configuration/index.md) · [Multi-Server Setup](docs/configuration/multi-server.md) · [TLS Verification](docs/configuration/tls-verification.md)
   - [Enterprise Replay Mock Server](docs/guides/enterprise-replay-mock-server.md) · [Mock Testing Scenarios & Rule Creation Guide](docs/guides/mock-testing-scenarios.md)
 - **Portable Single-File HTML Documentation**:
-  - [`docs/_html/arodonata-v2-docs.html`](docs/_html/arodonata-v2-docs.html) — standalone offline HTML file with dark/light theme toggle, sidebar navigation across all 32 documentation pages, and interactive pan/zoom pre-rendered SVG Mermaid diagrams.
+  - [`docs/_html/arodonata-v2-docs.html`](docs/_html/arodonata-v2-docs.html) — standalone offline HTML file with dark/light theme toggle, sidebar navigation across all 33 documentation pages, and interactive pan/zoom pre-rendered SVG Mermaid diagrams.
 - **NotebookLM / LLM Context Bundles (`docs-notebooklm/`)**:
   - [`01-guide-and-concepts.md`](docs-notebooklm/01-guide-and-concepts.md) — complete narrative architecture, database schema, MCP server, and user guides.
   - [`02-api-reference.md`](docs-notebooklm/02-api-reference.md) — full public API reference extracted directly from `src/arodonata` via AST.
-  - [`03-examples-and-recipes.md`](docs-notebooklm/03-examples-and-recipes.md) — all 12 runnable examples (`01`..`12`) with inline source code.
-  - [`04-capabilities-db-mcp-and-openspec.md`](docs-notebooklm/04-capabilities-db-mcp-and-openspec.md) — downstream integration guide, SQLModel table definitions (`tables.py`), MCP tool specs, and all 10 OpenSpec system specifications.
-- **Runnable Examples (`examples/`)**: Progressive scripts (`01_basic_queries.py` through `12_mcp_embedded.py`) — see [examples/README.md](examples/README.md) and [examples/README_CRUD.md](examples/README_CRUD.md).
+  - [`03-examples-and-recipes.md`](docs-notebooklm/03-examples-and-recipes.md) — all 13 runnable examples (`01`..`13`) with inline source code.
+  - [`04-capabilities-db-mcp-and-openspec.md`](docs-notebooklm/04-capabilities-db-mcp-and-openspec.md) — downstream integration guide, SQLModel table definitions (`tables.py`), MCP tool specs, and all 12 OpenSpec system specifications.
+- **Runnable Examples (`examples/`)**: Progressive scripts (`01_basic_queries.py` through `13_gateway_topology_matching.py`) — see [examples/README.md](examples/README.md) and [examples/README_CRUD.md](examples/README_CRUD.md).
 - **Engineering Standards**: See [AGENTS.md](AGENTS.md) for Spec-Driven Development (`openspec/`), quality gates, and git workflow rules.
 
 ### Rebuilding Documentation Artifacts

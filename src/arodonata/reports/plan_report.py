@@ -11,6 +11,7 @@ from arodonata.core.errors import redact_sid, sanitize_mapping
 from arodonata.core.models.rulebase import RulebaseType
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.cpcrud.models import FieldChange, Outcome, Plan, PlannedAction
+from arodonata.reports._object_summary import build_object_summary_fields, format_plain_object_summary
 from arodonata.reports.models import (
     ChangeOperation,
     ChangeReport,
@@ -19,6 +20,7 @@ from arodonata.reports.models import (
     ReportWarning,
     RuleChangeEntry,
     SessionChangeReport,
+    _sanitize_report_value,
 )
 
 
@@ -33,10 +35,10 @@ def _compute_post_delta_list(
 
 
 def _convert_field_change(fc: FieldChange) -> FieldDiff:
-    old_val = fc.old_value
-    new_val = fc.new_value
-    added = list(fc.added_items)
-    removed = list(fc.removed_items)
+    old_val = _sanitize_report_value(fc.old_value)
+    new_val = _sanitize_report_value(fc.new_value)
+    added = [redact_sid(x) for x in fc.added_items]
+    removed = [redact_sid(x) for x in fc.removed_items]
 
     if isinstance(old_val, list) and isinstance(new_val, Mapping) and ("add" in new_val or "remove" in new_val):
         old_list = [str(x) for x in old_val]
@@ -116,31 +118,7 @@ def _as_str_list(val: Any) -> list[str]:
 
 
 def _format_plan_object_summary(fields: Mapping[str, Any]) -> str:
-    parts: list[str] = []
-    if fields.get("ipv4-address") is not None:
-        parts.append(f"ipv4-address={fields['ipv4-address']}")
-    if fields.get("ipv6-address") is not None:
-        parts.append(f"ipv6-address={fields['ipv6-address']}")
-    if fields.get("subnet4") is not None:
-        if fields.get("mask-length4") is not None:
-            parts.append(f"subnet4={fields['subnet4']}/{fields['mask-length4']}")
-        elif fields.get("subnet-mask") is not None:
-            parts.append(f"subnet4={fields['subnet4']}/{fields['subnet-mask']}")
-        else:
-            parts.append(f"subnet4={fields['subnet4']}")
-    if fields.get("ipv4-address-first") is not None or fields.get("ipv4-address-last") is not None:
-        parts.append(f"range={fields.get('ipv4-address-first', '')}-{fields.get('ipv4-address-last', '')}")
-    for key in ("port", "protocol", "fqdn", "primary-category"):
-        if fields.get(key) is not None:
-            parts.append(f"{key}={fields[key]}")
-    for list_key in ("url-list", "members"):
-        vals = fields.get(list_key)
-        if isinstance(vals, list) and vals:
-            parts.append(f"{list_key}=[{', '.join(str(v) for v in vals)}]")
-    comments = str(fields.get("comments") or "").strip()
-    if comments:
-        parts.append(f"comments={comments}")
-    return ", ".join(parts)
+    return format_plain_object_summary(fields)
 
 
 def _canonical_list_field_key(raw_key: str) -> str:
@@ -184,38 +162,11 @@ def _action_to_object_entry(act: PlannedAction, field_diffs: list[FieldDiff]) ->
     diff_by_name = {d.field_name.lower(): d for d in field_diffs}
     merged = _merge_action_state(act, diff_by_name)
 
-    summary_fields: dict[str, Any] = {}
-    for scalar_key in (
-        "ipv4-address",
-        "ipv6-address",
-        "subnet4",
-        "mask-length4",
-        "subnet-mask",
-        "ipv4-address-first",
-        "ipv4-address-last",
-        "port",
-        "protocol",
-        "fqdn",
-        "primary-category",
-    ):
-        val = merged.get(scalar_key)
-        if val is None:
-            val = merged.get(scalar_key.replace("-", "_"))
-        if val is not None:
-            summary_fields[scalar_key] = val
-
-    for list_key in ("url-list", "members"):
-        if list_key in diff_by_name and isinstance(diff_by_name[list_key].new_value, list):
-            summary_fields[list_key] = list(diff_by_name[list_key].new_value)
-        else:
-            raw_l = merged.get(list_key) if list_key in merged else merged.get(list_key.replace("-", "_"))
-            str_l = _as_str_list(raw_l)
-            if str_l:
-                summary_fields[list_key] = str_l
-
-    comments_val = str(merged.get("comments") or "").strip()
-    if comments_val:
-        summary_fields["comments"] = redact_sid(comments_val)
+    summary_fields = build_object_summary_fields(
+        merged,
+        diff_by_name=diff_by_name,
+        allow_underscore_keys=True,
+    )
 
     summary_text = redact_sid(_format_plan_object_summary(summary_fields))
     raw_data = sanitize_mapping(
@@ -402,7 +353,7 @@ def build_change_report_from_plan(
                     numbering_basis="Dry-run preview synthesized offline from CPCRUD Plan (no Check Point write session opened)",
                     rule_changes=rule_changes,
                     object_changes=object_changes,
-                    resolved_names=dict(plan.name_resolutions),
+                    resolved_names={redact_sid(str(k)): redact_sid(str(v)) for k, v in plan.name_resolutions.items()},
                 )
             )
 

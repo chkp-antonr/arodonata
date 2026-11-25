@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol
 
 from arodonata.core.errors import ArodonataError, ServerIdentityError, ValidationError
@@ -430,3 +431,249 @@ class _HybridStateReaderBase:
         raw_items = [raw for raw in q_res.objects if isinstance(raw, dict)]
         self._filtered_objects_memo[memo_key] = list(raw_items)
         return raw_items
+
+    async def _live_single_lookup(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        entity_type: str,
+        payload: dict[str, Any],
+        label: str,
+    ) -> dict[str, Any] | None:
+        """Invoke `show-<type>` with single-key `payload`; returns `None` on not-found."""
+        cmd = TYPE_TO_SHOW_SINGLE_CMD[entity_type]
+        try:
+            res = await self._api.api_call(mgmt_name, cmd, payload, domain=domain_name or None)
+        except ServerIdentityError:
+            raise
+        except Exception as exc:
+            raise StateLookupError(
+                f"Live API lookup ({cmd}) failed for {label} in {mgmt_name}:{domain_name}: {exc}"
+            ) from exc
+        if not res.success:
+            if is_not_found_error(res.status_code, res.error_code, res.error_message):
+                return None
+            raise StateLookupError(
+                f"Live API lookup ({cmd}) failed for {label} in {mgmt_name}:{domain_name}: "
+                f"{res.error_message or res.error_code or f'HTTP {res.status_code}'}"
+            )
+        return res.data if isinstance(res.data, dict) and res.data else None
+
+    async def _get_entity_by_name[T: (CPObject, CPService)](
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        entity_type: str,
+        name: str,
+        *,
+        valid_types: frozenset[str],
+        invalid_type_label: str,
+        scope: SyncScope,
+        deleted_store: dict[tuple[str, str], set[str]],
+        virtual_store: dict[tuple[str, str], dict[str, T]],
+        cache_fetch_by_names: Callable[[list[str]], Awaitable[Sequence[T]]],
+        parser: Callable[[dict[str, Any]], T],
+        allow_dot_domain_fallback: bool = False,
+    ) -> T | None:
+        """Shared cache-first + live API + overlay name lookup for objects and services."""
+        if entity_type not in valid_types:
+            raise ValidationError(f"Unsupported CPCRUD {invalid_type_label} type: {entity_type!r}")
+        dom_key = (mgmt_name, domain_name)
+        del_set = deleted_store.get(dom_key, set())
+        virt_map = virtual_store.get(dom_key, {})
+        if f"name:{entity_type}:{name}" in del_set:
+            return None
+        virt = virt_map.get(f"name:{entity_type}:{name}")
+        if virt is not None:
+            return virt
+
+        dot_fallback = allow_dot_domain_fallback and entity_type == "dns-domain" and not name.startswith(".")
+        if await self.is_slice_cache_fresh(mgmt_name, domain_name, scope, entity_type):
+            lookup_names = [name, f".{name}"] if dot_fallback else [name]
+            try:
+                items = await cache_fetch_by_names(lookup_names)
+            except Exception as exc:
+                raise StateLookupError(
+                    f"Cache lookup failed for {entity_type} {name!r} in {mgmt_name}:{domain_name}: {exc}"
+                ) from exc
+            for item in items:
+                if item.name != name:
+                    continue
+                resolved = _apply_fetched_entity_overlay(entity_type, item, del_set, virt_map)
+                if resolved is not None:
+                    return resolved
+            if dot_fallback:
+                dot_name = f".{name}"
+                if f"name:dns-domain:{dot_name}" in del_set:
+                    return None
+                dot_virt = virt_map.get(f"name:dns-domain:{dot_name}")
+                if dot_virt is not None:
+                    return dot_virt
+                for item in items:
+                    if item.name != dot_name:
+                        continue
+                    resolved = _apply_fetched_entity_overlay(entity_type, item, del_set, virt_map)
+                    if resolved is not None:
+                        return resolved
+            return None
+
+        raw = await self._live_single_lookup(mgmt_name, domain_name, entity_type, {"name": name}, f"{name!r}")
+        if raw is None and dot_fallback:
+            dot_name = f".{name}"
+            if f"name:dns-domain:{dot_name}" in del_set:
+                return None
+            dot_virt = virt_map.get(f"name:dns-domain:{dot_name}")
+            if dot_virt is not None:
+                return dot_virt
+            raw = await self._live_single_lookup(mgmt_name, domain_name, entity_type, {"name": dot_name}, f".{name!r}")
+        return _apply_fetched_entity_overlay(entity_type, parser(raw), del_set, virt_map) if raw is not None else None
+
+    async def _get_entity_by_uid[T: (CPObject, CPService)](
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        entity_type: str,
+        uid: str,
+        *,
+        valid_types: frozenset[str],
+        invalid_type_label: str,
+        scope: SyncScope,
+        deleted_store: dict[tuple[str, str], set[str]],
+        virtual_store: dict[tuple[str, str], dict[str, T]],
+        cache_fetch_by_uid: Callable[[], Awaitable[T | None]],
+        parser: Callable[[dict[str, Any]], T],
+    ) -> T | None:
+        """Shared cache-first + live API + overlay UID lookup for objects and services."""
+        if entity_type not in valid_types:
+            raise ValidationError(f"Unsupported CPCRUD {invalid_type_label} type: {entity_type!r}")
+        dom_key = (mgmt_name, domain_name)
+        del_set = deleted_store.get(dom_key, set())
+        virt_map = virtual_store.get(dom_key, {})
+        if f"uid:{uid}" in del_set:
+            return None
+        virt = virt_map.get(f"uid:{uid}")
+        if virt is not None:
+            return virt
+
+        if await self.is_slice_cache_fresh(mgmt_name, domain_name, scope, entity_type):
+            try:
+                item = await cache_fetch_by_uid()
+            except Exception as exc:
+                raise StateLookupError(
+                    f"Cache UID lookup failed for {entity_type} {uid!r} in {mgmt_name}:{domain_name}: {exc}"
+                ) from exc
+            if item is not None and item.type == entity_type:
+                return _apply_fetched_entity_overlay(entity_type, item, del_set, virt_map)
+            return None
+
+        raw = await self._live_single_lookup(mgmt_name, domain_name, entity_type, {"uid": uid}, f"{uid!r}")
+        return _apply_fetched_entity_overlay(entity_type, parser(raw), del_set, virt_map) if raw is not None else None
+
+    async def _candidates_for_entity_value_lookup[T: (CPObject, CPService)](
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        entity_type: str,
+        filter_text: str,
+        ip_only: bool,
+        valid_types: frozenset[str],
+        invalid_type_label: str,
+        scope: SyncScope,
+        live_memo: dict[tuple[str, str, str], list[T]],
+        deleted_store: dict[tuple[str, str], set[str]],
+        virtual_store: dict[tuple[str, str], dict[str, T]],
+        list_all: Callable[[], Awaitable[list[T]]],
+        parser: Callable[[dict[str, Any]], T],
+    ) -> list[T]:
+        """Shared candidate lookup from fresh cache, live memo, or targeted `show-objects`."""
+        if entity_type not in valid_types:
+            raise ValidationError(f"Unsupported CPCRUD {invalid_type_label} type: {entity_type!r}")
+        if (
+            await self.is_slice_cache_fresh(mgmt_name, domain_name, scope, entity_type)
+            or (mgmt_name, domain_name, entity_type) in live_memo
+        ):
+            return await list_all()
+
+        raw_items = await self._query_filtered_objects(
+            mgmt_name,
+            domain_name,
+            obj_type=entity_type,
+            filter_text=filter_text,
+            ip_only=ip_only,
+        )
+        if raw_items is None:
+            return await list_all()
+
+        base_list = [parser(raw) for raw in raw_items]
+        dom_key = (mgmt_name, domain_name)
+        return self._merge_entity_overlay(
+            entity_type,
+            base_list,
+            deleted_store.get(dom_key, set()),
+            virtual_store.get(dom_key, {}),
+        )
+
+    async def _list_entities_of_type[T: (CPObject, CPService)](
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        entity_type: str,
+        *,
+        valid_types: frozenset[str],
+        invalid_type_label: str,
+        scope: SyncScope,
+        live_memo: dict[tuple[str, str, str], list[T]],
+        deleted_store: dict[tuple[str, str], set[str]],
+        virtual_store: dict[tuple[str, str], dict[str, T]],
+        cache_list: Callable[[], Awaitable[list[T]]],
+        parser: Callable[[dict[str, Any]], T],
+    ) -> list[T]:
+        """Shared full type listing from fresh cache or memoized live `api_query` with overlay."""
+        if entity_type not in valid_types:
+            raise ValidationError(f"Unsupported CPCRUD {invalid_type_label} type: {entity_type!r}")
+
+        base_list: list[T]
+        if await self.is_slice_cache_fresh(mgmt_name, domain_name, scope, entity_type):
+            try:
+                base_list = await cache_list()
+            except Exception as exc:
+                raise StateLookupError(
+                    f"Cache listing failed for {entity_type} in {mgmt_name}:{domain_name}: {exc}"
+                ) from exc
+        else:
+            memo_key = (mgmt_name, domain_name, entity_type)
+            if memo_key in live_memo:
+                base_list = list(live_memo[memo_key])
+            else:
+                plural_cmd = TYPE_TO_SHOW_PLURAL_CMD[entity_type]
+                try:
+                    q_res = await self._api.api_query(
+                        mgmt_name,
+                        plural_cmd,
+                        domain=domain_name or None,
+                        details_level="standard",
+                    )
+                except ServerIdentityError:
+                    raise
+                except Exception as exc:
+                    raise StateLookupError(
+                        f"Live API query ({plural_cmd}) failed in {mgmt_name}:{domain_name}: {exc}"
+                    ) from exc
+
+                if not q_res.success or q_res.code == "paging_inconsistent":
+                    reason = q_res.error_message or q_res.code or f"{plural_cmd} query failed"
+                    raise StateLookupError(
+                        f"Live API query ({plural_cmd}) failed in {mgmt_name}:{domain_name}: {reason}"
+                    )
+
+                base_list = [parser(raw) for raw in q_res.objects if isinstance(raw, dict)]
+                live_memo[memo_key] = list(base_list)
+
+        dom_key = (mgmt_name, domain_name)
+        return self._merge_entity_overlay(
+            entity_type,
+            base_list,
+            deleted_store.get(dom_key, set()),
+            virtual_store.get(dom_key, {}),
+        )

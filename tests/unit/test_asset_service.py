@@ -577,3 +577,75 @@ async def test_cross_domain_vsx_reconciliation_locking_and_skip_noop() -> None:
     await svc._reconcile_cross_domain_vsx("mds2")
     await svc._reconcile_cross_domain_vsx(None)
     assert locks_acquired == ["vsx-reconcile:mds2", "vsx-reconcile:mds2"]
+
+
+async def test_asset_service_reconcile_lock_timeout_empty_types_and_vsx_fallback() -> None:
+    """DA-006/DA-017/DA-018: `LockAcquisitionError` is non-fatal, empty types short-circuit, `vsx_ref` links fallback."""
+    from arodonata.core.errors import LockAcquisitionError
+    from arodonata.core.models.assets import Asset
+    from arodonata.core.models.domains import RefreshOutcome
+    from arodonata.core.services._asset_linking import VSXRelationshipManager
+
+    seen_timeouts: list[float | None] = []
+
+    class _BusyLockCoord:
+        class _LP:
+            def lock(self, _key: str, *, wait_timeout: float | None = None) -> Any:
+                seen_timeouts.append(wait_timeout)
+
+                class _RaiseCtx:
+                    async def __aenter__(self) -> None:
+                        raise LockAcquisitionError("vsx lock busy")
+
+                    async def __aexit__(self, *args: Any) -> None:
+                        return None
+
+                return _RaiseCtx()
+
+        _lock_port = _LP()
+
+        async def ensure(self, **kwargs: Any) -> RefreshOutcome:
+            raise AssertionError("get_assets(types=[]) must short-circuit before coordinator.ensure")
+
+    class _MinCache:
+        async def get_assets(self, **kwargs: Any) -> list[Asset]:
+            return []
+
+    svc = AssetRefreshService(
+        settings=ArodonataSettings(),
+        api=None,  # type: ignore[arg-type]
+        cache=_MinCache(),  # type: ignore[arg-type]
+        coordinator=_BusyLockCoord(),  # type: ignore[arg-type]
+    )
+    assert await svc.get_assets(mgmt_name="mds1", types=[], cache_mode="force") == []
+    await svc._reconcile_cross_domain_vsx_for_mgmt("mds1")
+    assert seen_timeouts == [15.0]
+
+    # DA-017: child with stale remote parent_uid still links local parent by vsx_ref
+    class _EmptyGenApi:
+        async def api_query(self, *args: Any, **kwargs: Any) -> ApiCallResult:
+            return ApiCallResult(success=True, data={"objects": []})
+
+    parent = Asset(
+        id="m:d:vsx-local",
+        asset_id="m:d:VSX_LOCAL",
+        mgmt_name="m",
+        domain_name="d",
+        uid="vsx-local",
+        name="VSX_LOCAL",
+        type="vsx-gateway",
+    )
+    child = Asset(
+        id="m:d:vs1",
+        asset_id="m:d:VS1",
+        mgmt_name="m",
+        domain_name="d",
+        uid="vs1",
+        name="VS1",
+        type="virtual-system",
+        parent_uid="stale-remote-uid",
+        raw_data={"vsx-gateway": {"uid": "vsx-local"}},
+    )
+    enriched = {a.uid: a for a in await VSXRelationshipManager(_EmptyGenApi()).enrich("m", "d", [parent, child])}  # type: ignore[arg-type]
+    assert enriched["vs1"].parent_uid == "vsx-local"
+    assert enriched["vsx-local"].virtual_system_uids == ["vs1"]

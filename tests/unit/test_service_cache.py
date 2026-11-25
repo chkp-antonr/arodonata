@@ -377,3 +377,137 @@ async def test_service_cache_normalizes_aliases_and_commits_smart_fast_atomicall
     assert [s.uid for s in await cache.get_services("mds1", "Corp", types=["service-tcp"])] == ["st1"]
 
     await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-018-1")
+@pytest.mark.asyncio
+async def test_unified_typed_sync_pipeline_emits_service_threshold_fallback_progress() -> None:
+    """Verify `ServiceCacheService` shares `ObjectService`'s `max_incremental_changes` fallback progress event and overlay."""
+    from datetime import datetime
+
+    from arodonata.core.events import DomainSyncProgressEvent
+    from arodonata.core.models.domains import DomainSyncState
+    from arodonata.core.services.sync_coordinator import DomainProbeResult
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    await cache.upsert_domains([DomainInfo(mgmt_name="mds1", uid="d1", name="Corp", active_ip="10.1.0.1")])
+
+    class _ThresholdApi:
+        async def api_call(
+            self, mgmt: str, cmd: str, payload: dict[str, Any] | None = None, **kwargs: Any
+        ) -> ApiCallResult:
+            if cmd == "show-changes":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "changes": [
+                            {
+                                "operations": {
+                                    "added-objects": [{"uid": f"u-{i}", "type": "service-tcp"} for i in range(5)]
+                                }
+                            }
+                        ]
+                    },
+                )
+            return ApiCallResult(success=False)
+
+        async def api_query(self, *args: Any, **kwargs: Any) -> ApiQueryResult:
+            return ApiQueryResult(success=True, objects=[])
+
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", max_incremental_changes=2)
+    dom_svc = DomainService(settings=settings, api=_ThresholdApi(), cache=cache, lock_port=lock_port)  # type: ignore[arg-type]
+    coord = DomainSyncCoordinator(
+        settings=settings, api=_ThresholdApi(), cache=cache, lock_port=lock_port, domain_service=dom_svc
+    )  # type: ignore[arg-type]
+    svc_service = ServiceCacheService(settings=settings, api=_ThresholdApi(), cache=cache, coordinator=coord)  # type: ignore[arg-type]
+
+    probe = DomainProbeResult(
+        mgmt_name="mds1",
+        domain=DomainInfo(mgmt_name="mds1", uid="d1", name="Corp", active_ip="10.1.0.1"),
+        stale_types=["service-tcp"],
+        fresh_types=[],
+        existing_states={
+            "service-tcp": DomainSyncState(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                scope="services",
+                item_type="service-tcp",
+                last_session_uid="prev-s",
+                last_published_at=datetime(2026, 1, 1),
+                status="ok",
+            )
+        },
+        probe_started_at=datetime(2026, 1, 2),
+    )
+    emitted: list[Any] = []
+
+    async def _emit(ev: Any) -> None:
+        emitted.append(ev)
+
+    res = await svc_service._try_incremental_sync(probe, _emit)
+    assert res is None
+    assert any(
+        isinstance(e, DomainSyncProgressEvent) and e.scope == "services" and "max_incremental_changes" in e.message
+        for e in emitted
+    )
+    await db.close()
+
+
+async def test_service_cache_single_overlay_isolation_and_empty_types_short_circuit() -> None:
+    """DA-008/DA-018: `get_service_by_uid` never returns unrelated overlay services; empty/foreign types short-circuit."""
+    from arodonata.core.context import WriteSession, write_session_context
+    from arodonata.core.models.services import CPService
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = ServiceFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=0)
+    domain_service = DomainService(settings=settings, api=api, cache=cache)
+    coord = DomainSyncCoordinator(
+        settings=settings, api=api, cache=cache, lock_port=lock_port, domain_service=domain_service
+    )
+    svc_cache = ServiceCacheService(settings=settings, api=api, cache=cache, coordinator=coord)
+
+    # DA-018: empty or non-service types return [] without refreshing default service types
+    assert await svc_cache.get_services("mds1", "Corp", types=["  "], cache_mode="force") == []
+    assert await svc_cache.get_services("mds1", "Corp", types=["host"], cache_mode="force") == []
+    assert len(api.queried_commands) == 0
+
+    existing = CPService(
+        id="mds1:Corp:svc-1",
+        service_id="mds1:Corp:svc-1",
+        uid="svc-1",
+        name="S1",
+        type="service-tcp",
+        mgmt_name="mds1",
+        domain_name="Corp",
+        port="80",
+    )
+    other = CPService(
+        id="mds1:Corp:svc-other",
+        service_id="mds1:Corp:svc-other",
+        uid="svc-other",
+        name="SOther",
+        type="service-tcp",
+        mgmt_name="mds1",
+        domain_name="Corp",
+        port="443",
+    )
+    await cache.replace_domain_services("mds1", "Corp", [existing], types=["service-tcp"])
+
+    ws = WriteSession(mgmt_name="mds1", domain_name="Corp", sid="s1", server_ip="10.0.0.1")
+    ws.overlay.record_service_upsert(other)
+    with write_session_context(ws):
+        got = await svc_cache.get_service_by_uid("mds1", "Corp", "svc-1", cache_mode="cache")
+        assert got is not None and got.uid == "svc-1"
+
+        ws.overlay.record_service_delete(uid="svc-1")
+        deleted_res = await svc_cache.get_service_by_uid("mds1", "Corp", "svc-1", cache_mode="cache")
+        assert deleted_res is None
+
+    await db.close()

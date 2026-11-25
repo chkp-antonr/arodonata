@@ -929,3 +929,128 @@ async def test_staged_publish_head_staleness_and_arodonata_provenance() -> None:
 
 async def _const_head(uid: str, ts: Any) -> tuple[bool, str | None, Any, str | None]:
     return True, uid, ts, None
+
+
+async def test_cpcrud_redaction_unreadable_baseline_and_shielded_logout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DA-001/DA-002/DA-003: Redact SIDs in results/events, block unreadable baseline without allow_stale, shield logout."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from arodonata.core.errors import AuthenticationError, ServerIdentityError
+    from arodonata.core.events import CPCRUDEvent
+    from arodonata.cpcrud.executor import Executor
+    from arodonata.cpcrud.models import ActionResult, StagedSessionInfo
+
+    res = ActionResult(
+        action_id="a1",
+        mgmt_name="mds1",
+        domain_name="Corp",
+        operation="add",
+        object_type="host",
+        name="H1",
+        planned_outcome=Outcome.CREATE,
+        outcome=Outcome.CREATE,
+        message='{"sid": "secret_sid_value_1234"}',
+        error="X-chkp-sid: another_sid_5678",
+    )
+    assert "secret_sid_value_1234" not in (res.message or "")
+    assert "another_sid_5678" not in (res.error or "")
+
+    ev = CPCRUDEvent(
+        stage="apply",
+        status="failed",
+        message='{"sid": "ev_secret_sid_1234"}',
+        error='{"password": "topsecret"}',
+    )
+    assert "ev_secret_sid_1234" not in (ev.message or "")
+    assert "topsecret" not in ev.error
+
+    # DA-002: unreadable baseline refuses publish unless allow_stale=True
+    api = ExecutorFakeApi()
+    executor = Executor(api=api)
+    executor._staged_sessions[("mds1", "Corp", "sess-u1")] = StagedSessionInfo(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        server_ip="10.0.0.1",
+        session_uid="sess-u1",
+        session_name="arodonata-cpcrud-sess-u1",
+        baseline_session_uid=None,
+        baseline_published_at=None,
+        baseline_readable=False,
+    )
+    blocked = await executor.publish_staged_session("mds1", "Corp", session_uid="sess-u1")
+    assert blocked.success is False
+    assert "baseline" in (blocked.error_message or "").lower()
+
+    allowed = await executor.publish_staged_session("mds1", "Corp", session_uid="sess-u1", allow_stale=True)
+    assert allowed.success is True
+
+    # DA-003: logout_sid is shielded on task cancellation in _run_on_adopted_staged_session
+    shielded_calls: list[bool] = []
+    orig_shield = asyncio.shield
+
+    def _spy_shield(aw: Any) -> Any:
+        shielded_calls.append(True)
+        return orig_shield(aw)
+
+    monkeypatch.setattr(asyncio, "shield", _spy_shield)
+
+    class _CancelApi:
+        logout_sid = AsyncMock(return_value=True)
+
+        async def create_dedicated_session(self, *args: Any, **kwargs: Any) -> tuple[str, str]:
+            return "helper-sid-999", "10.0.0.1"
+
+        async def api_call(self, mgmt: str, cmd: str, payload: Any = None, **kwargs: Any) -> ApiCallResult:
+            raise asyncio.CancelledError
+
+    cancel_exec = Executor(api=_CancelApi())  # type: ignore[arg-type]
+    with pytest.raises(asyncio.CancelledError):
+        await cancel_exec._adopt_staged_session("mds1", "Corp", session_uid="sess-cancel")
+    assert len(shielded_calls) >= 1
+    assert cancel_exec._api.logout_sid.await_count >= 1  # type: ignore[attr-defined]
+
+    with pytest.raises(asyncio.CancelledError):
+        await cancel_exec._run_on_adopted_staged_session(
+            "mds1",
+            sid=None,
+            server_ip=None,
+            active_sid="sid-adopted-1234",
+            active_ip="10.0.0.1",
+            known_sids=["sid-adopted-1234"],
+            error_code="discard_failed",
+            action=lambda: cancel_exec._api.api_call("mds1", "discard"),
+        )
+    assert len(shielded_calls) >= 2
+
+    async def _raise_auth() -> ApiCallResult:
+        raise AuthenticationError("bad token sid-adopted-1234")
+
+    err_res = await cancel_exec._run_on_adopted_staged_session(
+        "mds1",
+        sid=None,
+        server_ip=None,
+        active_sid="sid-adopted-1234",
+        active_ip="10.0.0.1",
+        known_sids=["sid-adopted-1234"],
+        error_code="discard_failed",
+        action=_raise_auth,
+    )
+    assert err_res.success is False
+    assert err_res.error_code == "discard_failed"
+    assert "sid-adopted-1234" not in (err_res.error_message or "")
+
+    async def _raise_identity() -> ApiCallResult:
+        raise ServerIdentityError("cert mismatch")
+
+    with pytest.raises(ServerIdentityError, match="cert mismatch"):
+        await cancel_exec._run_on_adopted_staged_session(
+            "mds1",
+            sid=None,
+            server_ip=None,
+            active_sid="sid-adopted-1234",
+            active_ip="10.0.0.1",
+            known_sids=["sid-adopted-1234"],
+            error_code="discard_failed",
+            action=_raise_identity,
+        )

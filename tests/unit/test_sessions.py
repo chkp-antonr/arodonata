@@ -1057,7 +1057,7 @@ async def test_cold_cache_explicit_cma_server_ip_refreshes_domains_and_accepts_k
         explicit_server_ip="10.0.0.12",
     )
     assert ip_cma == "10.0.0.12"
-    assert mds_ip == "10.0.0.1"
+    assert mds_ip == "10.0.0.2"
 
     # 1b. Secondary MDS IP (10.0.0.2 from show-mdss) is also accepted
     ip_mds2, _, _ = await client.login_coordinator.resolve_target_ips(

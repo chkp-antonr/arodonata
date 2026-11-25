@@ -20,12 +20,13 @@ from ._emulator_models import (
 from ._emulator_projection import (
     ACCESS_REF_COLS,
     EXTRA_OBJECT_BUCKETS,
-    GATEWAY_SHOW_CMD,
     HTTPS_CELL_LIST_FIELDS,
     NAT_REF_COLS,
     THREAT_CELL_LIST_FIELDS,
+    build_scope_ref_to_uids,
     extract_ref_uids,
     iter_flat_rule_entries,
+    iter_gateway_topology_refs,
 )
 
 
@@ -279,13 +280,14 @@ def collect_blocking_references(
     dom_files: Mapping[str, Any],
     all_domains_effective: Mapping[str, Mapping[str, Any]],
 ) -> list[str]:
-    """Return human-readable descriptions of groups and rules directly referencing `target_uid`."""
+    """Return human-readable descriptions of groups, rules, and gateways directly referencing `target_uid`."""
     scopes: list[tuple[str, Mapping[str, Any]]] = [(dom_name, dom_files)]
     if dom_name == "Global":
         for other_dom, other_files in all_domains_effective.items():
             if other_dom != "Global":
                 scopes.append((other_dom, other_files))
 
+    global_files = all_domains_effective.get("Global", {})
     refs: list[str] = []
     for scope_dom, scope_files in scopes:
         for cmd in ("show-groups", "show-groups-with-exclusion", "show-service-groups"):
@@ -337,37 +339,14 @@ def collect_blocking_references(
                             f"NAT rule #{rule.get('rule-number') or idx} in package '{pkg_name}' (domain '{scope_dom}')"
                         )
 
-        for gw_cmd in (GATEWAY_SHOW_CMD, "show-simple-gateways", "show-simple-clusters"):
-            gws = scope_files.get(gw_cmd, {}).get("objects", [])
-            if not isinstance(gws, list):
-                continue
-            for gw in gws:
-                if not isinstance(gw, Mapping):
-                    continue
-                gw_label = str(gw.get("name") or gw.get("uid") or "gateway")
-                vpn_refs = extract_ref_uids(gw.get("vpn-domain"))
-                vpn_settings = gw.get("vpn-settings")
-                if isinstance(vpn_settings, Mapping):
-                    vpn_refs |= extract_ref_uids(vpn_settings.get("vpn-domain"))
-                if target_uid in vpn_refs:
+        ref_to_uid = build_scope_ref_to_uids(scope_files, global_files)
+        for gw_label, iface_name, topo_uids in iter_gateway_topology_refs(scope_files, ref_to_uid):
+            if target_uid in topo_uids:
+                if iface_name is None:
                     refs.append(f"Gateway '{gw_label}' VPN domain in domain '{scope_dom}'")
-
-                raw_ifaces = gw.get("interfaces")
-                iface_items = raw_ifaces.get("objects", []) if isinstance(raw_ifaces, Mapping) else raw_ifaces
-                if isinstance(iface_items, list):
-                    for iface in iface_items:
-                        if not isinstance(iface, Mapping):
-                            continue
-                        topo_refs = extract_ref_uids(iface.get("specific-network"))
-                        topo_settings = iface.get("topology-settings")
-                        if isinstance(topo_settings, Mapping):
-                            topo_refs |= extract_ref_uids(topo_settings.get("specific-network"))
-                        if target_uid in topo_refs:
-                            iface_name = str(iface.get("name") or "interface")
-                            refs.append(
-                                f"Gateway '{gw_label}' interface '{iface_name}' topology in domain '{scope_dom}'"
-                            )
-    return refs
+                else:
+                    refs.append(f"Gateway '{gw_label}' interface '{iface_name}' topology in domain '{scope_dom}'")
+    return list(dict.fromkeys(refs))
 
 
 def _build_unused_filter_predicate(
@@ -410,6 +389,7 @@ def _build_unused_filter_predicate(
                 group_by_uid[g_uid] = members
                 if g_uid.lower() in req_groups or g_name.lower() in req_groups:
                     seed_uids.append(g_uid)
+        allowed_group_member_uids.update(seed_uids)
         visited: set[str] = set()
         stack = list(seed_uids)
         while stack:
@@ -447,6 +427,54 @@ def _build_unused_filter_predicate(
     return _matches
 
 
+def collect_referenced_uids(
+    *,
+    dom_name: str,
+    dom_files: Mapping[str, Any],
+    all_domains_effective: Mapping[str, Mapping[str, Any]],
+) -> set[str]:
+    """Collect all UIDs referenced by groups, rulebases, or gateways across applicable scopes in one pass."""
+    scopes: list[Mapping[str, Any]] = [dom_files]
+    if dom_name == "Global":
+        scopes.extend(other_files for other_dom, other_files in all_domains_effective.items() if other_dom != "Global")
+
+    global_files = all_domains_effective.get("Global", {})
+    referenced: set[str] = set()
+    for scope_files in scopes:
+        for cmd in ("show-groups", "show-groups-with-exclusion", "show-service-groups"):
+            items = scope_files.get(cmd, {}).get("objects", [])
+            if not isinstance(items, list):
+                continue
+            for grp in items:
+                if not isinstance(grp, Mapping):
+                    continue
+                referenced.update(extract_ref_uids(grp.get("members")))
+                referenced.update(extract_ref_uids(grp.get("include")))
+                referenced.update(extract_ref_uids(grp.get("except")))
+
+        for rb_cmd, ref_cols in (
+            ("show-access-rulebase", ACCESS_REF_COLS),
+            ("show-https-rulebase", HTTPS_CELL_LIST_FIELDS),
+            ("show-threat-rulebase", THREAT_CELL_LIST_FIELDS),
+            ("show-nat-rulebase", NAT_REF_COLS),
+        ):
+            rb_store = scope_files.get(rb_cmd, {})
+            if not isinstance(rb_store, Mapping):
+                continue
+            for rb_val in rb_store.values():
+                if not isinstance(rb_val, Mapping):
+                    continue
+                for _, rule in iter_flat_rule_entries(rb_val.get("rulebase")):
+                    for col in ref_cols:
+                        referenced.update(extract_ref_uids(rule.get(col)))
+
+        ref_to_uid = build_scope_ref_to_uids(scope_files, global_files)
+        for _, _, topo_uids in iter_gateway_topology_refs(scope_files, ref_to_uid):
+            referenced.update(topo_uids)
+
+    return referenced
+
+
 def find_unused_objects(
     dom_files: Mapping[str, Any],
     *,
@@ -456,6 +484,11 @@ def find_unused_objects(
 ) -> list[dict[str, Any]]:
     """Return all local `ENTITY_SPECS` objects with zero incoming group, rule, or gateway references."""
     matches_filter = _build_unused_filter_predicate(dom_files, req)
+    referenced_uids = collect_referenced_uids(
+        dom_name=dom_name,
+        dom_files=dom_files,
+        all_domains_effective=all_domains_effective,
+    )
     unused: list[dict[str, Any]] = []
     for spec in ENTITY_SPECS:
         items = dom_files.get(spec.plural_show, {}).get("objects", [])
@@ -466,13 +499,7 @@ def find_unused_objects(
                 continue
             if not matches_filter(obj):
                 continue
-            refs = collect_blocking_references(
-                str(obj["uid"]),
-                dom_name=dom_name,
-                dom_files=dom_files,
-                all_domains_effective=all_domains_effective,
-            )
-            if not refs:
+            if str(obj["uid"]) not in referenced_uids:
                 unused.append(obj)
     return unused
 
@@ -490,6 +517,11 @@ def delete_unused_objects(
     removed_total = 0
     while True:
         removed_pass = 0
+        referenced_uids = collect_referenced_uids(
+            dom_name=dom_name,
+            dom_files=dom_files,
+            all_domains_effective=all_domains_effective,
+        )
         for spec in ENTITY_SPECS:
             items = dom_files.get(spec.plural_show, {}).get("objects", [])
             if not isinstance(items, list):
@@ -503,13 +535,7 @@ def delete_unused_objects(
                     kept.append(obj)
                     continue
                 uid = str(obj["uid"])
-                refs = collect_blocking_references(
-                    uid,
-                    dom_name=dom_name,
-                    dom_files=dom_files,
-                    all_domains_effective=all_domains_effective,
-                )
-                if not refs:
+                if uid not in referenced_uids:
                     locked_uids_out.add(uid)
                     removed_pass += 1
                 else:
@@ -521,3 +547,24 @@ def delete_unused_objects(
         if removed_pass == 0:
             break
     return removed_total
+
+
+def preview_delete_unused_uids(
+    dom_files: Mapping[str, Any],
+    *,
+    dom_name: str,
+    all_domains_effective: Mapping[str, Mapping[str, Any]],
+    req: Mapping[str, Any] | None = None,
+) -> set[str]:
+    """Return the set of UIDs that `delete-unused-objects` would remove for preflight lock checking."""
+    sim_dom = copy.deepcopy(dict(dom_files))
+    sim_all = {**all_domains_effective, dom_name: sim_dom}
+    would_delete: set[str] = set()
+    delete_unused_objects(
+        sim_dom,
+        dom_name=dom_name,
+        all_domains_effective=sim_all,
+        locked_uids_out=would_delete,
+        req=req,
+    )
+    return would_delete
