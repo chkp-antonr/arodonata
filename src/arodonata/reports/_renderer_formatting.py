@@ -9,14 +9,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from arodonata.reports._object_summary import (
+    render_object_details_with_diffs,
+)
 from arodonata.reports.models import FieldDiff, ObjectChangeEntry, RuleChangeEntry
 
 SUPPORTED_REPORT_FORMATS: frozenset[str] = frozenset({"html", "json", "markdown"})
 
-_INLINE_TOKEN_RE = re.compile(r"(`[^`\r\n]+`|\*\*[^*\r\n]+\*\*|\*[^*\r\n]+\*|\[[^\]\r\n]+\]\([^)\r\n]+\))")
-_SUMMARY_SPLIT_RE = re.compile(
-    r", (?=(?:ipv4-address|ipv6-address|subnet4|subnet6|range|range6|port|protocol|fqdn|members|comments)=)"
-)
+_INLINE_TOKEN_RE = re.compile(r"(`[^`\r\n]+`|\*\*[^*\r\n]+\*\*|\*[^*\r\n]+\*|!?\[[^\]\r\n]+\]\([^)\r\n]+\))")
 
 
 def _is_safe_href(url: str) -> bool:
@@ -42,6 +42,8 @@ def render_safe_inline_markdown_html(text: str) -> str:
             out.append(f"<strong>{html.escape(part[2:-2], quote=True)}</strong>")
         elif part.startswith("*") and part.endswith("*") and len(part) >= 2:
             out.append(f"<em>{html.escape(part[1:-1], quote=True)}</em>")
+        elif part.startswith("!["):
+            out.append(html.escape(part, quote=True))
         elif part.startswith("[") and "](" in part and part.endswith(")"):
             bracket_end = part.find("](")
             label = part[1:bracket_end]
@@ -59,10 +61,11 @@ def render_safe_inline_markdown_html(text: str) -> str:
 
 
 def render_safe_inline_markdown_md(text: str) -> str:
-    """Sanitize inline markdown for Markdown output (neutralizing HTML tags and unsafe link schemes)."""
+    """Sanitize inline markdown for Markdown output (neutralizing HTML tags and unsafe link/image schemes)."""
     if not text:
         return ""
-    parts = _INLINE_TOKEN_RE.split(text)
+    clean_text = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+    parts = _INLINE_TOKEN_RE.split(clean_text)
     out: list[str] = []
     for part in parts:
         if not part:
@@ -73,16 +76,18 @@ def render_safe_inline_markdown_md(text: str) -> str:
             out.append(f"**{html.escape(part[2:-2], quote=False)}**")
         elif part.startswith("*") and part.endswith("*") and len(part) >= 2:
             out.append(f"*{html.escape(part[1:-1], quote=False)}*")
+        elif part.startswith("!["):
+            out.append(html.escape(part, quote=True).replace("[", "\\[").replace("]", "\\]"))
         elif part.startswith("[") and "](" in part and part.endswith(")"):
             bracket_end = part.find("](")
-            label = html.escape(part[1:bracket_end], quote=False)
+            label = html.escape(part[1:bracket_end], quote=False).replace("[", "\\[").replace("]", "\\]")
             href = part[bracket_end + 2 : -1].strip()
             if _is_safe_href(href):
                 out.append(f"[{label}]({html.escape(href, quote=True)})")
             else:
                 out.append(html.escape(part, quote=True).replace("[", "\\[").replace("]", "\\]"))
         else:
-            out.append(html.escape(part, quote=False))
+            out.append(html.escape(part, quote=False).replace("[", "\\[").replace("]", "\\]"))
     return "".join(out)
 
 
@@ -99,7 +104,21 @@ def _esc_md(val: Any) -> str:
         return ""
     raw = ", ".join(str(x) for x in val) if isinstance(val, list) else str(val)
     escaped = html.escape(raw, quote=False)
-    return escaped.replace("|", "\\|").replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+    return (
+        escaped.replace("|", "\\|")
+        .replace("\r\n", " ")
+        .replace("\r", " ")
+        .replace("\n", " ")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+        .replace("`", "\\`")
+    )
+
+
+def _esc_md_code(val: Any) -> str:
+    if val is None:
+        return ""
+    return str(val).replace("\r\n", " ").replace("\r", " ").replace("\n", " ").replace("|", "\\|").replace("`", "'")
 
 
 def _format_dt_utc(dt: datetime | None) -> str:
@@ -278,120 +297,10 @@ def _render_nat_rule_cells(
     )
 
 
-def _summary_fields_for_object(oc: ObjectChangeEntry) -> dict[str, Any]:
-    if oc.summary_fields:
-        return dict(oc.summary_fields)
-    fields: dict[str, Any] = {}
-    if not oc.summary:
-        return fields
-    for raw_clause in _SUMMARY_SPLIT_RE.split(oc.summary):
-        if "=" not in raw_clause:
-            fields.setdefault("_raw", raw_clause)
-            continue
-        k, v = raw_clause.split("=", 1)
-        key = k.strip()
-        if key == "subnet4" and "/" in v:
-            net4, mask4 = v.split("/", 1)
-            fields["subnet4"] = net4
-            fields["mask-length4" if mask4.isdigit() else "subnet-mask"] = mask4
-        elif key == "subnet6" and "/" in v:
-            net6, mask6 = v.split("/", 1)
-            fields["subnet6"] = net6
-            fields["mask-length6"] = mask6
-        elif key == "range" and "-" in v:
-            f4, l4 = v.split("-", 1)
-            fields["ipv4-address-first"] = f4
-            fields["ipv4-address-last"] = l4
-        elif key == "range6" and "-" in v:
-            f6, l6 = v.split("-", 1)
-            fields["ipv6-address-first"] = f6
-            fields["ipv6-address-last"] = l6
-        elif key == "members" and v.startswith("[") and v.endswith("]"):
-            fields["members"] = [x.strip() for x in v[1:-1].split(",") if x.strip()]
-        else:
-            fields[key] = v
-    return fields
-
-
 def _render_object_details(oc: ObjectChangeEntry, fmt: _CellFormatter) -> str:
-    if oc.operation != "modified" or not oc.field_diffs:
-        return fmt.esc(oc.summary)
-    diffs_by_name: dict[str, FieldDiff] = {d.field_name.strip().lower(): d for d in oc.field_diffs}
-    sfields = _summary_fields_for_object(oc)
-    if not sfields and oc.summary:
-        return fmt.esc(oc.summary)
-
-    rendered_fields: set[str] = set()
-    parts: list[str] = []
-
-    def _scalar_val(field_key: str) -> str:
-        val = sfields.get(field_key)
-        d = diffs_by_name.get(field_key)
-        rendered_fields.add(field_key)
-        return _render_scalar_cell(val, d, fmt)[0]
-
-    for addr_k in ("ipv4-address", "ipv6-address"):
-        if addr_k in sfields or addr_k in diffs_by_name:
-            parts.append(f"{fmt.esc(addr_k)}={_scalar_val(addr_k)}")
-
-    if any(k in sfields or k in diffs_by_name for k in ("subnet4", "mask-length4", "subnet-mask")):
-        net4_s = _scalar_val("subnet4") if ("subnet4" in sfields or "subnet4" in diffs_by_name) else ""
-        if "mask-length4" in sfields or "mask-length4" in diffs_by_name:
-            mask4_s = _scalar_val("mask-length4")
-            parts.append(f"subnet4={net4_s}/{mask4_s}" if net4_s else f"mask-length4={mask4_s}")
-        elif "subnet-mask" in sfields or "subnet-mask" in diffs_by_name:
-            smask_s = _scalar_val("subnet-mask")
-            parts.append(f"subnet4={net4_s}/{smask_s}" if net4_s else f"subnet-mask={smask_s}")
-        else:
-            parts.append(f"subnet4={net4_s}")
-
-    if any(k in sfields or k in diffs_by_name for k in ("subnet6", "mask-length6")):
-        net6_s = _scalar_val("subnet6") if ("subnet6" in sfields or "subnet6" in diffs_by_name) else ""
-        if "mask-length6" in sfields or "mask-length6" in diffs_by_name:
-            mask6_s = _scalar_val("mask-length6")
-            parts.append(f"subnet6={net6_s}/{mask6_s}" if net6_s else f"mask-length6={mask6_s}")
-        else:
-            parts.append(f"subnet6={net6_s}")
-
-    if any(k in sfields or k in diffs_by_name for k in ("ipv4-address-first", "ipv4-address-last")):
-        parts.append(f"range={_scalar_val('ipv4-address-first')}-{_scalar_val('ipv4-address-last')}")
-
-    if any(k in sfields or k in diffs_by_name for k in ("ipv6-address-first", "ipv6-address-last")):
-        parts.append(f"range6={_scalar_val('ipv6-address-first')}-{_scalar_val('ipv6-address-last')}")
-
-    for k in ("port", "protocol", "fqdn"):
-        if k in sfields or k in diffs_by_name:
-            parts.append(f"{fmt.esc(k)}={_scalar_val(k)}")
-
-    if "members" in sfields or "members" in diffs_by_name:
-        mdiff = diffs_by_name.get("members")
-        raw_m = sfields.get("members")
-        curr_members = (
-            [str(x) for x in mdiff.new_value]
-            if (mdiff is not None and isinstance(mdiff.new_value, list))
-            else ([str(x) for x in raw_m] if isinstance(raw_m, list) else [])
-        )
-        m_rendered, _ = _render_list_cell(curr_members, mdiff, fmt, empty_fallback="")
-        parts.append(f"members=[{m_rendered}]")
-        rendered_fields.add("members")
-
-    if "comments" in sfields or "comments" in diffs_by_name:
-        parts.append(f"comments={_scalar_val('comments')}")
-
-    if "_raw" in sfields:
-        parts.append(fmt.esc(sfields["_raw"]))
-
-    for d in oc.field_diffs:
-        low_f = d.field_name.strip().lower()
-        if low_f in rendered_fields or low_f == "name":
-            continue
-        rendered_fields.add(low_f)
-        if low_f in ("members", "groups", "tags") or d.added_items or d.removed_items:
-            curr_l = [str(x) for x in d.new_value] if isinstance(d.new_value, list) else []
-            l_str, _ = _render_list_cell(curr_l, d, fmt, empty_fallback="")
-            parts.append(f"{fmt.esc(d.field_name)}=[{l_str}]")
-        else:
-            s_str, _ = _render_scalar_cell(d.new_value, d, fmt)
-            parts.append(f"{fmt.esc(d.field_name)}={s_str}")
-
-    return ", ".join(parts)
+    return render_object_details_with_diffs(
+        oc,
+        render_scalar=lambda val, diff: _render_scalar_cell(val, diff, fmt)[0],
+        render_list=lambda curr, diff: _render_list_cell(curr, diff, fmt, empty_fallback="")[0],
+        esc=fmt.esc,
+    )

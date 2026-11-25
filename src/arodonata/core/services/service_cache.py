@@ -16,21 +16,50 @@ from typing import Any, Protocol
 
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import get_write_session
-from arodonata.core.errors import ServerIdentityError
-from arodonata.core.events import DomainSyncProgressEvent, SyncProgressEvent
+from arodonata.core.events import SyncProgressEvent
 from arodonata.core.models.common import (
+    CANONICAL_ASSET_TYPES,
     DEFAULT_SERVICE_TYPES,
+    OBJECT_TYPE_ALIASES,
     CacheMode,
+    normalize_any_type,
     normalize_service_type,
     to_naive_utc,
     utc_now,
 )
-from arodonata.core.models.domains import DomainSyncState, RefreshOutcome
+from arodonata.core.models.domains import RefreshOutcome
 from arodonata.core.models.services import CPService
 from arodonata.core.ports import ApiPort, ServiceCachePort, SyncStatePort
-from arodonata.core.services.object_service import extract_changes_from_show_changes
+from arodonata.core.services._typed_cache_sync import (
+    apply_typed_context_overlay,
+    can_try_incremental,
+    full_reload_types,
+    try_incremental_sync,
+)
 from arodonata.core.services.sync_coordinator import DomainProbeResult, DomainSyncCoordinator
 from arodonata.core.telemetry import span_attrs, traced
+
+_NON_SERVICE_OBJECT_TYPES: frozenset[str] = frozenset(
+    {
+        *OBJECT_TYPE_ALIASES.values(),
+        "host",
+        "network",
+        "address-range",
+        "multicast-address-range",
+        "group-with-exclusion",
+        "dns-domain",
+        "wildcard",
+        "security-zone",
+        "dynamic-object",
+        "time",
+        "time-group",
+        "access-role",
+        "tag",
+        "gsn-handover-group",
+        "network-feed",
+        "application-site",
+    }
+)
 
 
 class _ServiceCachePort(ServiceCachePort, SyncStatePort, Protocol):
@@ -85,15 +114,21 @@ class ServiceCacheService:
     def _normalize_types(self, types: Sequence[str] | None) -> list[str]:
         if types is None:
             return list(DEFAULT_SERVICE_TYPES)
+        canonical_assets_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
         seen: list[str] = []
         for t in types:
             raw = str(t).strip()
             if not raw:
                 continue
             clean = normalize_service_type(raw)
+            any_clean = normalize_any_type(raw)
+            if not clean.startswith("service-") and (
+                any_clean.lower() in canonical_assets_lower or any_clean in _NON_SERVICE_OBJECT_TYPES
+            ):
+                continue
             if clean and clean not in seen:
                 seen.append(clean)
-        return seen or list(DEFAULT_SERVICE_TYPES)
+        return seen
 
     async def stream_refresh_services(
         self,
@@ -107,6 +142,8 @@ class ServiceCacheService:
     ) -> AsyncIterator[SyncProgressEvent]:
         """Stream `SyncProgressEvent` items while refreshing service objects across domains."""
         target_types = self._normalize_types(types)
+        if not target_types:
+            return
 
         async def _sync_domain_services(
             probe: DomainProbeResult,
@@ -145,6 +182,8 @@ class ServiceCacheService:
         """Refresh service objects across domains and return `RefreshOutcome`."""
         target_types = self._normalize_types(types)
         span_attrs(mgmt_name=mgmt_name, mode=mode, types=target_types, include_global=include_global)
+        if not target_types:
+            return RefreshOutcome(scope="services")
 
         async def _sync_domain_services(
             probe: DomainProbeResult,
@@ -169,133 +208,26 @@ class ServiceCacheService:
         )
 
     def _can_try_incremental(self, probe: DomainProbeResult) -> bool:
-        if not probe.stale_types:
-            return False
-        for t in probe.stale_types:
-            st = probe.existing_states.get(t)
-            if st is None or st.status != "ok":
-                return False
-            if st.last_session_uid is None and st.last_published_at is None:
-                return False
-        return True
+        return can_try_incremental(probe)
 
     async def _try_incremental_sync(
         self,
         probe: DomainProbeResult,
         emit: Callable[[SyncProgressEvent], Awaitable[None]],
     ) -> int | None:
-        mgmt_name = probe.mgmt_name
-        dom_name = probe.domain.name
-        stale_set = set(probe.stale_types)
-
-        baseline_states = [probe.existing_states[t] for t in probe.stale_types if t in probe.existing_states]
-        if not baseline_states:
-            return None
-
-        earliest_state = min(
-            baseline_states,
-            key=lambda s: (s.last_published_at is None, s.last_published_at or datetime.max),
+        return await try_incremental_sync(
+            scope="services",
+            probe=probe,
+            emit=emit,
+            api=self._api,
+            settings=self._settings,
+            now_fn=self._now,
+            model_from_cp_dict=CPService.from_cp_dict,
+            get_cached_by_type=lambda m, d, types: self._cache.get_services(m, d, types=types),
+            apply_diff_fn=lambda m, d, del_uids, svcs, states: self._cache.apply_service_diff(
+                m, d, deleted_uids=del_uids, services=svcs, sync_states=states
+            ),
         )
-
-        payload: dict[str, Any] = {"details-level": "standard"}
-        if earliest_state.last_session_uid is not None:
-            payload["from-session"] = earliest_state.last_session_uid
-        elif earliest_state.last_published_at is not None:
-            payload["from-date"] = to_naive_utc(earliest_state.last_published_at).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        try:
-            res = await self._api.api_call(
-                mgmt_name,
-                "show-changes",
-                payload,
-                domain=dom_name,
-                wait_for_task=True,
-            )
-            if not res.success:
-                return None
-
-            upserts_meta, deleted_uids = extract_changes_from_show_changes(
-                res.data,
-                tracked_types=stale_set,
-            )
-            total_changes = len(upserts_meta) + len(deleted_uids)
-            if total_changes > self._settings.max_incremental_changes:
-                return None
-
-            fetched_services: list[CPService] = []
-            for uid, _hint_type in upserts_meta:
-                svc_res = await self._api.api_call(
-                    mgmt_name,
-                    "show-object",
-                    {"uid": uid, "details-level": "full"},
-                    domain=dom_name,
-                )
-                if not svc_res.success:
-                    return None
-                raw_svc = svc_res.data.get("object") if isinstance(svc_res.data.get("object"), dict) else svc_res.data
-                if not isinstance(raw_svc, dict) or not raw_svc.get("uid"):
-                    return None
-                cp_svc = CPService.from_cp_dict(mgmt_name, dom_name, raw_svc)
-                if cp_svc.type in stale_set:
-                    fetched_services.append(cp_svc)
-
-            existing_by_type: dict[str, list[CPService]] = {}
-            for item_type in probe.stale_types:
-                existing_by_type[item_type] = await self._cache.get_services(mgmt_name, dom_name, types=[item_type])
-
-            deleted_uid_set = set(deleted_uids)
-            fetched_by_type: dict[str, dict[str, CPService]] = {t: {} for t in probe.stale_types}
-            for svc in fetched_services:
-                if svc.type in fetched_by_type:
-                    fetched_by_type[svc.type][svc.uid] = svc
-
-            synced_at = probe.probe_started_at or self._now()
-            sync_states: list[DomainSyncState] = []
-            for item_type in probe.stale_types:
-                uid_set = {s.uid for s in existing_by_type.get(item_type, []) if s.uid not in deleted_uid_set}
-                uid_set.update(fetched_by_type.get(item_type, {}).keys())
-                sync_states.append(
-                    DomainSyncState(
-                        mgmt_name=mgmt_name,
-                        domain_name=dom_name,
-                        scope="services",
-                        item_type=item_type,
-                        last_published_at=probe.remote_published_at,
-                        last_session_uid=probe.remote_session_uid,
-                        synced_at=synced_at,
-                        status="ok",
-                        object_count=len(uid_set),
-                        last_error=None,
-                    )
-                )
-
-            await self._cache.apply_service_diff(
-                mgmt_name,
-                dom_name,
-                deleted_uids=deleted_uids,
-                services=fetched_services,
-                sync_states=sync_states,
-            )
-
-            await emit(
-                DomainSyncProgressEvent(
-                    scope="services",
-                    mgmt_name=mgmt_name,
-                    domain=dom_name,
-                    item_type=",".join(probe.stale_types),
-                    processed=total_changes,
-                    total=total_changes,
-                    message=(
-                        f"Applied incremental service diff on {mgmt_name}:{dom_name} "
-                        f"({len(fetched_services)} upserted, {len(deleted_uids)} deleted)."
-                    ),
-                )
-            )
-            return len(fetched_services) + len(deleted_uids)
-        except ServerIdentityError:
-            raise
-        except Exception:
-            return None
 
     async def _full_reload_types(
         self,
@@ -303,78 +235,18 @@ class ServiceCacheService:
         emit: Callable[[SyncProgressEvent], Awaitable[None]],
     ) -> int:
         """Fetch all service objects for `probe.stale_types` and atomically replace them in `arodonata_services`."""
-        mgmt_name = probe.mgmt_name
-        dom_name = probe.domain.name
-        collected_by_type: dict[str, list[CPService]] = {}
-        all_collected: list[CPService] = []
-
-        for item_type in probe.stale_types:
-            cmd, extra_payload = resolve_service_query_command(item_type)
-            q_res = await self._api.api_query(
-                mgmt_name,
-                cmd,
-                domain=dom_name,
-                details_level="full",
-                payload=extra_payload or None,
-            )
-            if not q_res.success:
-                raise RuntimeError(
-                    f"Failed to query {item_type!r} ({cmd}) on {mgmt_name}:{dom_name}: "
-                    f"{q_res.error_message or q_res.code or 'query failed'}"
-                )
-
-            typed_svcs: list[CPService] = []
-            for raw in q_res.objects:
-                if not isinstance(raw, dict) or not raw.get("uid"):
-                    continue
-                raw_copy = dict(raw)
-                if not raw_copy.get("type"):
-                    raw_copy["type"] = item_type
-                cp_svc = CPService.from_cp_dict(mgmt_name, dom_name, raw_copy)
-                if cp_svc.type != item_type:
-                    cp_svc = cp_svc.model_copy(update={"type": item_type})
-                typed_svcs.append(cp_svc)
-
-            collected_by_type[item_type] = typed_svcs
-            all_collected.extend(typed_svcs)
-
-            await emit(
-                DomainSyncProgressEvent(
-                    scope="services",
-                    mgmt_name=mgmt_name,
-                    domain=dom_name,
-                    item_type=item_type,
-                    processed=len(typed_svcs),
-                    total=len(typed_svcs),
-                    message=f"Fetched {len(typed_svcs)} {item_type} service(s) from {mgmt_name}:{dom_name}.",
-                )
-            )
-
-        synced_at = probe.probe_started_at or self._now()
-        sync_states = [
-            DomainSyncState(
-                mgmt_name=mgmt_name,
-                domain_name=dom_name,
-                scope="services",
-                item_type=item_type,
-                last_published_at=probe.remote_published_at,
-                last_session_uid=probe.remote_session_uid,
-                synced_at=synced_at,
-                status="ok",
-                object_count=len(collected_by_type.get(item_type, [])),
-                last_error=None,
-            )
-            for item_type in probe.stale_types
-        ]
-        await self._cache.replace_domain_services(
-            mgmt_name,
-            dom_name,
-            all_collected,
-            types=probe.stale_types,
-            sync_states=sync_states,
+        return await full_reload_types(
+            scope="services",
+            probe=probe,
+            emit=emit,
+            api=self._api,
+            now_fn=self._now,
+            resolve_command_fn=resolve_service_query_command,
+            model_from_cp_dict=CPService.from_cp_dict,
+            replace_domain_fn=lambda m, d, items, types, states: self._cache.replace_domain_services(
+                m, d, items, types=types, sync_states=states
+            ),
         )
-
-        return len(all_collected)
 
     @traced
     async def get_services(
@@ -390,9 +262,10 @@ class ServiceCacheService:
         cache_ttl: float | None = None,
     ) -> list[CPService]:
         """Ensure requested service types are fresh (unless `cache_mode="cache"`), then return services with active `WriteSession` overlay applied."""
-        if types is not None and not types:
+        norm_types = self._normalize_types(types) if types is not None else None
+        if norm_types is not None and not norm_types:
             return []
-        target_types = self._normalize_types(types) if types is not None else list(DEFAULT_SERVICE_TYPES)
+        target_types = list(norm_types) if norm_types is not None else list(DEFAULT_SERVICE_TYPES)
         if cache_mode != "cache":
             await self.refresh_services(
                 mgmt_name=mgmt_name,
@@ -403,7 +276,6 @@ class ServiceCacheService:
                 cache_ttl=cache_ttl,
             )
 
-        norm_types = self._normalize_types(types) if types is not None else None
         cached = await self._cache.get_services(
             mgmt_name=mgmt_name,
             domain_name=domain,
@@ -452,8 +324,7 @@ class ServiceCacheService:
 
         svc = await self._cache.get_service_by_uid(mgmt_name, domain, uid)
         if svc is not None and ws is not None:
-            merged = ws.overlay.apply_to_services([svc])
-            return merged[0] if merged else None
+            return ws.overlay.apply_to_single_service(svc)
         return svc
 
     @staticmethod
@@ -469,37 +340,17 @@ class ServiceCacheService:
         uids: Sequence[str] | None = None,
     ) -> list[CPService]:
         """Merge active `WriteSession` overlay from `contextvars` onto `cached_services`."""
-        ws = get_write_session()
-        if ws is None:
-            return list(cached_services)
-        if mgmt_name is not None and ws.mgmt_name != mgmt_name:
-            return list(cached_services)
-        if allowed_domains is not None:
-            if ws.domain_name not in allowed_domains:
-                return list(cached_services)
-        elif domain_name is not None:
-            if ws.domain_name != domain_name:
-                return list(cached_services)
-        elif not include_global and ws.domain_name == "Global":
-            return list(cached_services)
-
-        in_scope: list[CPService] = []
-        out_of_scope: list[CPService] = []
-        for svc in cached_services:
-            if svc.mgmt_name == ws.mgmt_name and svc.domain_name == ws.domain_name:
-                in_scope.append(svc)
-            else:
-                out_of_scope.append(svc)
-
-        merged_scope = ws.overlay.apply_to_services(in_scope, types=types)
-        if names is not None:
-            name_set = set(names)
-            merged_scope = [s for s in merged_scope if s.name in name_set]
-        if uids is not None:
-            uid_set = set(uids)
-            merged_scope = [s for s in merged_scope if s.uid in uid_set]
-
-        return out_of_scope + merged_scope
+        return apply_typed_context_overlay(
+            cached_services,
+            overlay_apply_fn=lambda ov, items, t: ov.apply_to_services(items, types=t),
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            allowed_domains=allowed_domains,
+            include_global=include_global,
+            types=types,
+            names=names,
+            uids=uids,
+        )
 
 
 __all__ = [

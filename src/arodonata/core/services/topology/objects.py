@@ -13,7 +13,7 @@ from arodonata.core.models.assets import Asset
 from arodonata.core.models.objects import CPObject
 from arodonata.core.ports import ApiPort, ObjectCachePort
 from arodonata.core.primitives import effective_range_prefix_len, is_uuid, mask_to_prefix_len
-from arodonata.core.services.asset_service import _extract_interfaces_from_generic
+from arodonata.core.services._asset_linking import _extract_interfaces_from_generic
 from arodonata.core.services.object_service import ObjectService
 from arodonata.core.services.topology._shared import TOPOLOGY_OBJECT_LOOKUP_CONCURRENCY
 from arodonata.core.services.topology.normalizer import _extract_raw_routes

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable, Sequence
 
+from arodonata.core.context import get_write_session
 from arodonata.core.errors import (
     AuthenticationError,
     RepositoryScriptError,
@@ -194,6 +196,9 @@ async def _run_inline_cprid(
         "targets": [target.node_uid or target.node_name],
     }
     used_sids: list[str] = []
+    active_ws = get_write_session(mgmt_name=target.mgmt_name, domain_name=target.domain_name)
+    if active_ws is not None and active_ws.sid:
+        used_sids.append(active_ws.sid)
     try:
         try:
             res = await api.api_call(
@@ -239,8 +244,8 @@ async def _run_inline_cprid(
                         timeout=timeout,
                     )
                 finally:
-                    with contextlib.suppress(Exception):
-                        await api.logout_sid(target.mgmt_name, ded_sid, server_ip=ded_ip)
+                    with contextlib.suppress(BaseException):
+                        await asyncio.shield(api.logout_sid(target.mgmt_name, ded_sid, server_ip=ded_ip))
     except ServerIdentityError:
         raise
     except (SessionError, AuthenticationError) as exc:
@@ -332,6 +337,9 @@ async def _run_repository_cprid(
         )
 
     used_sids: list[str] = []
+    active_ws = get_write_session(mgmt_name=target.mgmt_name, domain_name=target.domain_name)
+    if active_ws is not None and active_ws.sid:
+        used_sids.append(active_ws.sid)
     session_getter_wrapped: Callable[[str, str | None], Awaitable[tuple[str, str]]] | None = None
     if cprid_session_getter is not None:
 

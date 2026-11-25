@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from typing import Any
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
@@ -1086,3 +1087,172 @@ async def test_script_repository_boundary_models_and_session_branches_redact_sid
     assert getter_sid not in str(get_exc.value)
     assert REDACTED_PLACEHOLDER in str(get_exc.value)
     _ = stub
+
+
+@pytest.mark.spec("SCN-SESS-013-2")
+async def test_decomposed_run_script_and_route_collection_helpers() -> None:
+    """Verify `_invoke_run_script_with_session`/`_decode_run_script_tasks` and route collection helpers preserve SID redaction and coalescing."""
+    from datetime import UTC, datetime
+
+    from arodonata.core.models.common import ApiCallResult
+    from arodonata.core.models.topology import GatewayCliResult, GatewayRouteCollectionStatus
+    from arodonata.core.services.script_service import (
+        ScriptRepositoryService,
+        _decode_run_script_tasks,
+        _invoke_run_script_with_session,
+    )
+    from arodonata.core.services.topology.route_collection import (
+        _execute_coalesced_target,
+        _finalize_domain_route_sync_states,
+        _persist_gateway_routes,
+    )
+
+    assert callable(_invoke_run_script_with_session)
+    assert callable(_decode_run_script_tasks)
+    assert callable(_execute_coalesced_target)
+    assert callable(_persist_gateway_routes)
+
+    # 1. Dedicated session mode invokes run-script, scrubs bare SID from stdout, and always logs out
+    ded_sid = "HelperDedSid1122"
+
+    class _HelperApi(_ScriptApiStub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.logged_out: list[str] = []
+
+        async def create_dedicated_session(
+            self, mgmt_name: str, domain: str | None = None, **kw: object
+        ) -> tuple[str, str]:
+            return ded_sid, "10.0.0.1"
+
+        async def logout_sid(self, mgmt_name: str, sid: str, **kw: object) -> None:
+            self.logged_out.append(sid)
+
+        async def api_call(
+            self, mgmt_name: str, command: str, payload: dict[str, object] | None = None, **kw: object
+        ) -> ApiCallResult:
+            if command == "run-script":
+                return ApiCallResult(
+                    success=True,
+                    status_code=200,
+                    data={
+                        "tasks": [
+                            {
+                                "task-id": "t-help",
+                                "status": "succeeded",
+                                "task-details": [
+                                    {
+                                        "gatewayName": "gw-01",
+                                        "statusCode": "succeeded",
+                                        "responseMessage": f"sid={ded_sid}",
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                )
+            return await super().api_call(mgmt_name, command, payload, **kw)  # type: ignore[arg-type]
+
+    h_api = _HelperApi()
+    svc = ScriptRepositoryService(api=h_api)  # type: ignore[arg-type]
+    outcome = await svc.run_repository_script("mds1", "app-diag", ["gw-01"], domain="Corp")
+    assert outcome.success is True
+    assert ded_sid not in outcome.stdout
+    assert h_api.logged_out == [ded_sid]
+
+    # 2. _finalize_domain_route_sync_states downgrades domain status when any gateway fails
+    upserted: list[Any] = []
+
+    class _SyncCache:
+        async def upsert_sync_state(self, state: Any) -> None:
+            upserted.append(state)
+
+    st_ok = GatewayRouteCollectionStatus(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        gateway_id="id-1",
+        gateway_asset_id="aid-1",
+        gateway_uid="u-1",
+        gateway_name="gw-1",
+        gateway_type="simple-gateway",
+        success=True,
+        routes_collected=4,
+    )
+    st_fail = GatewayRouteCollectionStatus(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        gateway_id="id-2",
+        gateway_asset_id="aid-2",
+        gateway_uid="u-2",
+        gateway_name="gw-2",
+        gateway_type="simple-gateway",
+        success=False,
+        error="timeout",
+    )
+    coll = await _finalize_domain_route_sync_states(
+        [(st_ok, 4), (st_fail, 0)],
+        cache=_SyncCache(),  # type: ignore[arg-type]
+        gw_tokens=[],
+        total_gateways=2,
+        now=datetime.now(UTC),
+    )
+    assert coll.succeeded_gateways == 1
+    assert coll.failed_gateways == 1
+    assert coll.total_routes == 4
+    assert len(upserted) == 1
+    assert upserted[0].status == "failed"
+    assert "gw-2: timeout" in (upserted[0].last_error or "")
+    _ = GatewayCliResult
+
+
+async def test_run_repository_script_preserves_server_identity_and_task_errors() -> None:
+    """DA-023: `run_repository_script` preserves `ServerIdentityError` and `TaskPollError` from session calls."""
+    from arodonata.core.errors import ServerIdentityError, TaskPollError
+    from arodonata.core.models.common import ApiCallResult
+    from arodonata.core.services.script_service import _invoke_run_script_with_session
+
+    class _IdentityApi:
+        async def create_dedicated_session(self, *args: Any, **kwargs: Any) -> tuple[str, str]:
+            return "sid-s1", "10.0.0.1"
+
+        async def api_call(self, mgmt: str, cmd: str, *args: Any, **kwargs: Any) -> ApiCallResult:
+            if cmd == "run-script":
+                raise ServerIdentityError("cert mismatch")
+            return ApiCallResult(success=True, data={})
+
+        async def logout_sid(self, mgmt: str, sid: str, **kwargs: Any) -> bool:
+            return True
+
+    with pytest.raises(ServerIdentityError, match="cert mismatch"):
+        await _invoke_run_script_with_session(
+            _IdentityApi(),  # type: ignore[arg-type]
+            mgmt_name="mds1",
+            dom_key="Corp",
+            ref="s1",
+            payload={"script": "echo 1"},
+            timeout=None,
+            sid=None,
+            server_ip=None,
+            active_ws=None,
+            session_getter=None,
+        )
+
+    class _TaskFailApi(_IdentityApi):
+        async def api_call(self, mgmt: str, cmd: str, *args: Any, **kwargs: Any) -> ApiCallResult:
+            if cmd == "run-script":
+                raise TaskPollError("script failed")
+            return ApiCallResult(success=True, data={})
+
+    with pytest.raises(TaskPollError, match="script failed"):
+        await _invoke_run_script_with_session(
+            _TaskFailApi(),  # type: ignore[arg-type]
+            mgmt_name="mds1",
+            dom_key="Corp",
+            ref="s1",
+            payload={"script": "echo 1"},
+            timeout=None,
+            sid=None,
+            server_ip=None,
+            active_ws=None,
+            session_getter=None,
+        )

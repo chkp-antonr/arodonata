@@ -282,6 +282,7 @@ class ClientLifecycleMixin(ClientBase):
         force_disconnect: bool = False,
         expected_session_name: str | None = None,
         allow_foreign: bool = False,
+        allow_stale: bool = False,
     ) -> ApiCallResult:
         """Adopt `session_uid`, publish it, log out, and invalidate the domain cache."""
         return await self._cpcrud.publish_staged_session(
@@ -295,6 +296,7 @@ class ClientLifecycleMixin(ClientBase):
             force_disconnect=force_disconnect,
             expected_session_name=expected_session_name,
             allow_foreign=allow_foreign,
+            allow_stale=allow_stale,
         )
 
     async def stream_publish_staged_session(
@@ -310,6 +312,7 @@ class ClientLifecycleMixin(ClientBase):
         force_disconnect: bool = False,
         expected_session_name: str | None = None,
         allow_foreign: bool = False,
+        allow_stale: bool = False,
     ) -> AsyncIterator[CPCRUDEvent]:
         """Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate the domain cache."""
         async for ev in self._cpcrud.stream_publish_staged_session(
@@ -323,6 +326,7 @@ class ClientLifecycleMixin(ClientBase):
             force_disconnect=force_disconnect,
             expected_session_name=expected_session_name,
             allow_foreign=allow_foreign,
+            allow_stale=allow_stale,
         ):
             yield ev
 

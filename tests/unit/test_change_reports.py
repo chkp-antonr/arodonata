@@ -2563,3 +2563,99 @@ async def test_reports_range_bounds_owned_fallback_placement_diffs_and_safe_mark
     assert "\\[click\\]" in bad_href_md
     assert "\r" not in _esc_md("a\r\nb|c")
     assert "a b\\|c" == _esc_md("a\r\nb|c")
+
+
+@pytest.mark.spec("SCN-REPORT-007-1")
+def test_unified_object_summary_preserves_icmp_protocol_url_description_and_ipv6() -> None:
+    """Verify unified object summary schema preserves omitted fields across modified diffs and dry-run plan reports."""
+    from arodonata.cpcrud.models import FieldChange, Outcome, Plan, PlannedAction
+    from arodonata.reports._renderer_formatting import _HTML_FMT, _MD_FMT, _render_object_details
+    from arodonata.reports.models import FieldDiff, ObjectChangeEntry
+    from arodonata.reports.plan_report import build_change_report_from_plan
+
+    # 1. Modified service-icmp with summary missing summary_fields -> SUMMARY_SPLIT_RE + _render_object_details preserves icmp/description
+    oc = ObjectChangeEntry(
+        uid="icmp-1",
+        name="ICMP_Echo",
+        object_type="service-icmp",
+        operation="modified",
+        summary="icmp-type=8, icmp-code=0, ip-protocol=1, description=Ping check, comments=updated",
+        summary_fields={},
+        field_diffs=[FieldDiff(field_name="comments", old_value="old", new_value="updated")],
+    )
+    html_details = _render_object_details(oc, _HTML_FMT)
+    md_details = _render_object_details(oc, _MD_FMT)
+    assert "icmp-type=8" in html_details and "icmp-code=0" in html_details
+    assert "ip-protocol=1" in html_details and "description=Ping check" in html_details
+    assert "icmp-type=8" in md_details and "description=Ping check" in md_details
+
+    # 2. Dry-run plan_report preserves IPv6 subnet/range, icmp, ip-protocol, url-regex, url-list, description
+    plan = Plan(
+        actions=[
+            PlannedAction(
+                action_id="p1",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="set",
+                object_type="application-site",
+                name="App_Portal",
+                outcome=Outcome.UPDATE,
+                prior_state={
+                    "primary-category": "Custom",
+                    "urls-defined-as-regular-expression": True,
+                    "url-list": ["portal.example.com"],
+                    "description": "Internal app",
+                    "subnet6": "2001:db8::",
+                    "mask-length6": 64,
+                },
+                payload={"comments": "new comment"},
+                field_changes=[FieldChange(field="comments", old_value="", new_value="new comment")],
+            )
+        ]
+    )
+    rep = build_change_report_from_plan(plan)
+    obj_entry = rep.sessions[0].object_changes[0]
+    assert "primary-category=Custom" in obj_entry.summary
+    assert "urls-defined-as-regular-expression=True" in obj_entry.summary
+    assert "url-list=[portal.example.com]" in obj_entry.summary
+    assert "description=Internal app" in obj_entry.summary
+    assert "subnet6=2001:db8::/64" in obj_entry.summary
+
+
+def test_report_redaction_and_markdown_injection_escaping() -> None:
+    """DA-009/DA-010: Scrub SIDs/secrets from report entries and escape dangerous Markdown constructs."""
+    from arodonata.reports.models import ChangeReport, FieldDiff, ObjectChangeEntry, SessionChangeReport
+    from arodonata.reports.renderer import render_change_report
+
+    fd = FieldDiff(
+        field_name="password",
+        old_value="old_secret_1234",
+        new_value="X-chkp-sid: secret_sid_9876",
+    )
+    assert "old_secret_1234" not in str(fd.old_value)
+    assert "secret_sid_9876" not in str(fd.new_value)
+
+    obj_entry = ObjectChangeEntry(
+        uid="uid-evil-`tick`",
+        name="[click](https://evil.test)",
+        object_type="host",
+        operation="added",
+        summary="ipv4-address=10.0.0.1 ![exfil](https://evil.test/x.png) comments=X-chkp-sid: leaked_sid_1234",
+    )
+    assert "leaked_sid_1234" not in (obj_entry.summary or "")
+
+    rep = ChangeReport(
+        sessions=[
+            SessionChangeReport(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                session_uid="s1",
+                object_changes=[obj_entry],
+            )
+        ],
+    )
+    bundle = render_change_report(rep, options=RenderOptions())
+    md = bundle.markdown
+    assert "[click](https://evil.test)" not in md
+    assert "![exfil](https://evil.test/x.png)" not in md
+    assert r"\[click\]" in md

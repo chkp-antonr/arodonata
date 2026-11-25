@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from contextlib import suppress
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -60,6 +61,67 @@ from arodonata.cpcrud.state_reader import OBJECT_ITEM_TYPES, SERVICE_ITEM_TYPES,
 
 class _PlannerCachePort(ObjectCachePort, ServiceCachePort, SidCachePort, SyncStatePort, Protocol):
     """Cache capabilities required by `Planner` and its internal `HybridStateReader`."""
+
+
+@dataclass(slots=True)
+class _DomainPlanState:
+    """Mutable per-domain dependency, failure, and name-resolution tracking during planning."""
+
+    failed_refs: set[str] = field(default_factory=set)
+    failed_ids: set[str] = field(default_factory=set)
+    res_map: dict[str, str] = field(default_factory=dict)
+    global_res: dict[str, str] = field(default_factory=dict)
+    ref_action_ids: dict[str, str] = field(default_factory=dict)
+    entity_action_ids: dict[tuple[str, str], str] = field(default_factory=dict)
+
+
+def _record_action_outcome(act: PlannedAction, state: _DomainPlanState) -> None:
+    """Update per-domain failure sets, auto-name resolutions, and dependency indices for `act`."""
+    if act.outcome in (Outcome.ERROR, Outcome.SKIPPED_DEPENDENCY):
+        if act.requested_name:
+            state.failed_refs.add(act.requested_name)
+        if act.name:
+            state.failed_refs.add(act.name)
+        state.failed_ids.add(act.action_id)
+        return
+
+    if act.outcome == Outcome.DELETE:
+        deleted_names = {n for n in (act.name, act.resolved_name) if n}
+        for target_map in (state.res_map, state.global_res):
+            for rk in [k for k, v in target_map.items() if k in deleted_names or v in deleted_names]:
+                target_map.pop(rk, None)
+        for n in deleted_names:
+            state.ref_action_ids.pop(n, None)
+            state.entity_action_ids[(act.object_type, n)] = act.action_id
+        if act.target_uid:
+            state.entity_action_ids.pop(("uid", act.target_uid), None)
+        return
+
+    if act.resolved_name:
+        state.res_map.pop(act.resolved_name, None)
+        state.global_res.pop(act.resolved_name, None)
+    if act.requested_name and act.resolved_name and act.requested_name != act.resolved_name:
+        state.res_map[act.requested_name] = act.resolved_name
+        state.global_res[act.requested_name] = act.resolved_name
+    if act.outcome == Outcome.UPDATE and act.name and act.resolved_name and act.name != act.resolved_name:
+        state.res_map[act.name] = act.resolved_name
+        state.global_res[act.name] = act.resolved_name
+
+    if act.outcome in (Outcome.CREATE, Outcome.UPDATE):
+        for ref_key in (act.requested_name, act.resolved_name, act.name):
+            if ref_key:
+                state.ref_action_ids[ref_key] = act.action_id
+                state.entity_action_ids[(act.object_type, ref_key)] = act.action_id
+        if act.target_uid:
+            state.entity_action_ids[("uid", act.target_uid)] = act.action_id
+        if act.outcome == Outcome.CREATE and act.name:
+            state.entity_action_ids[("uid", f"planned:{act.object_type}:{act.name}")] = act.action_id
+
+
+def _resolve_domain_name(mapping: Mapping[str, Any], default: str = "") -> str:
+    """Resolve `domain` / `domain_name` safely, falling back to `default` when `None` or blank."""
+    raw = mapping.get("domain") or mapping.get("domain_name") or default
+    return str(raw).strip() if raw is not None else ""
 
 
 class Planner:
@@ -146,7 +208,7 @@ class Planner:
         """Normalize a flat or multi-target template into a list of target specifications."""
         raw_targets = template.get("targets") or template.get("domains")
         root_mgmt = str(template.get("mgmt_name") or self._default_mgmt_name).strip()
-        root_domain = str(template.get("domain") or template.get("domain_name") or "").strip()
+        root_domain = _resolve_domain_name(template)
         raw_root_conflict = template.get("conflict_policy")
         root_conflict: dict[str, Any] = dict(raw_root_conflict) if isinstance(raw_root_conflict, dict) else {}
         root_name_pol = template.get("on_name_conflict") or root_conflict.get("on_name_conflict") or "update"
@@ -168,9 +230,7 @@ class Planner:
                 targets.append(
                     {
                         "mgmt_name": str(item.get("mgmt_name") or root_mgmt).strip(),
-                        "domain_name": str(
-                            item.get("domain") if "domain" in item else item.get("domain_name", root_domain) or ""
-                        ).strip(),
+                        "domain_name": _resolve_domain_name(item, root_domain),
                         "on_name_conflict": item.get("on_name_conflict")
                         or t_conflict.get("on_name_conflict")
                         or root_name_pol,
@@ -263,14 +323,16 @@ class Planner:
         targets = self._expand_targets(template)
         span_attrs(target_count=len(targets))
 
-        # 1. Discover all unique (mgmt_name, domain_name) pairs across targets and step-level overrides
+        # 1. Discover all unique (mgmt_name, domain_name) pairs across targets and cache ordered steps
         domain_pairs: list[tuple[str, str]] = []
         seen_pairs: set[tuple[str, str]] = set()
         seen_explicit_ids: set[str] = set()
+        steps_by_target: list[list[tuple[str, dict[str, Any]]]] = []
         for t in targets:
             t_mgmt = str(t.get("mgmt_name") or self._default_mgmt_name).strip()
             t_dom = str(t.get("domain_name") or "").strip()
             steps = self._collect_ordered_steps(t)
+            steps_by_target.append(steps)
             if not steps and (t_mgmt, t_dom) not in seen_pairs:
                 seen_pairs.add((t_mgmt, t_dom))
                 domain_pairs.append((t_mgmt, t_dom))
@@ -282,9 +344,7 @@ class Planner:
                         raise ValidationError(f"Duplicate CPCRUD operation id: {id_str!r}")
                     seen_explicit_ids.add(id_str)
                 s_mgmt = str(step_spec.get("mgmt_name") or t_mgmt).strip()
-                s_dom = str(
-                    step_spec.get("domain") if "domain" in step_spec else step_spec.get("domain_name", t_dom) or ""
-                ).strip()
+                s_dom = _resolve_domain_name(step_spec, t_dom)
                 if (s_mgmt, s_dom) not in seen_pairs:
                     seen_pairs.add((s_mgmt, s_dom))
                     domain_pairs.append((s_mgmt, s_dom))
@@ -303,15 +363,10 @@ class Planner:
         )
 
         actions: list[PlannedAction] = []
-        global_res_by_domain: dict[tuple[str, str], dict[str, str]] = {}
-        failed_refs_by_domain: dict[tuple[str, str], set[str]] = {}
-        failed_action_ids_by_domain: dict[tuple[str, str], set[str]] = {}
-        domain_resolutions: dict[tuple[str, str], dict[str, str]] = {}
-        action_ids_by_ref_by_domain: dict[tuple[str, str], dict[str, str]] = {}
-        entity_action_ids_by_domain: dict[tuple[str, str], dict[tuple[str, str], str]] = {}
+        domain_states: dict[tuple[str, str], _DomainPlanState] = {}
         action_seq = 0
 
-        for t in targets:
+        for target_idx, t in enumerate(targets):
             t_mgmt = str(t.get("mgmt_name") or self._default_mgmt_name).strip()
             t_dom = str(t.get("domain_name") or "").strip()
             eff_name_pol: NameConflictPolicy = (
@@ -329,14 +384,12 @@ class Planner:
             else:
                 eff_prefixes = self._default_naming_prefixes
 
-            steps = self._collect_ordered_steps(t)
+            steps = steps_by_target[target_idx]
             for kind, step_spec in steps:
                 action_seq += 1
                 action_id = str(step_spec.get("id") or f"act-{action_seq}")
                 s_mgmt = str(step_spec.get("mgmt_name") or t_mgmt).strip()
-                s_dom = str(
-                    step_spec.get("domain") if "domain" in step_spec else step_spec.get("domain_name", t_dom) or ""
-                ).strip()
+                s_dom = _resolve_domain_name(step_spec, t_dom)
                 dom_key = (s_mgmt, s_dom)
                 step_stamp = domain_stamps.get(f"{s_mgmt}:{s_dom}")
 
@@ -345,10 +398,10 @@ class Planner:
                     on_ip_conflict=step_spec.get("on_ip_conflict") or eff_ip_pol,
                 )
 
-                failed_refs = failed_refs_by_domain.setdefault(dom_key, set())
-                failed_ids = failed_action_ids_by_domain.setdefault(dom_key, set())
-                res_map = domain_resolutions.setdefault(dom_key, {})
-                dom_global_res = global_res_by_domain.setdefault(dom_key, {})
+                dom_state = domain_states.setdefault(dom_key, _DomainPlanState())
+                failed_refs = dom_state.failed_refs
+                failed_ids = dom_state.failed_ids
+                res_map = dom_state.res_map
 
                 if step_stamp is None or not step_stamp.readable:
                     err_reason = (step_stamp.error if step_stamp else None) or "show-last-published-session failed"
@@ -373,9 +426,7 @@ class Planner:
                         error=err_msg,
                     )
                     actions.append(act)
-                    if raw_name:
-                        failed_refs.add(raw_name)
-                    failed_ids.add(action_id)
+                    _record_action_outcome(act, dom_state)
                     continue
 
                 explicit_deps = [str(d) for d in (step_spec.get("depends_on") or []) if str(d)]
@@ -388,8 +439,8 @@ class Planner:
                     step_refs = _extract_rule_references(step_spec)
                     broken_deps.extend(sorted(r for r in step_refs if r in failed_refs))
 
-                ref_action_ids = action_ids_by_ref_by_domain.setdefault(dom_key, {})
-                entity_action_ids = entity_action_ids_by_domain.setdefault(dom_key, {})
+                ref_action_ids = dom_state.ref_action_ids
+                entity_action_ids = dom_state.entity_action_ids
                 inferred_deps: list[str] = []
                 for ref in sorted(step_refs):
                     resolved_ref = res_map.get(ref, ref)
@@ -421,9 +472,7 @@ class Planner:
                         error=skip_msg,
                     )
                     actions.append(act)
-                    if raw_name:
-                        failed_refs.add(raw_name)
-                    failed_ids.add(action_id)
+                    _record_action_outcome(act, dom_state)
                     continue
 
                 if kind == "object":
@@ -491,49 +540,11 @@ class Planner:
                     act = act.model_copy(update={"depends_on": merged_deps})
 
                 actions.append(act)
-                if act.outcome in (Outcome.ERROR, Outcome.SKIPPED_DEPENDENCY):
-                    if act.requested_name:
-                        failed_refs.add(act.requested_name)
-                    if act.name:
-                        failed_refs.add(act.name)
-                    failed_ids.add(action_id)
-                else:
-                    if act.outcome == Outcome.DELETE:
-                        deleted_names = {n for n in (act.name, act.resolved_name) if n}
-                        for target_map in (res_map, dom_global_res):
-                            for rk in [k for k, v in target_map.items() if k in deleted_names or v in deleted_names]:
-                                target_map.pop(rk, None)
-                        for n in deleted_names:
-                            ref_action_ids.pop(n, None)
-                            entity_action_ids[(act.object_type, n)] = act.action_id
-                        if act.target_uid:
-                            entity_action_ids.pop(("uid", act.target_uid), None)
-                    else:
-                        if act.resolved_name:
-                            res_map.pop(act.resolved_name, None)
-                            dom_global_res.pop(act.resolved_name, None)
-                        if act.requested_name and act.resolved_name and act.requested_name != act.resolved_name:
-                            res_map[act.requested_name] = act.resolved_name
-                            dom_global_res[act.requested_name] = act.resolved_name
-                        if (
-                            act.outcome == Outcome.UPDATE
-                            and act.name
-                            and act.resolved_name
-                            and act.name != act.resolved_name
-                        ):
-                            res_map[act.name] = act.resolved_name
-                            dom_global_res[act.name] = act.resolved_name
-                    if act.outcome in (Outcome.CREATE, Outcome.UPDATE):
-                        for ref_key in (act.requested_name, act.resolved_name, act.name):
-                            if ref_key:
-                                ref_action_ids[ref_key] = act.action_id
-                                entity_action_ids[(act.object_type, ref_key)] = act.action_id
-                        if act.target_uid:
-                            entity_action_ids[("uid", act.target_uid)] = act.action_id
-                        if act.outcome == Outcome.CREATE and act.name:
-                            entity_action_ids[("uid", f"planned:{act.object_type}:{act.name}")] = act.action_id
+                _record_action_outcome(act, dom_state)
 
-        global_name_resolutions = {k: v for dom_map in global_res_by_domain.values() for k, v in dom_map.items()}
+        global_name_resolutions = {
+            k: v for dom_state in domain_states.values() for k, v in dom_state.global_res.items()
+        }
         return Plan(
             created_at=self._now(),
             domain_stamps=domain_stamps,

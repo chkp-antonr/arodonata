@@ -368,6 +368,21 @@ def _apply_object_update_to_model(
         updates["members"] = new_members
         new_raw["members"] = new_raw_members
 
+    if "groups" in update_payload:
+        grp_val = update_payload["groups"]
+        if isinstance(grp_val, list):
+            new_raw["groups"] = [str(g) for g in grp_val]
+        elif isinstance(grp_val, Mapping):
+            _, new_raw_grps = _compute_post_update_members(
+                [],
+                {"members": existing.raw_data.get("groups") if isinstance(existing.raw_data, Mapping) else []},
+                {"members": diffs["groups"]} if "groups" in diffs else {},
+                {"members": grp_val},
+            )
+            new_raw["groups"] = [
+                str(d.get("name") or d.get("uid") or "") for d in new_raw_grps if d.get("name") or d.get("uid")
+            ]
+
     updates["raw_data"] = new_raw
     return existing.model_copy(update=updates)
 
@@ -422,6 +437,21 @@ def _apply_service_update_to_model(
         )
         updates["members"] = new_members
         new_raw["members"] = new_raw_members
+
+    if "groups" in update_payload:
+        grp_val = update_payload["groups"]
+        if isinstance(grp_val, list):
+            new_raw["groups"] = [str(g) for g in grp_val]
+        elif isinstance(grp_val, Mapping):
+            _, new_raw_grps = _compute_post_update_members(
+                [],
+                {"members": existing.raw_data.get("groups") if isinstance(existing.raw_data, Mapping) else []},
+                {"members": diffs["groups"]} if "groups" in diffs else {},
+                {"members": grp_val},
+            )
+            new_raw["groups"] = [
+                str(d.get("name") or d.get("uid") or "") for d in new_raw_grps if d.get("name") or d.get("uid")
+            ]
 
     updates["raw_data"] = new_raw
     return existing.model_copy(update=updates)

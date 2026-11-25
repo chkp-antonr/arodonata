@@ -15,11 +15,11 @@ Google NotebookLM / Claude Projects / Gemini Gems:
   02-api-reference.md                         - Every public class, SQLModel table, function,
                                                 and method in `src/arodonata`, extracted
                                                 directly from source via `ast`
-  03-examples-and-recipes.md                  - All 12 progressive examples (`01`..`12`) with
+  03-examples-and-recipes.md                  - All 13 progressive examples (`01`..`13`) with
                                                 resolved `--8<--` snippets and helper scripts
   04-capabilities-db-mcp-and-openspec.md      - Downstream integration guide (`CAPABILITIES.md`),
                                                 exact SQLModel table definitions (`tables.py`),
-                                                MCP tool registrations, and all 10 OpenSpec
+                                                MCP tool registrations, and all 12 OpenSpec
                                                 system specifications (`openspec/specs/*/spec.md`)
 
 Also writes `docs/_build_bundle/arodonata-v2-docs/` so running:
@@ -366,18 +366,20 @@ EXAMPLE_MD_FILES: list[tuple[str, str]] = [
     ("30-example-10-change-report-evidence.md", "examples/10-change-report-evidence.md"),
     ("31-example-11-otel-tracing.md", "examples/11-otel-tracing.md"),
     ("32-example-12-mcp-embedded.md", "examples/12-mcp-embedded.md"),
+    ("33-example-13-gateway-topology-matching.md", "examples/13-gateway-topology-matching.md"),
 ]
 
 
 def build_examples() -> str:
     parts = [
-        "# Arodonata v2 — Runnable Examples & Recipes (01..12)\n",
+        "# Arodonata v2 — Runnable Examples & Recipes (01..13)\n",
         "Worked examples showing common tasks with Arodonata v2: basic queries, multi-term search "
         "and structured cross-domain aggregation (`query_objects`), gateway/cluster/VSX relationships, "
         "paired streaming and batch smart refresh, rulebase queries and local filtering, session "
         "lifecycle, `WriteSession` + `SessionOverlay` read-your-own-writes isolation, declarative "
         "CPCRUD (`plan`/`apply`/`inverse`), auditable change reports (`OwnedSession` live numbering "
-        "vs published cached numbering), OpenTelemetry tracing, and embedded FastAPI MCP servers.\n",
+        "vs published cached numbering), OpenTelemetry tracing, embedded FastAPI MCP servers, and "
+        "gateway topology matching (`examples/13_gateway_topology_matching.py`).\n",
     ]
     for _, relpath in EXAMPLE_MD_FILES:
         text = (DOCS / relpath).read_text(encoding="utf-8")
@@ -403,7 +405,7 @@ def build_capabilities_and_specs() -> str:
         "This bundle combines the Downstream Integration Guide (`docs/CAPABILITIES.md`), "
         "the complete 15-table SQLModel database schema (`docs/architecture/database-schema.md` + "
         "`src/arodonata/adapters/storage/tables.py`), the consolidated MCP Server specification "
-        "(`docs/mcp/index.md`), and all 10 canonical OpenSpec capability specifications "
+        "(`docs/mcp/index.md`), and all 12 canonical OpenSpec capability specifications "
         "(`openspec/specs/*/spec.md`).\n",
         "\n---\n\n## Part 1: Downstream Integration Guide (`docs/CAPABILITIES.md`)\n",
         _resolve_snippets((DOCS / "CAPABILITIES.md").read_text(encoding="utf-8")),
@@ -452,7 +454,7 @@ def prepare_build_docs_bundle() -> None:
         encoding="utf-8",
     )
 
-    # 3. Details (numbered 01..32 in exact reading order)
+    # 3. Details (numbered 01..33 in exact reading order)
     for bundle_name, _, relpath in GUIDE_SOURCES:
         if relpath in ("index.md", "CAPABILITIES.md", "architecture/database-schema.md", "mcp/index.md"):
             continue

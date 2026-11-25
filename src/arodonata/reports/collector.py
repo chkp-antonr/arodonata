@@ -483,6 +483,7 @@ async def collect_change_report(
                     wait_for_task=True,
                 )
                 if ch_res.success and isinstance(ch_res.data, dict):
+                    sanitized_ch_data = sanitize_mapping(ch_res.data, known_sids=known_sids)
                     raw_responses.append(
                         RawResponse(
                             mgmt_name=mgmt_name,
@@ -490,11 +491,11 @@ async def collect_change_report(
                             session_uid=s_uid,
                             command="show-changes",
                             payload=changes_payload,
-                            response=sanitize_mapping(ch_res.data, known_sids=known_sids),
+                            response=sanitized_ch_data,
                         )
                     )
-                    ops_list = _parse_change_containers(ch_res.data, session_uid=s_uid)
-                    changes_user_name = _extract_session_user_from_changes(ch_res.data, session_uid=s_uid)
+                    ops_list = _parse_change_containers(sanitized_ch_data, session_uid=s_uid)
+                    changes_user_name = _extract_session_user_from_changes(sanitized_ch_data, session_uid=s_uid)
                     break
                 err_txt = redact_sid(
                     ch_res.error_message or ch_res.error_code or "show-changes failed",
@@ -549,7 +550,10 @@ async def collect_change_report(
                     )
                 )
 
-        session_user_name = str(s_meta_dict.get("user-name") or s_meta_dict.get("user") or changes_user_name or "")
+        session_user_name = redact_sid(
+            str(s_meta_dict.get("user-name") or s_meta_dict.get("user") or changes_user_name or ""),
+            known_sids=known_sids,
+        )
         known_names: dict[str, str] = {}
         bare_uids: set[str] = set()
         rule_changes, object_changes, filtered_sys_cnt = _parse_rule_and_object_changes(
@@ -588,12 +592,19 @@ async def collect_change_report(
         pub_at = parse_cp_publish_timestamp(s_meta_dict.get("publish-time"))
         last_mod = parse_cp_publish_timestamp(s_meta_dict.get("last-modify-time"))
         session_state = str(s_meta_dict.get("state") or ("published" if pub_at is not None else "open"))
+        redacted_names = {
+            redact_sid(str(k), known_sids=known_sids): redact_sid(str(v), known_sids=known_sids)
+            for k, v in known_names.items()
+        }
         session_report = SessionChangeReport(
             mgmt_name=mgmt_name,
             domain_name=dom_name,
             session_uid=s_uid,
-            session_name=str(s_meta_dict.get("name") or s_meta_dict.get("session-name") or ""),
-            description=str(s_meta_dict.get("description") or ""),
+            session_name=redact_sid(
+                str(s_meta_dict.get("name") or s_meta_dict.get("session-name") or ""),
+                known_sids=known_sids,
+            ),
+            description=redact_sid(str(s_meta_dict.get("description") or ""), known_sids=known_sids),
             user_name=session_user_name,
             state=session_state,
             published_at=pub_at,
@@ -606,7 +617,7 @@ async def collect_change_report(
             ),
             rule_changes=rule_changes,
             object_changes=object_changes,
-            resolved_names=dict(known_names),
+            resolved_names=redacted_names,
         )
         _replace_resolved_uids_in_session(session_report, known_names)
 

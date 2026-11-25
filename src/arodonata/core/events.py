@@ -125,6 +125,12 @@ class CPCRUDEvent(DomainEvent):
     outcome: str | None = None
     error: str | None = None
 
+    def model_post_init(self, __context: Any) -> None:
+        if self.message:
+            self.message = redact_sid(self.message)
+        if self.error:
+            self.error = redact_sid(self.error)
+
 
 class CPCRUDStartedEvent(CPCRUDEvent):
     """Emitted when a CPCRUD plan execution begins."""

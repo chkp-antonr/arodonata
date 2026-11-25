@@ -24,11 +24,19 @@ from arodonata.core.errors import (
     ConfigurationError,
     DomainNotFoundError,
     LockAcquisitionError,
-    ServerIdentityError,
 )
 from arodonata.core.models.common import ApiCallResult, CacheMode, to_naive_utc, utc_now
-from arodonata.core.models.domains import DomainInfo, DomainSyncState
+from arodonata.core.models.domains import (
+    DomainInfo,
+    DomainSyncState,
+    parse_domain_dict,
+)
 from arodonata.core.ports import ApiPort, DomainCachePort, LockPort, SyncStatePort
+from arodonata.core.services._domain_discovery import (
+    discover_mds_domains,
+    fetch_global_domain_entry,
+    fetch_mds_ip_map,
+)
 from arodonata.core.telemetry import span_attrs, traced
 
 
@@ -37,125 +45,6 @@ class _DomainServiceCachePort(DomainCachePort, SyncStatePort, Protocol):
 
 
 logger = arlogi.get_logger(__name__)
-
-_SINGLE_DOMAIN_UNSUPPORTED_TOKENS: tuple[str, ...] = (
-    "command_not_found",
-    "not supported on non-mds",
-    "multi-domain",
-    "unknown command",
-)
-
-_RBAC_DETAILS_LEVEL_TOKENS: tuple[str, ...] = (
-    "err_forbidden",
-    "forbidden",
-    "permission",
-    "not authorized",
-    "unauthorized",
-    "not allowed",
-    "details-level",
-    "details_level",
-    "privileges",
-)
-
-
-def _is_single_domain_unsupported(res: ApiCallResult) -> bool:
-    """Return `True` if `show-domains` failed because the server is a single-domain SmartCenter."""
-    err_lower = (res.error_message or "").lower()
-    code_lower = (res.error_code or "").lower()
-    return any(tok in err_lower or tok in code_lower for tok in _SINGLE_DOMAIN_UNSUPPORTED_TOKENS)
-
-
-def _is_rbac_or_details_level_rejected(res: ApiCallResult) -> bool:
-    """Return `True` if `show-domains` with `details-level=full` was rejected due to RBAC / permissions."""
-    if res.status_code in (401, 403):
-        return True
-    err_lower = (res.error_message or "").lower()
-    code_lower = (res.error_code or "").lower()
-    return any(tok in err_lower or tok in code_lower for tok in _RBAC_DETAILS_LEVEL_TOKENS)
-
-
-def parse_domain_dict(
-    mgmt_name: str,
-    raw: dict[str, Any],
-    *,
-    default_host: str | None = None,
-    mds_ip_by_name: dict[str, str] | None = None,
-    now_fn: Callable[[], datetime] = utc_now,
-) -> DomainInfo:
-    """Convert a raw Check Point `show-domains` / `show-domain` / `show-global-domain` object into `DomainInfo`."""
-    uid = str(raw.get("uid") or "")
-    name = str(raw.get("name") or "")
-    dom_type = str(raw.get("type") or raw.get("domain-type") or "domain")
-    is_global = dom_type in ("global", "global-domain") or name == "Global" or bool(raw.get("is_global"))
-
-    servers_raw = raw.get("servers")
-    servers_list: list[dict[str, Any]] = (
-        [s for s in servers_raw if isinstance(s, dict)] if isinstance(servers_raw, list) else []
-    )
-
-    active_ip: str | None = raw.get("active_ip") or raw.get("active-ip")
-    active_mds_ip: str | None = raw.get("active_mds_ip") or raw.get("active-mds-ip")
-    standby_ips: list[str] = []
-
-    for srv in servers_list:
-        srv_ip = srv.get("ipv4-address") or srv.get("ipv6-address") or srv.get("ip")
-        mds_obj = srv.get("multi-domain-server")
-        mds_ip: str | None = None
-        if isinstance(mds_obj, dict):
-            mds_ip = mds_obj.get("ipv4-address") or mds_obj.get("ipv6-address") or mds_obj.get("ip")
-            if not mds_ip and mds_ip_by_name and isinstance(mds_obj.get("name"), str):
-                mds_ip = mds_ip_by_name.get(mds_obj["name"])
-        elif isinstance(mds_obj, str) and mds_ip_by_name:
-            mds_ip = mds_ip_by_name.get(mds_obj)
-        elif isinstance(srv.get("multi-domain-server-ip"), str):
-            mds_ip = srv.get("multi-domain-server-ip")
-
-        is_active = bool(srv.get("active"))
-        if is_active:
-            if isinstance(srv_ip, str) and srv_ip:
-                active_ip = srv_ip
-            if isinstance(mds_ip, str) and mds_ip:
-                active_mds_ip = mds_ip
-        elif isinstance(srv_ip, str) and srv_ip:
-            standby_ips.append(srv_ip)
-
-    if active_ip is None and is_global and active_mds_ip:
-        active_ip = active_mds_ip
-
-    if active_ip is None and servers_list:
-        first_srv = servers_list[0]
-        first_ip = first_srv.get("ipv4-address") or first_srv.get("ipv6-address") or first_srv.get("ip")
-        if isinstance(first_ip, str) and first_ip:
-            active_ip = first_ip
-        first_mds = first_srv.get("multi-domain-server")
-        if active_mds_ip is None and isinstance(first_mds, dict):
-            mds_candidate = first_mds.get("ipv4-address") or first_mds.get("ip")
-            if isinstance(mds_candidate, str) and mds_candidate:
-                active_mds_ip = mds_candidate
-        elif active_mds_ip is None and isinstance(first_mds, str) and mds_ip_by_name:
-            mds_candidate = mds_ip_by_name.get(first_mds)
-            if mds_candidate:
-                active_mds_ip = mds_candidate
-
-    if active_ip is None and default_host:
-        active_ip = default_host
-    if active_mds_ip is None:
-        active_mds_ip = active_ip or default_host
-
-    return DomainInfo(
-        id=f"{mgmt_name}:{name}",
-        mgmt_name=mgmt_name,
-        uid=uid or f"domain:{mgmt_name}:{name}",
-        name=name,
-        domain_type="global" if is_global else dom_type,
-        active_ip=active_ip,
-        active_mds_ip=active_mds_ip,
-        standby_ips=standby_ips,
-        servers=servers_list,
-        is_global=is_global,
-        raw_data=dict(raw),
-        updated_at=now_fn(),
-    )
 
 
 class DomainListRefreshTracker:
@@ -437,138 +326,26 @@ class DomainService:
         )
 
         existing_domains = await self._cache.get_domains(mgmt_name, include_global=True)
-        existing_by_name: dict[str, DomainInfo] = {d.name: d for d in existing_domains}
 
-        transport_or_auth_failed = False
-        try:
-            res = await self._api.api_call(
-                mgmt_name,
-                "show-domains",
-                {"details-level": "full", "limit": 500, "offset": 0},
-                domain=None,
-            )
-        except ServerIdentityError:
-            raise
-        except Exception as exc:
-            transport_or_auth_failed = True
-            res = ApiCallResult(
-                success=False,
-                status_code=0,
-                error_code=type(exc).__name__,
-                error_message=str(exc),
-            )
+        async def _exec_cmd(cmd: str, payload: dict[str, Any]) -> ApiCallResult:
+            return await self._api.api_call(mgmt_name, cmd, payload, domain=None)
 
-        details_level = "full"
-        is_single_domain = False
-        fallback_failed_res: ApiCallResult | None = None
-
-        if not res.success:
-            is_single_domain = _is_single_domain_unsupported(res)
-            if not is_single_domain and not transport_or_auth_failed and _is_rbac_or_details_level_rejected(res):
-                logger.warning(
-                    f"show-domains (details-level=full) on '{mgmt_name}' rejected "
-                    f"({res.error_code or res.status_code}: {res.error_message}); retrying with details-level=standard.",
-                    mgmt_name=mgmt_name,
-                    error_code=res.error_code or str(res.status_code),
-                    error_message=res.error_message,
-                )
-                try:
-                    fallback_res = await self._api.api_call(
-                        mgmt_name,
-                        "show-domains",
-                        {"details-level": "standard", "limit": 500, "offset": 0},
-                        domain=None,
-                    )
-                except ServerIdentityError:
-                    raise
-                except Exception as exc:
-                    fallback_res = ApiCallResult(
-                        success=False,
-                        status_code=0,
-                        error_code=type(exc).__name__,
-                        error_message=str(exc),
-                    )
-                if fallback_res.success:
-                    res = fallback_res
-                    details_level = "standard"
-                else:
-                    fallback_failed_res = fallback_res
-                    if _is_single_domain_unsupported(fallback_res):
-                        is_single_domain = True
-
-        discovered: list[DomainInfo] = []
-        mds_ip_by_name: dict[str, str] = {}
-
-        if res.success:
-            first_page = res.data.get("objects")
-            raw_objs: list[Any] = list(first_page) if isinstance(first_page, list) else []
-            total_domains = int(res.data.get("total") or len(raw_objs))
-            page_offset = len(raw_objs)
-            while page_offset < total_domains and isinstance(first_page, list) and len(first_page) > 0:
-                try:
-                    page_res = await self._api.api_call(
-                        mgmt_name,
-                        "show-domains",
-                        {
-                            "details-level": details_level,
-                            "limit": 500,
-                            "offset": page_offset,
-                        },
-                        domain=None,
-                    )
-                except ServerIdentityError:
-                    raise
-                except Exception as exc:
-                    logger.warning(
-                        f"Pagination of show-domains on '{mgmt_name}' interrupted at offset {page_offset}: {exc}",
-                        mgmt_name=mgmt_name,
-                        offset=page_offset,
-                        error=str(exc),
-                    )
-                    break
-                if not page_res.success:
-                    break
-                next_objs = page_res.data.get("objects")
-                if not isinstance(next_objs, list) or not next_objs:
-                    break
-                raw_objs.extend(next_objs)
-                page_offset += len(next_objs)
-
-            if raw_objs:
-                needs_mdss = any(
-                    isinstance(srv.get("multi-domain-server"), str)
-                    for raw in raw_objs
-                    if isinstance(raw, dict) and isinstance(raw.get("servers"), list)
-                    for srv in raw["servers"]
-                    if isinstance(srv, dict)
-                )
-                if needs_mdss:
-                    mds_ip_by_name = await self._fetch_mds_ip_map(mgmt_name)
-
-                for raw in raw_objs:
-                    if isinstance(raw, dict) and raw.get("name"):
-                        dom = parse_domain_dict(
-                            mgmt_name,
-                            raw,
-                            default_host=default_host,
-                            mds_ip_by_name=mds_ip_by_name,
-                            now_fn=self._now,
-                        )
-                        # If details-level=standard returned no `servers` array, preserve previously cached
-                        # CMA active_ip, active_mds_ip, standby_ips, and servers for this domain!
-                        prev_dom = existing_by_name.get(dom.name)
-                        if not dom.servers and prev_dom is not None and (prev_dom.servers or prev_dom.active_ip):
-                            dom = dom.model_copy(
-                                update={
-                                    "active_ip": prev_dom.active_ip or dom.active_ip,
-                                    "active_mds_ip": prev_dom.active_mds_ip or dom.active_mds_ip,
-                                    "standby_ips": list(prev_dom.standby_ips)
-                                    if prev_dom.standby_ips
-                                    else dom.standby_ips,
-                                    "servers": list(prev_dom.servers) if prev_dom.servers else dom.servers,
-                                }
-                            )
-                        discovered.append(dom)
+        discovery = await discover_mds_domains(
+            mgmt_name,
+            _exec_cmd,
+            existing_domains=existing_domains,
+            default_host=default_host,
+            use_default_host_on_parse=True,
+            fallback_uid=True,
+            need_mdss_for_global=False,
+            now_fn=self._now,
+            log=logger,
+        )
+        res = discovery.res
+        fallback_failed_res = discovery.fallback_failed_res
+        is_single_domain = discovery.is_single_domain
+        discovered = list(discovery.domains)
+        mds_ip_by_name = discovery.mds_ip_by_name
 
         # If show-domains succeeded with no objects, or failed because server is single-domain SmartCenter,
         # synthesize the default single-domain entry if no user domains were returned.
@@ -653,28 +430,8 @@ class DomainService:
         return discovered
 
     async def _fetch_mds_ip_map(self, mgmt_name: str) -> dict[str, str]:
-        """Query `show-mdss` on the system domain to map MDS member names to IPv4 addresses."""
-        try:
-            res = await self._api.api_call(
-                mgmt_name,
-                "show-mdss",
-                {"details-level": "full", "limit": 500},
-                domain=None,
-            )
-            if res.success and isinstance(res.data.get("objects"), list):
-                result: dict[str, str] = {}
-                for obj in res.data["objects"]:
-                    if isinstance(obj, dict):
-                        m_name = obj.get("name")
-                        m_ip = obj.get("ipv4-address") or obj.get("ip")
-                        if isinstance(m_name, str) and m_name and isinstance(m_ip, str) and m_ip:
-                            result[m_name] = m_ip
-                return result
-        except ServerIdentityError:
-            raise
-        except Exception:
-            pass
-        return {}
+        """Query `show-mdss` on the system domain to map MDS member names to IP addresses."""
+        return await fetch_mds_ip_map(lambda cmd, payload: self._api.api_call(mgmt_name, cmd, payload, domain=None))
 
     async def _fetch_or_synthesize_global_domain(
         self,
@@ -685,41 +442,37 @@ class DomainService:
     ) -> DomainInfo:
         """Query `show-global-domain` or synthesize a canonical `Global` `DomainInfo` row."""
         now = self._now()
-        try:
-            res = await self._api.api_call(
-                mgmt_name,
-                "show-global-domain",
-                {"name": "Global", "details-level": "full"},
-                domain=None,
-            )
-            if res.success and isinstance(res.data, dict) and res.data.get("uid"):
-                raw = dict(res.data)
-                raw.setdefault("name", "Global")
-                raw["is_global"] = True
-                eff_mds_ips = dict(mds_ip_by_name or {})
-                if not eff_mds_ips and any(
-                    isinstance(srv, dict) and isinstance(srv.get("multi-domain-server"), str)
-                    for srv in (raw.get("servers") or [])
-                ):
-                    eff_mds_ips = await self._fetch_mds_ip_map(mgmt_name)
-                dom = parse_domain_dict(
-                    mgmt_name,
-                    raw,
-                    default_host=default_host,
-                    mds_ip_by_name=eff_mds_ips,
-                    now_fn=self._now,
-                )
-                return dom.model_copy(
-                    update={
-                        "name": "Global",
-                        "is_global": True,
-                        "domain_type": "global",
-                    }
-                )
-        except ServerIdentityError:
-            raise
-        except Exception:
-            pass
+        eff_mds_ips = dict(mds_ip_by_name or {})
+
+        async def _exec_global(cmd: str, payload: dict[str, Any]) -> ApiCallResult:
+            return await self._api.api_call(mgmt_name, cmd, payload, domain=None)
+
+        dom = await fetch_global_domain_entry(
+            mgmt_name,
+            _exec_global,
+            default_host=default_host,
+            mds_ip_by_name=eff_mds_ips,
+            now_fn=self._now,
+            require_uid=True,
+            fallback_uid=True,
+        )
+        if dom is not None:
+            if not eff_mds_ips and any(
+                isinstance(srv, dict) and isinstance(srv.get("multi-domain-server"), str) for srv in dom.servers
+            ):
+                fetched_ips = await self._fetch_mds_ip_map(mgmt_name)
+                if fetched_ips:
+                    raw_with_ips = dict(dom.raw_data)
+                    raw_with_ips.setdefault("name", "Global")
+                    raw_with_ips["is_global"] = True
+                    dom = parse_domain_dict(
+                        mgmt_name,
+                        raw_with_ips,
+                        default_host=default_host,
+                        mds_ip_by_name=fetched_ips,
+                        now_fn=self._now,
+                    ).model_copy(update={"name": "Global", "is_global": True, "domain_type": "global"})
+            return dom
 
         return DomainInfo(
             id=f"{mgmt_name}:Global",

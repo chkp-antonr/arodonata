@@ -169,7 +169,10 @@ def _sanitize_exception_chain(exc: BaseException, seen: set[int] | None = None) 
 def traced[**P, R](func: Callable[P, R]) -> Callable[P, R]: ...
 @overload
 def traced[**P, R](
-    *, name: str | None = None, attrs: dict[str, Any] | None = None
+    *,
+    name: str | None = None,
+    attrs: dict[str, Any] | None = None,
+    module: str | None = None,
 ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
 
 
@@ -178,10 +181,13 @@ def traced[**P, R](
     *,
     name: str | None = None,
     attrs: dict[str, Any] | None = None,
+    module: str | None = None,
 ) -> Any:
     """Wrap a function in `@arlogi.otel.traced` while scrubbing chained `__cause__`/`__context__` exceptions."""
 
     def decorate(fn: Callable[P, R]) -> Callable[P, R]:
+        if module is not None:
+            fn.__module__ = module
         if inspect.isasyncgenfunction(fn):
 
             @functools.wraps(fn)

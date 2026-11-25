@@ -8,10 +8,12 @@ Check Point Management API round-trips, formatting output as `"markdown"`,
 
 from __future__ import annotations
 
+import html
 import ipaddress
 import json
 import shlex
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from arodonata.core.models.objects import CPObject
@@ -36,106 +38,119 @@ from arodonata.rulebase.models import (
 )
 
 
-def _object_matches_ip_or_subnet(obj: CPObject, query_term: str) -> bool:
-    """Return `True` if `obj` matches an IPv4 address or CIDR query."""
+def _parse_ip_query(query_term: str) -> tuple[bool, ipaddress.IPv4Network | ipaddress.IPv4Address] | None:
+    """Pre-parse an IPv4 address or CIDR filter term once."""
     try:
         if "/" in query_term:
-            q_net = ipaddress.IPv4Network(query_term, strict=False)
+            return True, ipaddress.IPv4Network(query_term, strict=False)
+        return False, ipaddress.IPv4Address(query_term)
+    except ValueError:
+        return None
+
+
+def _object_matches_ip_or_subnet(
+    obj: CPObject,
+    query_term: str,
+    *,
+    parsed_query: tuple[bool, ipaddress.IPv4Network | ipaddress.IPv4Address] | None = None,
+) -> bool:
+    """Return `True` if `obj` matches an IPv4 address or CIDR query."""
+    eff_query = parsed_query if parsed_query is not None else _parse_ip_query(query_term)
+    if eff_query is None:
+        return False
+    is_cidr, parsed = eff_query
+    try:
+        if is_cidr:
+            assert isinstance(parsed, ipaddress.IPv4Network)
             if obj.ipv4_address:
-                return ipaddress.IPv4Address(obj.ipv4_address) in q_net
+                return ipaddress.IPv4Address(obj.ipv4_address) in parsed
             if obj.subnet4 and obj.mask_length4 is not None:
                 o_net = ipaddress.IPv4Network(f"{obj.subnet4}/{obj.mask_length4}", strict=False)
-                return o_net.overlaps(q_net)
+                return o_net.overlaps(parsed)
             if obj.ipv4_address_first and obj.ipv4_address_last:
                 first_int = int(ipaddress.IPv4Address(obj.ipv4_address_first))
                 last_int = int(ipaddress.IPv4Address(obj.ipv4_address_last))
-                q_first = int(q_net.network_address)
-                q_last = int(q_net.broadcast_address)
+                q_first = int(parsed.network_address)
+                q_last = int(parsed.broadcast_address)
                 return first_int <= q_last and q_first <= last_int
         else:
-            q_ip = ipaddress.IPv4Address(query_term)
+            assert isinstance(parsed, ipaddress.IPv4Address)
             if obj.ipv4_address:
-                return ipaddress.IPv4Address(obj.ipv4_address) == q_ip
+                return ipaddress.IPv4Address(obj.ipv4_address) == parsed
             if obj.subnet4 and obj.mask_length4 is not None:
                 o_net = ipaddress.IPv4Network(f"{obj.subnet4}/{obj.mask_length4}", strict=False)
-                return q_ip in o_net
+                return parsed in o_net
             if obj.ipv4_address_first and obj.ipv4_address_last:
                 first_ip = ipaddress.IPv4Address(obj.ipv4_address_first)
                 last_ip = ipaddress.IPv4Address(obj.ipv4_address_last)
-                return first_ip <= q_ip <= last_ip
+                return first_ip <= parsed <= last_ip
     except ValueError:
         return False
     return False
 
 
-def _service_matches_term(svc: CPService, term_lower: str) -> bool:
-    """Return `True` if `svc` matches a service name, UID, port, or protocol term."""
-    if term_lower in svc.name.lower() or term_lower == svc.uid.lower():
+def _port_matches_str(port_str: str, candidate: str) -> bool:
+    """Return `True` if `candidate` matches an exact port string or numeric port range."""
+    if candidate == port_str:
         return True
-    if svc.protocol and term_lower == svc.protocol.lower():
+    if "-" in port_str and candidate.isdigit():
+        parts = port_str.split("-", 1)
+        if parts[0].isdigit() and parts[1].isdigit():
+            q_port = int(candidate)
+            return int(parts[0]) <= q_port <= int(parts[1])
+    return False
+
+
+def _service_matches_term(svc: CPService, term_lower: str) -> bool:
+    """Return `True` if `svc` matches a service name, UID, type, port, or protocol term."""
+    if term_lower in svc.name.lower() or term_lower == svc.uid.lower() or term_lower == svc.type.lower():
+        return True
+    eff_proto = (
+        (svc.protocol or ("tcp" if svc.type == "service-tcp" else "udp" if svc.type == "service-udp" else ""))
+        .strip()
+        .lower()
+    )
+    if eff_proto and term_lower == eff_proto:
         return True
     if svc.port:
         port_str = svc.port.strip().lower()
-        if term_lower == port_str or f"/{port_str}" in term_lower:
-            return True
-        # Handle port ranges like "8000-8080" when searching for "8080" or "8050"
-        if "-" in port_str and term_lower.isdigit():
-            parts = port_str.split("-", 1)
-            if parts[0].isdigit() and parts[1].isdigit():
-                q_port = int(term_lower)
-                if int(parts[0]) <= q_port <= int(parts[1]):
-                    return True
-    if svc.protocol and svc.port:
-        combo = f"{svc.protocol.lower()}/{svc.port.lower()}"
-        if term_lower == combo or term_lower == svc.type.lower():
+        if "/" in term_lower:
+            proto_part, port_part = term_lower.split("/", 1)
+            return bool(eff_proto and proto_part == eff_proto and _port_matches_str(port_str, port_part))
+        if _port_matches_str(port_str, term_lower):
             return True
     return False
 
 
-def _build_matching_object_identifiers(
-    term: str,
-    objects: Sequence[CPObject],
+def _build_reverse_parents(
+    items: Sequence[CPObject] | Sequence[CPService],
+) -> tuple[dict[str, Any], dict[str, set[str]]]:
+    """Build `by_uid` and member->parent-group-UID adjacency maps once for a sequence of objects or services."""
+    by_uid: dict[str, Any] = {item.uid: item for item in items}
+    by_name: dict[str, Any] = {item.name.lower(): item for item in items}
+    reverse_parents: dict[str, set[str]] = {}
+    for item in items:
+        if item.members:
+            for member in item.members:
+                reverse_parents.setdefault(member, set()).add(item.uid)
+                m_obj = by_name.get(member.lower())
+                if m_obj is not None:
+                    reverse_parents.setdefault(m_obj.uid, set()).add(item.uid)
+    return by_uid, reverse_parents
+
+
+def _expand_parent_identifiers(
+    direct_uids: set[str],
+    by_uid: Mapping[str, Any],
+    reverse_parents: Mapping[str, set[str]],
+    matched_identifiers: set[str],
 ) -> set[str]:
-    """Resolve all object names and UIDs (including parent groups) matching `term`."""
-    term_lower = term.strip().lower()
-    if not term_lower:
-        return set()
-
-    by_uid: dict[str, CPObject] = {o.uid: o for o in objects}
-    by_name: dict[str, CPObject] = {o.name.lower(): o for o in objects}
-
-    direct_uids: set[str] = set()
-    matched_identifiers: set[str] = set()
-
-    for obj in objects:
-        if (
-            term_lower in obj.name.lower()
-            or term_lower == obj.uid.lower()
-            or (obj.ipv4_address and term_lower in obj.ipv4_address.lower())
-            or (obj.subnet4 and term_lower in obj.subnet4.lower())
-            or (obj.fqdn and term_lower in obj.fqdn.lower())
-            or _object_matches_ip_or_subnet(obj, term.strip())
-        ):
-            direct_uids.add(obj.uid)
-            matched_identifiers.add(obj.name.lower())
-            matched_identifiers.add(obj.uid.lower())
-
+    """Expand direct matching UIDs to all transitive ancestor group names/UIDs (cycle-safe)."""
     if not direct_uids:
         return matched_identifiers
-
-    # Expand to parent groups that contain any direct match (up to 5 levels)
-    reverse_parents: dict[str, set[str]] = {}
-    for obj in objects:
-        if obj.members:
-            for m in obj.members:
-                reverse_parents.setdefault(m, set()).add(obj.uid)
-                m_obj = by_name.get(m.lower())
-                if m_obj is not None:
-                    reverse_parents.setdefault(m_obj.uid, set()).add(obj.uid)
-
     frontier = set(direct_uids)
     visited = set(direct_uids)
-    for _ in range(5):
+    while frontier:
         next_frontier: set[str] = set()
         for u in frontier:
             for p_uid in reverse_parents.get(u, ()):
@@ -149,21 +164,58 @@ def _build_matching_object_identifiers(
         if not next_frontier:
             break
         frontier = next_frontier
-
     return matched_identifiers
+
+
+def _build_matching_object_identifiers(
+    term: str,
+    objects: Sequence[CPObject],
+    *,
+    by_uid: Mapping[str, CPObject] | None = None,
+    reverse_parents: Mapping[str, set[str]] | None = None,
+) -> set[str]:
+    """Resolve all object names and UIDs (including parent groups) matching `term`."""
+    term_clean = term.strip()
+    term_lower = term_clean.lower()
+    if not term_lower:
+        return set()
+
+    parsed_query = _parse_ip_query(term_clean)
+    direct_uids: set[str] = set()
+    matched_identifiers: set[str] = set()
+
+    for obj in objects:
+        if (
+            term_lower in obj.name.lower()
+            or term_lower == obj.uid.lower()
+            or (obj.ipv4_address and term_lower in obj.ipv4_address.lower())
+            or (obj.subnet4 and term_lower in obj.subnet4.lower())
+            or (obj.fqdn and term_lower in obj.fqdn.lower())
+            or _object_matches_ip_or_subnet(obj, term_clean, parsed_query=parsed_query)
+        ):
+            direct_uids.add(obj.uid)
+            matched_identifiers.add(obj.name.lower())
+            matched_identifiers.add(obj.uid.lower())
+
+    if not direct_uids:
+        return matched_identifiers
+
+    if by_uid is None or reverse_parents is None:
+        by_uid, reverse_parents = _build_reverse_parents(objects)
+    return _expand_parent_identifiers(direct_uids, by_uid, reverse_parents, matched_identifiers)
 
 
 def _build_matching_service_identifiers(
     term: str,
     services: Sequence[CPService],
+    *,
+    by_uid: Mapping[str, CPService] | None = None,
+    reverse_parents: Mapping[str, set[str]] | None = None,
 ) -> set[str]:
     """Resolve all service names and UIDs (including service-groups) matching `term`."""
     term_lower = term.strip().lower()
     if not term_lower:
         return set()
-
-    by_uid: dict[str, CPService] = {s.uid: s for s in services}
-    by_name: dict[str, CPService] = {s.name.lower(): s for s in services}
 
     direct_uids: set[str] = set()
     matched_identifiers: set[str] = set()
@@ -177,33 +229,58 @@ def _build_matching_service_identifiers(
     if not direct_uids:
         return matched_identifiers
 
-    reverse_parents: dict[str, set[str]] = {}
-    for svc in services:
-        if svc.members:
-            for m in svc.members:
-                reverse_parents.setdefault(m, set()).add(svc.uid)
-                m_svc = by_name.get(m.lower())
-                if m_svc is not None:
-                    reverse_parents.setdefault(m_svc.uid, set()).add(svc.uid)
+    if by_uid is None or reverse_parents is None:
+        by_uid, reverse_parents = _build_reverse_parents(services)
+    return _expand_parent_identifiers(direct_uids, by_uid, reverse_parents, matched_identifiers)
 
-    frontier = set(direct_uids)
-    visited = set(direct_uids)
-    for _ in range(5):
-        next_frontier: set[str] = set()
-        for u in frontier:
-            for p_uid in reverse_parents.get(u, ()):
-                if p_uid not in visited:
-                    visited.add(p_uid)
-                    next_frontier.add(p_uid)
-                    p_svc = by_uid.get(p_uid)
-                    if p_svc is not None:
-                        matched_identifiers.add(p_svc.name.lower())
-                        matched_identifiers.add(p_svc.uid.lower())
-        if not next_frontier:
-            break
-        frontier = next_frontier
 
-    return matched_identifiers
+@dataclass(frozen=True, slots=True)
+class _RulebaseFilterIndex:
+    """Precomputed group-membership graphs and per-token matching identifier sets for `filter_numbered_rulebase`."""
+
+    obj_matches_by_term: dict[str, set[str]] = field(default_factory=dict)
+    svc_matches_by_term: dict[str, set[str]] = field(default_factory=dict)
+
+
+def _build_rulebase_filter_index(
+    tokens: Sequence[tuple[str | None, str]],
+    objects: Sequence[CPObject],
+    services: Sequence[CPService],
+) -> _RulebaseFilterIndex:
+    """Build object/service reverse-parent graphs once and precompute per-token match sets."""
+    if not tokens:
+        return _RulebaseFilterIndex()
+
+    obj_tokens = [val for qual, val in tokens if qual in ("src", "source", "dst", "destination", None)]
+    svc_tokens = [val for qual, val in tokens if qual in ("svc", "service", None)]
+
+    obj_matches: dict[str, set[str]] = {}
+    if obj_tokens and objects:
+        obj_by_uid, obj_rev = _build_reverse_parents(objects)
+        for val in obj_tokens:
+            key = val.strip().lower()
+            if key not in obj_matches:
+                obj_matches[key] = _build_matching_object_identifiers(
+                    val,
+                    objects,
+                    by_uid=obj_by_uid,
+                    reverse_parents=obj_rev,
+                )
+
+    svc_matches: dict[str, set[str]] = {}
+    if svc_tokens and services:
+        svc_by_uid, svc_rev = _build_reverse_parents(services)
+        for val in svc_tokens:
+            key = val.strip().lower()
+            if key not in svc_matches:
+                svc_matches[key] = _build_matching_service_identifiers(
+                    val,
+                    services,
+                    by_uid=svc_by_uid,
+                    reverse_parents=svc_rev,
+                )
+
+    return _RulebaseFilterIndex(obj_matches_by_term=obj_matches, svc_matches_by_term=svc_matches)
 
 
 def _parse_filter_tokens(filter_text: str) -> list[tuple[str | None, str]]:
@@ -287,10 +364,21 @@ def rule_matches_filter(
     *,
     objects: Sequence[CPObject] = (),
     services: Sequence[CPService] = (),
+    _precomputed: _RulebaseFilterIndex | None = None,
 ) -> bool:
     """Return `True` if `rule` satisfies all `(qualifier, value)` filter tokens."""
     if not tokens:
         return True
+
+    def _obj_ids(term: str) -> set[str]:
+        if _precomputed is not None:
+            return _precomputed.obj_matches_by_term.get(term.strip().lower(), set())
+        return _build_matching_object_identifiers(term, objects)
+
+    def _svc_ids(term: str) -> set[str]:
+        if _precomputed is not None:
+            return _precomputed.svc_matches_by_term.get(term.strip().lower(), set())
+        return _build_matching_service_identifiers(term, services)
 
     for qual, val in tokens:
         v_low = val.lower()
@@ -322,17 +410,17 @@ def rule_matches_filter(
                 return False
         elif qual in ("src", "source"):
             refs = _rule_ref_values(rule, "source")
-            obj_ids = _build_matching_object_identifiers(val, objects)
+            obj_ids = _obj_ids(val)
             if not any(v_low in r or r in obj_ids for r in refs):
                 return False
         elif qual in ("dst", "destination"):
             refs = _rule_ref_values(rule, "destination")
-            obj_ids = _build_matching_object_identifiers(val, objects)
+            obj_ids = _obj_ids(val)
             if not any(v_low in r or r in obj_ids for r in refs):
                 return False
         elif qual in ("svc", "service"):
             refs = _rule_ref_values(rule, "service")
-            svc_ids = _build_matching_service_identifiers(val, services)
+            svc_ids = _svc_ids(val)
             if not any(v_low in r or r in svc_ids for r in refs):
                 return False
         else:
@@ -354,8 +442,8 @@ def rule_matches_filter(
             if any(v_low in part for part in haystack_parts if part):
                 continue
 
-            obj_ids = _build_matching_object_identifiers(val, objects)
-            svc_ids = _build_matching_service_identifiers(val, services)
+            obj_ids = _obj_ids(val)
+            svc_ids = _svc_ids(val)
             all_refs = set(
                 _rule_ref_values(rule, "source")
                 + _rule_ref_values(rule, "destination")
@@ -367,6 +455,29 @@ def rule_matches_filter(
     return True
 
 
+def _esc_rule_md(val: Any) -> str:
+    """Escape HTML tags, newlines, pipes, and Markdown link/code delimiters in rulebase table cells."""
+    if val is None:
+        return ""
+    escaped = html.escape(str(val), quote=False)
+    return (
+        escaped.replace("\r\n", " ")
+        .replace("\r", " ")
+        .replace("\n", " ")
+        .replace("|", "\\|")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+        .replace("`", "\\`")
+    )
+
+
+def _esc_rule_code(val: Any) -> str:
+    """Neutralize newlines, pipes, and backticks inside inline Markdown code spans."""
+    if val is None:
+        return ""
+    return str(val).replace("\r\n", " ").replace("\r", " ").replace("\n", " ").replace("|", "\\|").replace("`", "'")
+
+
 def format_rules_markdown(
     target_name: str,
     rulebase_type: str,
@@ -374,12 +485,12 @@ def format_rules_markdown(
     sections: Sequence[NumberedSection] | None = None,
 ) -> str:
     """Format numbered rules (and optional sections) into a Markdown table."""
-    lines: list[str] = [f"# Rulebase: {target_name} ({rulebase_type})", ""]
+    lines: list[str] = [f"# Rulebase: {_esc_rule_md(target_name)} ({_esc_rule_md(rulebase_type)})", ""]
     if sections:
         lines.append("## Sections")
         lines.append("")
         for sec in sections:
-            lines.append(f"- **{sec.name}** (`{sec.range_label}`)")
+            lines.append(f"- **{_esc_rule_md(sec.name)}** (`{_esc_rule_code(sec.range_label)}`)")
         lines.append("")
 
     if rulebase_type == "nat":
@@ -390,19 +501,20 @@ def format_rules_markdown(
         for r in rules:
             en = "yes" if r.enabled else "no"
             lines.append(
-                f"| {r.rule_number} | {r.name} | {en} | {r.method or ''} | "
-                f"{r.original_source or 'Any'} | {r.original_destination or 'Any'} | {r.original_service or 'Any'} | "
-                f"{r.translated_source or 'Original'} | {r.translated_destination or 'Original'} | "
-                f"{r.translated_service or 'Original'} | {r.comments} |"
+                f"| {_esc_rule_md(r.rule_number)} | {_esc_rule_md(r.name)} | {en} | {_esc_rule_md(r.method or '')} | "
+                f"{_esc_rule_md(r.original_source or 'Any')} | {_esc_rule_md(r.original_destination or 'Any')} | "
+                f"{_esc_rule_md(r.original_service or 'Any')} | {_esc_rule_md(r.translated_source or 'Original')} | "
+                f"{_esc_rule_md(r.translated_destination or 'Original')} | "
+                f"{_esc_rule_md(r.translated_service or 'Original')} | {_esc_rule_md(r.comments)} |"
             )
     else:
         lines.append("| # | Name | Enabled | Source | Destination | Service | Action | Track | Comments |")
         lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
         for r in rules:
             en = "yes" if r.enabled else "no"
-            src = ", ".join(r.source) if r.source else "Any"
-            dst = ", ".join(r.destination) if r.destination else "Any"
-            svc = ", ".join(r.service) if r.service else "Any"
+            src = ", ".join(_esc_rule_md(x) for x in r.source) if r.source else "Any"
+            dst = ", ".join(_esc_rule_md(x) for x in r.destination) if r.destination else "Any"
+            svc = ", ".join(_esc_rule_md(x) for x in r.service) if r.service else "Any"
             if r.source_negate:
                 src = f"NOT ({src})"
             if r.destination_negate:
@@ -410,8 +522,8 @@ def format_rules_markdown(
             if r.service_negate:
                 svc = f"NOT ({svc})"
             lines.append(
-                f"| {r.rule_number} | {r.name} | {en} | {src} | {dst} | {svc} | "
-                f"{r.action or ''} | {r.track or ''} | {r.comments} |"
+                f"| {_esc_rule_md(r.rule_number)} | {_esc_rule_md(r.name)} | {en} | {src} | {dst} | {svc} | "
+                f"{_esc_rule_md(r.action or '')} | {_esc_rule_md(r.track or '')} | {_esc_rule_md(r.comments)} |"
             )
     return "\n".join(lines)
 
@@ -593,7 +705,12 @@ def filter_numbered_rulebase(
     """Evaluate `filter_query` locally against `rulebase` and format the matching rules."""
     tokens = _parse_filter_tokens(filter_query)
     all_rules = rulebase.flat_rules
-    matched_rules = [r for r in all_rules if rule_matches_filter(r, tokens, objects=objects, services=services)]
+    precomputed = _build_rulebase_filter_index(tokens, objects, services)
+    matched_rules = [
+        r
+        for r in all_rules
+        if rule_matches_filter(r, tokens, objects=objects, services=services, _precomputed=precomputed)
+    ]
 
     if isinstance(rulebase, PackageRulebase):
         target_name = rulebase.package_name

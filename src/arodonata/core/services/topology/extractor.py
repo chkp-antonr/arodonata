@@ -21,11 +21,11 @@ from arodonata.core.models.topology import (
 )
 from arodonata.core.ports import ApiPort, RulebaseRefreshPort
 from arodonata.core.primitives import MAX_IPV4_INT
-from arodonata.core.services.asset_service import (
+from arodonata.core.services._asset_linking import (
     VSX_CHILD_TYPES,
-    AssetRefreshService,
     _extract_interfaces_from_generic,
 )
+from arodonata.core.services.asset_service import AssetRefreshService
 from arodonata.core.services.sync_coordinator import DomainProbeResult, DomainSyncCoordinator
 from arodonata.core.services.topology._shared import (
     _TOPOLOGY_OBJECT_SYNC_TYPES,

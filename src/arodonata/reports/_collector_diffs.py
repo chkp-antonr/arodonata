@@ -7,6 +7,7 @@ from typing import Any
 
 from arodonata.core.models.rulebase import RulebaseType
 from arodonata.core.primitives import is_uuid
+from arodonata.reports._object_summary import build_object_summary_fields, format_plain_object_summary
 from arodonata.reports.models import ChangeOperation, FieldDiff
 
 RULE_OBJECT_TYPES: frozenset[str] = frozenset(
@@ -407,96 +408,14 @@ def _is_system_maintenance_object(
 
 def _build_object_summary_fields(core: dict[str, Any], members: list[str]) -> dict[str, Any]:
     """Extract structured summary attributes for a non-rule policy object."""
-    fields: dict[str, Any] = {}
-    for key in (
-        "ipv4-address",
-        "ipv6-address",
-        "subnet4",
-        "mask-length4",
-        "subnet-mask",
-        "subnet6",
-        "mask-length6",
-        "ipv4-address-first",
-        "ipv4-address-last",
-        "ipv6-address-first",
-        "ipv6-address-last",
-        "port",
-        "protocol",
-        "ip-protocol",
-        "icmp-type",
-        "icmp-code",
-        "fqdn",
-        "primary-category",
-        "urls-defined-as-regular-expression",
-    ):
-        if core.get(key) is not None:
-            fields[key] = core[key]
-    raw_urls = core.get("url-list")
-    if isinstance(raw_urls, list):
-        clean_urls = [str(u).strip() for u in raw_urls if str(u).strip()]
-        if clean_urls:
-            fields["url-list"] = clean_urls
-    if members:
-        fields["members"] = list(members)
-    desc_str = str(core.get("description") or "").strip()
-    if desc_str:
-        fields["description"] = desc_str
-    comments_str = str(core.get("comments") or "").strip()
-    if comments_str:
-        fields["comments"] = comments_str
-    return fields
+    return build_object_summary_fields(core, members=members)
 
 
 def _format_object_summary_from_fields(fields: dict[str, Any]) -> str:
     """Format `summary_fields` into a human-readable summary string."""
-    summary_parts: list[str] = []
-    if fields.get("ipv4-address") is not None:
-        summary_parts.append(f"ipv4-address={fields['ipv4-address']}")
-    if fields.get("ipv6-address") is not None:
-        summary_parts.append(f"ipv6-address={fields['ipv6-address']}")
-    if fields.get("subnet4") is not None:
-        if fields.get("mask-length4") is not None:
-            summary_parts.append(f"subnet4={fields['subnet4']}/{fields['mask-length4']}")
-        elif fields.get("subnet-mask") is not None:
-            summary_parts.append(f"subnet4={fields['subnet4']}/{fields['subnet-mask']}")
-        else:
-            summary_parts.append(f"subnet4={fields['subnet4']}")
-    if fields.get("subnet6") is not None:
-        if fields.get("mask-length6") is not None:
-            summary_parts.append(f"subnet6={fields['subnet6']}/{fields['mask-length6']}")
-        else:
-            summary_parts.append(f"subnet6={fields['subnet6']}")
-    if fields.get("ipv4-address-first") is not None or fields.get("ipv4-address-last") is not None:
-        summary_parts.append(f"range={fields.get('ipv4-address-first') or ''}-{fields.get('ipv4-address-last') or ''}")
-    if fields.get("ipv6-address-first") is not None or fields.get("ipv6-address-last") is not None:
-        summary_parts.append(f"range6={fields.get('ipv6-address-first') or ''}-{fields.get('ipv6-address-last') or ''}")
-    for key in (
-        "port",
-        "protocol",
-        "ip-protocol",
-        "icmp-type",
-        "icmp-code",
-        "fqdn",
-        "primary-category",
-        "urls-defined-as-regular-expression",
-    ):
-        if fields.get(key) is not None:
-            summary_parts.append(f"{key}={fields[key]}")
-    url_list = fields.get("url-list")
-    if isinstance(url_list, list) and url_list:
-        summary_parts.append(f"url-list=[{', '.join(str(u) for u in url_list)}]")
-    members = fields.get("members")
-    if isinstance(members, list) and members:
-        summary_parts.append(f"members=[{', '.join(str(m) for m in members)}]")
-    desc_str = str(fields.get("description") or "").strip()
-    if desc_str:
-        summary_parts.append(f"description={desc_str}")
-    comments_str = str(fields.get("comments") or "").strip()
-    if comments_str:
-        summary_parts.append(f"comments={comments_str}")
-    return ", ".join(summary_parts)
+    return format_plain_object_summary(fields)
 
 
 def _build_object_summary(core: dict[str, Any], members: list[str]) -> str:
     """Build a human-readable summary string for a non-rule policy object."""
-    return _format_object_summary_from_fields(_build_object_summary_fields(core, members))
+    return format_plain_object_summary(build_object_summary_fields(core, members=members))

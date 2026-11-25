@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from arodonata.core.models.common import ApiCallResult
 
-from ._emulator_lookup import find_effective_object
+from ._emulator_lookup import find_effective_object, preview_delete_unused_uids
 from ._emulator_models import (
     CMD_TO_ENTITY_ACTION,
     SidBinding,
@@ -68,9 +68,18 @@ def preflight_target_uids(
     dom_files: Mapping[str, Any],
     global_files: Mapping[str, Any],
     dom_name: str,
+    *,
+    all_domains_effective: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> set[str]:
     """Identify object, script, rule, or section UIDs affected by a write command for lock checking."""
     targets: set[str] = set()
+    if command == "delete-unused-objects":
+        return preview_delete_unused_uids(
+            dom_files,
+            dom_name=dom_name,
+            all_domains_effective=all_domains_effective or {dom_name: dom_files, "Global": global_files},
+            req=req,
+        )
     if command in ("set-repository-script", "delete-repository-script") or (
         command == "add-repository-script" and bool(req.get("set-if-exists", False))
     ):

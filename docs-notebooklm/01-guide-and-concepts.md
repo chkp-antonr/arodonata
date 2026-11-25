@@ -47,7 +47,7 @@ asyncio.run(main())
 | Capability | Primary Entry Point | Description |
 | --- | --- | --- |
 | **Unified Async Facade** | `ArodonataClient` | Single composition root wiring transport, SQL cache, distributed locks, rulebase numbering, CPCRUD, and change reports |
-| **Database-Backed Cache** | `DatabaseManager`, `SqlCacheAdapter` | 15 `arodonata_*`-prefixed SQLModel tables on PostgreSQL (`asyncpg`) or SQLite (`aiosqlite`) with SHA-256 auto-migration and cross-process locks |
+| **Database-Backed Cache** | `DatabaseManager`, `SqlCacheAdapter` | 17 `arodonata_*`-prefixed SQLModel tables on PostgreSQL (`asyncpg`) or SQLite (`aiosqlite`) with SHA-256 auto-migration and cross-process locks |
 | **Smart & Incremental Sync** | `refresh_objects`, `stream_refresh_*` | Four cache modes (`cache`, `smart`, `smart-fast`, `force`) with `show-changes` incremental diffs and parallel per-MDS-member execution |
 | **Search & Aggregation** | `search_objects`, `query_objects` | IP/CIDR/range/wildcard/exact search with recursive group membership traversal and SQL-free cross-domain aggregation (`list`, `count`, `describe`) |
 | **Rulebase Introspection** | `get_package_rulebase`, `filter_rulebase` | Normalized 6-table rulebase cache with exact SmartConsole hierarchical numbering (`1`, `2.1`, `3`), reverse UID lookup (`locate_rules`), and local filtering |
@@ -63,7 +63,7 @@ asyncio.run(main())
 - **Downstream Integration Contract**: [Capabilities & Integration Guide (`CAPABILITIES.md`)](CAPABILITIES.md) — mandatory reading for host applications (e.g., FPCR v2).
 - **Architecture Deep Dives**:
   - [Architecture Overview](architecture/index.md) & [Hexagonal Ports & Adapters](architecture/ports-and-adapters.md)
-  - [Database Schema Reference (15 `arodonata_*` Tables)](architecture/database-schema.md)
+  - [Database Schema Reference (17 `arodonata_*` Tables)](architecture/database-schema.md)
   - [Caching, Incremental Sync & Search](architecture/caching-and-sync.md)
   - [Sessions, MDSM & `SessionOverlay`](architecture/sessions-and-mdm.md)
   - [CPCRUD Engine Internals](architecture/cpcrud.md)
@@ -153,7 +153,7 @@ Every interaction in Arodonata v2 goes through [`ArodonataClient`](../architectu
 
 When you enter `async with ArodonataClient() as client:`, Arodonata automatically:
 
-1. Verifies and migrates the 15 `arodonata_*` tables in your SQLite or PostgreSQL database (`DatabaseManager.initialize()`).
+1. Verifies and migrates the 17 `arodonata_*` tables in your SQLite or PostgreSQL database (`DatabaseManager.initialize()`).
 2. Schedules non-blocking cleanup of any orphaned idle Arodonata read sessions (`changes == 0` and `locks == 0`).
 3. Disposes owned connections cleanly on exit (preserving persistent `arodonata_sid_cache` rows across CLI runs when using a file-backed SQLite or PostgreSQL database).
 
@@ -346,7 +346,7 @@ await client.discard_staged_session("mdsm-prod", "Domain4", session_uid=staged.s
 In the enterprise automation ecosystem (such as **FPCR v2**, web portals, CLIs, and AI agent platforms), **Arodonata acts as the single authoritative engine for all Check Point interactions**:
 
 - Native `aiohttp` transport, post-handshake SHA-256 certificate verification (`pinned`, `tofu`, `lab-memory`), per-MDS-member rate limiting, and `70s` login throttle recovery (`LoginGate`).
-- Database-backed caching across **15 `arodonata_*`-prefixed SQLModel tables** (PostgreSQL `asyncpg` and SQLite `aiosqlite`) with SHA-256 schema hash auto-migration, naive UTC timestamp uniformity (`tzinfo=None`), and distributed locks (`arodonata_distributed_locks`).
+- Database-backed caching across **17 `arodonata_*`-prefixed SQLModel tables** (PostgreSQL `asyncpg` and SQLite `aiosqlite`) with SHA-256 schema hash auto-migration, naive UTC timestamp uniformity (`tzinfo=None`), and distributed locks (`arodonata_distributed_locks`).
 - Incremental (`show-changes`) and full synchronization across domains, objects, services, assets (gateways/clusters/VSX), and rulebases with typed streaming progress events (`SyncProgressEvent`).
 - Isolated write sessions (`WriteSession`) with `contextvars`-bound `SessionOverlay` for read-your-own-writes isolation prior to `publish`.
 - Declarative Policy-as-Code (`CPCRUDService`): offline JSON Schema validation, `HybridStateReader`, two-axis conflict policies (`NameConflictPolicy` × `IpConflictPolicy`), pre-publish staleness verification (`DomainStamp`), staged session handoff (`take-over-session`), compensating rollback generation (`inverse`), and full lifecycle support for network objects, services, `application-site` custom URL/regex objects, groups, and rules.
@@ -384,7 +384,7 @@ In the enterprise automation ecosystem (such as **FPCR v2**, web portals, CLIs, 
 Host applications (such as FastAPI backends using SQLAlchemy/SQLModel) can pass their existing `AsyncEngine` directly to `ArodonataClient(engine=host_engine)`.
 
 - **Non-Destructive Ownership (`owns_engine=False`)**: When an external `AsyncEngine` is passed, `await client.close()` closes Arodonata's HTTP transport and background tasks **without** disposing the host application's `AsyncEngine`.
-- **Strict Table Namespace Isolation (`arodonata_*`)**: All 15 Arodonata tables are prefixed with `arodonata_` (`ARODONATA_TABLE_NAMES`). `DatabaseManager.initialize()` inspects and migrates only `arodonata_*` tables, completely ignoring any host application tables registered in `SQLModel.metadata` (even if the host app has tables named `assets`, `domains`, or `distributed_locks`).
+- **Strict Table Namespace Isolation (`arodonata_*`)**: All 17 Arodonata tables are prefixed with `arodonata_` (`ARODONATA_TABLE_NAMES`). `DatabaseManager.initialize()` inspects and migrates only `arodonata_*` tables, completely ignoring any host application tables registered in `SQLModel.metadata` (even if the host app has tables named `assets`, `domains`, or `distributed_locks`).
 - **Naive UTC Timestamp Uniformity**: All Arodonata models and database columns use naive UTC (`DateTime(timezone=False)`, `tzinfo=None` via `to_naive_utc()` and `utc_now()`), eliminating `asyncpg` offset-naive vs offset-aware `DataError` crashes on PostgreSQL.
 
 ```python
@@ -481,24 +481,28 @@ flowchart TB
         MCP["arodonata.mcp Server & Tools"]
     end
 
-    subgraph Core["Hexagonal Core (src/arodonata/core, rulebase, cpcrud, reports)"]
+    subgraph Core["Hexagonal Core (core, rulebase, cpcrud, reports, api_reference)"]
         Services["Domain, Object, Service, Asset & Search Services"]
         Coord["DomainSyncCoordinator"]
+        Topology["TopologyService & ScriptRepositoryService"]
         Rulebase["CachedRulebaseSource & RulebaseRefreshService"]
-        CPCRUD["CPCRUDService (Validator, Planner, Differ, Executor, Inverse)"]
+        CPCRUD["CPCRUDService (Expressions, Validator, Planner, Differ, Executor, Inverse)"]
         Reports["ChangeReport Collector & Renderer"]
-        Ports["Protocols: ApiPort | CachePort | LockPort | AuthProvider"]
+        ApiRef["ApiReferenceEngine (Bundled Offline Index)"]
+        Ports["Protocols: ApiPort | CachePort | LockPort | AuthProvider | GatewayCliPort"]
     end
 
-    subgraph Adapters["Infrastructure Adapters (src/arodonata/adapters)"]
-        CP["AMgmtClient (ApiTransport, TrustPolicy, RateLimiter, LoginGate, TaskWaiter)"]
+    subgraph Adapters["Infrastructure Adapters (adapters & testing)"]
+        CP["AMgmtClient (ApiTransport, TrustPolicy, RateLimiter, LoginCoordinator, SessionCleaner, TaskWaiter)"]
         DB["SqlCacheAdapter & SqlLockAdapter (DatabaseManager)"]
+        GWCLI["GatewayCliPort SSH Adapter / FileReplayApiMock & FileReplayCliMock"]
         SSE["SSE Boundary Adapter (SSEEvent)"]
     end
 
     subgraph External["External Systems"]
         MDSM["Check Point SMS / MDSM Clusters (HTTPS Web API)"]
-        SQL[("PostgreSQL (asyncpg) / SQLite (aiosqlite)\n15 arodonata_* Tables")]
+        Gateways["Check Point Gateways / VSX (SSH / cprid run-script)"]
+        SQL[("PostgreSQL (asyncpg) / SQLite (aiosqlite)\n17 arodonata_* Tables")]
     end
 
     SDK --> Client
@@ -507,38 +511,56 @@ flowchart TB
     MCP --> Client
     Client --> Services
     Client --> Coord
+    Client --> Topology
     Client --> Rulebase
     Client --> CPCRUD
     Client --> Reports
+    Client --> ApiRef
     Services --> Ports
     Coord --> Ports
+    Topology --> Ports
     Rulebase --> Ports
     CPCRUD --> Ports
     Reports --> Ports
     Ports -.-> CP
     Ports -.-> DB
+    Ports -.-> GWCLI
     Client -.-> SSE
     CP --> MDSM
+    CP --> Gateways
+    GWCLI --> Gateways
     DB --> SQL
 ```
 
 ## Key Architectural Invariants
 
-1. **Pure Core Domain (`arodonata.core`, `arodonata.rulebase`, `arodonata.cpcrud`, `arodonata.reports`)**:
-   - Business logic depends exclusively on typed Python `Protocol` interfaces (`ApiPort`, `CachePort`, `LockPort`, `AuthProvider`).
+1. **Pure Core Domain (`arodonata.core`, `arodonata.rulebase`, `arodonata.cpcrud`, `arodonata.reports`, `arodonata.api_reference`)**:
+   - Business logic depends exclusively on typed Python `Protocol` interfaces (`ApiPort`, `CachePort`, `LockPort`, `AuthProvider`, `GatewayCliPort`).
    - Core modules never import `aiohttp`, `asyncpg`, `aiosqlite`, or HTTP transport primitives directly.
 2. **Database-First Synchronization & Multi-Worker Coordination**:
-   - All cached state lives in **15 `arodonata_*` SQLModel tables** ([Database Schema Reference](database-schema.md)).
+   - All cached state lives in **17 `arodonata_*` SQLModel tables** ([Database Schema Reference](database-schema.md)).
    - Schema initialization is serialized across worker processes (`pg_advisory_xact_lock` on PostgreSQL, `BEGIN IMMEDIATE` on SQLite) and tracked by SHA-256 metadata digest in `arodonata_schema_version`.
-   - Domain synchronization acquires database-backed distributed locks (`arodonata_distributed_locks`) with automatic background TTL heartbeat renewal.
+   - `arodonata_distributed_locks` coordinates cross-process critical sections with automatic background heartbeat renewal across domain syncs, domain list discovery, `LoginGate` serialization, and distributed `RateLimiter` slots.
 3. **Strict Read vs Write Session Separation**:
-   - Read operations share a persistent, credential-bound read-only session in `arodonata_sid_cache`. Mutating commands (`add-*`, `set-*`, `delete-*`, `publish`, `discard`) are strictly rejected on the shared session.
-   - Write operations open an isolated `WriteSession` (`create_dedicated_session`) with an in-memory `SessionOverlay` bound via `contextvars` so callers immediately read their own uncommitted writes before `publish`.
+   - Read operations share a persistent, credential-bound read-only session in `arodonata_sid_cache` (system domain keyed as `"System Data"`). Mutating commands (`add-*`, `set-*`, `delete-*`, `publish`, `discard`, `run-script`) are rejected on the shared session.
+   - Write operations open an isolated `WriteSession` (`create_dedicated_session`) with an in-memory `SessionOverlay` bound via `contextvars` so callers immediately read their own uncommitted object/service writes before `publish`. CPCRUD also supports staged sessions (`no_publish=True, keep_session=True`, finalized via `publish_staged_session` / `discard_staged_session`), while `ScriptRepositoryService` executes scripts inside dedicated non-read-only sessions without `publish`/`discard`.
 4. **Defense-in-Depth Security Hygiene**:
    - Session tokens (`sid`), API keys, and passwords are redacted (`"***REDACTED***"`) in all `repr()`, logs, OpenTelemetry span attributes, exception messages, and MCP tool outputs (`redact_sid(..., known_sids=...)`).
    - TLS certificates are verified post-handshake and pre-request against SHA-256 DER fingerprints (`pinned`, `tofu`, or `lab-memory`).
 5. **Provider-Agnostic Observability**:
    - Functions decorated with `@traced` (`arodonata.core.telemetry`) emit OpenTelemetry spans via `opentelemetry-api` (`arlogi.otel.traced`) without ever owning or overriding the host application's global `TracerProvider`.
+
+## Subsystems & Package Map
+
+| Package | Responsibility |
+| --- | --- |
+| `arodonata.client` & `arodonata.core` | Composition root (`ArodonataClient`), typed settings/contexts, error hierarchy, five core protocols, domain/object/service/asset/search/topology/script services, and background warm-up |
+| `arodonata.rulebase` | Normalized policy package, inline layer, section, SmartConsole numbering, local filtering (`RulebaseRefreshService`, `CachedRulebaseSource`), and CPCRUD export |
+| `arodonata.cpcrud` | Declarative Policy-as-Code engine: shorthand expression parser, draft-07 schema validator, `HybridStateReader`, differ, cleanup-aware planner, executor (retries + staged sessions), and inverse rollback builder |
+| `arodonata.reports` | Auditable `ChangeReport` collector (session/range scopes + offline `build_change_report_from_plan`), live rule placement numbering, and self-contained HTML/Markdown/JSON renderer |
+| `arodonata.api_reference` | Offline bundled `cp_api_index.json.gz` engine (`ApiReferenceEngine`) supporting version-filtered command search, payload schema description, and offline validation |
+| `arodonata.mcp` | Streamable-HTTP MCP server (`arodonata-mcp` CLI + `ArodonataASGIApp`), static bearer / JWT / host auth, DNS-rebinding & Origin guards, HMAC-signed CPCRUD plans, and read/topology/API tools |
+| `arodonata.testing` | Enterprise replay dataset generator, stateful in-process emulator (`FileReplayApiMock`, `FileReplayCliMock`), and standalone HTTPS mock server (`CheckPointReplayHttpServer`) |
 
 
 ---
@@ -549,7 +571,7 @@ flowchart TB
 
 # Hexagonal Ports & Adapters
 
-Arodonata v2 isolates all Check Point Management API and SQL database details behind four core `Protocol` interfaces defined in `src/arodonata/core/ports/__init__.py`.
+Arodonata v2 isolates all Check Point Management API, gateway CLI execution, and SQL database details behind five core `Protocol` interfaces defined in `src/arodonata/core/ports/__init__.py`.
 
 ## Core Protocols (`arodonata.core.ports`)
 
@@ -557,51 +579,72 @@ Arodonata v2 isolates all Check Point Management API and SQL database details be
 
 Defines the asynchronous contract for communicating with Check Point Management and MDSM servers:
 
-- `api_call(mgmt_name, command, payload, *, domain=None, sid=None, server_ip=None, wait_for_task=True, timeout=None) -> ApiCallResult`
-- `api_query(mgmt_name, command, *, domain=None, details_level="standard", payload=None, sid=None, server_ip=None, limit=500) -> ApiQueryResult`
+- `api_call(mgmt_name, command, payload=None, *, domain=None, sid=None, server_ip=None, wait_for_task=True, timeout=None) -> ApiCallResult`
+- `api_query(mgmt_name, command, *, domain=None, details_level="standard", payload=None, sid=None, server_ip=None, limit=300) -> ApiQueryResult`
 - `create_dedicated_session(mgmt_name, domain=None, *, auth=None, session_name=None, session_description=None) -> tuple[str, str]`
-- `logout_sid(mgmt_name, sid, *, server_ip=None) -> bool`
-- `close(*, logout=False) -> None`
+- `logout_sid(mgmt_name, sid, *, server_ip=None) -> Awaitable[bool]`
+- `close(*, logout=None) -> None` (when `logout=None`, auto-logs out active sessions only if the client owns an auto-created ephemeral `:memory:` SQLite engine)
 
 **Default Adapter**: `AMgmtClient` (`src/arodonata/adapters/checkpoint/client.py`), backed by:
 
-- `ApiTransport`: Native `aiohttp` client with `allow_redirects=False`, `trust_env=False`, post-handshake SHA-256 certificate verification, and phase-tagged `TransportError` (`phase="connect"` vs `"post-send"` so mutating calls are never re-sent after bytes leave the socket).
-- `VerifiedConnectionPool`: Reuses verified keep-alive connections (up to `10s` idle) strictly for idempotent `show-*` commands.
-- `RateLimiter` & `LoginGate`: Enforces `concurrent_limit` per MDS member IP and a `70s` cooldown window on login throttling (`err_too_many_requests`).
-- `TaskWaiter`: Polls asynchronous Check Point `task-id` responses with exponential backoff (`2s..10s`) up to `task_timeout`.
+- `ApiTransport` (`transport.py`): Native `aiohttp` client with `allow_redirects=False`, `trust_env=False`, post-handshake and pre-request SHA-256 certificate verification (`TrustPolicy` / `TrustStore` in `tls.py`), and phase-tagged `TransportError` (`phase="connect" | "post-send"`) / `ApiTimeoutError` (`phase="connect" | "read"`) carrying `request_sent: bool` so mutating calls are never re-sent after bytes leave the socket.
+- `VerifiedConnectionPool`: Reuses verified keep-alive connections (`<= 10s` idle, `< 95` requests) for idempotent `show-*` commands under shared scope AND for non-boundary commands within scoped dedicated sessions (`s:<sha256_prefix>`), while `NON_POOLABLE_SESSION_COMMANDS` (`login`, `logout`, `keepalive`, `publish`, `discard`, `continue-session`, `switch-session`, `take-over-session`, `disconnect`) bypass pooling.
+- `LoginCoordinator` & `SessionCleaner` (`sessions.py`): Credential-bound read-only session cache lookup, isolated `WriteSession` management, coalesced keepalive sweeps, and startup cleanup of orphaned Arodonata sessions.
+- `RateLimiter` & `LoginGate` (`rate_limiter.py`): Enforces `concurrent_limit` per MDS member IP and a `70.0s` cooldown window on login throttling (`err_too_many_requests`).
+- `paginate_objects` (`pager.py`) & `TaskWaiter` (`task_waiter.py`): Continuity-verified pagination (`limit=300`, clamped to `500`, `±10` boundary overlap recovery and single restart on `total` shift) plus exponential-backoff `show-task` polling (`2s..10s` up to `task_timeout`).
 
 ### 2. `CachePort`
 
-Defines the contract for reading and persisting cached Check Point topology, objects, services, assets, rulebases, sessions, and sync states:
+Defines the contract for reading and persisting cached Check Point topology, sessions, objects, services, assets, gateway topology intervals, annotations, rulebases, and sync states:
 
-- Domain topology: `get_domains()`, `replace_domains()`
-- Shared sessions: `get_cached_sid()`, `upsert_cached_sid()`, `delete_cached_sid()`, `list_cached_sids()`
-- Sync state: `get_sync_state()`, `list_sync_states()`, `upsert_sync_state()`
-- Objects & Services: `get_objects()`, `get_object_by_uid()`, `replace_domain_objects()`, `apply_incremental_objects()`, `get_services()`, `get_service_by_uid()`, `replace_domain_services()`, `apply_incremental_services()`
-- Assets: `get_assets()`, `replace_domain_assets()`
-- Rulebase snapshots: `get_domain_rulebase()`, `replace_domain_rulebase()`
-- Structured aggregation: `describe_objects()`, `query_objects()`
+- **Domain topology**: `get_domains()`, `get_domain()`, `upsert_domains()`
+- **Shared sessions**: `get_sid()`, `upsert_sid()`, `evict_sid()`, `list_sids()`
+- **Sync state**: `get_sync_state()`, `list_sync_states()`, `upsert_sync_state()`
+- **Objects & Services**: `get_objects()`, `get_object_by_uid()`, `replace_domain_objects()`, `upsert_objects()`, `delete_objects_by_uids()`, `get_services()`, `get_service_by_uid()`, `replace_domain_services()`, `upsert_services()`, `delete_services_by_uids()`
+- **Assets**: `get_assets()`, `replace_domain_assets()`, `upsert_assets()`
+- **Gateway topology & annotations**: `get_gateway_topology()`, `replace_domain_topology()`, `upsert_gateway_topology()`, `get_topology_annotations()`, `upsert_topology_annotations()`, `delete_topology_annotations()`
+- **Rulebase snapshots & slices**: `replace_domain_rulebase()`, `replace_domain_package_catalog()`, `upsert_domain_rulebase_layers()`, `get_domain_rulebase()`, `get_domain_rulebase_packages()`
 
-**Default Adapter**: `SqlCacheAdapter` (`src/arodonata/adapters/storage/cache_adapter.py`), which executes atomic transactions and dialect-specific `ON CONFLICT DO UPDATE` upserts on PostgreSQL and SQLite.
+*(Note: Cross-domain filtering and aggregation methods `describe_objects()` and `query_objects()` live in `SearchService` and `ArodonataClient`, built on top of `CachePort`.)*
+
+**Default Adapter**: `SqlCacheAdapter` (`src/arodonata/adapters/storage/cache_adapter.py`), which executes atomic transactions, deduplicates primary keys before batched writes (`_BATCH_ROWS = 500`), and runs dialect-specific `ON CONFLICT DO UPDATE` upserts on PostgreSQL and SQLite.
 
 ### 3. `LockPort`
 
-Coordinates distributed cross-process critical sections (per-domain cache refreshes, login serialization, and cross-worker rate-limit slots):
+Coordinates distributed cross-process critical sections (per-domain cache refreshes, `LoginGate` serialization, and cross-worker `RateLimiter` slots):
 
-- `acquire(lock_key, *, ttl_seconds=60.0, timeout_seconds=30.0, poll_interval=0.25) -> str` (returns `owner_id`)
-- `renew(lock_key, owner_id, *, ttl_seconds=60.0) -> bool`
-- `release(lock_key, owner_id) -> bool`
-- `lock(lock_key, *, ttl_seconds=60.0, timeout_seconds=30.0) -> AsyncIterator[str]`
+- `acquire(lock_key, *, ttl_seconds=60.0, owner_id=None, wait_timeout=None, poll_interval=0.05) -> bool`
+- `renew(lock_key, *, ttl_seconds=60.0, owner_id=None) -> bool`
+- `release(lock_key, *, owner_id=None) -> bool`
+- `lock(lock_key, *, ttl_seconds=60.0, owner_id=None, wait_timeout=None, poll_interval=0.05) -> AbstractAsyncContextManager[str]` (yields `owner_id`; raises `LockAcquisitionError` on contention/timeout)
 
-**Default Adapter**: `SqlLockAdapter` (`src/arodonata/adapters/storage/lock_adapter.py`) backed by the `arodonata_distributed_locks` table, evaluating expiration against the database server's UTC clock.
+**Default Adapter**: `SqlLockAdapter` (aliased as `DatabaseLockManager`, `src/arodonata/adapters/storage/lock_adapter.py`) backed by `arodonata_distributed_locks`, evaluating expiration against the database server's UTC clock.
 
 ### 4. `AuthProvider`
 
-Optional pluggable protocol for resolving credentials dynamically per `(mgmt_name, domain)` when `auth_mode="dynamic"` is used without an explicit `auth_context`.
+Optional pluggable protocol for resolving runtime credentials dynamically per `(mgmt_name, domain)` and receiving failure notifications when `auth_mode="dynamic"` is used without an explicit `auth_context`:
+
+- `get_credentials(mgmt_name, domain=None, *, user=None) -> AuthContext`
+- `on_auth_failed(mgmt_name, auth, exc) -> None`
+
+### 5. `GatewayCliPort` (& `GatewayCliCallable`)
+
+Optional protocol for executing shell/clish diagnostics on Check Point gateways and VSX Virtual Systems (e.g., via SSH):
+
+- `execute_command(target: GatewayCliTarget, command: str, *, timeout: float = 30.0) -> GatewayCliResult | str`
+- `GatewayCliCallable = Callable[[GatewayCliTarget, str], Awaitable[GatewayCliResult | str]]`
+
+Injected via `ArodonataClient(..., gateway_cli=...)` or `client.set_gateway_cli(...)` for `TopologyService.collect_gateway_routes()`. When unavailable or failing, route collection falls back to Check Point `cprid` via `AMgmtClient` (`run-script` one-time or repository scripts managed by `ScriptRepositoryService`).
+
+## Boundary, Storage & Testing Adapters
+
+- **`DatabaseManager`** (`src/arodonata/adapters/storage/database.py`): Manages async SQLAlchemy engines (`asyncpg` / `aiosqlite`), cross-worker schema locks, and SHA-256 schema hash auto-migration restricted to `ARODONATA_TABLE_NAMES`.
+- **`SSEAdapter`** (`src/arodonata/adapters/sse/__init__.py`): Converts core `DomainEvent` streams (`SyncProgressEvent`, `CPCRUDEvent`) into SID-redacted `SSEEvent` frames via `to_sse_event()` and `stream_as_sse()`.
+- **Replay & Test Doubles (`arodonata.testing`)**: `FileReplayApiMock`, `FileReplayCliMock`, and `CheckPointReplayHttpServer` implement `ApiPort` and `GatewayCliPort` against realistic MDSM/VSX fixture datasets with stateful session overlays and call auditing.
 
 ## Dependency Injection in Tests & Custom Hosts
 
-Because `ArodonataClient` accepts custom `api: ApiPort`, `cache: CachePort`, and `lock_port: LockPort` instances in its constructor, unit tests and downstream applications can inject in-memory fakes or custom adapters without monkeypatching internal classes:
+Because `ArodonataClient` accepts custom `api: ApiPort`, `cache: CachePort`, `lock_port: LockPort`, `auth_provider: AuthProvider`, and `gateway_cli: GatewayCliPort | GatewayCliCallable` instances in its constructor, unit tests and downstream applications can inject in-memory fakes or custom adapters without monkeypatching internal classes:
 
 ```python
 client = ArodonataClient(
@@ -609,6 +652,8 @@ client = ArodonataClient(
     api=custom_api_port,
     cache=custom_cache_port,
     lock_port=custom_lock_port,
+    auth_provider=custom_auth_provider,
+    gateway_cli=custom_gateway_cli,
 )
 ```
 
@@ -619,9 +664,9 @@ client = ArodonataClient(
 
 *(source: `docs/architecture/database-schema.md`)*
 
-# Database Schema Reference (15 `arodonata_*` Tables)
+# Database Schema Reference (17 `arodonata_*` Tables)
 
-Arodonata v2 persists all cached topology, shared sessions, distributed locks, objects, services, gateway/VSX assets, and normalized policy rulebases across **15 SQLModel tables** defined in `src/arodonata/adapters/storage/tables.py` (`ARODONATA_TABLE_NAMES`).
+Arodonata v2 persists all cached topology, shared sessions, distributed locks, objects, services, gateway/VSX assets, gateway topology intervals, administrator topology annotations, and normalized policy rulebases across **17 SQLModel tables** defined in `src/arodonata/adapters/storage/tables.py` (`ARODONATA_TABLE_NAMES`).
 
 Both **PostgreSQL (`postgresql+asyncpg://`)** and **SQLite (`sqlite+aiosqlite://`)** are first-class supported backends.
 
@@ -632,12 +677,12 @@ Both **PostgreSQL (`postgresql+asyncpg://`)** and **SQLite (`sqlite+aiosqlite://
 Arodonata v2 is engineered to share a single database and `SQLModel.metadata` registry safely with host applications (such as **FPCR v2**):
 
 1. **Strict `arodonata_` Table Namespace (`ARODONATA_TABLE_NAMES`)**:
-   - Every table owned by Arodonata is prefixed with `arodonata_` (including `arodonata_assets`, `arodonata_domains`, `arodonata_distributed_locks`, `arodonata_sid_cache`, `arodonata_domain_sync_state`).
-   - `DatabaseManager.initialize()` inspects and migrates **only** tables in `ARODONATA_TABLE_NAMES`. Any host application tables in the same database or `SQLModel.metadata` (such as a host app's own `assets` or `domains` table) are never touched, altered, or dropped.
+   - Every table owned by Arodonata is prefixed with `arodonata_` (all 17 tables in `ARODONATA_TABLE_NAMES`).
+   - `DatabaseManager.initialize()` inspects and migrates **only** tables in `ARODONATA_TABLE_NAMES`. Any host application tables in the same database or `SQLModel.metadata` (such as a host app's own `assets`, `domains`, or `sid_cache` table) are never touched, altered, or dropped.
 2. **SHA-256 Schema Hash Auto-Migration (`arodonata_schema_version`)**:
-   - `DatabaseManager` computes a deterministic SHA-256 digest (`compute_schema_hash()`) over the table names, column names, SQL types, primary keys, nullability, and indexes of all 15 `arodonata_*` tables.
-   - If the current `schema_hash` is already recorded in `arodonata_schema_version` and all 15 tables exist, startup skips column inspection and completes in `< 2ms`.
-   - When the schema evolves, `DatabaseManager` adds missing columns/indexes via savepoint-protected (`begin_nested()`) `ALTER TABLE` statements—or drops and recreates ephemeral `arodonata_*` cache tables if primary keys or `NOT NULL` constraints changed—and records the new `schema_hash`.
+   - `DatabaseManager` computes a deterministic SHA-256 digest (`compute_schema_hash()`) over the table names, column names, SQL types, primary keys, nullability, and indexes of all 17 `arodonata_*` tables.
+   - If the current `schema_hash` is already recorded in `arodonata_schema_version` and all 17 tables exist, startup skips column inspection and completes rapidly.
+   - When the schema evolves, `_is_table_schema_incompatible()` checks for breaking structural drift: primary key mismatch, orphaned `NOT NULL` columns lacking defaults, legacy timezone-aware `TIMESTAMPTZ` columns, coarse column type family changes, or tightened/newly added `NOT NULL` columns without defaults. Compatible additions use savepoint-protected (`begin_nested()`) `ALTER TABLE` statements; incompatible cache tables are dropped and recreated before recording the new `schema_hash`.
 3. **Cross-Worker Migration Serialization**:
    - Multi-worker Uvicorn/Gunicorn startups are serialized using `SELECT pg_advisory_xact_lock(...)` on PostgreSQL and `BEGIN IMMEDIATE` on SQLite, with a double-check of `arodonata_schema_version` after acquiring the lock.
 4. **Legacy v1 Table Fingerprint Cleanup**:
@@ -650,11 +695,12 @@ Arodonata v2 is engineered to share a single database and `SQLModel.metadata` re
      - `CPObject.object_id` (`arodonata_objects.object_id`): `"{mgmt_name}:{domain_name}:{name}"`
      - `CPService.service_id` (`arodonata_services.service_id`): `"{mgmt_name}:{domain_name}:{name}"`
      - `Asset.asset_id` (`arodonata_assets.asset_id`): `"{mgmt_name}:{domain_name}:{name}"`
+   - Rich `application-site` properties (`primary_category`, `url_list`, `urls_defined_as_regular_expression`, `description`) are stored in `arodonata_objects.raw_data` and hydrated onto `CPObject` on read.
    - In addition, `arodonata_assets` maintains dual UID and human-readable parent/child topology links (`parent_uid`, `parent_name`, `parent_id`, `parent_asset_id`, `member_uids`, `member_asset_ids`, `virtual_system_uids`, and `virtual_system_asset_ids`), supporting both intra-domain clusters and **cross-domain VSX topology** (where a physical VSX gateway/cluster resides in an infrastructure domain like `VSX` and its Virtual Systems reside in tenant domains like `Domain4`).
 
 ---
 
-## 2. Entity-Relationship Diagram (15 Tables)
+## 2. Entity-Relationship Diagram (17 Tables)
 
 ```mermaid
 erDiagram
@@ -680,13 +726,14 @@ erDiagram
         datetime updated_at
     }
     arodonata_sid_cache {
-        string id PK "mgmt_name:domain_name:auth_hash"
+        string id PK "mgmt_name:domain_name:auth_identity"
         string mgmt_name "INDEX"
         string domain_name "INDEX"
         string sid "REDACTED in repr"
         string server_ip
         string session_uid
         string auth_identity
+        datetime created_at
         datetime last_used_at
         datetime expires_at
     }
@@ -694,7 +741,7 @@ erDiagram
         string id PK "mgmt_name:domain_name:scope:item_type"
         string mgmt_name "INDEX"
         string domain_name "INDEX"
-        string scope "INDEX: domains|objects|services|assets|rulebase"
+        string scope "INDEX: domains|objects|services|assets|rulebase|topology"
         string item_type "INDEX: host|network|*|..."
         datetime last_published_at
         string last_session_uid
@@ -708,7 +755,7 @@ erDiagram
         string object_id "INDEX: mgmt_name:domain_name:name"
         string uid "INDEX"
         string name "INDEX"
-        string type "INDEX: host|network|address-range|group|dns-domain"
+        string type "INDEX: host|network|address-range|group|dns-domain|application-site"
         string mgmt_name "INDEX"
         string domain_name "INDEX"
         string original_domain "INDEX"
@@ -749,6 +796,35 @@ erDiagram
         json virtual_system_asset_ids
         json interfaces
         json network_security_blades
+    }
+    arodonata_gateway_topology {
+        string id PK "mgmt_name:domain_name:gw_uid:iface:src_type:cidr"
+        string mgmt_name "INDEX"
+        string domain_name "INDEX"
+        string gateway_id "INDEX"
+        string gateway_asset_id "INDEX"
+        string gateway_uid "INDEX"
+        string gateway_name "INDEX"
+        string interface_name "INDEX"
+        string topology_zone "INDEX"
+        string source_type "INDEX"
+        bigint ip_first_int "INDEX"
+        bigint ip_last_int "INDEX"
+        int prefix_len
+    }
+    arodonata_topology_annotations {
+        string id PK "mgmt_name:domain_name:gw_uid:iface:cidr"
+        string mgmt_name "INDEX"
+        string domain_name "INDEX"
+        string gateway_uid "INDEX"
+        string gateway_name "INDEX"
+        string interface_name "INDEX"
+        string cidr_or_range "INDEX"
+        boolean trust_static_topology
+        string disposition "INDEX"
+        string zone
+        string site
+        json custom_metadata
     }
     arodonata_rulebase_package_layer {
         string id PK "mgmt_name:domain_name:package_uid:rulebase_type:layer_uid"
@@ -838,6 +914,9 @@ erDiagram
     arodonata_domains ||--o{ arodonata_objects : "contains"
     arodonata_domains ||--o{ arodonata_services : "contains"
     arodonata_domains ||--o{ arodonata_assets : "contains"
+    arodonata_domains ||--o{ arodonata_gateway_topology : "contains"
+    arodonata_domains ||--o{ arodonata_topology_annotations : "contains"
+    arodonata_assets ||--o{ arodonata_gateway_topology : "exposes interface intervals"
     arodonata_domains ||--o{ arodonata_rulebase_package_layer : "contains"
     arodonata_rulebase_package_layer }o--|| arodonata_rulebase_layer : "orders layer"
     arodonata_rulebase_layer ||--o{ arodonata_rulebase_section : "divides into sections"
@@ -859,12 +938,12 @@ Tracks applied SQLModel metadata SHA-256 hashes so workers skip redundant table 
 
 | Column | Type | Key / Index | Description |
 | --- | --- | --- | --- |
-| `schema_hash` | `str` | `PK` | 64-char SHA-256 hex digest of the 15 `arodonata_*` table schemas |
+| `schema_hash` | `str` | `PK` | 64-char SHA-256 hex digest of the 17 `arodonata_*` table schemas |
 | `applied_at` | `datetime` | `NOT NULL` | Naive UTC timestamp when the schema version was applied |
 
 #### 2. `arodonata_distributed_locks` (`DistributedLockRecord`)
 
-Coordinates cross-process critical sections (per-domain cache refreshes, login coordination, rate-limit slots).
+Coordinates cross-process critical sections (per-domain cache refreshes, `LoginGate` serialization, and distributed `RateLimiter` slots).
 
 | Column | Type | Key / Index | Description |
 | --- | --- | --- | --- |
@@ -879,13 +958,13 @@ Persistent shared read-only Check Point session store. Strictly omits `sid` from
 
 | Column | Type | Key / Index | Description |
 | --- | --- | --- | --- |
-| `id` | `str` | `PK` | Composite key `"{mgmt_name}:{domain_name}:{auth_identity_hash}"` |
+| `id` | `str` | `PK` | Composite key `"{mgmt_name}:{domain_name}:{auth_identity}"` (or `"{mgmt_name}:{domain_name}"` when `auth_identity` is `None`) |
 | `mgmt_name` | `str` | `INDEX` | Management server logical name |
-| `domain_name` | `str` | `INDEX` | Normalized domain name (`"default"` for SMS / MDS system domain) |
+| `domain_name` | `str` | `INDEX` | Normalized domain name (`"System Data"` / `SYSTEM_DOMAIN_KEY` for SMS or MDS system domain) |
 | `sid` | `str` | `repr=False` | Check Point session token (redacted in all representations) |
 | `server_ip` | `str` | `NOT NULL` | Active CMA or MDS IP where this session resides |
 | `session_uid` | `str \| None` | — | Check Point session UID from `login` response |
-| `auth_identity` | `str \| None` | — | Non-secret HMAC-SHA256 fingerprint of the credential that opened the session |
+| `auth_identity` | `str \| None` | — | Non-secret `AuthContext.identity_key` (`"{principal}:{24-char-hmac-sha256}"`) bound to the credential |
 | `created_at` | `datetime` | `NOT NULL` | Naive UTC creation timestamp |
 | `last_used_at` | `datetime` | `NOT NULL` | Naive UTC last API call timestamp |
 | `expires_at` | `datetime \| None` | — | Naive UTC local expiry (`last_used_at + session_expire_seconds`) |
@@ -899,7 +978,7 @@ Unified synchronization state tracker per `(mgmt_name, domain_name, scope, item_
 | `id` | `str` | `PK` | Composite key `"{mgmt_name}:{domain_name}:{scope}:{item_type}"` |
 | `mgmt_name` | `str` | `INDEX` | Management server logical name |
 | `domain_name` | `str` | `INDEX` | Domain name |
-| `scope` | `str` | `INDEX` | `"domains"`, `"objects"`, `"services"`, `"assets"`, or `"rulebase"` |
+| `scope` | `str` | `INDEX` | `"domains"`, `"objects"`, `"services"`, `"assets"`, `"rulebase"`, or `"topology"` |
 | `item_type` | `str` | `INDEX` | Specific type (e.g., `"host"`, `"service-tcp"`) or `"*"` for whole-scope syncs |
 | `last_published_at` | `datetime \| None` | — | Domain's `show-last-published-session` timestamp (`None` if never published) |
 | `last_session_uid` | `str \| None` | — | Last published Check Point session UID (used for `show-changes from-session` and `HybridStateReader`) |
@@ -921,8 +1000,8 @@ Cached MDSM/SMS domain topology discovered via `show-domains` (plus synthesized 
 | `id` | `str` | `PK` | `"{mgmt_name}:{name}"` |
 | `mgmt_name` | `str` | `INDEX` | Management server logical name |
 | `uid` | `str` | `INDEX` | Check Point domain UID |
-| `name` | `str` | `INDEX` | Domain name (e.g., `"Domain4"`, `"Global"`, `"default"`) |
-| `domain_type` | `str` | — | `"domain"`, `"global domain"`, or `"smc-user"` |
+| `name` | `str` | `INDEX` | Domain name (e.g., `"Domain4"`, `"Global"`, `"System Data"`) |
+| `domain_type` | `str` | — | `"domain"`, `"global"` / `"global-domain"` / `"global domain"`, or `"smc-user"` |
 | `active_ip` | `str \| None` | — | Active CMA IPv4/IPv6 address |
 | `active_mds_ip` | `str \| None` | `INDEX` | Hosting MDS member IP (used to group per-MDS-member sync concurrency) |
 | `standby_ips` | `list[str]` (JSON) | `NOT NULL` | Standby CMA IPs for automatic failover |
@@ -933,7 +1012,7 @@ Cached MDSM/SMS domain topology discovered via `show-domains` (plus synthesized 
 
 #### 6. `arodonata_objects` (`CPObjectRecord`)
 
-Cached network objects (`host`, `network`, `address-range`, `group`, `dns-domain`, etc.).
+Cached network objects (`host`, `network`, `address-range`, `group`, `dns-domain`, `application-site`, etc.).
 
 | Column | Type | Key / Index | Description |
 | --- | --- | --- | --- |
@@ -941,7 +1020,7 @@ Cached network objects (`host`, `network`, `address-range`, `group`, `dns-domain
 | `object_id` | `str` | `INDEX` | Human-readable composite key `"{mgmt_name}:{domain_name}:{name}"` |
 | `uid` | `str` | `INDEX` | Check Point object UID |
 | `name` | `str` | `INDEX` | Object name |
-| `type` | `str` | `INDEX` | Canonical object type (`"host"`, `"network"`, `"address-range"`, `"group"`, `"dns-domain"`) |
+| `type` | `str` | `INDEX` | Canonical object type (`"host"`, `"network"`, `"address-range"`, `"group"`, `"dns-domain"`, `"application-site"`) |
 | `mgmt_name`, `domain_name` | `str` | `INDEX` | Server and domain context |
 | `original_domain` | `str \| None` | `INDEX` | Owning domain reported by Check Point (`domain.name` inside `raw_data`, distinguishing local vs `Global` objects) |
 | `ipv4_address`, `ipv6_address` | `str \| None` | `INDEX` (`ipv4`) | Host IPv4 / IPv6 address |
@@ -949,12 +1028,12 @@ Cached network objects (`host`, `network`, `address-range`, `group`, `dns-domain
 | `ipv4_address_first`, `ipv4_address_last` | `str \| None` | — | Address range bounds |
 | `fqdn`, `is_sub_domain` | `str / bool` | `INDEX` (`fqdn`) | DNS domain FQDN and subdomain flag |
 | `members` | `list[str]` (JSON) | `NOT NULL` | Member UIDs for `group` objects |
-| `comments`, `color`, `tags`, `nat_settings` | `str / JSON` | — | Metadata, tag names, and automatic NAT settings |
-| `raw_data`, `updated_at` | `JSON / datetime` | `NOT NULL` | Full API payload and naive UTC timestamp |
+| `comments`, `color`, `tags`, `nat_settings` | `str / JSON` | `NOT NULL` (`comments`, `tags`, `nat_settings`) | Metadata, tag names, and automatic NAT settings |
+| `raw_data`, `updated_at` | `JSON / datetime` | `NOT NULL` | Full API payload (hydrating `application-site` URLs/categories) and naive UTC timestamp |
 
 #### 7. `arodonata_services` (`CPServiceRecord`)
 
-Dedicated cache table for service objects (`service-tcp`, `service-udp`, `service-icmp`, `service-group`, and on-demand `service-other`, `service-sctp`, `service-dce-rpc`, `service-rpc`, `service-icmp6`, `service-citrix-tcp`, `service-compound-tcp`).
+Dedicated cache table for service objects (`service-tcp`, `service-udp`, `service-icmp`, `service-group`, and on-demand `service-other`, `service-sctp`, `service-dce-rpc`, `service-rpc`, `service-icmp6`, `service-citrix-tcp`, `service-compound-tcp`, `service-gtp`).
 
 | Column | Type | Key / Index | Description |
 | --- | --- | --- | --- |
@@ -966,7 +1045,7 @@ Dedicated cache table for service objects (`service-tcp`, `service-udp`, `servic
 | `icmp_type`, `icmp_code` | `int \| None` | — | ICMP type and code |
 | `members` | `list[str]` (JSON) | `NOT NULL` | Member service UIDs for `service-group` |
 | `session_timeout`, `match_for_any` | `int / bool` | — | Service session timeout and `match-for-any` flag |
-| `comments`, `color`, `tags`, `raw_data`, `updated_at` | `str / JSON / datetime` | — | Metadata, raw payload, and naive UTC timestamp |
+| `comments`, `tags`, `raw_data`, `updated_at` | `str / JSON / datetime` | `NOT NULL` | Metadata, tag names, raw payload, and naive UTC timestamp (`color` is nullable) |
 
 #### 8. `arodonata_assets` (`AssetRecord`)
 
@@ -986,7 +1065,7 @@ Cached gateways, clusters, cluster members, VSX gateways/clusters/virtual system
 | `virtual_system_uids`, `virtual_system_asset_ids` | `list[str]` (JSON) | `NOT NULL` | Child VSX virtual system UIDs and human-readable `asset_id` values |
 | `interfaces` | `list[dict]` (JSON) | `NOT NULL` | Normalized network interfaces (`name`, `ipv4-address`, `ipv4-network-mask`, `topology`) |
 | `network_security_blades` | `dict` (JSON) | `NOT NULL` | Enabled software blades (`firewall`, `ips`, `url-filtering`, `anti-bot`, etc.) |
-| `comments`, `color`, `raw_data`, `updated_at` | `str / JSON / datetime` | — | Metadata, raw payload, and naive UTC timestamp |
+| `comments`, `raw_data`, `updated_at` | `str / JSON / datetime` | `NOT NULL` | Metadata, raw payload, and naive UTC timestamp (`color` is nullable) |
 
 ---
 
@@ -1022,6 +1101,50 @@ Stores HTTPS inspection rules (`layer_uid`, `section_uid`, `uid`, `name`, `posit
 
 Stores Threat Prevention rules (`layer_uid`, `section_uid`, `uid`, `name`, `position`, `rule_number`, `enabled`, `action`, `protected_scope`, `source`, `destination`, `service`, `track`, `install_on`, `comments`, `raw_data`).
 
+---
+
+### 3.4 Gateway Topology & Annotation Tables
+
+#### 16. `arodonata_gateway_topology` (`GatewayTopologyRecord`)
+
+Stores pre-expanded 64-bit integer IPv4 topology intervals (`[ip_first_int..ip_last_int]`) behind gateway and Virtual System interfaces from static topology extraction, VPN encryption domains, VSX provisioning routes, and live CLI routing tables (21 columns, 11 indexes).
+
+| Column | Type | Key / Index | Description |
+| --- | --- | --- | --- |
+| `id` | `str` | `PK` | Composite key `"{mgmt_name}:{domain_name}:{gateway_uid}:{interface_name}:{source_type}:{cidr_or_range}"` |
+| `mgmt_name`, `domain_name` | `str` | `INDEX` | Server and domain context |
+| `gateway_id`, `gateway_asset_id` | `str` | `INDEX` | Gateway UID key (`"{mgmt_name}:{domain_name}:{gateway_uid}"`) and human-readable key (`"{mgmt_name}:{domain_name}:{gateway_name}"`) |
+| `gateway_uid`, `gateway_name` | `str` | `INDEX` | Enforcing gateway/cluster/VS UID and name |
+| `gateway_type` | `str` | `NOT NULL` | Gateway asset type (default `"simple-gateway"`) |
+| `interface_name` | `str` | `INDEX` | Gateway interface name (`eth0`, `bond0.10`, `wrp128`) |
+| `interface_ipv4`, `interface_mask_length` | `str \| int \| None` | — | Primary IPv4 and mask prefix length of the interface |
+| `topology_zone` | `str` | `INDEX` | `"internal"`, `"external"`, or `"dmz"` |
+| `leads_to_dmz` | `bool` | `NOT NULL` | Whether Check Point marks this interface as leading to a DMZ |
+| `anti_spoofing_mode` | `str` | `NOT NULL` | `"prevent"`, `"detect"`, `"off"`, or `"unknown"` |
+| `source_type` | `str` | `INDEX` | `"interface_connected"`, `"interface_specific"`, `"external_interface"`, `"vpn_domain"`, `"vs_static_route"`, `"gaia_static_route"`, `"bgp_route"`, `"ospf_route"`, `"kernel_route"`, or `"manual"` |
+| `source_ref`, `cidr_or_range` | `str` | `NOT NULL` | Backing Check Point group/object/route reference and CIDR or IP range string |
+| `ip_first_int`, `ip_last_int` | `int` (`BigInteger`) | `INDEX, NOT NULL` | Unsigned 32-bit IPv4 start/end stored as 64-bit integer for portable SQL interval queries |
+| `prefix_len` | `int` | `NOT NULL` | Effective prefix specificity (`/0`..`/32`) for longest-prefix matching |
+| `updated_at` | `datetime` | `NOT NULL` | Naive UTC update timestamp |
+
+#### 17. `arodonata_topology_annotations` (`TopologyAnnotationRecord`)
+
+Stores persistent administrator overrides (`ignore`, `standby_dynamic`), static-topology trust hints, and IPAM site/zone metadata preserved across full `force` topology refreshes (15 columns, 7 indexes).
+
+| Column | Type | Key / Index | Description |
+| --- | --- | --- | --- |
+| `id` | `str` | `PK` | Composite annotation key scoped by server, domain, gateway, interface, and CIDR |
+| `mgmt_name`, `domain_name` | `str` | `INDEX` | Server and domain context |
+| `gateway_uid`, `gateway_name` | `str` | `INDEX` | Target gateway UID and optional name |
+| `interface_name` | `str` | `INDEX` | Target interface name or `"*"` wildcard |
+| `cidr_or_range` | `str` | `INDEX` | Target CIDR/IP range or `"*"` wildcard |
+| `trust_static_topology` | `bool \| None` | — | Optional confidence override trusting static topology over live routing conflicts |
+| `disposition` | `str \| None` | `INDEX` | Optional `"ignore"` (suppresses interface from matching) or `"standby_dynamic"` |
+| `topology_zone` | `str \| None` | — | Optional zone override (`"internal"`, `"external"`, `"dmz"`) |
+| `zone`, `site`, `comment` | `str` | `NOT NULL` | Organizational zone/site metadata and administrator note |
+| `custom_metadata` | `dict` (JSON) | `NOT NULL` | Extensible JSON metadata exported alongside prefixes (`export_topology_prefixes()`) |
+| `updated_at` | `datetime` | `NOT NULL` | Naive UTC update timestamp |
+
 
 ---
 
@@ -1039,8 +1162,8 @@ Arodonata v2 coordinates multi-domain synchronization through `DomainSyncCoordin
 | --- | --- | --- | --- |
 | `"cache"` | Never | Local SQLite/PostgreSQL query only (`0` API calls) | High-speed rulebase filtering, offline analysis, MCP `query_objects` |
 | `"smart"` (default) | Only when `synced_at` is older than `cache_ttl` (or after `invalidate_domain`) | Full atomic type-slice reload if `(last_published_at, last_session_uid)` changed | Default SDK reads (`get_hosts`, `get_services`, `get_gateways`) |
-| `"smart-fast"` | Same as `"smart"` | Queries `show-changes` (`from-session` or UTC `from-date`) and applies dialect `ON CONFLICT` upserts/deletes; falls back to full reload if changes `> max_incremental_changes` (`500`) | Rapid refresh after small publishes across large domains |
-| `"force"` | Always probes current publish head | Unconditional atomic reload of all requested types | Initial cache build (`04_smart_refresh.py`) or forced recovery |
+| `"smart-fast"` | Same as `"smart"` | Queries `show-changes` (`from-session` or UTC `from-date`), deletes removed UIDs, re-fetches added/modified UIDs via `show-object`, and applies dialect `ON CONFLICT` upserts; falls back to full reload if changes `> max_incremental_changes` (`500`) | Rapid refresh after small publishes across large domains |
+| `"force"` | Always probes current publish head | Unconditional atomic reload of all requested types | Initial cache build or forced recovery |
 
 ## 2. Synchronization Pipeline & Safeguards
 
@@ -1056,16 +1179,18 @@ sequenceDiagram
     Coord->>Cache: list_sync_states(mgmt, domain, scope)
     alt Within cache_ttl and not invalidated
         Coord-->>Caller: Return cached data immediately (0 API calls)
+    else In-process single-flight already active
+        Coord-->>Caller: Coalesce and await shared result
     else Expired TTL or invalidated
         Coord->>Lock: acquire("sync:mgmt:domain:objects") + start heartbeat task
-        Coord->>API: show-session (verify shared session has 0 uncommitted changes)
+        Coord->>API: show-session (verify changes == 0, locks == 0, published == 0)
         Coord->>API: show-last-published-session
         alt (last_published_at, last_session_uid) unchanged
             Coord->>Cache: Update synced_at timestamp
         else Published head advanced
             alt mode == "smart-fast" and baseline exists
-                Coord->>API: show-changes(from-session=last_session_uid)
-                Coord->>Cache: Atomic transaction: apply_incremental_objects + upsert_sync_state
+                Coord->>API: show-changes(from-session=last_session_uid) + show-object per changed UID
+                Coord->>Cache: Atomic transaction: delete_objects_by_uids + upsert_objects + upsert_sync_state
             else mode == "smart" or "force" or >500 changes
                 Coord->>API: Continuity-verified paginated show-hosts / show-networks / ...
                 Coord->>Cache: Atomic transaction: replace_domain_objects + upsert_sync_state
@@ -1078,30 +1203,56 @@ sequenceDiagram
 
 ### Critical Invariants
 
-- **Dirty Shared Session Refusal (`DirtySessionError`)**: Before syncing any domain into the shared cache, `DomainSyncCoordinator` verifies via `show-session` that the session has `changes == 0`. It never caches uncommitted objects into the shared SQL tables.
-- **Per-MDS-Member Concurrency**: Domains hosted on the same `active_mds_ip` are refreshed concurrently via `asyncio.TaskGroup` up to `max(1, concurrent_limit - 1)` at a time, leaving at least one rate-limiter slot free for interactive API calls.
+- **Dirty Shared Session Refusal (`DirtySessionError`)**: Before syncing any domain into the shared cache, `DomainSyncCoordinator` verifies via `show-session` that `locks == 0`, `changes == 0`, and `number-of-published-changes == 0` (failing closed if `show-session` fails). Uncommitted changes are never written into shared SQL tables.
+- **Process-Wide Concurrency & Single-Flight Coalescing (`_ProcessSyncRegistry`)**: Coordinators sharing a database engine share event-loop-bound per-MDS-member semaphores and an `_InFlightDomainSync` registry so concurrent coroutines syncing the same domain coalesce without duplicate API probes or lock contention. Default `domain_sync_concurrency` is `min(2, max(1, concurrent_limit - 1))` unless overridden via `ARODONATA_DOMAIN_SYNC_CONCURRENCY`, and re-entrant nested `ensure` calls reuse `_HELD_MDS_PERMITS` without deadlocking.
 - **Lock Contention vs Genuine Failure**: If another worker holds the per-domain lock (`LockAcquisitionError`), the coordinator skips redundant work without marking `arodonata_domain_sync_state.status = "failed"`. Genuine API or credential errors record a sanitized (`redact_sid`) error in `last_error` while preserving previously cached rows.
 
-## 3. Search & Recursive Group Membership (`SearchService`)
+## 3. Search, Structured Queries & Recursive Group Membership (`SearchService`)
 
-`await client.search_objects(query, ..., exact_match=False, max_depth=2)` classifies each comma-separated term in `query` and searches across `arodonata_objects` (plus any active `WriteSession` overlay):
+`await client.search_objects(query, ..., exact_match=False, max_depth=2)` classifies each comma-separated term via `classify_search_term()` into `"ipv4"`, `"cidr"`, `"range"`, `"wildcard"`, `"uid"`, or `"name"` and searches across `arodonata_objects` (plus `arodonata_assets` including interface IPv4s when asset types are specified, and any active `WriteSession` overlay):
 
 1. **IPv4 Address (`10.1.10.50`)**: Matches hosts with that IPv4 address, networks whose CIDR subnet contains the IP, and address ranges whose `[first..last]` bounds include the IP.
-2. **CIDR Subnet (`10.1.10.0/24`)**: Matches networks with that subnet/mask and hosts/subnets contained within it.
+2. **CIDR Subnet (`10.1.10.0/24`)**: Matches networks with that subnet/mask and hosts/subnets contained within it (with containment excluded when `exact_match=True`).
 3. **IPv4 Range (`10.1.10.1-10.1.10.20`)**: Matches overlapping `address-range` objects and contained hosts.
-4. **Wildcard Pattern (`*.corp.example`, `web-*`)**: Evaluates case-insensitive anchored `fnmatchcase` across object names and `fqdn` fields.
-5. **Composite Identifier (`mds:Domain4:hWebHost` or `mds:Domain4:<uid>`)**: Matches `CPObject.object_id` or `CPObject.id` directly (case-insensitively on `object_id`).
+4. **Wildcard Pattern (`*.corp.example`, `web-*`)**: Evaluates case-insensitive anchored `fnmatchcase` across `name`, `uid`, `object_id`, `id`, `fqdn`, `ipv4_address`, `subnet4`, and `comments`.
+5. **UUID Identifier (`<uid>`)**: Matches `CPObject.uid` or composite `id` directly.
 6. **Exact or Substring Name (`exact_match=True` vs `False`)**:
-   - When `exact_match=False` (default), matches case-insensitive substrings in `name`, `fqdn`, `object_id`, and `comments`.
-   - When `exact_match=True`, matches only exact case-insensitive `name`, `fqdn`, `object_id`, or `id` (e.g., searching `".example.com"` with `exact_match=True` matches `.example.com` without matching `sub.example.com`).
-7. **Recursive Group Resolution (`max_depth`)**: Automatically traverses `group.members` upward up to `max_depth` levels, returning both `SearchResult.objects` and `SearchResult.memberships` (`object_uid -> list[GroupMembershipNode]`, where each `GroupMembershipNode` carries `uid`, `name`, `type`, `domain`, `id`, `object_id`, `depth`, `parent_uids`, and `parent_object_ids`).
+   - When `exact_match=False` (default), matches case-insensitive substrings in `name`, `fqdn`, `object_id`, `id`, and `comments`.
+   - When `exact_match=True`, matches only exact case-insensitive `name`, `fqdn`, `object_id`, `id`, or `uid` (e.g., searching `".example.com"` with `exact_match=True` matches `.example.com` without matching `sub.example.com`).
+7. **Recursive Group Resolution (`max_depth`)**: Traverses `group.members` upward up to `max_depth` levels, returning `SearchResult(query=..., matches=[...], memberships=...)` where each `GroupMembershipNode` carries `id`, `object_id`, `uid`, `name`, `mgmt_name`, `domain_name`, `depth`, `parent_uids`, and `parent_object_ids`.
+
+`SearchService` also provides:
+
+- `describe_objects()` and `query_objects()` for cross-domain SQL-backed filtering (`scope_origin="local"|"global"|"all"`, `ip_subnet`, `port`, `protocol`, `tags`), `group_by` aggregation with CPMI type aliases, and `aggregate="count" | "list" | "describe"`.
+- `get_cache_status()` inspecting `arodonata_domain_sync_state` per `(mgmt_name, domain_name, scope, item_type)`.
+- `get_group_members()` / `resolve_group_with_members()` resolving recursive group, service-group, cluster, and cross-domain VSX members while raising `AmbiguousObjectError` if an unqualified name matches multiple cached domains.
 
 ## 4. Cross-Domain Asset Topology & Composite Identifiers
 
 During `refresh_assets` / `stream_refresh_assets`, `AssetRefreshService` runs `ClusterRelationshipManager` and `VSXRelationshipManager` across cached domain assets:
 
 - **Intra-Domain Cluster Members**: Links each cluster (`CpmiGatewayCluster`, `vsx-cluster-netobj`) and its members (`CpmiClusterMember`, `vsx-cluster-member`) with both UID references (`parent_uid`, `member_uids`) and composite identifiers (`parent_id`, `parent_asset_id`, `member_asset_ids`).
-- **Cross-Domain VSX Virtual Systems**: On Multi-Domain Security Management (MDSM), a physical VSX gateway or cluster typically lives in an infrastructure domain (e.g., `"VSX"`) while its Virtual Systems (`virtual-system`) reside in tenant domains (e.g., `"Domain4"`). `AssetRefreshService` reconciles VSX relationships across all domains on the same `mgmt_name`, populating `parent_id` (`"mds:VSX:<vsx-uid>"`), `parent_asset_id` (`"mds:VSX:<vsx-name>"`), `virtual_system_uids`, and `virtual_system_asset_ids` (`["mds:Domain4:<vs-name>"]`).
+- **Cross-Domain VSX Virtual Systems**: Reconciles VSX relationships across all domains on the same `mgmt_name` (including `CpmiVsxSlotObj` / `CpmiVsSlotObj` interface and route inheritance), populating `parent_id` (`"mds:VSX:<vsx-uid>"`), `parent_asset_id` (`"mds:VSX:<vsx-name>"`), `virtual_system_uids`, and `virtual_system_asset_ids` (`["mds:Domain4:<vs-name>"]`).
+
+## 5. Explicit Background Cache Warm-Up
+
+`client.start_object_cache_warmup(...)` starts non-blocking background cache warming coalesced across callers via `_WarmupFlightKey` (`(mgmt_name, domains, types, include_global, include_services, mode == "force")`). `get_domains()` never triggers implicit warm-up, while `client.get_warmup_status()` reports SID-redacted per-server progress (`WarmupStatusEntry`). On `client.close()`, active warm-up tasks are cancelled cleanly.
+
+## 6. Gateway Topology & Live Route Sync (`TopologyService`)
+
+`TopologyService` combines Check Point static interface/VPN/VS-route extraction with live CLI routing diagnostics:
+
+- **Targeted On-Demand Extraction**: Expands interface specific-network groups on demand via targeted `show-object` / `show-group` lookups rather than downloading every host/network object in a domain.
+- **Live Route Collection**: Executes route collection scripts bounded by `route_collect_concurrency` (default `min(4, max(1, concurrent_limit // 2))`) and serialized per VSX physical chassis node, trying `GatewayCliPort` (SSH) first and falling back to Check Point `cprid` `run-script` (via `ScriptRepositoryService` in `"auto"` or `"repository"` mode, or inline bash).
+- **Reconciliation, Confidence & Matching**: Persists 64-bit IPv4 intervals into `arodonata_gateway_topology`, honors persistent `arodonata_topology_annotations` (`ignore`, `standby_dynamic`, `trust_static_topology`), computes `ConfidenceDelta` scores using `TopologyConfidenceWeights` and policy rule evidence, and exposes `reconcile_gateway_topology()`, `get_topology_diagnostics()`, `find_affected_gateways()`, and `export_topology_prefixes()`.
+
+## 7. Rulebase Snapshots & Selective Package Refresh
+
+`RulebaseRefreshService` and `CachedRulebaseSource` maintain normalized SmartConsole-compatible rulebase caches across the 7 `arodonata_rulebase_*` tables:
+
+- `refresh_policy_packages()` populates the lightweight `arodonata_rulebase_package_layer` catalog without downloading all rule rows.
+- `refresh_package_rulebase()` atomically updates only the target package's layers, inline layers, sections, and NAT package rows (`upsert_domain_rulebase_layers`) without overwriting other packages in the domain.
+- `RulebasePager` stitches sections split across 100-rule pagination boundaries and probes trailing empty sections; `CachedRulebaseSource` supports offline hierarchical numbering (`1`, `2.1`, `3`), `locate_rules()`, and `filter_rulebase()` (`output_format="objects" | "markdown" | "model_friendly" | "cpcrud"`).
 
 
 ---
@@ -1118,21 +1269,21 @@ Arodonata v2 enforces a strict architectural separation between **shared read-on
 
 ## 1. Shared Read-Only Sessions (`arodonata_sid_cache`)
 
-- All read commands (`show-*`, `where-used`, `verify-policy`) use a pooled session cached in the `arodonata_sid_cache` table per `(mgmt_name, domain_name, auth_identity_hash)`.
-- **Hard Read-Only Guard**: `AMgmtClient` checks `is_readonly_command(command)` before using a cached `sid`. Attempting to run `add-*`, `set-*`, `delete-*`, `publish`, or `discard` on the shared session raises `SessionStateError` immediately.
-- **Persistent Reuse Across CLI Invocations**: When `ARODONATA_DATABASE_URL` points to a file-backed SQLite or PostgreSQL database, `await client.close()` leaves valid `arodonata_sid_cache` sessions alive so subsequent CLI commands or worker processes reuse the existing login without triggering Check Point's login rate limiter.
-- **Startup `SessionCleaner`**: On initialization, `SessionCleaner` inspects open sessions created by Arodonata (`application="arodonata"`) and logs out only orphaned idle sessions that have `changes == 0` and `locks == 0`.
+- **Credential-Bound Pooling (`C4`)**: All read commands (`show-*`, `where-used`, `verify-policy`) use a pooled session stored in `arodonata_sid_cache` keyed by `"{mgmt_name}:{domain_name}:{auth_identity}"`, where `domain_name` normalizes `None` to `SYSTEM_DOMAIN_KEY` (`"System Data"`) and `auth_identity` is the non-secret HMAC-SHA256 `AuthContext.identity_key` (`"{principal}:{digest}"`). Distinct users or API keys in multi-tenant hosts never collide or share a `sid`.
+- **Hard Read-Only Guard**: `AMgmtClient` checks `is_readonly_command(command)` before using a cached `sid`. Attempting to run `add-*`, `set-*`, `delete-*`, `publish`, `discard`, or `run-script` on the shared session raises `SessionStateError` immediately.
+- **Persistent Reuse Across Invocations**: When configured with PostgreSQL or file-backed SQLite, `await client.close()` leaves valid `arodonata_sid_cache` sessions alive so subsequent worker invocations reuse existing logins without triggering Check Point's login rate limiter (auto-logout on close runs only when `logout=True` or on an owned ephemeral `:memory:` SQLite DB).
+- **Startup & Max-Sessions `SessionCleaner`**: `SessionCleaner` (`src/arodonata/adapters/checkpoint/sessions.py`) inspects open Web API sessions where `application == "arodonata"` or `session-name` starts with `"arodonata"` with `changes == 0` and `locks == 0`. It discards orphaned sessions via **`discard {"uid": target_uid}`** (never `logout`, which cannot close foreign UIDs) while leaving `SmartConsole`, third-party, and dirty sessions untouched. Startup cleanup is also invoked on max-sessions errors and skips cleanly in cold `"dynamic"` mode with no active auth.
 
 ## 2. Isolated `WriteSession` & `SessionOverlay`
 
 Whenever you open `async with client.write_session(mgmt_name, domain) as ws:`, Arodonata:
 
-1. Calls `create_dedicated_session()` to open a fresh Check Point session outside `arodonata_sid_cache`.
+1. Calls `create_dedicated_session()` to open a fresh Check Point session outside `arodonata_sid_cache` (applying `session_name` / `session_description` from `UserContext` if set).
 2. Binds the `WriteSession` and its `SessionOverlay` to Python's `contextvars` for the current async task tree.
-3. Intercepts every `add-<type>`, `set-<type>`, and `delete-<type>` call inside that `with` block and records the created, modified, or deleted object/service in `ws.overlay`.
-4. Automatically merges `ws.overlay` into all cached read helpers (`get_hosts`, `get_objects`, `get_services`, `find_object`, `search_objects`, `get_group_members`) called within the same async context!
+3. Intercepts every `add-<type>`, `set-<type>`, and `delete-<type>` call for cacheable objects and services and records them via `ws.overlay.record_object_upsert()`, `record_object_delete()`, `record_service_upsert()`, and `record_service_delete()`. Non-object/non-service commands (`NON_OVERLAY_MUTATION_TARGETS` such as rules, sections, layers, packages, domains, and repository scripts) bypass `SessionOverlay`.
+4. Automatically merges `ws.overlay` (`apply_to_objects()`, `apply_to_services()`) into cached read helpers (`get_hosts`, `get_objects`, `get_services`, `find_object`, `search_objects`, `get_group_members`) called within the same async context.
 5. On normal block exit (`publish_on_exit=True`), executes `publish`, waits for the task to complete, clears the overlay, invalidates the domain cache so the next read fetches the new published revision, and logs out the dedicated `sid`.
-6. On exception, automatically executes `discard` (shielded via `asyncio.shield`) and logs out cleanly so no locks remain orphaned on the Check Point server.
+6. On any `BaseException` (including `asyncio.CancelledError`), shields `discard` and `logout_sid()` via `asyncio.shield` so no locks remain orphaned on Check Point.
 
 ```mermaid
 sequenceDiagram
@@ -1144,12 +1295,12 @@ sequenceDiagram
 
     App->>Client: async with client.write_session(mgmt, "Domain4") as ws:
     Client->>CP: login (dedicated session) -> sid_write
-    App->>Client: add_object(mgmt, "host", {"name": "h1", "ipv4-address": "10.0.0.1"})
+    App->>Client: add_object(mgmt, "host", {"name": "h1", "ipv4-address": "10.0.0.1"}, domain="Domain4")
     Client->>CP: add-host (sid=sid_write)
-    Client->>Overlay: record_upsert(CPObject("h1"))
+    Client->>Overlay: record_object_upsert(CPObject("h1"))
     App->>Client: get_hosts(mgmt, "Domain4")
     Client->>SQL: SELECT * FROM arodonata_objects (committed state)
-    Client->>Overlay: apply_objects(committed_hosts) -> includes uncommitted "h1"!
+    Client->>Overlay: apply_to_objects(committed_hosts) -> includes uncommitted "h1"
     Client-->>App: [..., CPObject("h1")]
     App->>Client: exit write_session block
     Client->>CP: publish (sid=sid_write) + wait_for_task
@@ -1157,12 +1308,23 @@ sequenceDiagram
     Client->>CP: logout (sid=sid_write)
 ```
 
-## 3. Login Throttling Recovery (`LoginGate`)
+## 3. Authentication Modes & Context Propagation
 
-Check Point R81.20 / R82 Management servers enforce a strict login rate limit; exceeding it returns HTTP `400` / `429` (`err_too_many_requests` / `"Too many login attempts"`).
+`ArodonataSettings` resolves credentials across three mutually validated modes (`api_key`, `credential`, and `dynamic`):
 
-- `LoginGate` (`src/arodonata/adapters/checkpoint/rate_limiter.py`) serializes login attempts per MDS member IP with inter-login spacing and, upon detecting a throttle response, opens a `login_throttle_window` (`70.0s` default) cooldown gate across all waiting tasks up to `login_max_wait` (`900.0s`).
-- Genuine authentication failures (`InvalidCredentialsError`, including Check Point R82 `"Authentication to server failed."` / `err_login_failed`) fail fast immediately without waiting or retrying.
+- **`client.auth_context(AuthContext(...))`**: Scopes per-request credentials (`api_key` or `username`/`password` + optional `user_id`) via `contextvars` for multi-tenant APIs/MCP hosts.
+- **`AuthProvider`**: Optional dynamic credential callback queried when no static or context-bound credential is present; notifies `on_auth_failed()` and fast-fails evicted identities across retries.
+- **`client.user_context(UserContext(...))`**: Propagates operator `user_id`, `username`, `session_name`, `session_description`, and `client_id` metadata onto dedicated Check Point write sessions.
+
+## 4. MDSM Discovery, Failover & Login Throttling Recovery
+
+- **Domain & Active CMA Failover**: `DomainService` caches `show-domains` (falling back to `details-level="standard"` if RBAC rejects `full` while preserving cached CMA IPs) with a `1h` TTL (`domain_list_ttl`). If a read-only call hits a stale standby CMA IP, `LoginCoordinator` clears cached SIDs and re-resolves active CMA IPs via `DomainService` / `show-global-domain`. Coalesced background keepalive sweeps (`RateLimiter.run_coalesced_keepalive`) keep long-lived sessions valid and evict expired SIDs immediately (`"object not found"` / revision reverts).
+- **Login Throttling Recovery (`LoginGate`)**: Check Point R81.20 / R82 Management servers enforce a strict login rate limit returning HTTP `400` / `429` (`err_too_many_requests` / `"Too many login attempts"`). `LoginGate` (`src/arodonata/adapters/checkpoint/rate_limiter.py`) serializes login attempts per MDS member IP with inter-login spacing and opens a shared `login_throttle_window` (`70.0s` default) cooldown gate up to `login_max_wait` (`900.0s`), while genuine auth failures (`InvalidCredentialsError`, e.g. `"Authentication to server failed."`) fail fast with zero retries.
+
+## 5. Staged CPCRUD Sessions & Repository Script Execution
+
+- **CPCRUD Staged Sessions**: `cpcrud.apply(plan, no_publish=True, keep_session=True)` retains the uncommitted write session cleanly and records `StagedSessionInfo` (`sid` redacted). Later calls to `publish_staged_session()` or `discard_staged_session()` validate session provenance and adopt the session via `take-over-session` (with `switch-session` fallback).
+- **`ScriptRepositoryService` Execution**: `run_repository_script()` runs `run-script` inside a dedicated non-read-only session (not `arodonata_sid_cache`) and closes cleanly without calling `publish` or `discard`.
 
 
 ---
@@ -1179,30 +1341,33 @@ Check Point R81.20 / R82 Management servers enforce a strict login rate limit; e
 
 ```mermaid
 flowchart LR
-    Tpl["YAML / JSON Template"] --> Val["Validator\n(checkpoint_ops_schema.json)"]
+    Expr["Shorthand Expressions\n(expressions.py)"] -.-> Tpl["YAML / JSON Template"]
+    Tpl --> Val["Validator & Semantic Checks\n(checkpoint_ops_schema.json)"]
     Val --> Plan["Planner & Differ"]
     Stamp["show-last-published-session\n(DomainStamp)"] --> Plan
-    Reader["HybridStateReader\n(SQL Cache + Live API Fallback\n+ Virtual Intra-Plan Overlay)"] --> Plan
+    Reader["HybridStateReader\n(SQL Cache + show-objects / API Fallback\n+ Virtual Intra-Plan Overlay)"] --> Plan
     Plan --> SignedPlan["Plan\n(PlannedActions + DomainStamps\n+ Name Resolutions)"]
-    SignedPlan --> Exec["Executor\n(Pre-Apply Stamp Check + WriteSession\n+ Retry Folding + Publish/Stage)"]
+    SignedPlan --> DryReport["build_change_report_from_plan\n(Offline Dry-Run Report)"]
+    SignedPlan --> Exec["Executor\n(Pre-Apply Stamp Check + WriteSession\n+ Retry Folding + Publish or Stage)"]
     Exec --> Report["ApplyReport\n(ActionResults + StagedSessionInfo)"]
+    Exec -.-> Staged["publish_staged_session /\ndiscard_staged_session"]
     SignedPlan & Report --> Inv["Inverse Builder\n(build_inverse_template)"]
 ```
 
 ## Core Components
 
-### 1. Offline Schema Validator (`validator.py`)
+### 1. Offline Schema & Semantic Validator (`validator.py`)
 
-Validates YAML strings or Python dictionaries against `src/arodonata/cpcrud/checkpoint_ops_schema.json` (JSON Schema Draft-07) with zero network or database calls. Checks structural requirements, object/service/group/section/rule types, conflict policies, and strict `(object_type, operation)` command allowlisting.
+`CPCRUDService.validate()` validates YAML strings or Python dictionaries against `src/arodonata/cpcrud/checkpoint_ops_schema.json` (or `cpcrud_schema_path`, JSON Schema Draft-07) with zero network or database calls. Beyond JSON Schema, semantic checks enforce strict `(object_type, operation)` command allowlisting, reject `add` operations on `application-site` missing both `url-list` and `application-signature`, and validate incremental `{add, remove}` delta mappings.
 
 ### 2. `DomainStamp` & `HybridStateReader` (`state_reader.py`)
 
 Before inspecting any objects or rules, `Planner` queries `show-last-published-session` for each target domain and records a `DomainStamp(mgmt_name, domain, last_session_uid, last_published_at)`.
 
-`HybridStateReader` then serves object and service lookups using a two-tier strategy:
+`HybridStateReader` serves object, service, and rule lookups using a tiered strategy:
 
-- **Cache Hit (Fast Path)**: If `arodonata_domain_sync_state` for `(mgmt_name, domain, scope, item_type)` matches the planner's `DomainStamp` (`last_published_at` and `last_session_uid`), lookups (`host`, `network`, `address-range`, `group`, `dns-domain`, `application-site`, `service-tcp`, `service-udp`, etc.) are resolved directly from `arodonata_objects` and `arodonata_services` in local SQL.
-- **Live API Fallback**: If the domain cache is absent or older than the `DomainStamp`, `HybridStateReader` falls back transparently to live Check Point API queries.
+- **Cache Hit (Fast Path)**: If `arodonata_domain_sync_state` for `(mgmt_name, domain, scope, item_type)` matches the planner's `DomainStamp` (`last_published_at` and `last_session_uid`), lookups (`host`, `network`, `address-range`, `group`, `dns-domain`, `application-site`, `service-tcp`, `service-udp`, `service-icmp`, etc.) resolve directly from `arodonata_objects` and `arodonata_services` in local SQL.
+- **Targeted Cold-Cache API Lookup**: When local cache is cold or stale, `HybridStateReader` first issues targeted `show-objects` queries (`filter` + `ip-only=True`)—with `application-site` value-matching using normalized `url-list` keys (`normalize_app_site_url_key`)—before falling back to full paginated `api_query` (`show-hosts`, `show-services-tcp`, etc.) only when necessary (e.g., `generic_err_command_not_recognized` or ICMP type/code lookups).
 - **Intra-Plan Virtual State Overlay**: Each `plan()` call instantiates a fresh `HybridStateReader` whose virtual overlay tracks objects, services, and groups planned earlier in the same template so downstream groups and rules see newly planned members immediately.
 - **Fail-Closed Lookup Errors**: Transport or API errors during state lookup raise `StateLookupError` and produce `Outcome.ERROR` (plus `Outcome.SKIPPED_DEPENDENCY` on dependent groups/rules) rather than falsely assuming an object is missing and planning a duplicate `CREATE`.
 
@@ -1215,24 +1380,38 @@ When planning an object or service:
   - If fields differ and `on_name_conflict="update"` → `Outcome.UPDATE` with field-level `FieldChange` diffs.
   - If fields differ and `on_name_conflict="error"` → `Outcome.ERROR`.
 - **`on_ip_conflict: "reuse" | "create_new" | "error"`**:
-  - Evaluated when no object has the requested `name`, but an existing object in the domain already owns the same IPv4 address, CIDR subnet, IP range, or TCP/UDP port:
+  - Evaluated when no object has the requested `name`, but an existing object in the domain already owns the same IPv4/IPv6 value, CIDR subnet, IP range, port/ICMP tuple, DNS FQDN, or `application-site` URL set:
   - `"reuse"` (default): Plans `Outcome.REUSE` and records `requested_name -> existing_name` in `Plan.name_resolutions`, automatically rewriting references in subsequent groups and rules.
-  - `"create_new"`: Generates a canonical convention name via `NamingPrefixes` (`Host_<ip>`, `Net_<subnet>_<mask>`, `IPR_<first>-<last>`, `TCP_<port>`, `UDP_<port>`) and plans `Outcome.CREATE` (or reuses if that canonical name already exists).
+  - `"create_new"`: Generates a convention name via `NamingPrefixes` (`Host_<ip>`, `Net_<subnet>_<mask>`, `IPR_<first>-<last>` or compressed same-`/24`, `TCP_<port>`, `UDP_<port>`, `ICMP_<type>[_<code>]`, `grp<name><suffix>`, `Site_[marker]<domain>`) and plans `Outcome.CREATE` (or reuses if that canonical name already exists).
   - `"error"`: Plans `Outcome.ERROR` and skips dependent actions.
 
 ### 4. Rule Identity & Cleanup-Aware Positioning (`rule_identity.py` & `position_helper.py`)
 
 - **Access, HTTPS, and Threat Rules**: Matched by `uid`, `name`, or traffic tuple (`source`, `destination`, `service`, `action`).
-- **NAT Rules**: Matched by `uid`, `name`, or original/translated traffic tuple, normalizing Check Point's built-in `"Original"` (`NAT_ORIGINAL_OBJECT_UID`) and `"Any"` (`NAT_ANY_OBJECT_UID`) sentinel UIDs so re-planning an applied NAT rule is 100% idempotent (`Outcome.UNCHANGED`).
-- **Cleanup Rule Anchoring**: When `position: "bottom"` is requested on an access layer whose bottom rule is an explicit Check Point cleanup rule (`name="Cleanup rule"` or `action="Drop"` with `Any/Any/Any`), `position_helper` automatically anchors the new rule `{"above": "<cleanup_rule_uid>"}` so traffic rules are never placed below the cleanup drop rule.
+- **NAT Rules**: Matched by `uid`, `name`, or original/translated traffic tuple, normalizing Check Point's built-in `"Original"` (`NAT_ORIGINAL_OBJECT_UID`) and `"Any"` (`NAT_ANY_OBJECT_UID`) sentinel UIDs so re-planning an applied NAT rule is idempotent (`Outcome.UNCHANGED`).
+- **Cleanup Rule Anchoring**: `is_cleanup_rule()` identifies any rule with `"cleanup"` in its name or any trailing `Any / Any / Any` rule at the end of a layer or section. When `position: "bottom"` or `{"bottom": "<section>"}` is requested alongside a trailing cleanup rule, `position_helper` automatically anchors the new rule `{"above": "<cleanup_rule_uid>"}` so traffic rules are never placed below the cleanup drop rule.
 
-### 5. Dedicated-Session `Executor` & Staleness Guard (`executor.py`)
+### 5. Dedicated-Session `Executor` & Compensating Rollback (`executor.py`, `inverse.py`)
 
 When `await client.cpcrud.apply(plan, force=False)` runs:
 
 1. **Pre-Session Staleness Check**: Re-queries `show-last-published-session` and compares against `plan.domain_stamps`. If another admin published changes after `plan()` was created and `force=False`, execution aborts with `Outcome.PLAN_STALE` before opening a write session.
-2. **Pre-Publish Drift Re-Verification**: Before calling `publish` at the end of a domain's action batch, `Executor` re-checks `show-last-published-session` a second time; if concurrent changes were published while actions were running and `force=False`, it discards the session and reports `Outcome.PLAN_STALE`.
-3. **Compensating Rollback (`inverse.py`)**: `client.cpcrud.inverse(plan, report)` inspects only actions that actually succeeded (`Outcome.CREATED`, `Outcome.UPDATED`, `Outcome.DELETED`) in `ApplyReport` and generates a schema-valid reverse template (`delete` for `CREATED`, `set` with `before` values for `UPDATED`, `add` with `before_snapshot` for `DELETED`) in reverse dependency order (rules → sections → groups → services/objects).
+2. **Pre-Publish Drift Re-Verification**: Before calling `publish`, `Executor` re-checks `show-last-published-session`; if concurrent changes published during execution (`force=False`), it discards the session cleanly and reports `Outcome.PLAN_STALE`.
+3. **Bounded Retries (`retry_remaining`)**: `Executor.stream_apply` can re-run failed actions up to `retry_remaining` times, advancing `DomainStamp` only for domains published by the executor and folding retry results into a cumulative `ApplyReport`.
+4. **Compensating Rollback (`inverse.py`)**: `client.cpcrud.inverse(plan, report=None)` supports both post-apply rollback (`Outcome.CREATE`, `Outcome.UPDATE`, `Outcome.DELETE` using `prior_state`, requiring a concrete `target_uid` on `CREATE`) and pre-apply dry-run inversion, emitting a schema-valid reverse template in reverse dependency order (rules → sections → groups → services/objects).
+
+### 6. Shorthand Expression Parser (`expressions.py`)
+
+`arodonata.cpcrud.expressions` parses concise operator strings into normalized Check Point object/service dictionaries using `NamingPrefixes`: `parse_object_expression()`, `parse_service_expression()`, `parse_group_expression()`, `expand_group_expression()`, `parse_app_site_expression()`, `parse_range_token()`, `normalize_wildcard_domain()`, and `wildcard_domain_to_cp_regex_urls()` (covering hosts, CIDRs, short IP ranges like `10.1.1.1-9`, `tcp/udp/icmp` tokens, DNS sub-domains, wildcard `application-site` regex URLs, and nested group trees).
+
+### 7. Incremental Group & Rule Cell Deltas (`DiffSafetyError`)
+
+`differ.py` supports incremental `{add, remove}` dictionaries on `group.members`, `service-group.members`, `application-site.url-list`, and rule cells (`source`, `destination`, `service`, `install-on`, `protected-scope`, `site-category`), raising `DiffSafetyError` to prevent unsafe mutations (adding `'Any'`, narrowing an existing `'Any'` cell without explicitly removing `'Any'`, or emptying a rule cell or `url-list` without `application-signature`). Missing named targets under `"set"` or incremental delta updates fail closed as `Outcome.ERROR`.
+
+### 8. Staged Sessions & Offline Dry-Run `ChangeReport`
+
+- **Staged Sessions**: Calling `apply(plan, no_publish=True, keep_session=True)` leaves the dedicated write session uncommitted for external inspection (`ApplyReport.staged_sessions` with `StagedSessionInfo`, `sid` redacted), emits `StagedSessionEvent`, and supports later provenance-verified adoption (`take-over-session` / `switch-session`) via `publish_staged_session()` and `discard_staged_session()`.
+- **Offline Plan Reports**: `build_change_report_from_plan(plan)` (`arodonata.reports.plan_report`) converts any `Plan` directly into a `ChangeReport` renderable via `render_change_report()` (`html`, `markdown`, `json`) without live API calls.
 
 
 ---
@@ -1367,9 +1546,19 @@ app.mount("/mcp", mcp_asgi)
 | `ARODONATA_MCP_ALLOWED_ORIGINS` | `list[str]` (CSV) | `http(s)://localhost:*`, `127.0.0.1:*` | Permitted browser `Origin` headers |
 | `ARODONATA_MCP_ALLOW_WRITE_API` | `bool` | `False` | When `False`, `api_call` permits only the explicit read-only allowlist (`show-*`, `where-used`, `verify-policy`); when `True`, mutating calls run in an isolated dedicated session |
 | `ARODONATA_MCP_CPCRUD` | `bool` | `False` | Registers the 5 tamper-proof HMAC-signed CPCRUD tools (`cpcrud_validate`, `cpcrud_plan`, `cpcrud_apply`, `cpcrud_inverse`, `cpcrud_staged_session`) |
+| `ARODONATA_MCP_ALLOW_INSECURE_UNAUTHENTICATED` | `bool` | `False` | Explicit opt-in required to pair `ARODONATA_MCP_AUTH_MODE=none` with non-loopback `host`, disabled DNS rebinding protection, wildcard or non-loopback allowlist entries, `allow_write_api=true`, or `cpcrud=true` (emits a `SECURITY WARNING`) |
+| `ARODONATA_MCP_TOOL_RATE_LIMIT_PER_MINUTE` | `int` | `120` | Sliding-window per-caller (`client_id[:user_id]`) tool invocation limit per minute across all MCP tools (`0` disables enforcement) |
+| `ARODONATA_MCP_LIVE_TOOL_RATE_LIMIT_PER_MINUTE` | `int` | `30` | Stricter per-caller sliding-window limit per minute for live/mutating tools, cold/stale `smart` syncs, domain-miss refreshes, and `show_object` live fallbacks (`0` disables enforcement) |
 | `ARODONATA_MCP_JSON_RESPONSE` | `bool` | `False` | Return JSON responses instead of SSE streams on Streamable-HTTP POST |
-| `ARODONATA_MCP_STATELESS_HTTP` | `bool` | `False` | Enable stateless Streamable-HTTP mode per request |
+| `ARODONATA_MCP_STATELESS_HTTP` | `bool` | `False` | Enable stateless Streamable-HTTP mode per request (recommended when serving multiple identities over one `auth_mode="host"` endpoint) |
 | `ARODONATA_MCP_SERVER_NAME` | `str` | `"arodonata-mcp"` | Server identifier reported in MCP initialization |
+
+### 4.1 Security, Multi-Tenant Isolation & Quota Semantics
+
+- **Service-Account Server-Wide Visibility Trust Boundary**: The MCP server authenticates callers at the HTTP/ASGI boundary (`client_id[:user_id]`), while backend Check Point queries execute using the `ArodonataClient` service account's configured `mgmt_names` and domain permissions. Do not expose a single shared MCP endpoint to mutually untrusted tenants expecting per-domain Check Point RBAC partitioning; run separate service-account-scoped MCP instances or enforce domain filtering in an enclosing host gateway.
+- **Embedded `auth_mode="host"` Middleware**: When embedding via `create_asgi_app(..., auth_mode="host")`, the enclosing host ASGI middleware MUST bind `UserContext` on every incoming HTTP request. For multi-tenant hosts handling varying caller identities over one Streamable-HTTP mount, configure `stateless_http=True` so each request executes with its own `UserContext` rather than inheriting the opening session's context.
+- **Per-Caller CPCRUD Isolation**: `cpcrud_plan`, `cpcrud_apply`, `cpcrud_inverse`, and `cpcrud_staged_session` scope HMAC signatures, `plan_store`, `last_report`, and `staged_session_store` strictly by resolved caller identity (`client_id[:user_id]`). If `staged_session_store` exceeds `MAX_STORED_PLANS`, same-caller sessions are evicted before other callers' entries, cleanly discarded, and logged out with a SID-redacted `WARNING`.
+- **Smart-Sync Live Quotas**: Cached reads served from fresh warm cache (`cache_mode="cache"` or `cache_mode="smart"` within `cache_ttl`) consume only `tool_rate_limit_per_minute`, while cold/stale `smart` syncs, domain-list cache misses, multi-scope/composite-ID syncs, proportional domain/scope fan-out (`cache_control`, `change_report`), and `show_object` live fallbacks charge `live_tool_rate_limit_per_minute`.
 
 
 ---
@@ -1786,16 +1975,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **cpcrud,reports,rulebase,search**: Redacted leaked SIDs and credentials via `redact_sid(..., known_sids=...)` across `ActionResult`, `CPCRUDEvent`, `check_current_domain_head`, `_executor_pass`, and recursive `FieldDiff` (`is_sensitive_key`) / `ChangeReport` / `reports/collector` sanitization (`DA-001`, `DA-009`), escaped `[` / `]`, `![img](...)`, backticks, newlines, and Markdown table pipes in `render_safe_inline_markdown_md`, `_esc_md`, `_esc_md_code`, and `format_rules_markdown` (`DA-010`, `DA-015`), enforced an explicit `ALLOWED_QUERY_GROUP_BY_FIELDS` allowlist in `query_objects` (`DA-011`), and propagated `ServerIdentityError` in `resolve_implicit_domain_mode` (`DA-013`).
+- **transport,ssrf,storage,tls**: Tightened `validate_explicit_server_ip()` to require `.issubset()` across all resolved DNS answers and return canonical pinned IPs without host re-resolution (`DA-001`), defaulted `RateLimitTimeoutError` to `phase="connect"` / `request_sent=False`, canonicalized `ConnectionPool` IPv4/IPv6/DNS keys, enforced bounded `max_response_bytes` (`67_108_864` default) streaming reads and valid TCP port bounds (`1..65535`), refused symlinked/group-writable `TrustStore` files and parent dirs while preserving `0444`/`0644` `uid=0` Kubernetes ConfigMap mounts (`VVAH-CLAUDE-05`), and created new file-backed SQLite parent directories (`0700`) and files (`0600`).
+- **sessions,cleaner,scripts,routes**: Enforced fail-closed `SessionCleaner` cleanup without seeding read-write SIDs into `arodonata_sid_cache` (`DA-042`), respected explicit `SIDCacheEntry.expires_at` in `is_sid_entry_fresh()`, normalized `domain_name=normalize_domain_key(...)` unconditionally in `get_write_session()` (`DA-003`), passed `cached.domain_name` in `keepalive_sid` eviction, caught `Exception` (not `BaseException`) in `logout_sid()`, and enforced SID redaction across `ScriptTargetExecutionResult`, `RepositoryScriptExecutionOutcome`, `GatewayCliResult`, `route_executor`, and all `ScriptRepositoryService.run_repository_script()` session exception branches (`DA-011`, `VVAH-SID-01`).
+- **mcp,cpcrud**: Rejected present-but-blank `Origin` headers (`origin_matches_allowed`), bound `plan_id` into `_sign_plan()`, blocked cross-caller `plan_id` overwrites, prioritized same-caller `staged_session_store` eviction (`VVAH-MCP-CPCRUD-01`), registered per-call extra dedicated SIDs via `_ACTIVE_MCP_EXTRA_SIDS` + shielded `logout_sid` + `TaskPollError(..., known_sids=...)` + `json_tool_result(..., known_sids=...)` (`DA-037`), and documented the service-account / server-wide domain visibility trust boundary in `docs/mcp/index.md`.
+- **tls,sessions,testing**: Failed closed with `ValidationError` when an explicit hostname resolves to zero DNS A/AAAA records (`REQ-SESS-010`), enforced unconditional startup stale-session inspection despite cached read-only System Data SIDs (`REQ-SESS-011`), preserved hostname-bound `TrustPolicy` pinned and TOFU fingerprint verification (`identity_host` / `tls_identity_host`) across canonical IP pinning and pooled socket reuse (`REQ-SESS-012`), and aligned `FileReplayApiMock` command-name validation with `AMgmtClient` (`REQ-ITEST-007`).
+
+### Fixed
+
+- **wave-9-deep-audit**: Remediated 34 Wave-9 deep-audit findings across CPCRUD (`StagedSessionInfo.baseline_readable` fail-closed publish guard + `allow_stale` propagation, single cancellation-safe `asyncio.shield(logout_sid)` cleanup, `_resolve_domain_name` `None` fallback, `groups` diffing, non-blank rule item safety, unset `install-on` normalization, clean `checkpoint_ops_schema.json`), Rulebase (`_service_matches_term` strict `proto/port` and `svc.type` matching, cycle-safe `_expand_parent_identifiers`), Sessions/MDSM (`WriteSession` exception preservation + shielded `logout_sid`, bounded stall-safe MDS pagination in `_domain_discovery.py`, `cached_domains` preservation in `validate_explicit_server_ip`, `ServerIdentityError`/`TaskError` propagation in script/route execution), Cache/Search (`SessionOverlay.apply_to_single_object` / `apply_to_single_service` isolation, empty/foreign `types` early short-circuits, `vsx-reconcile` `wait_timeout=15.0` and non-fatal `LockAcquisitionError` handling, `VSXRelationshipManager.enrich` `vsx_ref` fallback, lazy single-domain freshness checks in `find_object`, `exact_match=True` IP-range containment, shared `resolve_query_scopes` skipping `objects` on `port`/`protocol` queries, preserved `SearchService.__module__ == "arodonata.core.services.search_service"`), Emulator (`groups` filter `seed_uids`, gateway detail `leads-to-specific-network` name resolution, `delete-unused-objects` cross-session lock preflight), and documentation sync (`README.md`, `build_notebooklm_docs.py` covering 13 examples / 12 OpenSpec specs / 33 HTML pages).
+- **cpcrud,reports,rulebase,topology,assets,testing**: Remediated Wave 8 policy-layer audit findings (`REQ-CPCRUD-014`, `REQ-CPCRUD-015`, `REQ-REPORT-006`, `REQ-RULE-007`, `REQ-TOPO-021`, `REQ-CACHE-017`, `REQ-ITEST-019`) across CPCRUD (`track` wire encoding per rulebase, fail-closed rule actions, `install-on` anti-Any and empty-list guards, `is_cleanup_rule` fix, offline `validate()` parity, `planned:` UID stripping in `inverse()`, staged session `logout_sid` shielding and domain-head staleness checks), Change Reports (fail-closed `RangeScope` UIDs, `OwnedSession` `sid=None` fallback, nested `old_rule_number` and dotted `rule_number` preservation, order-only `FieldDiff` suppression, inline Markdown/`_esc_md` sanitization), Rulebase (paginated `show-*-layers`, advancing zero-rule pages, `< total_reported` truncation error, empty/name-keyed `LayerPrefixLocation`), Topology (`ServerIdentityError` propagation, full-domain `routes` sync state, `(mgmt_name, domain_name, node_key)` VSX coalescing, list `next-hop` unwrapping, spaced `_VS_ERROR_RE`, `manual` export parity), Assets (`(mgmt_name, uid)` VSX keying, per-management distributed lock, `cache`/no-op skip), and `FileReplayApiMock` (per-rulebase `track` wire validation, failed `set` rollback, `read_only` `switch-session`/`discard` guards, lazy in-memory baseline snapshots).
+- **cache,sync,rulebase,mcp**: Preserved in-flight domain/wildcard invalidations across `probe_domain_staleness` (`REQ-CACHE-015`) and slice sync handlers (`REQ-CACHE-016` — stamping `DomainSyncState.synced_at` at `probe.probe_started_at` and guarding `stream_ensure` / live route `_record_slice_synced` on `invalidation_at_start`), honored `cache_ttl` on single-package `refresh_package_rulebase` once slice invalidation is satisfied (`REQ-RULE-003`), kept `cache_mode="cache"` domain pre-validation free of live refreshes and quota charges (`REQ-MCP-013`), capped implicit all-domain `cache_control(action="refresh")` at `live_tool_rate_limit_per_minute` on empty live buckets while rejecting oversize explicit fan-out calls upfront with zero leaked slots (`REQ-MCP-014`), and reported `max(...)` `cache_age_seconds` across touched scopes in `query_objects` and `search_objects` (`REQ-MCP-015`).
+
+- **cache,sync,search,models**: Replaced destructive `.discard()` domain invalidation with timestamped + monotonic-sequence slice tracking in `DomainSyncCoordinator` and `DomainListRefreshTracker.invalidate(None)`, wired `WriteSession` publish invalidation for externally injected `AMgmtClient` (`DA-002`), committed `smart-fast` incremental diffs atomically via `apply_object_diff()` / `apply_service_diff()` after `show-object` hydration (`DA-004`), normalized service type aliases/casing across SQL and `SessionOverlay` (`DA-025`), preserved `mask-length4 == 0` (`0.0.0.0/0`, `DA-023`), scoped `SessionOverlay` merges across `ObjectService`, `ServiceCacheService`, and `SearchService` (`DA-024`), fixed `SearchService.find_object()` non-default `obj_type` sync and single-pass `force` refresh (`DA-005`), preserved multi-domain `Global` UID memberships (`DA-030`), prevented non-group `CPObject`/`CPService` shadowing and cross-domain `parent_name` cluster leaks (`DA-031`), and clamped `query_objects` `limit` (`1..1000`), `offset >= 0`, and `group_by` pagination (`VVAH-SEARCH-01`).
+- **mcp,quota,apiref,docs**: Honored `cache_mode="cache"` and MDS downgrades in `show_object` (`DA-044`), enforced multi-scope/composite-ID live quota and proportional bounded fan-out (`cache_control`, `change_report`, `DA-016`, `VVAH-MCP-QUOTA-01`), validated explicit domains when `mgmt_name` is omitted (`DA-045`), validated `valid_values` on `list[enum]` payloads (`DA-055`) and capped deduplicated `describe_command` batches at `<= 50` (`VVAH-APIREF-01`), and synchronized docs/specs (`arodonata_distributed_locks`, `17` tables, `SSEEvent.encode()`).
+
+### Added
+
+- **topology,scripts,specs**: Added zero-argument self-detecting VSX route collection bundle script (`build_route_collection_repository_script()`) emitting multi-VS bundles (`===ARODONATA_VSX_BUNDLE_START===` ... `===ARODONATA_VSX_BUNDLE_END===`) with per-VS error isolation (`===ARODONATA_VS_ERROR...===`), bundle parser and slice extractor (`parse_vsx_bundle_output()`, `extract_vs_slice_from_bundle()`, `VsxBundleSlice`), and per-physical-node zero-argument CPRID bundle coalescing (`(mgmt_name, node_key)`) traced to `REQ-TOPO-008` (`SCN-TOPO-008-4`).
+- **scripts,models,specs**: Added safe Base64 `"script-body"` decoding in `RepositoryScript.from_cp_dict()` with shared `_try_decode_base64_text()` heuristic, giving explicit precedence to `"script-body-base64"` over `"script-body"` and eliminating Check Point R82 false-positive outdated script drift traced to `REQ-CLIENT-010` (`SCN-CLIENT-010-4`).
+- **testing,emulator,specs**: Added Check Point R82 parity in `FileReplayApiMock` (`encode_repository_script_body_base64=True`), rejection of non-empty `"args"` on repository scripts when `allow_one_time_script=False` (`HTTP 400 err_validation_failed`), synthetic zero-argument VSX bundle generation on VSX chassis nodes, and field-order-independent `list_virtual_systems()` parsing traced to `REQ-TOPO-018` (`SCN-TOPO-018-2`).
+- **sessions,rate_limiter,specs**: Added principal identity logging (`username`, `user-name`, or non-secret static identifier) on login throttle cooldown events in `LoginGate` and `LoginCoordinator` traced to `REQ-SESS-006` (`SCN-SESS-006-1`).
+- **mcp,security,specs**: Added `MCPToolQuotaManager` (`src/arodonata/mcp/quota.py`, `QuotaDecision`) wired into `mcp_tool_guard` (`src/arodonata/mcp/errors.py`) enforcing independent per-`client_id` sliding-window quotas (`tool_rate_limit_per_minute=120`, `live_tool_rate_limit_per_minute=30`, defaulting unauthenticated callers to `"anonymous"`, emitting `arlogi` `WARNING` logs and `arodonata.mcp_rate_limited` / `arodonata.mcp_client_id` span attributes, and returning structured `rate_limit_exceeded` JSON `ToolFailure` responses; closes SAST #6), unified `ArodonataMCPSettings.validate_security_policy()` with `allow_insecure_unauthenticated` opt-in (`ARODONATA_MCP_ALLOW_INSECURE_UNAUTHENTICATED` / `--allow-insecure-unauthenticated`), `LOOPBACK_HOSTS` / `is_loopback_host()`, `REQ-MCP-012` (`SCN-MCP-012-1`) and `SCN-MCP-001-6`..`7` in `openspec/specs/mcp-server/spec.md`, and `"mcp"` hexagonal import-boundary enforcement (`arodonata.adapters`, `arodonata.testing`) in `tests/unit/test_architecture_boundaries.py` (`SCN-CLIENT-018-1`).
+- **openspec,tests**: Added `REQ-TOPO-020` (`SCN-TOPO-020-1`..`3`) in `openspec/specs/gateway-topology/spec.md` and comprehensive regression coverage in `tests/unit/test_topology_compat_and_security.py` specifying shim compatibility, boundary SID redaction, and fail-fast `ServerIdentityError` propagation across live route collection and targeted topology refresh.
+- **core,ports,specs**: Added `arodonata.core.models.sentinels` (canonical Check Point built-in UIDs, token sets, and sentinel normalizers), `arodonata.core.primitives` (`UUID_RE`, `is_uuid`, `format_composite_id`, `parse_composite_id`, `normalize_str_sequence`, `MAX_IPV4_INT`, `mask_to_prefix_len`, `prefix_len_to_mask`, `effective_range_prefix_len`, `object_ipv4_bounds`, `parse_cidr_or_range_bounds`), `RulebaseRefreshPort`, and AST architectural boundary tests in `tests/unit/test_architecture_boundaries.py` traced to `REQ-CLIENT-018` (`SCN-CLIENT-018-1`..`3`).
+- **ports**: Decomposed `CachePort` into eight `@runtime_checkable` Interface Segregation sub-protocols (`DomainCachePort`, `SidCachePort`, `SyncStatePort`, `ObjectCachePort`, `ServiceCachePort`, `AssetCachePort`, `TopologyCachePort`, `RulebaseCachePort`) and narrowed all core, checkpoint, CPCRUD, rulebase, and report cache consumers to the exact sub-protocols they use while preserving `CachePort` as the composite protocol.
+
+### Changed
+
+- **wave-9,architecture,performance**: Precomputed `_RulebaseFilterIndex` once per `filter_numbered_rulebase` call (`REQ-RULE-008`), replaced quadratic per-object emulator scans with single-pass `collect_referenced_uids()` (`REQ-ITEST-020`), unified canonical object summaries in `src/arodonata/reports/_object_summary.py` (`REQ-REPORT-007`), extracted shared typed cache sync/overlay engine `_typed_cache_sync.py` (`REQ-CACHE-018`), decomposed `search_service.py` into acyclic `core/services/search/` and extracted `_asset_linking.py` + `_domain_discovery.py` (`REQ-CACHE-018`, `REQ-SESS-013`), unified canonical `parse_domain_entry` / `parse_domain_dict` in `core/models/domains.py` and shared `open_api_write_session` lifecycle in `core/context.py` alongside `details-level="standard"` MDS fallback (`REQ-SESS-013`), and consolidated `_HybridStateReaderBase` (fixing `get_service_by_name` exact-name guard), `_DomainPlanState` single-pass step caching, `_run_on_adopted_staged_session`, `_copy_prior_fields`, and split per-type `differ.py` helpers (`REQ-CPCRUD-016`).
+- **cpcrud,rulebase,reports**: Decomposed all 6 oversized domain-engine modules into cohesive, acyclic submodules (`<= 677` LOC each) while preserving exact backward-compatible imports, `arlogi.get_logger(...)` channel names, and `@traced` span parity (`cpcrud`: `state_reader.py` → `_state_reader_common.py`, `_state_reader_objects.py`, `_state_reader_services.py`; `planner.py` → `_planner_helpers.py`, `_planner_diff.py`, `_planner_entity_steps.py`, `_planner_rule_steps.py`; `executor.py` → `_executor_helpers.py`, `_executor_pass.py`, `_executor_staged.py`; `rulebase`: `refresh.py` → `collector.py`; `reports`: `collector.py` → `_collector_diffs.py`, `_collector_changes.py`; `renderer.py` → `_renderer_formatting.py`, `_renderer_html.py`, `_renderer_markdown.py`), unified `collect_package_rulebase_slice` and `collect_domain_rulebase_snapshot` over shared `_traverse_rulebase_layers` BFS traversal and `_fetch_nat_package_rules` with single-pass `_extract_package_layers_and_seeds`, and unified group/member payload metadata helpers (`_append_common_create_metadata`, `parse_existing_member_entries`).
+- **testing,emulator**: Decomposed `replay_mock.py` (3,737 LOC), `_emulator_crud.py` (2,581 LOC), and `dataset_generator.py` (2,817 LOC) into cohesive, acyclic `_replay_*`, `_emulator_*`, and `_dataset_*` submodules (`<= 626` LOC each), consolidated shared projection, pagination, object-inlining, and rulebase-slicing helpers in `_emulator_projection` (`project_replay_details_level`, `project_details_level`, `paginate_items`, `inline_rule_objects`, `slice_rulebase_with_sections`), preserved all public and backward-compatible re-exports (`FileReplayApiMock`, `FileReplayCliMock`, `ReplayStateSnapshot`, `ensure_enterprise_raw_dataset`, `generate_enterprise_raw_dataset`, `_normalize_subnet_fields`), and verified byte-for-byte deterministic dataset parity.
+- **mcp,core,client**: Decomposed monolithic `src/arodonata/mcp/tools.py` (2,457 LOC) into the cohesive, acyclic `src/arodonata/mcp/tools/` package (`__init__`, `_common`, `_show_object`, `objects`, `lookup`, `topology`, `rulebase`, `admin`, `cpcrud`) with every file `<= 477` LOC, full legacy helper/constant re-exports, deduplicated `RULEBASE_TYPE_TO_COMMAND` and live collection fetching, and zero `client._*` private accesses or `arodonata.adapters` imports; moved `READONLY_EXACT_COMMANDS`, `is_readonly_command`, `validate_command_name`, and `format_host_attr_for_url` into `arodonata.core.primitives` (preserving exact identity re-exports in `arodonata.adapters.checkpoint.*`); and exposed `build_validated_trust_policy` / `TrustPolicy` via `arodonata.client` plus public `resolve_api_version`, `ensure_and_load_snapshot`, and `resolve_implicit_domain_mode` methods.
+- **client,search,config,boundaries**: Replaced monolithic `src/arodonata/client.py` with the cohesive, acyclic `src/arodonata/client/` package (`_base`, `warmup`, `lifecycle`, `inventory`, `rulebase_reports`, `topology`, `__init__`), moved `find_object` resolution into `SearchService.find_object()` with cache fallbacks when optional sub-services are omitted and concurrent cross-domain Pass-1/Pass-2 cache lookups, consolidated repeated database initialization checks into `_ensure_initialized()`, removed the dead `_CaptureExplicitAuthMode` validator from `ArodonataSettings` and unused internal facade aliases, added `"adapters"` hexagonal import-boundary enforcement in `tests/unit/test_architecture_boundaries.py` (`SCN-CLIENT-018-1`), and preserved exact 61 `@traced` spans, service properties, and shared `logger` identity.
+- **adapters,storage,checkpoint**: Decomposed `cache_adapter.py` into `src/arodonata/adapters/storage/cache/` (`_base`, `mappers`, `rulebase_mappers`, `control`, `inventory`, `topology`, `rulebase`, `__init__`) with unified dialect upserts and removed 5 unused `*_to_record` helpers; split `sessions.py` (`response_classifiers`, `target_resolver`, `session_cleaner`, `session_credentials`, `sessions`) and `transport.py` (`connection_pool`, `connector`, `transport`) with `PolicyBoundSSLContext` validation and clean `LoginCoordinator` helper boundaries.
+- **topology,services**: Decomposed `topology_service.py` and `route_collector.py` into the cohesive, acyclic `src/arodonata/core/services/topology/` package (`_shared`, `normalizer`, `objects`, `scoring`, `policy_rules`, `extractor`, `flow_matching`, `policy_matcher`, `diagnostics`, `reconciler`, `refresh`, `route_scripts`, `route_parsers`, `route_executor`, `route_collection`, `service`) while keeping `topology_service.py` and `route_collector.py` as import-compatible re-export shims for `__all__`, public helpers, formerly re-exported route helpers on `topology_service`, and exact shared `logger` identity supporting method-level monkeypatching (`topology_service.logger.warning`), removing internal `collect_gateway_routes` from `arodonata.core.services.topology.__all__`, and emitting structured `WARNING` logs alongside `DomainSyncFailedEvent` when targeted gateway topology refresh fails.
+- **core,cpcrud,rulebase,mcp,testing**: Moved `parse_cp_publish_timestamp` to `core.models.common`, `SERVICE_COMMAND_TYPES` / `NON_OVERLAY_MUTATION_TARGETS` / `update_overlay_from_command` to `core.context`, and `PolicyPackageInfo` / `extract_policy_packages` to `core.models.rulebase` with 100% backward-compatible re-exports; eliminated hexagonal violations across `core`, `cpcrud`, and `rulebase`; decoupled `TopologyService` via `RulebaseRefreshPort` DI (logging a warning when omitted during cold package refresh); and migrated duplicate UUID/CSV/IPv4 helpers and `dataset_generator.py` sentinel literals to the unified core modules.
+
+### Fixed
+
+- **testing,emulator**: Remediated Wave 6 audit findings across `src/arodonata/testing/`: fixed NAT rule lock preflight when `package` is omitted (`str(None) == "None"` bypass), preserved constructor `fail_ssh_nodes` defaults across `reset()`, rotated all active SID bindings on `discard` by `uid` and rejected mutations on non-open sessions, separated `project_replay_details_level()` (`REPLAY_STANDARD_SUMMARY_KEYS` excluding `"groups"`) from deterministic `project_details_level()` (`CRUD_STANDARD_KEEP_KEYS` ordered tuple), restored `min_limit=0` pagination behavior across `_paginate_list` and `handle_show_repository_scripts` (now reusing `paginate_items()`), enforced MDS/Global domain binding on `assign-global-policy` / `assign-global-assignment`, and routed both live writes and `run-script` tasks through `mock._apply_domain_mutation()` and `mock._next_task_id()`.
+- **topology,executor,coalescing**: Fixed `execute_gateway_cli()` in repository mode to return extracted per-target Virtual System slices with attached `bundle_stdout` (instead of raw chassis bundles), fail closed on missing bundle markers (`vsx_bundle_missing`) or truncated bundles (`vsx_bundle_truncated`), preserve run failure status without discarding error messages, and isolate coalesced leader cancellations via non-cancellation exceptions to protect sibling followers across independent gateways.
+- **tls,platform**: Added Windows cross-process file locking via `msvcrt.locking(lock_fd, msvcrt.LK_LOCK, 1)` in `TrustStore._save_atomic()` and non-blocking `msvcrt` locks in `IntegrationRunLock`, resolving Windows platform compatibility and file contention races.
+- **cpcrud,rulebase,reports**: Fixed intra-plan virtual overlay coherency in `Planner` and `HybridStateReader` so `group` and `service-group` `Outcome.UPDATE` paths record updated models (`members`, `comments`, `color`, `tags`, `new-name`, `raw_data`) in the virtual overlay, object/service updates, `DELETE` tombstones, fresh-cache `dns-domain` leading-dot lookups, and `res_map`/`Plan.name_resolutions` stay coherent across subsequent template steps (including clearing stale rename aliases upon re-creation and pruning deleted targets), same-template `CREATE -> UPDATE` / `CREATE -> DELETE` link `depends_on` and emit valid `"name"` wire identifiers instead of synthetic `"planned:"` UIDs (`REQ-CPCRUD-003` / `SCN-CPCRUD-003-6`), `Executor._stream_single_pass` routes head-freshness checks and invalidation through `Executor._check_current_domain_head` / `Executor._invalidate_domain`, `_traverse_rulebase_layers` backfills `parent_layer_uid`/`parent_rule_uid` onto queued pre-seeded inline/domain layers (`SCN-RULE-001-2`), and `_discover_target_sessions` applies `redact_sid()` / `sanitize_mapping()` across session listing errors and `RawResponse` payloads.
+- **mcp,security,server**: Enforced `ArodonataMCPSettings.validate_security_policy()` across all three MCP entry points (`arodonata-mcp` CLI, `create_mcp_server()`, and `create_asgi_app()`), failing closed on wildcard `allowed_hosts`/`allowed_origins` while DNS rebinding protection is active and on unsafe `auth_mode="none"` configurations (non-loopback `host`, disabled DNS rebinding protection, non-loopback `allowed_hosts`/`allowed_origins`, wildcards, `allow_write_api`, or `cpcrud`) unless `allow_insecure_unauthenticated=True` is explicitly set (closing SAST #1, #2, and #5), bracketed IPv6 literals (`::1`, `::`, `fe80::1`) in `AuthSettings.issuer_url` via `format_host_attr_for_url()`, eliminated split-brain drift in `create_asgi_app(mcp_server=...)` (allowing matching `settings` parity while rejecting conflicts and `trust_policy` overrides), ensured CLI exits cleanly with code `2` on factory errors with single `SECURITY WARNING` emission and managed client disposal, fixed `collect_known_sids()` to inspect active dedicated SIDs via `ArodonataClient.get_active_dedicated_sids()` and retained closed dedicated SIDs for `api_call` redaction, isolated per-caller (`client_id[:user_id]`) CPCRUD plan signatures / stores / staged sessions with automatic discard+logout on eviction, charged cold/stale `smart` syncs, domain-miss refreshes, and live fallbacks to `live` quota once per call via `MCPToolQuotaManager.check_and_consume_live_only()`, mapped invalid ISO-8601 dates in `change_report` to actionable `ToolFailure`, protected structured `ToolFailure` core JSON keys, and restored forwarding `_ensure_and_load_snapshot` / `_resolve_implicit_domain_mode` wrappers on `CachedRulebaseSource` and `SearchService`.
+- **tls,security**: Bound `FingerprintTCPConnector` `SSLContext` creation explicitly to validated `TrustPolicy` via `PolicyBoundSSLContext` (`TrustPolicy.create_ssl_context()`, `create_verified_ssl_context()`, and upfront `TrustPolicy` validation in `FingerprintTCPConnector`, removing unreferenced `_DEFAULT_CHECKPOINT_SSL_CONTEXT`), prevented failed concurrent TOFU merges or disk write errors in `TrustStore.record()` / `_save_atomic()` from poisoning in-memory `_entries`, added structured `arlogi` `WARNING` audit logs on first-contact TOFU and `lab-memory` acceptance (`event="tls_tofu_first_contact"`) plus `ERROR`/`WARNING` logs on certificate mismatch/rejection/missing cert, and recorded `arodonata.tls_decision` span attributes (including `"stored_match"` for legacy known-hosts entries) via `span_attrs()` (`SCN-TRANS-002-6`, closing SAST #3 and #4).
+- **sessions,client**: Prevented unbounded recursion in `LoginCoordinator` max-sessions recovery (`allow_max_sessions_cleanup=False` on `SessionCleaner` logins plus per-management `_cleaning_max_sessions` guard), preserved live fresh cached SIDs across all principals and domains regardless of `seed_system_sid` while logging out (`logout_sid`) and evicting only the active principal's expired cached SIDs, and eliminated the duplicate `invalidate_domain()` call when publishing via `ArodonataClient.api_call()`.
+- **topology,scripts,security**: Enforced regex-based `redact_sid()` at Pydantic model boundaries (`GatewayCliResult`, `GatewayRouteCollectionStatus`, `DomainSyncState.last_error`, `RefreshOutcome.failed_domains`, `SyncProgressEvent.error`, `DomainSyncFailedEvent`, `ScriptTargetExecutionResult`, and `RepositoryScriptExecutionOutcome`), threaded `known_sids` through `ScriptRepositoryService.run_repository_script()` (covering internally opened `arodonata-run-repo-script` sessions as well as injected getters), scrubbed SSH-only and `_vs_error=` `GatewayCliResult` paths, scrubbed targeted refresh `WARNING` logs, propagated fatal `ServerIdentityError` fail-fast (with `asyncio.TaskGroup` sibling cancellation and clean dedicated-session logout, without downgrading domain `routes` sync states) across both targeted gateway topology refresh (`_stream_targeted_gateway_refresh`) and live route collection (`execute_gateway_cli`, `collect_gateway_routes`, `AutoScriptModeResolver`), and restored legacy `cprid` fallback error formatting when an injected `gateway_cli` callback returns `None`.
+- **testing,sentinels**: Resolved UID `6c488338-8eec-4103-ad21-cd461ac2c476` misclassification in the replay emulator by removing `DROP_UID_ALT` and mapping it canonically to `Policy Targets` (`type="Global"`), matching Check Point Management API semantics (`6c488338-8eec-4103-ad21-cd461ac2c473` remains `Drop`), and switched `_normalize_action` / `_normalize_track` to validate strictly against `ACTION_UID_TO_NAME` / `TRACK_UID_TO_NAME`.
+- **cpcrud,primitives**: Implemented single-pass contiguous netmask validation in `mask_to_prefix_len` (supporting integral floats such as `24.0` and explicit `allow_hostmask` / `allow_prefix_int` flags) and added `strict=True` validation in `normalize_mask_length` for desired CPCRUD network specs so invalid `mask_length4` or `subnet_mask` values raise `ValidationError` instead of being silently dropped.
+
+## v2.6.6 (2026-11-19)
+
+### Fix
+
+- **core,cpcrud,mcp,reports,specs**: adopt traceable OpenSpec schema, resolve Phase 1b audit findings, and achieve 100% spec coverage (#94)
+
+### Added
+
+- **openspec,tests**: Forked minimal `arodonata` OpenSpec schema (`openspec/schemas/arodonata/`) enforcing `REQ-<DOM>-<NNN>` and `SCN-<DOM>-<NNN>-<K>` scenario traceability across all 12 domain specifications (`132` requirements, `284` scenarios), registered `@pytest.mark.spec(...)` in `pyproject.toml`, added `scripts/check_spec_traceability.py` with `tests/unit/test_check_spec_traceability.py` and `.github/workflows/specs.yml`, and achieved 100% scenario test coverage (`0` untested baseline scenarios) via `tests/spec/`.
+- **reports**: Added symmetric per-object `Field Diffs` Markdown column support alongside rule `Field Diffs` in `render_change_report()`.
+- **docs**: Synchronized `docs/architecture/` documentation with `v2.6.5`, added `docs/examples/13-gateway-topology-matching.md`, and documented Check Point Management Web API quirks and workarounds in `docs/troubleshooting/checkpoint-api-quirks.md`.
+
+### Fixed
+
+- **security,sessions,telemetry**: Validated explicit `server_ip` via `resolve_target_ips()` and enforced resolved MDS rate-limit slots in `LoginCoordinator.logout_sid()` and cache-hit `get_readonly_session()` (`FC-01`), and added recursive `sanitize_mapping` / sequence / `bytes` redaction in `core/telemetry.py` (`span_attrs`, `_coerce_span_value`) so credentials and session tokens never leak into OpenTelemetry spans (`FC-02`).
+- **client,mcp,search,cpcrud,topology,testing**: Determined ephemeral database cleanup on close from the actual SQLAlchemy engine URL in `ArodonataClient.close()` and `AMgmtClient.close()` (`FC-03`), auto-upgraded cold `list_domains(cache_mode="cache")` (`FC-04`), normalized mixed-case canonical `group_by` fields in `SearchService.query_objects()` (`FC-05`), diffed existing auto-named entities under `on_ip_conflict="create_new"` in `Planner` (`FC-06`), completed audit findings `FC-07`–`FC-12` (including synthetic `show-task` log status codes in `FileReplayApiMock`), and removed the dead `live_compat` configuration flag.
+
+## v2.6.5 (2026-11-18)
+
+### Feat
+
+- **scripts,topology,testing**: add Check Point Script Repository service, route modes, and emulator (#92)
+- **cpcrud,reports,config**: add incremental rule/URL diffs, naming profiles, and dry-run plan reports (#91)
+
 ### Added
 
 - **config,cpcrud**: Extended `NamingPrefixes` (`src/arodonata/core/config.py`, re-exported in `arodonata.cpcrud.models`) with `range_separator`, `compress_range_same_subnet`, `group_suffix`, `app_site`, `app_site_wildcard_marker`, `format_group()`, and `format_app_site()`, and wired `ArodonataSettings.cpcrud_naming_prefixes` (`ARODONATA_CPCRUD_*` and fallback `CPCRUD_*` environment variables without implicit `.env` loading) as the default profile in `CPCRUDService` and `Planner`.
 - **cpcrud**: Added `arodonata.cpcrud.expressions` (`parse_object_expression`, `parse_range_token`, `parse_app_site_expression`, `parse_service_expression`, `parse_group_expression`, `expand_group_expression`, `normalize_wildcard_domain`, `wildcard_domain_to_cp_regex_urls`) for pure shorthand parsing of hosts, CIDRs, compressed same-`/24` ranges, `.domain` DNS objects, `*domain`/`*.domain` Check Point regex `application-site` specs, services, and recursive nested inline groups.
 - **cpcrud,testing**: Added `{"add": [...], "remove": [...]}` incremental patch support in `checkpoint_ops_schema.json`, `FieldChange` (`added_items`, `removed_items`), `differ.py` (`application-site.url-list` and Access/HTTPS/Threat/NAT rule cells `source`, `destination`, `service`, `protected-scope`, `site-category`, `install-on`), `Planner` (`depends_on` ordering, UID dereferencing in `_build_prior_rule_state`, case-folded non-regex `url-list` value reuse via `normalize_app_site_url_key`), `inverse.py` rule rename rollback, and `FileReplayApiMock` (`_emulator_crud.py`, `_emulator_changes.py`).
 - **reports,client**: Added offline Dry-Run `ChangeReport` synthesis via `build_change_report_from_plan()` (`src/arodonata/reports/plan_report.py`, re-exported via `arodonata.reports`, `arodonata`, and `ArodonataClient.build_change_report_from_plan`) for pre-session HTML, Markdown, and JSON previews via `render_change_report()`.
+- **scripts,client**: Added application-agnostic Check Point Script Repository support via `ScriptRepositoryService` (`src/arodonata/core/services/script_service.py`), models and normalized body helpers (`CpridScriptMode`, `RepositoryScript`, `RepositoryScriptStatus`, `EnsureRepositoryScriptResult`, `ScriptTargetExecutionResult`, `RepositoryScriptExecutionOutcome` in `arodonata.core.models.scripts`), typed SID-redacted exceptions and shared classifiers (`RepositoryScriptError`, `RepositoryScriptNotFoundError`, `RepositoryScriptPermissionError`, `is_script_permission_error`, `is_unsupported_script_command_error` in `arodonata.core.errors`), and `@traced` `ArodonataClient` methods (`get_repository_script`, `list_repository_scripts`, `check_repository_script`, `ensure_repository_script`, `delete_repository_script`, `run_repository_script`) with `"repository-script"`, `"api-key"`, `"md-permissions-profile"`, and `"domain-permissions-profile"` excluded from `SessionOverlay` (`NON_OVERLAY_MUTATION_TARGETS`).
+- **config,topology,testing**: Added `ArodonataSettings.cprid_script_mode` (`"inline" | "repository" | "auto"`, default `"inline"`, env `ARODONATA_CPRID_SCRIPT_MODE`) and `cprid_repository_script_name` (`ARODONATA_CPRID_REPOSITORY_SCRIPT_NAME`, default `"arodonata-collect-routes-v1"`), canonical parameterized bash route-collection script (`build_route_collection_repository_script()`, `format_route_collection_repository_args()`), single-flight `AutoScriptModeResolver` `"auto"` probing without semaphore starvation, `check_route_collection_script()` / `ensure_route_collection_script()` helpers, fail-closed `GatewayRouteCollectionStatus.error_code` reporting, stateful per-domain `repository-script` CRUD and permission emulation in `FileReplayApiMock`, and gated live lifecycle integration test `tests/integration/b3/test_repository_scripts_live.py`.
 
 ### Fixed
 
 - **cpcrud**: Enforced fail-closed `Outcome.ERROR` / `DiffSafetyError` invariants preventing unsafe `"Any"` widening (blocking removals that empty rule cells or `application-site.url-list` without `application-signature`, requiring explicit `"Any"` removal when narrowing `"Any"` cells while stripping `"Any"` from Check Point wire `remove`, blocking incremental `{"add": ["Any"]}`, rejecting `set`/`update` targeting missing entities, rejecting unmatched rules carrying `{add, remove}` cell deltas under any verb, and preserving `rule_number` positional renames under `strict_name`).
+- **context,scripts**: Consolidated `SYSTEM_DOMAIN_KEY`, `normalize_domain_key()`, and shared `open_api_write_session()` in `arodonata.core.context` so `ScriptRepositoryService`, `DomainService`, `LoginCoordinator`, and `ArodonataClient.write_session()` share identical `"System Data"` scoping without cross-domain `WriteSession` bleed on `domain=None`, and restored lenient UTF-8 / control-character Base64 task decoding (`decode_base64_task_message`).
 
 ## v2.6.4 (2026-11-16)
 

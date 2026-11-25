@@ -9,7 +9,7 @@ from typing import Any
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.topology import AntiSpoofingMode
 from arodonata.core.primitives import mask_to_prefix_len
-from arodonata.core.services.asset_service import VSX_CHILD_TYPES, _extract_interfaces_from_generic
+from arodonata.core.services._asset_linking import VSX_CHILD_TYPES, _extract_interfaces_from_generic
 from arodonata.core.services.topology._shared import _NormalizedInterface
 
 

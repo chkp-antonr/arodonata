@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -10,11 +11,26 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from arodonata.core.errors import (
     REDACTED_PLACEHOLDER,
     ChangeReportInputError,
+    is_sensitive_key,
     redact_sid,
     sanitize_mapping,
 )
 from arodonata.core.models.common import to_naive_utc, utc_now
 from arodonata.core.models.rulebase import RulebaseType
+
+
+def _sanitize_report_value(val: Any) -> Any:
+    """Recursively redact SIDs and sensitive keys in arbitrary report field values."""
+    if isinstance(val, str):
+        return redact_sid(val)
+    if isinstance(val, bytes):
+        return redact_sid(val.decode("utf-8", errors="replace"))
+    if isinstance(val, Mapping):
+        return sanitize_mapping(val)
+    if isinstance(val, (list, tuple, set, frozenset)):
+        return [_sanitize_report_value(item) for item in val]
+    return val
+
 
 CURRENT_FORMAT_VERSION = 1
 
@@ -187,6 +203,24 @@ class FieldDiff(BaseModel):
     added_items: list[str] = Field(default_factory=list)
     removed_items: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _sanitize(self) -> FieldDiff:
+        if is_sensitive_key(self.field_name):
+            self.old_value = REDACTED_PLACEHOLDER if self.old_value is not None else None
+            self.new_value = REDACTED_PLACEHOLDER if self.new_value is not None else None
+            if self.added_items:
+                self.added_items = [REDACTED_PLACEHOLDER for _ in self.added_items]
+            if self.removed_items:
+                self.removed_items = [REDACTED_PLACEHOLDER for _ in self.removed_items]
+            return self
+        self.old_value = _sanitize_report_value(self.old_value)
+        self.new_value = _sanitize_report_value(self.new_value)
+        if self.added_items:
+            self.added_items = [redact_sid(x) for x in self.added_items]
+        if self.removed_items:
+            self.removed_items = [redact_sid(x) for x in self.removed_items]
+        return self
+
 
 class RuleChangeEntry(BaseModel):
     """A single added, modified, moved, or deleted rule within a session."""
@@ -228,6 +262,34 @@ class RuleChangeEntry(BaseModel):
     field_diffs: list[FieldDiff] = Field(default_factory=list)
     raw_data: dict[str, Any] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def _sanitize(self) -> RuleChangeEntry:
+        self.name = redact_sid(self.name)
+        self.comments = redact_sid(self.comments)
+        for attr in (
+            "package_name",
+            "layer_name",
+            "section_name",
+            "action",
+            "track",
+            "original_source",
+            "original_destination",
+            "original_service",
+            "translated_source",
+            "translated_destination",
+            "translated_service",
+        ):
+            val = getattr(self, attr)
+            if isinstance(val, str) and val:
+                setattr(self, attr, redact_sid(val))
+        for list_attr in ("source", "destination", "service", "install_on"):
+            items = getattr(self, list_attr)
+            if items:
+                setattr(self, list_attr, [redact_sid(x) for x in items])
+        if self.raw_data:
+            self.raw_data = sanitize_mapping(self.raw_data)
+        return self
+
 
 class ObjectChangeEntry(BaseModel):
     """A single added, modified, or deleted network/service/policy object in a session."""
@@ -242,6 +304,16 @@ class ObjectChangeEntry(BaseModel):
     summary_fields: dict[str, Any] = Field(default_factory=dict)
     field_diffs: list[FieldDiff] = Field(default_factory=list)
     raw_data: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _sanitize(self) -> ObjectChangeEntry:
+        self.name = redact_sid(self.name)
+        self.summary = redact_sid(self.summary)
+        if self.summary_fields:
+            self.summary_fields = sanitize_mapping(self.summary_fields)
+        if self.raw_data:
+            self.raw_data = sanitize_mapping(self.raw_data)
+        return self
 
 
 class ReportWarning(BaseModel):
@@ -307,6 +379,11 @@ class SessionChangeReport(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         self.published_at = to_naive_utc(self.published_at)
         self.last_modify_time = to_naive_utc(self.last_modify_time)
+        self.session_name = redact_sid(self.session_name)
+        self.description = redact_sid(self.description)
+        self.user_name = redact_sid(self.user_name)
+        if self.resolved_names:
+            self.resolved_names = {redact_sid(str(k)): redact_sid(str(v)) for k, v in self.resolved_names.items()}
 
 
 class RenderOptions(BaseModel):
@@ -343,6 +420,9 @@ class ChangeReport(BaseModel):
                 f"Unsupported ChangeReport format_version={self.format_version} "
                 f"(installed library supports up to format_version={CURRENT_FORMAT_VERSION})."
             )
+        self.title = redact_sid(self.title)
+        if self.header_fields:
+            self.header_fields = sanitize_mapping(self.header_fields)
         return self
 
 

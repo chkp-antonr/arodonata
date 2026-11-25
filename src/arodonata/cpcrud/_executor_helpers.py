@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from arodonata.core.errors import ServerIdentityError, ValidationError
+from arodonata.core.errors import ServerIdentityError, ValidationError, redact_sid
 from arodonata.core.events import CPCRUDActionEvent
 from arodonata.core.models.common import parse_cp_publish_timestamp, to_naive_utc
 from arodonata.core.ports import ApiPort
@@ -73,6 +74,8 @@ async def check_current_domain_head(
     api: ApiPort,
     mgmt_name: str,
     domain_name: str,
+    *,
+    known_sids: Sequence[str] | None = None,
 ) -> tuple[bool, str | None, datetime | None, str | None]:
     """Read `show-last-published-session` and return `(readable, uid, published_at, error)`."""
     try:
@@ -85,14 +88,15 @@ async def check_current_domain_head(
     except ServerIdentityError:
         raise
     except Exception as exc:
-        return False, None, None, str(exc)
+        return False, None, None, redact_sid(str(exc), known_sids=known_sids)
 
     if not res.success:
+        raw_err = res.error_message or res.error_code or f"HTTP {res.status_code}"
         return (
             False,
             None,
             None,
-            res.error_message or res.error_code or f"HTTP {res.status_code}",
+            redact_sid(raw_err, known_sids=known_sids),
         )
 
     data = res.data if isinstance(res.data, dict) else {}

@@ -319,7 +319,15 @@ def dispatch_api_call(
     ):
         is_write = mutating
         if is_write and active_ws is not None:
-            candidate_uids = preflight_target_uids(clean_cmd, req, dom_files, global_files, dom_name)
+            pre_all_eff = mock._effective_all_domains(binding)
+            candidate_uids = preflight_target_uids(
+                clean_cmd,
+                req,
+                dom_files,
+                global_files,
+                dom_name,
+                all_domains_effective=pre_all_eff,
+            )
             lock_err = check_cross_session_locks(mock, active_ws, candidate_uids)
             if lock_err is not None:
                 return lock_err

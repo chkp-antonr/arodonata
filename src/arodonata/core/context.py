@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
@@ -361,6 +361,28 @@ class SessionOverlay:
             return True, self._upserted_services[uid]
         return False, None
 
+    def apply_to_single_object(self, obj: CPObject) -> CPObject | None:
+        """Apply uncommitted updates/deletions to a single `CPObject` without appending unrelated entities."""
+        if self._is_object_deleted(obj):
+            return None
+        if obj.uid in self._upserted_objects:
+            return self._upserted_objects[obj.uid]
+        for replacement in self._upserted_objects.values():
+            if replacement.type == obj.type and replacement.name == obj.name:
+                return replacement if replacement.uid == obj.uid else None
+        return obj
+
+    def apply_to_single_service(self, svc: CPService) -> CPService | None:
+        """Apply uncommitted updates/deletions to a single `CPService` without appending unrelated entities."""
+        if self._is_service_deleted(svc):
+            return None
+        if svc.uid in self._upserted_services:
+            return self._upserted_services[svc.uid]
+        for replacement in self._upserted_services.values():
+            if replacement.type == svc.type and replacement.name == svc.name:
+                return replacement if replacement.uid == svc.uid else None
+        return svc
+
     def clear(self) -> None:
         """Discard all uncommitted overlay state (called on publish or discard)."""
         self._upserted_objects.clear()
@@ -514,6 +536,79 @@ def write_session_context(session: WriteSession) -> Iterator[WriteSession]:
 
 
 @asynccontextmanager
+async def run_write_session_lifecycle(
+    ws: WriteSession,
+    *,
+    api_call_fn: Callable[..., Awaitable[ApiCallResult]],
+    logout_fn: Callable[..., Awaitable[Any]],
+    domain: str | None = None,
+    publish_on_exit: bool = True,
+    on_domain_invalidated: Callable[[str, str | None], None] | None = None,
+) -> AsyncIterator[WriteSession]:
+    """Bind `ws` to `contextvars`, auto-discard on error, auto-publish on clean exit, and always log out."""
+    mgmt_name = ws.mgmt_name
+    dom_key = ws.domain_name
+    try:
+        with write_session_context(ws):
+            try:
+                yield ws
+            except BaseException:
+                if not ws.discarded and not ws.published:
+                    with suppress(BaseException):
+                        await asyncio.shield(
+                            api_call_fn(
+                                mgmt_name,
+                                "discard",
+                                {},
+                                domain=domain,
+                                sid=ws.sid,
+                                server_ip=ws.server_ip,
+                            )
+                        )
+                    ws.discarded = True
+                    ws.overlay.clear()
+                raise
+
+            if publish_on_exit and not ws.published and not ws.discarded:
+                pub_res = await api_call_fn(
+                    mgmt_name,
+                    "publish",
+                    {},
+                    domain=domain,
+                    sid=ws.sid,
+                    server_ip=ws.server_ip,
+                    wait_for_task=True,
+                )
+                if not pub_res.success:
+                    with suppress(BaseException):
+                        await asyncio.shield(
+                            api_call_fn(
+                                mgmt_name,
+                                "discard",
+                                {},
+                                domain=domain,
+                                sid=ws.sid,
+                                server_ip=ws.server_ip,
+                            )
+                        )
+                    ws.discarded = True
+                    ws.overlay.clear()
+                    raise SessionError(
+                        f"Failed to publish WriteSession on {mgmt_name!r} ({dom_key!r}): "
+                        f"{pub_res.error_message or 'publish failed'}",
+                        known_sids=[ws.sid],
+                    )
+                ws.published = True
+                ws.overlay.clear()
+                if on_domain_invalidated is not None:
+                    on_domain_invalidated(mgmt_name, domain)
+    finally:
+        ws.overlay.clear()
+        with suppress(BaseException):
+            await asyncio.shield(logout_fn(mgmt_name, ws.sid, server_ip=ws.server_ip))
+
+
+@asynccontextmanager
 async def open_api_write_session(
     api: ApiPort,
     mgmt_name: str,
@@ -549,63 +644,15 @@ async def open_api_write_session(
         user=resolved_user,
         overlay=SessionOverlay(mgmt_name, dom_key),
     )
-    try:
-        with write_session_context(ws):
-            try:
-                yield ws
-            except BaseException:
-                if not ws.discarded and not ws.published:
-                    with suppress(BaseException):
-                        await asyncio.shield(
-                            api.api_call(
-                                mgmt_name,
-                                "discard",
-                                {},
-                                domain=domain,
-                                sid=ws.sid,
-                                server_ip=ws.server_ip,
-                            )
-                        )
-                    ws.discarded = True
-                    ws.overlay.clear()
-                raise
-
-            if publish_on_exit and not ws.published and not ws.discarded:
-                pub_res = await api.api_call(
-                    mgmt_name,
-                    "publish",
-                    {},
-                    domain=domain,
-                    sid=ws.sid,
-                    server_ip=ws.server_ip,
-                    wait_for_task=True,
-                )
-                if not pub_res.success:
-                    with suppress(BaseException):
-                        await asyncio.shield(
-                            api.api_call(
-                                mgmt_name,
-                                "discard",
-                                {},
-                                domain=domain,
-                                sid=ws.sid,
-                                server_ip=ws.server_ip,
-                            )
-                        )
-                    ws.discarded = True
-                    ws.overlay.clear()
-                    raise SessionError(
-                        f"Failed to publish WriteSession on {mgmt_name!r} ({dom_key!r}): "
-                        f"{pub_res.error_message or 'publish failed'}"
-                    )
-                ws.published = True
-                ws.overlay.clear()
-                if on_domain_invalidated is not None:
-                    on_domain_invalidated(mgmt_name, domain)
-    finally:
-        ws.overlay.clear()
-        with suppress(BaseException):
-            await asyncio.shield(api.logout_sid(mgmt_name, ws.sid, server_ip=ws.server_ip))
+    async with run_write_session_lifecycle(
+        ws,
+        api_call_fn=api.api_call,
+        logout_fn=api.logout_sid,
+        domain=domain,
+        publish_on_exit=publish_on_exit,
+        on_domain_invalidated=on_domain_invalidated,
+    ) as bound_ws:
+        yield bound_ws
 
 
 def update_overlay_from_command(
@@ -677,6 +724,7 @@ __all__ = [
     "get_write_session",
     "normalize_domain_key",
     "open_api_write_session",
+    "run_write_session_lifecycle",
     "update_overlay_from_command",
     "user_context",
     "write_session_context",

@@ -93,33 +93,28 @@ async def _inspect_and_verify_provenance(
 ) -> tuple[str | None, ApiCallResult | None]:
     """Inspect helper session identity and target `session_uid` provenance before takeover.
 
-    Returns `(initial_uid, failure_result)`. On failure, the caller guarantees or expects `fresh_sid`
-    to be logged out cleanly; this helper logs out `fresh_sid` on every failure path before returning.
+    Returns `(initial_uid, failure_result)`. Caller handles shielded `logout_sid` on `fresh_sid`
+    whenever adoption does not complete.
     """
     initial_uid: str | None = None
     current_user: str = (
         resolved_auth.username.strip().lower() if resolved_auth is not None and resolved_auth.username else ""
     )
-    try:
-        self_res = await api.api_call(
-            mgmt_name,
-            "show-session",
-            {},
-            domain=domain or None,
-            sid=fresh_sid,
-            server_ip=fresh_ip,
-        )
-        if self_res.success and isinstance(self_res.data, dict):
-            raw_init_uid = str(self_res.data.get("uid") or "").strip()
-            if raw_init_uid:
-                initial_uid = raw_init_uid
-            raw_self_user = str(self_res.data.get("user-name") or self_res.data.get("user") or "").strip().lower()
-            if raw_self_user:
-                current_user = raw_self_user
-    except BaseException:
-        with suppress(BaseException):
-            await asyncio.shield(api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip))
-        raise
+    self_res = await api.api_call(
+        mgmt_name,
+        "show-session",
+        {},
+        domain=domain or None,
+        sid=fresh_sid,
+        server_ip=fresh_ip,
+    )
+    if self_res.success and isinstance(self_res.data, dict):
+        raw_init_uid = str(self_res.data.get("uid") or "").strip()
+        if raw_init_uid:
+            initial_uid = raw_init_uid
+        raw_self_user = str(self_res.data.get("user-name") or self_res.data.get("user") or "").strip().lower()
+        if raw_self_user:
+            current_user = raw_self_user
     try:
         info_res = await api.api_call(
             mgmt_name,
@@ -130,12 +125,8 @@ async def _inspect_and_verify_provenance(
             server_ip=fresh_ip,
         )
     except ServerIdentityError:
-        with suppress(BaseException):
-            await asyncio.shield(api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip))
         raise
     except Exception as exc:
-        with suppress(BaseException):
-            await asyncio.shield(api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip))
         safe_err = redact_sid(str(exc), known_sids=known_sids)
         return (
             None,
@@ -148,8 +139,6 @@ async def _inspect_and_verify_provenance(
         )
 
     if not info_res.success or not isinstance(info_res.data, dict):
-        with suppress(Exception):
-            await api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
         safe_err = redact_sid(
             info_res.error_message or info_res.error_code or f"Unable to inspect session {session_uid}",
             known_sids=known_sids,
@@ -160,8 +149,6 @@ async def _inspect_and_verify_provenance(
     s_state = str(s_data.get("state") or "").strip().lower()
     has_pub = bool(s_data.get("publish-time"))
     if s_state in ("published", "discarded") or has_pub:
-        with suppress(Exception):
-            await api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
         return (
             None,
             ApiCallResult(
@@ -179,8 +166,6 @@ async def _inspect_and_verify_provenance(
 
     name_matches_expected = expected_name_clean is not None and s_name == expected_name_clean
     if expected_name_clean is not None and not name_matches_expected and not allow_foreign:
-        with suppress(Exception):
-            await api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
         return (
             None,
             ApiCallResult(
@@ -206,8 +191,6 @@ async def _inspect_and_verify_provenance(
         is_web_api_app and (staged_entry is not None or name_matches_expected or is_own_web_session)
     )
     if not is_trusted_session:
-        with suppress(BaseException):
-            await asyncio.shield(api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip))
         return (
             None,
             ApiCallResult(
@@ -268,12 +251,8 @@ async def _takeover_or_switch_session(
                 combined_err = f"take-over-session failed ({take_err}); switch-session fallback failed ({sw_err})"
                 take_res = take_res.model_copy(update={"error_message": combined_err})
     except ServerIdentityError:
-        with suppress(Exception):
-            await api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
         raise
     except Exception as exc:
-        with suppress(Exception):
-            await api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
         safe_err = redact_sid(str(exc), known_sids=known_sids)
         return (
             None,
@@ -287,8 +266,6 @@ async def _takeover_or_switch_session(
         )
 
     if not take_res.success:
-        with suppress(Exception):
-            await api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
         safe_err = redact_sid(
             take_res.error_message or take_res.error_code or "take-over-session failed",
             known_sids=known_sids,
@@ -306,8 +283,6 @@ async def _takeover_or_switch_session(
                 server_ip=fresh_ip,
             )
         except ServerIdentityError:
-            with suppress(Exception):
-                await api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip)
             raise
         except Exception:
             pass
@@ -377,30 +352,39 @@ async def adopt_staged_session(
         )
 
     known_sids = [s for s in (candidate_sid, fresh_sid) if s]
-    initial_uid, failure_res = await _inspect_and_verify_provenance(
-        api,
-        mgmt_name,
-        domain,
-        session_uid=session_uid,
-        fresh_sid=fresh_sid,
-        fresh_ip=fresh_ip,
-        resolved_auth=resolved_auth,
-        staged_entry=staged_entry,
-        expected_name_clean=expected_name_clean,
-        allow_foreign=allow_foreign,
-        known_sids=known_sids,
-    )
-    if failure_res is not None:
-        return None, None, failure_res
+    adopted = False
+    try:
+        initial_uid, failure_res = await _inspect_and_verify_provenance(
+            api,
+            mgmt_name,
+            domain,
+            session_uid=session_uid,
+            fresh_sid=fresh_sid,
+            fresh_ip=fresh_ip,
+            resolved_auth=resolved_auth,
+            staged_entry=staged_entry,
+            expected_name_clean=expected_name_clean,
+            allow_foreign=allow_foreign,
+            known_sids=known_sids,
+        )
+        if failure_res is not None:
+            return None, None, failure_res
 
-    return await _takeover_or_switch_session(
-        api,
-        mgmt_name,
-        domain,
-        session_uid=session_uid,
-        fresh_sid=fresh_sid,
-        fresh_ip=fresh_ip,
-        initial_uid=initial_uid,
-        force_disconnect=force_disconnect,
-        known_sids=known_sids,
-    )
+        adopt_sid, adopt_ip, adopt_res = await _takeover_or_switch_session(
+            api,
+            mgmt_name,
+            domain,
+            session_uid=session_uid,
+            fresh_sid=fresh_sid,
+            fresh_ip=fresh_ip,
+            initial_uid=initial_uid,
+            force_disconnect=force_disconnect,
+            known_sids=known_sids,
+        )
+        if adopt_sid is not None and adopt_res.success:
+            adopted = True
+        return adopt_sid, adopt_ip, adopt_res
+    finally:
+        if not adopted:
+            with suppress(BaseException):
+                await asyncio.shield(api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip))

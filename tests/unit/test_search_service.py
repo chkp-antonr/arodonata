@@ -1459,3 +1459,176 @@ async def test_resolve_group_with_members_isolation_precedence_and_query_bounds(
         assert len(grouped_page["groups"]) == 3
     finally:
         await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-018-2")
+def test_decomposed_search_package_compat_traced_and_shared_asset_linking() -> None:
+    """Verify `search_service` compatibility exports, `@traced` method parity, and shared cluster/VSX asset linking."""
+    from arodonata.core.models.assets import Asset
+    from arodonata.core.services import search_service as legacy_mod
+    from arodonata.core.services.asset_service import ClusterRelationshipManager, VSXRelationshipManager
+    from arodonata.core.services.search import SearchService as PkgSearchService
+    from arodonata.core.services.search import classify_search_term as pkg_classify
+
+    assert legacy_mod.SearchService is PkgSearchService
+    assert legacy_mod.classify_search_term is pkg_classify
+    for method_name in (
+        "search_objects",
+        "resolve_group_with_members",
+        "get_group_members",
+        "find_object",
+        "describe_objects",
+        "query_objects",
+        "get_cache_status",
+    ):
+        fn = getattr(PkgSearchService, method_name)
+        assert hasattr(fn, "__wrapped__")
+        assert fn.__qualname__ == f"SearchService.{method_name}"
+
+    parent_clu = Asset(
+        id="mds1:Corp:clu-1",
+        asset_id="mds1:Corp:Cluster1",
+        mgmt_name="mds1",
+        domain_name="Corp",
+        uid="clu-1",
+        name="Cluster1",
+        type="simple-cluster",
+        raw_data={"members": ["mem-1"]},
+    )
+    mem_clu = Asset(
+        id="mds1:Corp:mem-1",
+        asset_id="mds1:Corp:Member1",
+        mgmt_name="mds1",
+        domain_name="Corp",
+        uid="mem-1",
+        name="Member1",
+        type="cluster-member",
+    )
+    enriched_clu = {a.uid: a for a in ClusterRelationshipManager().enrich([parent_clu, mem_clu])}
+    assert enriched_clu["mem-1"].parent_uid == "clu-1"
+    assert enriched_clu["clu-1"].member_uids == ["mem-1"]
+
+    vsx_p = Asset(
+        id="mds1:DC:vsx-1",
+        asset_id="mds1:DC:VSX1",
+        mgmt_name="mds1",
+        domain_name="DC",
+        uid="vsx-1",
+        name="VSX1",
+        type="vsx-gateway",
+    )
+    vs_c = Asset(
+        id="mds1:Tenant:vs-1",
+        asset_id="mds1:Tenant:VS1",
+        mgmt_name="mds1",
+        domain_name="Tenant",
+        uid="vs-1",
+        name="VS1",
+        type="virtual-system",
+        raw_data={"vsx-gateway": {"uid": "vsx-1"}},
+    )
+    reconciled = {a.uid: a for a in VSXRelationshipManager(api=None).reconcile_cross_domain([vsx_p, vs_c])}  # type: ignore[arg-type]
+    assert reconciled["vs-1"].parent_id == vsx_p.id
+    assert reconciled["vsx-1"].virtual_system_uids == ["vs-1"]
+
+
+async def test_search_service_group_by_validation_telemetry_range_exact_and_single_domain_refresh() -> None:
+    """DA-011/DA-013/DA-019/DA-025/DA-028/DA-030: SearchService safety, module metadata, and freshness."""
+    from arodonata.core.errors import ServerIdentityError
+    from arodonata.core.models.domains import RefreshOutcome
+    from arodonata.core.services.search.terms import matches_classified_term
+
+    assert SearchService.__module__ == "arodonata.core.services.search_service"
+    assert SearchService.search_objects.__module__ == "arodonata.core.services.search_service"
+
+    # DA-030: IP range exact_match=True enforces containment
+    host_inside = CPObject(
+        id="m:d:h1",
+        object_id="m:d:h1",
+        uid="h1",
+        name="H1",
+        type="host",
+        mgmt_name="m",
+        domain_name="d",
+        ipv4_address="10.0.0.5",
+    )
+    range_wider = CPObject.from_cp_dict(
+        "m",
+        "d",
+        {
+            "uid": "r1",
+            "name": "R1",
+            "type": "address-range",
+            "ipv4-address-first": "10.0.0.1",
+            "ipv4-address-last": "10.0.0.20",
+        },
+    )
+    term_range = classify_search_term("10.0.0.4-10.0.0.10")
+    assert matches_classified_term(host_inside, term_range, exact_match=True) is True
+    assert matches_classified_term(range_wider, term_range, exact_match=True) is False
+    assert matches_classified_term(range_wider, term_range, exact_match=False) is True
+
+    # DA-011, DA-013, DA-019, DA-028 using lightweight stubs
+    refreshed_scopes: list[str] = []
+
+    class _StubCache:
+        async def get_domains(self, mgmt_name: str, *, include_global: bool = True) -> list[DomainInfo]:
+            return [DomainInfo(id="m:Corp", mgmt_name="m", uid="d1", name="Corp", domain_type="domain")]
+
+        async def get_objects(self, **kwargs: Any) -> list[CPObject]:
+            return []
+
+        async def get_services(self, **kwargs: Any) -> list[CPService]:
+            return []
+
+        async def get_assets(self, **kwargs: Any) -> list[Asset]:
+            return []
+
+    class _StubObjSvc:
+        async def refresh_objects(self, **kwargs: Any) -> RefreshOutcome:
+            refreshed_scopes.append("objects")
+            return RefreshOutcome(scope="objects")
+
+        async def get_objects(self, **kwargs: Any) -> list[CPObject]:
+            return [host_inside] if kwargs.get("names") or kwargs.get("uids") else []
+
+    class _StubSvcCache:
+        async def refresh_services(self, **kwargs: Any) -> RefreshOutcome:
+            refreshed_scopes.append("services")
+            return RefreshOutcome(scope="services")
+
+        async def get_services(self, **kwargs: Any) -> list[CPService]:
+            return []
+
+    s = SearchService(
+        cache=_StubCache(),  # type: ignore[arg-type]
+        object_service=_StubObjSvc(),  # type: ignore[arg-type]
+        service_cache=_StubSvcCache(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ValidationError, match="Unsupported group_by"):
+        await s.query_objects(group_by=["__class__"], cache_mode="cache")
+
+    # DA-028: port filter skips objects refresh
+    await s.query_objects(mgmt_name="m", port="443", cache_mode="smart")
+    assert refreshed_scopes == ["services"]
+
+    # DA-019: single-domain find_object still invokes refresh_objects even when object exists in cache
+    refreshed_scopes.clear()
+    found = await s.find_object("m", None, "H1", cache_mode="smart")
+    assert found is not None and found.uid == "h1"
+    assert refreshed_scopes == ["objects"]
+
+    # DA-013: ServerIdentityError propagates through resolve_implicit_domain_mode
+    class _EmptyDomainCache(_StubCache):
+        async def get_domains(self, mgmt_name: str, *, include_global: bool = True) -> list[DomainInfo]:
+            return []
+
+    class _BoomDomSvc:
+        async def get_domains(self, **kwargs: Any) -> list[DomainInfo]:
+            raise ServerIdentityError("cert changed")
+
+    s._cache = _EmptyDomainCache()  # type: ignore[assignment]
+    s._object_service._coordinator = type("C", (), {"_domain_service": _BoomDomSvc()})()  # type: ignore[attr-defined]
+    with pytest.raises(ServerIdentityError, match="cert changed"):
+        await s.resolve_implicit_domain_mode("m", None, "smart")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 import pytest
 
@@ -647,3 +648,141 @@ def test_empty_inline_layer_and_name_keyed_prefix_lookup() -> None:
     locs = locate_rules_in_snapshot(snap, layer_uids=["EmptyInline"])
     assert locs.layer_prefixes["EmptyInline"]
     assert locs.layer_prefixes["EmptyInline"][0].prefix == "1."
+
+
+@pytest.mark.spec("SCN-RULE-008-1")
+def test_filter_numbered_rulebase_precomputes_group_graphs_with_exact_parity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify `filter_numbered_rulebase()` builds reverse-parent group graphs once across all rules and matches direct `rule_matches_filter`."""
+    from arodonata.core.models.objects import CPObject
+    from arodonata.core.models.services import CPService
+    from arodonata.rulebase import filter as filter_mod
+    from arodonata.rulebase.filter import _parse_filter_tokens, filter_numbered_rulebase, rule_matches_filter
+    from arodonata.rulebase.models import NumberedRule, PackageRulebase
+
+    objects = [
+        CPObject(mgmt_name="m", domain_name="d", uid="h1", name="Web_Host", type="host", ipv4_address="10.1.2.3"),
+        CPObject(mgmt_name="m", domain_name="d", uid="g1", name="Web_Group", type="group", members=["h1"]),
+        CPObject(mgmt_name="m", domain_name="d", uid="g2", name="Parent_Group", type="group", members=["g1"]),
+    ]
+    services = [
+        CPService(
+            mgmt_name="m", domain_name="d", uid="s1", name="https", type="service-tcp", port="443", protocol="TCP"
+        ),
+        CPService(mgmt_name="m", domain_name="d", uid="sg1", name="Web_Svcs", type="service-group", members=["s1"]),
+    ]
+    rules = [
+        NumberedRule(
+            uid=f"r-{i}",
+            rule_number=str(i),
+            name=f"Rule_{i}",
+            layer_uid="l1",
+            layer_name="Network",
+            rulebase_type="access",
+            source=["Parent_Group"] if i == 2 else ["Any"],
+            destination=["Any"],
+            service=["Web_Svcs"] if i == 2 else ["Any"],
+            action="Accept",
+        )
+        for i in range(1, 15)
+    ]
+    pkg = PackageRulebase(
+        mgmt_name="m",
+        domain_name="d",
+        package_uid="p1",
+        package_name="Std",
+        rulebase_type="access",
+        flat_rules=rules,
+    )
+
+    build_calls = 0
+    orig_rev = filter_mod._build_reverse_parents
+
+    def _counting_rev(items: Any) -> Any:
+        nonlocal build_calls
+        build_calls += 1
+        return orig_rev(items)
+
+    monkeypatch.setattr(filter_mod, "_build_reverse_parents", _counting_rev)
+    res = filter_numbered_rulebase(pkg, filter_query="src:10.1.2.3 svc:443", objects=objects, services=services)
+    assert [r.uid for r in res.rules] == ["r-2"]
+    # Built once for objects + once for services regardless of 14 rules
+    assert build_calls == 2
+
+    # Direct `rule_matches_filter` parity without precomputed index
+    tokens = _parse_filter_tokens("src:10.1.2.3 svc:443")
+    direct = [r.uid for r in rules if rule_matches_filter(r, tokens, objects=objects, services=services)]
+    assert direct == ["r-2"]
+
+
+def test_service_matching_cycles_and_markdown_cell_escaping() -> None:
+    """DA-004/DA-015: Prevent `proto/port` substring collisions, terminate group cycles, and escape MD cells."""
+    from arodonata.core.models.services import CPService
+    from arodonata.rulebase.filter import (
+        _expand_parent_identifiers,
+        _service_matches_term,
+        format_rules_markdown,
+    )
+    from arodonata.rulebase.models import NumberedRule
+
+    svc_8080 = CPService(
+        id="m:d:s8080",
+        service_id="m:d:s8080",
+        uid="s8080",
+        name="tcp_8080",
+        type="service-tcp",
+        mgmt_name="m",
+        domain_name="d",
+        port="8080",
+        protocol="TCP",
+    )
+    svc_icmp = CPService(
+        id="m:d:sicmp",
+        service_id="m:d:sicmp",
+        uid="sicmp",
+        name="echo_req",
+        type="service-icmp",
+        mgmt_name="m",
+        domain_name="d",
+    )
+    assert _service_matches_term(svc_8080, "tcp/80") is False
+    assert _service_matches_term(svc_8080, "tcp/8080") is True
+    assert _service_matches_term(svc_icmp, "service-icmp") is True
+
+    # Cyclic service group expansion (>5 deep + cycle) terminates cleanly and visits all nodes
+    cycle_parents = {
+        "a": ["b"],
+        "b": ["c"],
+        "c": ["d"],
+        "d": ["e"],
+        "e": ["f"],
+        "f": ["g", "a"],
+    }
+    by_uid = {
+        k: CPService(id=k, service_id=k, uid=k, name=k, type="service-group", mgmt_name="m", domain_name="d")
+        for k in ("a", "b", "c", "d", "e", "f", "g")
+    }
+    expanded = _expand_parent_identifiers({"a"}, by_uid, cycle_parents, {"a"})
+    assert {"a", "b", "c", "d", "e", "f", "g"}.issubset(expanded)
+
+    rule = NumberedRule(
+        uid="r-pipe",
+        mgmt_name="m",
+        domain_name="d",
+        package_uid="p1",
+        package_name="Std",
+        rulebase_type="access",
+        layer_uid="l1",
+        layer_name="Network",
+        rule_number="1",
+        name="allow | pipe\nnewline",
+        action="Accept",
+        source=["H1 | evil"],
+        destination=["Any"],
+        service=["Any"],
+        comments="note | with `tick`\nbreak",
+    )
+    md = format_rules_markdown("Std", "access", [rule])
+    assert r"allow \| pipe newline" in md
+    assert r"H1 \| evil" in md

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from datetime import datetime
 
@@ -344,64 +344,59 @@ class Executor:
 
         known_sids = [s for s in (sid, active_sid) if s]
         staged_entry = self._staged_sessions.get((mgmt_name, dom_key, session_uid))
-        try:
+
+        async def _do_publish() -> ApiCallResult:
             is_stale = False
             stale_reason = ""
-            if (
-                not allow_stale
-                and staged_entry is not None
-                and self._check_domain_head is not None
-                and (staged_entry.baseline_session_uid is not None or staged_entry.baseline_published_at is not None)
-            ):
+            head_check = self._check_domain_head or self._check_current_domain_head
+            if not allow_stale and staged_entry is not None:
                 from arodonata.cpcrud.models import DomainStamp
 
-                head_readable, curr_uid, curr_pub, head_err = await self._check_domain_head(mgmt_name, domain or "")
+                head_readable, curr_uid, curr_pub, head_err = await head_check(mgmt_name, domain or "")
                 baseline_stamp = DomainStamp(
                     mgmt_name=mgmt_name,
                     domain_name=dom_key,
-                    readable=True,
+                    readable=staged_entry.baseline_readable,
                     last_session_uid=staged_entry.baseline_session_uid,
                     last_published_at=staged_entry.baseline_published_at,
                     captured_at=self._now(),
                 )
                 if _is_domain_head_stale(baseline_stamp, curr_uid, curr_pub, head_readable):
                     is_stale = True
-                    stale_reason = head_err or f"published head drifted to {curr_uid or curr_pub}"
+                    safe_head_err = redact_sid(head_err, known_sids=known_sids) if head_err else None
+                    if not staged_entry.baseline_readable:
+                        stale_reason = safe_head_err or "pre-apply domain head baseline was unreadable"
+                    else:
+                        stale_reason = safe_head_err or f"published head drifted to {curr_uid or curr_pub}"
 
             if is_stale:
-                pub_res = ApiCallResult(
+                return ApiCallResult(
                     success=False,
                     status_code=409,
                     error_message=f"Refusing to publish stale staged session {session_uid}: {stale_reason}",
                     error_code="stale_plan",
                 )
-            else:
-                pub_res = await self._api.api_call(
-                    mgmt_name,
-                    "publish",
-                    {},
-                    domain=domain or None,
-                    sid=active_sid,
-                    server_ip=active_ip,
-                    wait_for_task=True,
-                    timeout=timeout,
-                )
-        except ServerIdentityError:
-            raise
-        except Exception as exc:
-            safe_err = redact_sid(str(exc), known_sids=known_sids)
-            pub_res = ApiCallResult(
-                success=False,
-                status_code=500,
-                error_message=safe_err,
-                error_code="publish_failed",
+            return await self._api.api_call(
+                mgmt_name,
+                "publish",
+                {},
+                domain=domain or None,
+                sid=active_sid,
+                server_ip=active_ip,
+                wait_for_task=True,
+                timeout=timeout,
             )
-        finally:
-            with suppress(BaseException):
-                await asyncio.shield(self._api.logout_sid(mgmt_name, active_sid, server_ip=active_ip))
-            if sid and sid != active_sid:
-                with suppress(BaseException):
-                    await asyncio.shield(self._api.logout_sid(mgmt_name, sid, server_ip=server_ip))
+
+        pub_res = await self._run_on_adopted_staged_session(
+            mgmt_name,
+            sid=sid,
+            server_ip=server_ip,
+            active_sid=active_sid,
+            active_ip=active_ip,
+            known_sids=known_sids,
+            error_code="publish_failed",
+            action=_do_publish,
+        )
 
         if pub_res.success:
             self._staged_sessions.pop((mgmt_name, dom_key, session_uid), None)
@@ -492,6 +487,38 @@ class Executor:
             if entry.sid == sid and (not mgmt_name or entry.mgmt_name == mgmt_name):
                 entry.clear_sid()
 
+    async def _run_on_adopted_staged_session(
+        self,
+        mgmt_name: str,
+        *,
+        sid: str | None,
+        server_ip: str | None,
+        active_sid: str,
+        active_ip: str | None,
+        known_sids: list[str],
+        error_code: str,
+        action: Callable[[], Awaitable[ApiCallResult]],
+    ) -> ApiCallResult:
+        """Execute an action on an adopted staged session and always shield logout cleanup."""
+        try:
+            return await action()
+        except ServerIdentityError:
+            raise
+        except Exception as exc:
+            safe_err = redact_sid(str(exc), known_sids=known_sids)
+            return ApiCallResult(
+                success=False,
+                status_code=500,
+                error_message=safe_err,
+                error_code=error_code,
+            )
+        finally:
+            with suppress(BaseException):
+                await asyncio.shield(self._api.logout_sid(mgmt_name, active_sid, server_ip=active_ip))
+            if sid and sid != active_sid:
+                with suppress(BaseException):
+                    await asyncio.shield(self._api.logout_sid(mgmt_name, sid, server_ip=server_ip))
+
     @traced
     async def discard_staged_session(
         self,
@@ -524,7 +551,8 @@ class Executor:
             return take_res
 
         known_sids = [s for s in (sid, active_sid) if s]
-        try:
+
+        async def _do_discard() -> ApiCallResult:
             disc_res = await self._api.api_call(
                 mgmt_name,
                 "discard",
@@ -541,22 +569,17 @@ class Executor:
                 return disc_res.model_copy(update={"error_message": safe_err})
             self._staged_sessions.pop((mgmt_name, dom_key, session_uid), None)
             return disc_res
-        except ServerIdentityError:
-            raise
-        except Exception as exc:
-            safe_err = redact_sid(str(exc), known_sids=known_sids)
-            return ApiCallResult(
-                success=False,
-                status_code=500,
-                error_message=safe_err,
-                error_code="discard_failed",
-            )
-        finally:
-            with suppress(BaseException):
-                await asyncio.shield(self._api.logout_sid(mgmt_name, active_sid, server_ip=active_ip))
-            if sid and sid != active_sid:
-                with suppress(BaseException):
-                    await asyncio.shield(self._api.logout_sid(mgmt_name, sid, server_ip=server_ip))
+
+        return await self._run_on_adopted_staged_session(
+            mgmt_name,
+            sid=sid,
+            server_ip=server_ip,
+            active_sid=active_sid,
+            active_ip=active_ip,
+            known_sids=known_sids,
+            error_code="discard_failed",
+            action=_do_discard,
+        )
 
 
 __all__ = [

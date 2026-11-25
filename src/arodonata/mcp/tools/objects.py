@@ -21,6 +21,7 @@ from arodonata.core.models.common import (
     normalize_service_type,
 )
 from arodonata.core.services.object_service import resolve_object_query_command
+from arodonata.core.services.search.query import resolve_query_scopes
 from arodonata.core.services.service_cache import resolve_service_query_command
 from arodonata.mcp.config import ArodonataMCPSettings
 from arodonata.mcp.errors import (
@@ -509,35 +510,17 @@ def register_object_tools(
         await _validate_optional_domains(client, eff_mgmt, domains, cache_mode=mode)
 
         canonical_asset_types_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
-        requested_types: list[str] | None = None
-        if types is not None:
-            requested_types = []
-            for raw_t in types:
-                clean_t = str(raw_t or "").strip()
-                if not clean_t:
-                    continue
-                any_t = normalize_any_type(clean_t)
-                candidates = (
-                    tuple(t.lower() for t in expand_asset_types([clean_t]))
-                    if any_t.lower() in canonical_asset_types_lower
-                    else (any_t,)
-                )
-                for c in candidates:
-                    if c not in requested_types:
-                        requested_types.append(c)
         if aggregate == "describe":
+            requested_types: list[str] | None = None
             want_objects, want_services, want_assets = True, False, False
         else:
-            want_objects = requested_types is None or any(
-                not t.startswith("service-") and t not in canonical_asset_types_lower for t in requested_types
+            requested_types, want_objects, want_services, want_assets = resolve_query_scopes(
+                types,
+                port=port,
+                protocol=protocol,
+                parent_id=parent_id,
+                parent_asset_id=parent_asset_id,
             )
-            want_services = requested_types is not None and any(t.startswith("service-") for t in requested_types)
-            want_assets = requested_types is not None and any(t in canonical_asset_types_lower for t in requested_types)
-            if requested_types is None and (port is not None or protocol is not None):
-                want_services = True
-            if requested_types is None and (parent_id is not None or parent_asset_id is not None):
-                want_objects = False
-                want_assets = True
 
         target_scopes: list[tuple[SyncScope, list[str] | None]] = []
         if want_objects:
@@ -556,7 +539,7 @@ def register_object_tools(
             target_scopes.append(("services", svc_item_types or None))
         if want_assets:
             target_scopes.append(("assets", None))
-        if not target_scopes:
+        if not target_scopes and aggregate == "describe":
             target_scopes.append(("objects", None))
 
         eff_mode = mode

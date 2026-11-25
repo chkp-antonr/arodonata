@@ -4,16 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from arodonata.core.errors import ServerIdentityError, ValidationError
 from arodonata.core.models.objects import CPObject
 from arodonata.cpcrud._state_reader_common import (
     OBJECT_ITEM_TYPES,
-    TYPE_TO_SHOW_PLURAL_CMD,
-    TYPE_TO_SHOW_SINGLE_CMD,
-    StateLookupError,
-    _apply_fetched_entity_overlay,
     _HybridStateReaderBase,
-    is_not_found_error,
     normalize_app_site_url_key,
     normalize_mask_length,
 )
@@ -30,110 +24,25 @@ class _ObjectLookupMixin(_HybridStateReaderBase):
         name: str,
     ) -> CPObject | None:
         """Look up a network object by `(mgmt_name, domain_name, obj_type, name)`."""
-        if obj_type not in OBJECT_ITEM_TYPES:
-            raise ValidationError(f"Unsupported CPCRUD object type: {obj_type!r}")
-        dom_key = (mgmt_name, domain_name)
-        del_set = self._deleted_objects.get(dom_key, set())
-        virt_map = self._virtual_objects.get(dom_key, {})
-        if f"name:{obj_type}:{name}" in del_set:
-            return None
-        virt = virt_map.get(f"name:{obj_type}:{name}")
-        if virt is not None:
-            return virt
-
-        if await self.is_slice_cache_fresh(mgmt_name, domain_name, "objects", obj_type):
-            lookup_names = [name, f".{name}"] if (obj_type == "dns-domain" and not name.startswith(".")) else [name]
-            try:
-                objs = await self._cache.get_objects(
-                    mgmt_name=mgmt_name,
-                    domain_name=domain_name,
-                    types=[obj_type],
-                    names=lookup_names,
-                )
-            except Exception as exc:
-                raise StateLookupError(
-                    f"Cache lookup failed for {obj_type} {name!r} in {mgmt_name}:{domain_name}: {exc}"
-                ) from exc
-            for item in objs:
-                if item.name != name:
-                    continue
-                resolved = _apply_fetched_entity_overlay(obj_type, item, del_set, virt_map)
-                if resolved is not None:
-                    return resolved
-            if obj_type == "dns-domain" and not name.startswith("."):
-                dot_name = f".{name}"
-                if f"name:dns-domain:{dot_name}" in del_set:
-                    return None
-                dot_virt = virt_map.get(f"name:dns-domain:{dot_name}")
-                if dot_virt is not None:
-                    return dot_virt
-                for item in objs:
-                    if item.name != dot_name:
-                        continue
-                    resolved = _apply_fetched_entity_overlay(obj_type, item, del_set, virt_map)
-                    if resolved is not None:
-                        return resolved
-            return None
-
-        # Fallback to live API call
-        cmd = TYPE_TO_SHOW_SINGLE_CMD[obj_type]
-        payload: dict[str, Any] = {"name": name}
-        try:
-            res = await self._api.api_call(
-                mgmt_name,
-                cmd,
-                payload,
-                domain=domain_name or None,
-            )
-        except ServerIdentityError:
-            raise
-        except Exception as exc:
-            raise StateLookupError(
-                f"Live API lookup ({cmd}) failed for {name!r} in {mgmt_name}:{domain_name}: {exc}"
-            ) from exc
-
-        if not res.success:
-            if is_not_found_error(res.status_code, res.error_code, res.error_message):
-                # For dns-domain, Check Point often stores names with a leading dot (e.g. ".example.com")
-                if obj_type == "dns-domain" and not name.startswith("."):
-                    if f"name:dns-domain:.{name}" in del_set:
-                        return None
-                    dot_virt = virt_map.get(f"name:dns-domain:.{name}")
-                    if dot_virt is not None:
-                        return dot_virt
-                    try:
-                        dot_res = await self._api.api_call(
-                            mgmt_name,
-                            cmd,
-                            {"name": f".{name}"},
-                            domain=domain_name or None,
-                        )
-                    except ServerIdentityError:
-                        raise
-                    except Exception as exc:
-                        raise StateLookupError(
-                            f"Live API lookup ({cmd}) failed for .{name!r} in {mgmt_name}:{domain_name}: {exc}"
-                        ) from exc
-                    if dot_res.success and isinstance(dot_res.data, dict):
-                        fetched_dot = CPObject.from_cp_dict(mgmt_name, domain_name, dot_res.data)
-                        return _apply_fetched_entity_overlay(obj_type, fetched_dot, del_set, virt_map)
-                    if not dot_res.success and not is_not_found_error(
-                        dot_res.status_code, dot_res.error_code, dot_res.error_message
-                    ):
-                        raise StateLookupError(
-                            f"Live API lookup ({cmd}) failed for .{name!r}: "
-                            f"{dot_res.error_message or dot_res.error_code or 'API error'}"
-                        )
-                return None
-            raise StateLookupError(
-                f"Live API lookup ({cmd}) failed for {name!r} in {mgmt_name}:{domain_name}: "
-                f"{res.error_message or res.error_code or f'HTTP {res.status_code}'}"
-            )
-
-        if not isinstance(res.data, dict) or not res.data:
-            return None
-        fetched = CPObject.from_cp_dict(mgmt_name, domain_name, res.data)
-        return _apply_fetched_entity_overlay(obj_type, fetched, del_set, virt_map)
+        return await self._get_entity_by_name(
+            mgmt_name,
+            domain_name,
+            obj_type,
+            name,
+            valid_types=OBJECT_ITEM_TYPES,
+            invalid_type_label="object",
+            scope="objects",
+            deleted_store=self._deleted_objects,
+            virtual_store=self._virtual_objects,
+            cache_fetch_by_names=lambda lookup_names: self._cache.get_objects(
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                types=[obj_type],
+                names=lookup_names,
+            ),
+            parser=lambda raw: CPObject.from_cp_dict(mgmt_name, domain_name, raw),
+            allow_dot_domain_fallback=True,
+        )
 
     async def get_object_by_uid(
         self,
@@ -143,55 +52,19 @@ class _ObjectLookupMixin(_HybridStateReaderBase):
         uid: str,
     ) -> CPObject | None:
         """Look up a network object by `(mgmt_name, domain_name, obj_type, uid)`."""
-        if obj_type not in OBJECT_ITEM_TYPES:
-            raise ValidationError(f"Unsupported CPCRUD object type: {obj_type!r}")
-        dom_key = (mgmt_name, domain_name)
-        del_set = self._deleted_objects.get(dom_key, set())
-        virt_map = self._virtual_objects.get(dom_key, {})
-        if f"uid:{uid}" in del_set:
-            return None
-        virt = virt_map.get(f"uid:{uid}")
-        if virt is not None:
-            return virt
-
-        if await self.is_slice_cache_fresh(mgmt_name, domain_name, "objects", obj_type):
-            try:
-                obj = await self._cache.get_object_by_uid(mgmt_name, domain_name, uid)
-            except Exception as exc:
-                raise StateLookupError(
-                    f"Cache UID lookup failed for {obj_type} {uid!r} in {mgmt_name}:{domain_name}: {exc}"
-                ) from exc
-            if obj is not None and obj.type == obj_type:
-                return _apply_fetched_entity_overlay(obj_type, obj, del_set, virt_map)
-            return None
-
-        cmd = TYPE_TO_SHOW_SINGLE_CMD[obj_type]
-        try:
-            res = await self._api.api_call(
-                mgmt_name,
-                cmd,
-                {"uid": uid},
-                domain=domain_name or None,
-            )
-        except ServerIdentityError:
-            raise
-        except Exception as exc:
-            raise StateLookupError(
-                f"Live API UID lookup ({cmd}) failed for {uid!r} in {mgmt_name}:{domain_name}: {exc}"
-            ) from exc
-
-        if not res.success:
-            if is_not_found_error(res.status_code, res.error_code, res.error_message):
-                return None
-            raise StateLookupError(
-                f"Live API UID lookup ({cmd}) failed for {uid!r} in {mgmt_name}:{domain_name}: "
-                f"{res.error_message or res.error_code or f'HTTP {res.status_code}'}"
-            )
-
-        if not isinstance(res.data, dict) or not res.data:
-            return None
-        fetched = CPObject.from_cp_dict(mgmt_name, domain_name, res.data)
-        return _apply_fetched_entity_overlay(obj_type, fetched, del_set, virt_map)
+        return await self._get_entity_by_uid(
+            mgmt_name,
+            domain_name,
+            obj_type,
+            uid,
+            valid_types=OBJECT_ITEM_TYPES,
+            invalid_type_label="object",
+            scope="objects",
+            deleted_store=self._deleted_objects,
+            virtual_store=self._virtual_objects,
+            cache_fetch_by_uid=lambda: self._cache.get_object_by_uid(mgmt_name, domain_name, uid),
+            parser=lambda raw: CPObject.from_cp_dict(mgmt_name, domain_name, raw),
+        )
 
     async def _candidates_for_object_value_lookup(
         self,
@@ -203,26 +76,21 @@ class _ObjectLookupMixin(_HybridStateReaderBase):
         ip_only: bool = False,
     ) -> list[CPObject]:
         """Return candidate `CPObject` entries from fresh cache, live memo, or targeted `show-objects`."""
-        if obj_type not in OBJECT_ITEM_TYPES:
-            raise ValidationError(f"Unsupported CPCRUD object type: {obj_type!r}")
-        if (
-            await self.is_slice_cache_fresh(mgmt_name, domain_name, "objects", obj_type)
-            or (mgmt_name, domain_name, obj_type) in self._live_objects_memo
-        ):
-            return await self.list_objects_of_type(mgmt_name, domain_name, obj_type)
-
-        raw_items = await self._query_filtered_objects(
+        return await self._candidates_for_entity_value_lookup(
             mgmt_name,
             domain_name,
-            obj_type=obj_type,
+            entity_type=obj_type,
             filter_text=filter_text,
             ip_only=ip_only,
+            valid_types=OBJECT_ITEM_TYPES,
+            invalid_type_label="object",
+            scope="objects",
+            live_memo=self._live_objects_memo,
+            deleted_store=self._deleted_objects,
+            virtual_store=self._virtual_objects,
+            list_all=lambda: self.list_objects_of_type(mgmt_name, domain_name, obj_type),
+            parser=lambda raw: CPObject.from_cp_dict(mgmt_name, domain_name, raw),
         )
-        if raw_items is None:
-            return await self.list_objects_of_type(mgmt_name, domain_name, obj_type)
-
-        base_list = [CPObject.from_cp_dict(mgmt_name, domain_name, raw) for raw in raw_items]
-        return self._merge_object_overlay(mgmt_name, domain_name, obj_type, base_list)
 
     async def list_objects_of_type(
         self,
@@ -231,53 +99,23 @@ class _ObjectLookupMixin(_HybridStateReaderBase):
         obj_type: str,
     ) -> list[CPObject]:
         """Return all objects of `obj_type` in `(mgmt_name, domain_name)` from fresh cache or live `api_query`."""
-        if obj_type not in OBJECT_ITEM_TYPES:
-            raise ValidationError(f"Unsupported CPCRUD object type: {obj_type!r}")
-
-        base_list: list[CPObject]
-        if await self.is_slice_cache_fresh(mgmt_name, domain_name, "objects", obj_type):
-            try:
-                base_list = await self._cache.get_objects(
-                    mgmt_name=mgmt_name,
-                    domain_name=domain_name,
-                    types=[obj_type],
-                )
-            except Exception as exc:
-                raise StateLookupError(
-                    f"Cache listing failed for {obj_type} in {mgmt_name}:{domain_name}: {exc}"
-                ) from exc
-        else:
-            memo_key = (mgmt_name, domain_name, obj_type)
-            if memo_key in self._live_objects_memo:
-                base_list = list(self._live_objects_memo[memo_key])
-            else:
-                plural_cmd = TYPE_TO_SHOW_PLURAL_CMD[obj_type]
-                try:
-                    q_res = await self._api.api_query(
-                        mgmt_name,
-                        plural_cmd,
-                        domain=domain_name or None,
-                        details_level="standard",
-                    )
-                except ServerIdentityError:
-                    raise
-                except Exception as exc:
-                    raise StateLookupError(
-                        f"Live API query ({plural_cmd}) failed in {mgmt_name}:{domain_name}: {exc}"
-                    ) from exc
-
-                if not q_res.success or q_res.code == "paging_inconsistent":
-                    reason = q_res.error_message or q_res.code or f"{plural_cmd} query failed"
-                    raise StateLookupError(
-                        f"Live API query ({plural_cmd}) failed in {mgmt_name}:{domain_name}: {reason}"
-                    )
-
-                base_list = [
-                    CPObject.from_cp_dict(mgmt_name, domain_name, raw) for raw in q_res.objects if isinstance(raw, dict)
-                ]
-                self._live_objects_memo[memo_key] = list(base_list)
-
-        return self._merge_object_overlay(mgmt_name, domain_name, obj_type, base_list)
+        return await self._list_entities_of_type(
+            mgmt_name,
+            domain_name,
+            obj_type,
+            valid_types=OBJECT_ITEM_TYPES,
+            invalid_type_label="object",
+            scope="objects",
+            live_memo=self._live_objects_memo,
+            deleted_store=self._deleted_objects,
+            virtual_store=self._virtual_objects,
+            cache_list=lambda: self._cache.get_objects(
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                types=[obj_type],
+            ),
+            parser=lambda raw: CPObject.from_cp_dict(mgmt_name, domain_name, raw),
+        )
 
     async def find_host_by_ip(
         self,

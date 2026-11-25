@@ -1,6 +1,6 @@
-# Arodonata v2 — Runnable Examples & Recipes (01..12)
+# Arodonata v2 — Runnable Examples & Recipes (01..13)
 
-Worked examples showing common tasks with Arodonata v2: basic queries, multi-term search and structured cross-domain aggregation (`query_objects`), gateway/cluster/VSX relationships, paired streaming and batch smart refresh, rulebase queries and local filtering, session lifecycle, `WriteSession` + `SessionOverlay` read-your-own-writes isolation, declarative CPCRUD (`plan`/`apply`/`inverse`), auditable change reports (`OwnedSession` live numbering vs published cached numbering), OpenTelemetry tracing, and embedded FastAPI MCP servers.
+Worked examples showing common tasks with Arodonata v2: basic queries, multi-term search and structured cross-domain aggregation (`query_objects`), gateway/cluster/VSX relationships, paired streaming and batch smart refresh, rulebase queries and local filtering, session lifecycle, `WriteSession` + `SessionOverlay` read-your-own-writes isolation, declarative CPCRUD (`plan`/`apply`/`inverse`), auditable change reports (`OwnedSession` live numbering vs published cached numbering), OpenTelemetry tracing, embedded FastAPI MCP servers, and gateway topology matching (`examples/13_gateway_topology_matching.py`).
 
 
 ---
@@ -27,6 +27,7 @@ Progressive runnable scripts demonstrating `ArodonataClient` usage from basic ca
 | `10_change_report_evidence.py` | [10 — Change Report Evidence](10-change-report-evidence.md) | Auditable `ChangeReport` evidence: live unpublished numbering via `OwnedSession` vs published cached numbering rendered to HTML, Markdown, and JSON | Yes (auto-reverted via `_session_guard.py`) |
 | `11_otel_tracing.py` | [11 — OpenTelemetry Tracing](11-otel-tracing.md) | Provider-agnostic OpenTelemetry instrumentation (`arlogi.otel.setup_tracing`) with a per-span timing breakdown from exported JSONL traces | No |
 | `12_mcp_embedded.py` | [12 — Embedded FastAPI MCP](12-mcp-embedded.md) | Embedding Arodonata's MCP server (`create_mcp_server`, `create_asgi_app`) inside a FastAPI application with custom tools | No |
+| `13_gateway_topology_matching.py` | [13 — Gateway Topology Matching](13-gateway-topology-matching.md) | Gateway topology sync, interface summaries, affected-gateway LPM matching, diagnostics, reconciliation, and annotations | No |
 | `_session_guard.py` | — | Crash-safe baseline snapshot/restore context manager (`guarded_session`) and standalone CLI tool for manual testing | Helper / CLI |
 
 ## Setup & Execution
@@ -57,6 +58,9 @@ ARODONATA_LAB=home uv run examples/10_change_report_evidence.py
 
 # 6. Run the embedded FastAPI + MCP server on http://127.0.0.1:8000/mcp
 uv run examples/12_mcp_embedded.py
+
+# 7. Run gateway topology & affected-gateway candidate matching against replay fixtures
+uv run examples/13_gateway_topology_matching.py
 ```
 
 ## Crash-Safe Manual Testing with `_session_guard.py`
@@ -1428,7 +1432,6 @@ mcp_settings = ArodonataMCPSettings(
     auth_mode="host",
     port=8000,
     path="/mcp",
-    live_compat=True,
     cpcrud=True,
 )
 
@@ -1488,6 +1491,111 @@ app.mount("/", mcp_app)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
+```
+
+
+---
+
+*(source: `docs/examples/13-gateway-topology-matching.md`)*
+
+# 13 — Gateway Topology Matching (`13_gateway_topology_matching.py`)
+
+Demonstrates offline and live gateway topology workflows (`refresh_topology`, `get_gateway_topology`, `summarize_gateway_interfaces`, `find_affected_gateways`, `get_topology_diagnostics`, `reconcile_gateway_topology`, and `upsert_topology_annotations`) using replay fixtures.
+
+## Source Code (`examples/13_gateway_topology_matching.py`)
+
+```python title="examples/13_gateway_topology_matching.py"
+"""Example 13 — Gateway interface topology caching & affected gateway candidate matching (`get_gateway_topology`, `find_affected_gateways`).
+
+Run:
+    uv run examples/13_gateway_topology_matching.py
+
+Demonstrates:
+1. Synchronizing and querying the gateway interface topology cache (`arodonata_gateway_topology`) via
+   `client.get_gateway_topology(...)`.
+2. Summarizing flat topology intervals per gateway interface (`TopologyService.summarize_gateway_interfaces`).
+3. Discovering which policy-enforcing gateways (simple gateways, clusters, and VSX Virtual Systems),
+   domains, policy packages, and access layers are affected by traffic between `sources` and `destinations`
+   via `client.find_affected_gateways(sources, destinations, ...)`, excluding gateways where both endpoints
+   reside behind the same interface (`src_interface == dst_interface`).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import time
+
+from dotenv import load_dotenv
+
+load_dotenv(".env.lib", override=False)
+load_dotenv(".env.secrets", override=False)
+
+from arodonata import ArodonataClient, ArodonataSettings, TopologyService  # noqa: E402
+
+
+async def main() -> None:
+    """Inspect cached gateway interface topology and locate candidate gateways for sample traffic flows."""
+    settings = ArodonataSettings()
+    raw_domain = os.getenv("EXAMPLE_DOMAIN")
+    target_domain = raw_domain.strip() if raw_domain and raw_domain.strip() else None
+    sample_sources = [
+        s.strip() for s in os.getenv("EXAMPLE_FLOW_SOURCES", "10.0.0.0/8, 192.168.0.0/16").split(",") if s.strip()
+    ]
+    sample_destinations = [
+        d.strip() for d in os.getenv("EXAMPLE_FLOW_DESTINATIONS", "172.16.0.0/12, 8.8.8.8").split(",") if d.strip()
+    ]
+    t0 = time.perf_counter()
+
+    async with ArodonataClient(settings=settings) as client:
+        print(
+            f"[Step 1/3] Fetching gateway topology entries for domain={target_domain!r} (get_gateway_topology)...",
+            flush=True,
+        )
+        entries = await client.get_gateway_topology(domain=target_domain, cache_mode="smart")
+        print(f"  Cached topology intervals: {len(entries)}")
+
+        print("\n[Step 2/3] Summarizing topology per gateway interface...", flush=True)
+        summaries = TopologyService.summarize_gateway_interfaces(entries)
+        print(f"  Policy-enforcing gateway interfaces: {len(summaries)}")
+        for summary in summaries[:10]:
+            cidrs_preview = ", ".join(summary.cidrs_and_ranges[:4])
+            if len(summary.cidrs_and_ranges) > 4:
+                cidrs_preview += f", ... (+{len(summary.cidrs_and_ranges) - 4} more)"
+            dmz_tag = " [DMZ]" if summary.leads_to_dmz else ""
+            print(
+                f"  - {summary.gateway_asset_id} :: {summary.interface_name} "
+                f"({summary.topology_zone}{dmz_tag}, sources={summary.source_types}): {cidrs_preview}"
+            )
+
+        print(
+            f"\n[Step 3/3] Finding affected gateways for sources={sample_sources} -> destinations={sample_destinations}...",
+            flush=True,
+        )
+        candidates = await client.find_affected_gateways(
+            sources=sample_sources,
+            destinations=sample_destinations,
+            domain=target_domain,
+            cache_mode="cache",
+        )
+        print(f"  Affected policy-enforcing gateways found: {len(candidates)}")
+        for cand in candidates:
+            print(
+                f"  * {cand.gateway_asset_id} ({cand.gateway_type}, ip={cand.ipv4_address}) "
+                f"policy={cand.installed_access_policy!r} packages={cand.policy_packages} layers={cand.access_layers}"
+            )
+            for flow in cand.matched_flows[:5]:
+                print(
+                    f"      {flow.source_query} ({flow.src_interface} [{flow.src_topology_zone}: {flow.src_matched_cidr}]) "
+                    f"-> {flow.destination_query} ({flow.dst_interface} [{flow.dst_topology_zone}: {flow.dst_matched_cidr}]) "
+                    f"[{flow.match_type}]"
+                )
+
+    print(f"\nCompleted in {time.perf_counter() - t0:.2f}s")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 

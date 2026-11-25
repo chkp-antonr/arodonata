@@ -82,6 +82,7 @@ async def _register_staged_session(
     eff_session_name: str,
     staged_sessions: list[StagedSessionInfo],
     staged_registry: OrderedDict[tuple[str, str, str], StagedSessionInfo],
+    stamp: DomainStamp | None = None,
 ) -> tuple[str | None, str]:
     """Query `show-session` if needed and register `StagedSessionInfo` upon opening a staged session."""
     session_uid: str | None = ws.session_uid
@@ -113,6 +114,9 @@ async def _register_staged_session(
         server_ip=ws.server_ip,
         session_uid=session_uid,
         session_name=resolved_name,
+        baseline_readable=bool(stamp is not None and stamp.readable),
+        baseline_session_uid=stamp.last_session_uid if stamp is not None else None,
+        baseline_published_at=stamp.last_published_at if stamp is not None else None,
     )
     staged_sessions.append(staged_info)
     if session_uid:
@@ -174,9 +178,10 @@ async def _finalize_domain_session(
         pre_pub_ok, pre_pub_uid, pre_pub_at, pre_pub_err = await check_domain_head(mgmt_name, dom_name)
         if _is_domain_head_stale(stamp, pre_pub_uid, pre_pub_at, pre_pub_ok):
             stale_domains.append(dom_label)
+            safe_head_err = redact_sid(pre_pub_err, known_sids=[ws.sid]) if pre_pub_err else None
             stale_msg = (
                 f"Plan became stale before publish for {dom_label}: expected session head "
-                f"{stamp.last_session_uid!r}, got {pre_pub_uid!r} ({pre_pub_err or 'domain published concurrently'})."
+                f"{stamp.last_session_uid!r}, got {pre_pub_uid!r} ({safe_head_err or 'domain published concurrently'})."
             )
             await _shielded_discard(api, mgmt_name, dom_name, ws)
             ws.overlay.clear()
@@ -397,6 +402,7 @@ async def _execute_domain_batch(
                 eff_session_name,
                 staged_sessions,
                 staged_registry,
+                stamp=stamp,
             )
             registration_ok = True
         with write_session_context(ws):
