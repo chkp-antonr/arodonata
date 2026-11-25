@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 CAPABILITY_PREFIXES: dict[str, str] = {
+    "ai-builder": "AIBUILD",
     "api-reference": "APIREF",
     "cache-and-sync": "CACHE",
     "change-reports": "REPORT",

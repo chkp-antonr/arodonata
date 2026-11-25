@@ -119,6 +119,7 @@ nav:
       - Mock Testing Scenarios: guides/mock-testing-scenarios.md
       - MCP Server & Tools: mcp/index.md
       - Check Point API Quirks: troubleshooting/checkpoint-api-quirks.md
+      - Check Point Operations & CLI Quirks: troubleshooting/checkpoint-ops-quirks.md
   - Architecture:
       - Overview: architecture/index.md
       - Hexagonal Ports & Adapters: architecture/ports-and-adapters.md

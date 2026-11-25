@@ -1,12 +1,12 @@
 # Arodonata v2 — Full API Reference
 
-Complete, auto-generated reference of every public class, SQLModel table, function, and method in the `arodonata` v2.0.0 package, extracted directly from `src/arodonata` via AST.
+Complete, auto-generated reference of every public class, SQLModel table, function, and method in the `arodonata` v2.6.7 package, extracted directly from `src/arodonata` via AST.
 
 ## Package Map
 
 - **Top-Level Package & ArodonataClient Facade (`arodonata`, `arodonata.client`)** — 1 module(s)
 - **core — Configuration, Contexts, Models, Hexagonal Ports, Sync & Search Services** — 54 module(s)
-- **adapters — Check Point Transport (`AMgmtClient`), SQL Storage (15 Tables) & SSE** — 29 module(s)
+- **adapters — Check Point Transport (`AMgmtClient`), SQL Storage & SSE** — 29 module(s)
 - **rulebase — Cached Rulebase Source, SmartConsole Numbering & Local Filtering** — 8 module(s)
 - **cpcrud — Declarative Policy-as-Code Engine (Validator, Planner, Executor, Inverse)** — 22 module(s)
 - **reports — Auditable Session Change Report Collector & Multi-Format Renderer** — 12 module(s)
@@ -3640,7 +3640,7 @@ Wrap a function in `@arlogi.otel.traced` while scrubbing chained `__cause__`/`__
 
 ---
 
-## adapters — Check Point Transport (`AMgmtClient`), SQL Storage (15 Tables) & SSE
+## adapters — Check Point Transport (`AMgmtClient`), SQL Storage & SSE
 
 ### `arodonata/adapters/__init__.py`
 
