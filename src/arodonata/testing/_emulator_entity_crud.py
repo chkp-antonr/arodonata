@@ -525,8 +525,10 @@ def handle_entity_crud(
 
         obj_uid = str(obj["uid"])
         locked_uids_out.add(obj_uid)
+        orig_obj = copy.deepcopy(obj)
         new_name = str(req.get("new-name") or "").strip()
-        if new_name and new_name != obj.get("name"):
+        renamed = bool(new_name and new_name != obj.get("name"))
+        if renamed:
             conflict = _check_name_conflict(dom_files, new_name, spec, exclude_uid=obj_uid)
             if conflict is not None:
                 return (
@@ -538,7 +540,6 @@ def handle_entity_crud(
                     None,
                 )
             obj["name"] = new_name
-            _propagate_object_rename(dom_files, obj)
 
         err = _apply_entity_fields(
             obj,
@@ -549,7 +550,11 @@ def handle_entity_crud(
             dom_name=dom_name,
         )
         if err is not None:
+            obj.clear()
+            obj.update(orig_obj)
             return err, None
+        if renamed:
+            _propagate_object_rename(dom_files, obj)
 
         meta = obj.setdefault("meta-info", {})
         if isinstance(meta, dict):

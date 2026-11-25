@@ -164,7 +164,10 @@ class FileReplayApiMock(ApiPort):
     def _get_clean_domain_baseline(self, dom_name: str) -> dict[str, Any]:
         baseline = self._initial_domain_data.get(dom_name)
         if baseline is None:
-            baseline = self._load_domain_files(dom_name)
+            if dom_name in self._domain_data and dom_name not in self._dirty_domains:
+                baseline = copy.deepcopy(self._domain_data[dom_name])
+            else:
+                baseline = self._load_domain_files(dom_name)
             self._initial_domain_data[dom_name] = baseline
         return baseline
 

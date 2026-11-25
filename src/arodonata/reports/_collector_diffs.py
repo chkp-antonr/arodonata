@@ -272,6 +272,8 @@ def _list_field_diff(field_name: str, old_refs: list[str], new_refs: list[str]) 
     new_set = set(new_refs)
     removed_items = list(dict.fromkeys(x for x in old_refs if x not in new_set))
     added_items = list(dict.fromkeys(x for x in new_refs if x not in old_set))
+    if not removed_items and not added_items:
+        return None
     return FieldDiff(
         field_name=field_name,
         old_value=old_refs,

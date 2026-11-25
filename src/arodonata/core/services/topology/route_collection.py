@@ -241,8 +241,8 @@ async def _collect_gateway_routes_impl(
             return cprid_sessions[key]
 
     auto_mode_resolver = AutoScriptModeResolver()
-    repo_node_flights: dict[tuple[str, str], asyncio.Future[GatewayCliResult]] = {}
-    repo_node_locks: dict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
+    repo_node_flights: dict[tuple[str, str, str], asyncio.Future[GatewayCliResult]] = {}
+    repo_node_locks: dict[tuple[str, str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def _run_target(target: GatewayCliTarget) -> tuple[GatewayCliTarget, GatewayCliResult]:
         preclaimed = False
@@ -251,7 +251,7 @@ async def _collect_gateway_routes_impl(
 
         probe_exc: BaseException | None = None
         node_key = str(target.node_uid or target.node_ipv4 or target.node_name or target.gateway_uid)
-        coalesce_key = (target.mgmt_name, node_key)
+        coalesce_key = (target.mgmt_name, target.domain_name, node_key)
 
         should_coalesce = (
             eff_cli is None
@@ -260,7 +260,10 @@ async def _collect_gateway_routes_impl(
                 eff_script_mode == "repository"
                 or (
                     eff_script_mode == "auto"
-                    and auto_mode_resolver.get_resolved(target.mgmt_name, target.domain_name) == "repository"
+                    and (
+                        preclaimed
+                        or auto_mode_resolver.get_resolved(target.mgmt_name, target.domain_name) == "repository"
+                    )
                 )
             )
         )
@@ -270,7 +273,9 @@ async def _collect_gateway_routes_impl(
         if should_coalesce:
             async with repo_node_locks[coalesce_key]:
                 existing_fut = repo_node_flights.get(coalesce_key)
-                if existing_fut is None:
+                if existing_fut is None or (
+                    preclaimed and existing_fut.done() and existing_fut.exception() is not None
+                ):
                     flight_fut = asyncio.get_running_loop().create_future()
                     repo_node_flights[coalesce_key] = flight_fut
                     is_leader = True
@@ -456,23 +461,13 @@ async def _collect_gateway_routes_impl(
         parsed_by_node.clear()
         entry_count = len(route_entries)
 
-        route_sync_state = DomainSyncState(
-            mgmt_name=gw_asset.mgmt_name,
-            domain_name=gw_asset.domain_name,
-            scope="topology",
-            item_type="routes",
-            synced_at=now,
-            status="ok",
-            object_count=entry_count,
-            last_error=None,
-        )
         await cache.replace_domain_topology(
             gw_asset.mgmt_name,
             gw_asset.domain_name,
             route_entries,
             gateway_uids=[gw_asset.uid],
             source_types=list(LIVE_ROUTE_SOURCES),
-            sync_states=[route_sync_state],
+            sync_states=None,
         )
         route_entries.clear()
 
@@ -535,19 +530,21 @@ async def _collect_gateway_routes_impl(
         if not st.success:
             failed_by_dom[(st.mgmt_name, st.domain_name)].append(f"{st.gateway_name}: {st.error or 'failed'}")
 
-    for (m_name, d_name), errs in failed_by_dom.items():
-        await cache.upsert_sync_state(
-            DomainSyncState(
-                mgmt_name=m_name,
-                domain_name=d_name,
-                scope="topology",
-                item_type="routes",
-                synced_at=now,
-                status="failed",
-                object_count=routes_count_by_dom[(m_name, d_name)],
-                last_error="; ".join(errs),
+    if not gw_tokens:
+        for (m_name, d_name), total_cnt in routes_count_by_dom.items():
+            errs = failed_by_dom.get((m_name, d_name), [])
+            await cache.upsert_sync_state(
+                DomainSyncState(
+                    mgmt_name=m_name,
+                    domain_name=d_name,
+                    scope="topology",
+                    item_type="routes",
+                    synced_at=now,
+                    status="failed" if errs else "ok",
+                    object_count=total_cnt,
+                    last_error="; ".join(errs) if errs else None,
+                )
             )
-        )
 
     return RouteCollectionOutcome(
         total_gateways=len(target_gateways),

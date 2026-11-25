@@ -507,11 +507,20 @@ def _record_layer_prefixes_from_rules(
     package_name: str | None,
     context: str,
     layer_prefixes: dict[str, list[LayerPrefixLocation]],
+    seen_layer_uids: set[str] | None = None,
 ) -> None:
     for r in rules:
+        child_layer_uid: str | None = None
+        child_layer_name: str = ""
         if r.children:
             child_layer_uid = r.children[0].layer_uid
             child_layer_name = r.children[0].layer_name
+        elif r.inline_layer_uid:
+            child_layer_uid = r.inline_layer_uid
+            child_layer_name = r.inline_layer_name or ""
+        if child_layer_uid:
+            if seen_layer_uids is not None:
+                seen_layer_uids.add(child_layer_uid)
             child_prefix = f"{r.rule_number}."
             loc = LayerPrefixLocation(
                 mgmt_name=mgmt_name,
@@ -529,6 +538,7 @@ def _record_layer_prefixes_from_rules(
             existing = layer_prefixes.setdefault(child_layer_uid, [])
             if loc not in existing:
                 existing.append(loc)
+        if r.children:
             _record_layer_prefixes_from_rules(
                 r.children,
                 mgmt_name=mgmt_name,
@@ -537,6 +547,7 @@ def _record_layer_prefixes_from_rules(
                 package_name=package_name,
                 context=context,
                 layer_prefixes=layer_prefixes,
+                seen_layer_uids=seen_layer_uids,
             )
 
 
@@ -718,8 +729,13 @@ def locate_rules_in_snapshot(
     if wanted_layers:
         filtered_lp: dict[str, list[LayerPrefixLocation]] = {}
         for k, locs in layer_prefixes.items():
-            if k in wanted_layers or any(loc.layer_name in wanted_layers for loc in locs):
+            if k in wanted_layers:
                 filtered_lp[k] = locs
+            for loc in locs:
+                if loc.layer_name in wanted_layers:
+                    bucket = filtered_lp.setdefault(loc.layer_name, [])
+                    if loc not in bucket:
+                        bucket.append(loc)
         for u in wanted_layers:
             filtered_lp.setdefault(u, [])
         layer_prefixes = filtered_lp

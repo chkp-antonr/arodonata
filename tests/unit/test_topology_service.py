@@ -2512,11 +2512,11 @@ async def test_claude_review_regression_fixes() -> None:
     # Multi-domain `refresh_topology(..., collect_routes=True)`
     await client.refresh_topology(mgmt_name="mds1", domains=["Corp"], collect_routes=True, mode="force")
 
-    # Verify `DomainSyncState(scope="topology", item_type="routes")` was persisted
+    # Verify `DomainSyncState(scope="topology", item_type="routes")` was persisted with summed count
     route_sync_state = await client.cache.get_sync_state("mds1", "Corp", "topology", "routes")
     assert route_sync_state is not None
     assert route_sync_state.status == "ok"
-    assert route_sync_state.object_count == 2
+    assert route_sync_state.object_count == 8
 
     # Verify WAN connected route `203.0.113.0/24` on external `eth0` did NOT trigger `missing_in_topology`
     rec = await client.reconcile_gateway_topology(mgmt_name="mds1", domain="Corp", cache_mode="cache")
@@ -2586,6 +2586,7 @@ async def test_stage2_vpn_domain_policy_rule_evidence_one_arm_aci_inference_and_
     3. `include_policy_inferred` (`match_type="policy_inferred"`) for one-arm Cisco ACI service-graph gateways and incomplete-topology gateways.
     4. `reconcile_gateway_topology(..., check_policy=True)` reporting `policy_topology_mismatch` for gateway-targeted rules (`install_on`).
     """
+
     from arodonata.client import ArodonataClient
     from arodonata.core.config import TopologyConfidenceWeights
 
@@ -4844,3 +4845,100 @@ async def test_audit_findings_f1_f2_f3_f5_f6_verification() -> None:
     assert "10.1.0.0/16" in slice_res.stdout
     assert "10.2.0.0/16" not in slice_res.stdout  # Sibling VS routes NOT returned in target slice
     assert slice_res.bundle_stdout is not None  # Raw bundle attached for coalescing followers
+
+
+@pytest.mark.spec("SCN-TOPO-021-1", "SCN-TOPO-021-2")
+@pytest.mark.asyncio
+async def test_wave8_topology_bundle_errors_nexthop_list_identity_and_manual_export() -> None:
+    """Verify Wave 8 topology fixes: bundle base failure, spaced VS error, list nexthop, ServerIdentityError, and manual export."""
+    from unittest.mock import AsyncMock
+
+    from arodonata.core.config import TopologyConfidenceWeights
+    from arodonata.core.errors import ServerIdentityError
+    from arodonata.core.models.topology import GatewayCliResult, TopologyAnnotation
+    from arodonata.core.services.topology.normalizer import _parse_route_nexthop_and_interface
+    from arodonata.core.services.topology.objects import _enrich_group_raw_if_needed
+    from arodonata.core.services.topology.route_parsers import (
+        VSX_BUNDLE_END_MARKER,
+        VSX_BUNDLE_START_MARKER,
+        extract_vs_slice_from_bundle,
+    )
+    from arodonata.core.services.topology.scoring import export_topology_prefixes
+
+    # 1. SCN-TOPO-021-1: failed base_result returns base_result instead of vsx_bundle_missing
+    base_err = GatewayCliResult(
+        success=False,
+        stdout="",
+        stderr="cprid timeout",
+        exit_code=1,
+        executor="cprid",
+        error_code="cprid_timeout",
+        error_message="timed out",
+    )
+    res_err = extract_vs_slice_from_bundle("", vsid=1, vs_name="VS 1", executor="cprid", base_result=base_err)
+    assert res_err is base_err
+    assert res_err.error_code == "cprid_timeout"
+
+    # Spaced VS name in _VS_ERROR_RE
+    bundle_with_err = (
+        f"{VSX_BUNDLE_START_MARKER}\n"
+        "===ARODONATA_VS_START vsid=1 name=VS With Spaces===\n"
+        "===ARODONATA_VS_ERROR vsid=1 name=VS With Spaces error=ip route failed===\n"
+        "===ARODONATA_VS_END===\n"
+        f"{VSX_BUNDLE_END_MARKER}\n"
+    )
+    res_vs_err = extract_vs_slice_from_bundle(bundle_with_err, vsid=1, vs_name="VS With Spaces", executor="cprid")
+    assert not res_vs_err.success
+    assert "ip route failed" in (res_vs_err.error_message or "")
+
+    # List-valued nexthop extraction
+    nh_ip, explicit_if = _parse_route_nexthop_and_interface(
+        {"destination": "10.20.0.0/16", "nexthop": ["10.0.0.1"], "interface": "eth1"}
+    )
+    assert str(nh_ip) == "10.0.0.1"
+    assert explicit_if == "eth1"
+
+    # ServerIdentityError propagation in _enrich_group_raw_if_needed
+    class _IdentityFailApi:
+        async def api_call(self, *args: Any, **kwargs: Any) -> Any:
+            raise ServerIdentityError("identity mismatch")
+
+    with pytest.raises(ServerIdentityError, match="identity mismatch"):
+        await _enrich_group_raw_if_needed(
+            _IdentityFailApi(),  # type: ignore[arg-type]
+            mgmt_name="mds1",
+            search_dom="Corp",
+            raw_item={"uid": "g-1", "type": "group", "domain": {"name": "Corp"}},
+        )
+
+    # 2. SCN-TOPO-021-2: include_ignored=True preserves manual annotations & manual-only gateways
+    class _ManualCache:
+        async def get_gateway_topology(self, **kwargs: Any) -> list[Any]:
+            return []
+
+        async def get_topology_annotations(self, **kwargs: Any) -> list[TopologyAnnotation]:
+            return [
+                TopologyAnnotation(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    gateway_uid="gw-manual-only",
+                    gateway_name="gw-manual-only",
+                    interface_name="eth3",
+                    cidr_or_range="192.168.55.0/24",
+                    disposition="manual",
+                )
+            ]
+
+    exported = await export_topology_prefixes(
+        cache=_ManualCache(),  # type: ignore[arg-type]
+        weights=TopologyConfidenceWeights(),
+        refresh_topology_fn=AsyncMock(),
+        mgmt_name="mds1",
+        domain="Corp",
+        include_ignored=True,
+        cache_mode="cache",
+    )
+    assert len(exported) == 1
+    assert exported[0].gateway_uid == "gw-manual-only"
+    assert exported[0].cidr_or_range == "192.168.55.0/24"
+    assert "manual" in exported[0].source_types

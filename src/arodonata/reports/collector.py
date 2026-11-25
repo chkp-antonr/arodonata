@@ -153,6 +153,21 @@ async def _discover_target_sessions(
                 )
 
                 candidate_sessions = [s for s in q_res.objects if isinstance(s, dict) and s.get("uid")]
+                candidate_uids = {str(s.get("uid") or "") for s in candidate_sessions}
+                if (scope.from_session and scope.from_session not in candidate_uids) or (
+                    scope.to_session and scope.to_session not in candidate_uids
+                ):
+                    warnings.append(
+                        ReportWarning(
+                            code="range_session_not_found",
+                            mgmt_name=mgmt_name,
+                            domain=dom_name or None,
+                            message=(
+                                f"Requested RangeScope session bound "
+                                f"(from={scope.from_session!r}, to={scope.to_session!r}) not found in {mgmt_name}:{dom_name}."
+                            ),
+                        )
+                    )
                 for s_meta in _filter_range_sessions(candidate_sessions, scope):
                     s_uid = str(s_meta["uid"])
                     key = (mgmt_name, dom_name, s_uid)
@@ -242,6 +257,13 @@ async def _resolve_session_bare_uids(
                 sid=owned.sid if owned is not None else None,
                 server_ip=owned.server_ip if (owned is not None and owned.server_ip) else None,
             )
+            if not obj_res.success and owned is not None:
+                obj_res = await api.api_call(
+                    mgmt_name,
+                    "show-object",
+                    {"uid": u, "details-level": "standard"},
+                    domain=dom_name or None,
+                )
             if obj_res.success and isinstance(obj_res.data, dict):
                 inner = obj_res.data.get("object") if isinstance(obj_res.data.get("object"), dict) else obj_res.data
                 resolved_name = inner.get("name") if isinstance(inner, dict) else None
@@ -341,35 +363,68 @@ async def collect_change_report(
     for key in session_order:
         mgmt_name, dom_name, s_uid, preloaded_meta, owned = target_sessions[key]
         known_sids = [owned.sid] if owned is not None else []
+        eff_sid: str | None = owned.sid if owned is not None else None
+        eff_server_ip: str | None = owned.server_ip if (owned is not None and owned.server_ip) else None
+        if owned is not None and owned.domain and dom_name and owned.domain.strip().lower() != dom_name.strip().lower():
+            warnings.append(
+                ReportWarning(
+                    code="owned_session_not_used",
+                    mgmt_name=mgmt_name,
+                    domain=dom_name or None,
+                    session_uid=s_uid,
+                    message=(
+                        f"OwnedSession domain {owned.domain!r} does not match target domain {dom_name!r}; "
+                        "falling back to shared read-only session."
+                    ),
+                )
+            )
+            eff_sid = None
+            eff_server_ip = None
 
         session_meta: dict[str, Any] | None = preloaded_meta
         if session_meta is None:
-            try:
-                s_res = await api.api_call(
-                    mgmt_name,
-                    "show-session",
-                    {"uid": s_uid},
-                    domain=dom_name or None,
-                    sid=owned.sid if owned is not None else None,
-                    server_ip=owned.server_ip if (owned is not None and owned.server_ip) else None,
-                )
-                if s_res.success and isinstance(s_res.data, dict):
-                    session_meta = s_res.data
-                    raw_responses.append(
-                        RawResponse(
-                            mgmt_name=mgmt_name,
-                            domain=dom_name or None,
-                            session_uid=s_uid,
-                            command="show-session",
-                            payload={"uid": s_uid},
-                            response=sanitize_mapping(s_res.data, known_sids=known_sids),
-                        )
+            for attempt_sid, attempt_ip in (
+                ((eff_sid, eff_server_ip), (None, None)) if eff_sid is not None else ((None, None),)
+            ):
+                try:
+                    s_res = await api.api_call(
+                        mgmt_name,
+                        "show-session",
+                        {"uid": s_uid},
+                        domain=dom_name or None,
+                        sid=attempt_sid,
+                        server_ip=attempt_ip,
                     )
-                else:
+                    if s_res.success and isinstance(s_res.data, dict):
+                        session_meta = s_res.data
+                        raw_responses.append(
+                            RawResponse(
+                                mgmt_name=mgmt_name,
+                                domain=dom_name or None,
+                                session_uid=s_uid,
+                                command="show-session",
+                                payload={"uid": s_uid},
+                                response=sanitize_mapping(s_res.data, known_sids=known_sids),
+                            )
+                        )
+                        break
                     err_txt = redact_sid(
                         s_res.error_message or s_res.error_code or "show-session failed",
                         known_sids=known_sids,
                     )
+                    if attempt_sid is not None:
+                        warnings.append(
+                            ReportWarning(
+                                code="owned_session_error",
+                                mgmt_name=mgmt_name,
+                                domain=dom_name or None,
+                                session_uid=s_uid,
+                                message=f"OwnedSession failed on show-session for {s_uid} ({err_txt}); retrying read-only.",
+                            )
+                        )
+                        eff_sid = None
+                        eff_server_ip = None
+                        continue
                     warnings.append(
                         ReportWarning(
                             code="session_fetch_failed",
@@ -380,53 +435,84 @@ async def collect_change_report(
                         )
                     )
                     session_meta = {"uid": s_uid}
-            except ServerIdentityError:
-                raise
-            except Exception as exc:
-                safe_err = redact_sid(str(exc), known_sids=known_sids)
-                warnings.append(
-                    ReportWarning(
-                        code="session_fetch_failed",
-                        mgmt_name=mgmt_name,
-                        domain=dom_name or None,
-                        session_uid=s_uid,
-                        message=f"Error fetching session metadata for {s_uid}: {safe_err}",
+                except ServerIdentityError:
+                    raise
+                except Exception as exc:
+                    safe_err = redact_sid(str(exc), known_sids=known_sids)
+                    if attempt_sid is not None:
+                        warnings.append(
+                            ReportWarning(
+                                code="owned_session_error",
+                                mgmt_name=mgmt_name,
+                                domain=dom_name or None,
+                                session_uid=s_uid,
+                                message=f"OwnedSession error on show-session for {s_uid} ({safe_err}); retrying read-only.",
+                            )
+                        )
+                        eff_sid = None
+                        eff_server_ip = None
+                        continue
+                    warnings.append(
+                        ReportWarning(
+                            code="session_fetch_failed",
+                            mgmt_name=mgmt_name,
+                            domain=dom_name or None,
+                            session_uid=s_uid,
+                            message=f"Error fetching session metadata for {s_uid}: {safe_err}",
+                        )
                     )
-                )
-                session_meta = {"uid": s_uid}
+                    session_meta = {"uid": s_uid}
+        if session_meta is None:
+            session_meta = {"uid": s_uid}
         s_meta_dict: dict[str, Any] = session_meta
 
         changes_payload: dict[str, Any] = {"to-session": s_uid, "details-level": "full"}
         ops_list: list[dict[str, Any]] = []
         changes_user_name = ""
-        try:
-            ch_res = await api.api_call(
-                mgmt_name,
-                "show-changes",
-                changes_payload,
-                domain=dom_name or None,
-                sid=owned.sid if owned is not None else None,
-                server_ip=owned.server_ip if (owned is not None and owned.server_ip) else None,
-                wait_for_task=True,
-            )
-            if ch_res.success and isinstance(ch_res.data, dict):
-                raw_responses.append(
-                    RawResponse(
-                        mgmt_name=mgmt_name,
-                        domain=dom_name or None,
-                        session_uid=s_uid,
-                        command="show-changes",
-                        payload=changes_payload,
-                        response=sanitize_mapping(ch_res.data, known_sids=known_sids),
-                    )
+        for attempt_sid, attempt_ip in (
+            ((eff_sid, eff_server_ip), (None, None)) if eff_sid is not None else ((None, None),)
+        ):
+            try:
+                ch_res = await api.api_call(
+                    mgmt_name,
+                    "show-changes",
+                    changes_payload,
+                    domain=dom_name or None,
+                    sid=attempt_sid,
+                    server_ip=attempt_ip,
+                    wait_for_task=True,
                 )
-                ops_list = _parse_change_containers(ch_res.data, session_uid=s_uid)
-                changes_user_name = _extract_session_user_from_changes(ch_res.data, session_uid=s_uid)
-            else:
+                if ch_res.success and isinstance(ch_res.data, dict):
+                    raw_responses.append(
+                        RawResponse(
+                            mgmt_name=mgmt_name,
+                            domain=dom_name or None,
+                            session_uid=s_uid,
+                            command="show-changes",
+                            payload=changes_payload,
+                            response=sanitize_mapping(ch_res.data, known_sids=known_sids),
+                        )
+                    )
+                    ops_list = _parse_change_containers(ch_res.data, session_uid=s_uid)
+                    changes_user_name = _extract_session_user_from_changes(ch_res.data, session_uid=s_uid)
+                    break
                 err_txt = redact_sid(
                     ch_res.error_message or ch_res.error_code or "show-changes failed",
                     known_sids=known_sids,
                 )
+                if attempt_sid is not None:
+                    warnings.append(
+                        ReportWarning(
+                            code="owned_session_error",
+                            mgmt_name=mgmt_name,
+                            domain=dom_name or None,
+                            session_uid=s_uid,
+                            message=f"OwnedSession failed on show-changes for {s_uid} ({err_txt}); retrying read-only.",
+                        )
+                    )
+                    eff_sid = None
+                    eff_server_ip = None
+                    continue
                 warnings.append(
                     ReportWarning(
                         code="changes_fetch_failed",
@@ -436,19 +522,32 @@ async def collect_change_report(
                         message=f"Failed to fetch changes for session {s_uid}: {err_txt}",
                     )
                 )
-        except ServerIdentityError:
-            raise
-        except Exception as exc:
-            safe_err = redact_sid(str(exc), known_sids=known_sids)
-            warnings.append(
-                ReportWarning(
-                    code="changes_fetch_failed",
-                    mgmt_name=mgmt_name,
-                    domain=dom_name or None,
-                    session_uid=s_uid,
-                    message=f"Error fetching changes for session {s_uid}: {safe_err}",
+            except ServerIdentityError:
+                raise
+            except Exception as exc:
+                safe_err = redact_sid(str(exc), known_sids=known_sids)
+                if attempt_sid is not None:
+                    warnings.append(
+                        ReportWarning(
+                            code="owned_session_error",
+                            mgmt_name=mgmt_name,
+                            domain=dom_name or None,
+                            session_uid=s_uid,
+                            message=f"OwnedSession error on show-changes for {s_uid} ({safe_err}); retrying read-only.",
+                        )
+                    )
+                    eff_sid = None
+                    eff_server_ip = None
+                    continue
+                warnings.append(
+                    ReportWarning(
+                        code="changes_fetch_failed",
+                        mgmt_name=mgmt_name,
+                        domain=dom_name or None,
+                        session_uid=s_uid,
+                        message=f"Error fetching changes for session {s_uid}: {safe_err}",
+                    )
                 )
-            )
 
         session_user_name = str(s_meta_dict.get("user-name") or s_meta_dict.get("user") or changes_user_name or "")
         known_names: dict[str, str] = {}

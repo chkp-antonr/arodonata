@@ -264,3 +264,68 @@ async def test_rulebase_pager_trailing_probe_recovers_empty_section_after_exact_
     assert [s.uid for s in res.sections] == ["sec-1", "sec-2-empty"]
     assert res.sections[1].rule_uids == []
     assert [r.uid for r in res.access_rules] == ["r1", "r2"]
+
+
+@pytest.mark.spec("SCN-RULE-007-1")
+@pytest.mark.asyncio
+async def test_pager_zero_rule_advancing_page_and_truncated_total_error() -> None:
+    """SCN-RULE-007-1: Zero-rule advancing pages continue paging; truncated < total_reported raises RuntimeError."""
+    advancing_pages = {
+        0: {
+            "uid": "layer-1",
+            "name": "Network",
+            "from": 1,
+            "to": 1,
+            "total": 2,
+            "rulebase": [{"uid": "sec-empty", "name": "Empty", "type": "access-section", "rulebase": []}],
+        },
+        1: {
+            "uid": "layer-1",
+            "name": "Network",
+            "from": 2,
+            "to": 2,
+            "total": 2,
+            "rulebase": [
+                {"uid": "r1", "name": "R1", "type": "access-rule", "rule-number": 1},
+                {"uid": "r2", "name": "R2", "type": "access-rule", "rule-number": 2},
+            ],
+        },
+    }
+    res = await fetch_paged_rulebase(
+        PagerFakeApi(advancing_pages),
+        "mds1",
+        "Corp",
+        rulebase_type="access",
+        layer_uid="layer-1",
+        limit=1,
+    )
+    assert [r.uid for r in res.access_rules] == ["r1", "r2"]
+
+    # Truncated upstream returning fewer rules than total_reported raises RuntimeError
+    truncated_pages = {
+        0: {
+            "uid": "layer-1",
+            "name": "Network",
+            "from": 1,
+            "to": 1,
+            "total": 5,
+            "rulebase": [{"uid": "r1", "name": "R1", "type": "access-rule", "rule-number": 1}],
+        },
+        1: {
+            "uid": "layer-1",
+            "name": "Network",
+            "from": 1,
+            "to": 1,
+            "total": 5,
+            "rulebase": [],
+        },
+    }
+    with pytest.raises(RuntimeError, match="Incomplete rulebase pagination"):
+        await fetch_paged_rulebase(
+            PagerFakeApi(truncated_pages),
+            "mds1",
+            "Corp",
+            rulebase_type="access",
+            layer_uid="layer-1",
+            limit=1,
+        )

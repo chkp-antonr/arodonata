@@ -489,3 +489,91 @@ async def test_vsx_slot_objects_cross_domain_reconciliation_and_route_merge() ->
     assert dom4_after_early_break["vs-dom4-uid"].parent_uid == "vsx-gw-uid"
 
     await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-017-1")
+@pytest.mark.asyncio
+async def test_cross_domain_vsx_reconciliation_locking_and_skip_noop() -> None:
+    """Verify cross-domain VSX reconciliation keys by (mgmt_name, uid), locks per mgmt, and skips cache/no-op."""
+    import contextlib
+
+    from arodonata.core.config import ArodonataSettings
+    from arodonata.core.models.assets import Asset
+    from arodonata.core.models.domains import RefreshOutcome
+    from arodonata.core.services.asset_service import AssetRefreshService, VSXRelationshipManager
+
+    # 1. Keying by (mgmt_name, uid) prevents cross-management UID collision
+    mgr = VSXRelationshipManager(api=None)  # type: ignore[arg-type]
+    p1 = Asset(
+        id="mds1:DomA:shared-parent-uid",
+        asset_id="mds1:DomA:vsx-parent",
+        mgmt_name="mds1",
+        domain_name="DomA",
+        uid="shared-parent-uid",
+        name="vsx-parent",
+        type="vsx-cluster",
+    )
+    p2 = Asset(
+        id="mds2:DomB:shared-parent-uid",
+        asset_id="mds2:DomB:vsx-parent",
+        mgmt_name="mds2",
+        domain_name="DomB",
+        uid="shared-parent-uid",
+        name="vsx-parent",
+        type="vsx-cluster",
+    )
+    c2 = Asset(
+        id="mds2:DomC:vs-child-uid",
+        asset_id="mds2:DomC:vs-child",
+        mgmt_name="mds2",
+        domain_name="DomC",
+        uid="vs-child-uid",
+        name="vs-child",
+        type="vsx-virtual-system",
+        raw_data={"vsx-gateway": {"uid": "shared-parent-uid"}},
+    )
+    modified = mgr.reconcile_cross_domain([p1, p2, c2])
+    assert any(a.id == c2.id and a.parent_id == p2.id for a in modified)
+
+    # 2. Skip on mode="cache" or wrote_any=False, and acquire cache.lock on _reconcile_cross_domain_vsx
+    locks_acquired: list[str] = []
+
+    class _FakeCache:
+        @contextlib.asynccontextmanager
+        async def lock(self, lock_key: str, **kwargs: Any) -> Any:
+            locks_acquired.append(lock_key)
+            yield "owner-1"
+
+        async def get_assets(self, **kwargs: Any) -> list[Asset]:
+            return [p2, c2] if kwargs.get("mgmt_name") == "mds2" else [p2, c2]
+
+        async def upsert_assets(self, assets: list[Asset]) -> None:
+            return None
+
+    class _NoOpCoord:
+        async def ensure(self, **kwargs: Any) -> RefreshOutcome:
+            return RefreshOutcome(scope="assets")
+
+        async def stream_ensure(self, **kwargs: Any) -> Any:
+            from types import SimpleNamespace
+
+            yield SimpleNamespace(event_type="sync_completed")
+
+    svc = AssetRefreshService(
+        settings=ArodonataSettings(),
+        api=None,  # type: ignore[arg-type]
+        cache=_FakeCache(),  # type: ignore[arg-type]
+        coordinator=_NoOpCoord(),  # type: ignore[arg-type]
+    )
+
+    # No-op smart refresh and cache mode must NOT call _reconcile_cross_domain_vsx or acquire lock
+    await svc.refresh_assets(mgmt_name="mds2", mode="cache")
+    await svc.refresh_assets(mgmt_name="mds2", mode="smart")
+    async for _ in svc.stream_refresh_assets(mgmt_name="mds2", mode="cache"):
+        pass
+    assert locks_acquired == []
+
+    # Direct _reconcile_cross_domain_vsx acquires per-mgmt distributed lock
+    await svc._reconcile_cross_domain_vsx("mds2")
+    await svc._reconcile_cross_domain_vsx(None)
+    assert locks_acquired == ["vsx-reconcile:mds2", "vsx-reconcile:mds2"]

@@ -69,7 +69,7 @@ _CLISH_ROUTE_RE = re.compile(
 
 
 _VS_START_RE = re.compile(r"^===ARODONATA_VS_START\s+vsid=(?P<vsid>\d+)\s+name=(?P<name>.*?)===$")
-_VS_ERROR_RE = re.compile(r"^===ARODONATA_VS_ERROR\s+vsid=\d+\s+name=\S+\s+error=(?P<err>.*?)===$")
+_VS_ERROR_RE = re.compile(r"^===ARODONATA_VS_ERROR\s+vsid=\d+\s+name=.*?\s+error=(?P<err>.*?)===$")
 
 
 @dataclass(slots=True)
@@ -170,6 +170,8 @@ def extract_vs_slice_from_bundle(
     """Extract a specific Virtual System slice from VSX bundle output, or return original output if not bundled."""
     is_vs = (vsid is not None and int(vsid) > 0) or bool(vs_name and vs_name.strip())
     if VSX_BUNDLE_START_MARKER not in stdout:
+        if base_result is not None and not base_result.success:
+            return base_result
         if is_vs:
             return GatewayCliResult(
                 success=False,

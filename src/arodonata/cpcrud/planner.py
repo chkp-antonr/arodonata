@@ -304,6 +304,11 @@ class Planner:
 
         actions: list[PlannedAction] = []
         global_res_by_domain: dict[tuple[str, str], dict[str, str]] = {}
+        failed_refs_by_domain: dict[tuple[str, str], set[str]] = {}
+        failed_action_ids_by_domain: dict[tuple[str, str], set[str]] = {}
+        domain_resolutions: dict[tuple[str, str], dict[str, str]] = {}
+        action_ids_by_ref_by_domain: dict[tuple[str, str], dict[str, str]] = {}
+        entity_action_ids_by_domain: dict[tuple[str, str], dict[tuple[str, str], str]] = {}
         action_seq = 0
 
         for t in targets:
@@ -323,12 +328,6 @@ class Planner:
                 eff_prefixes = NamingPrefixes.from_mapping(t.get("naming_prefixes"), base=self._default_naming_prefixes)
             else:
                 eff_prefixes = self._default_naming_prefixes
-
-            failed_refs_by_domain: dict[tuple[str, str], set[str]] = {}
-            failed_action_ids_by_domain: dict[tuple[str, str], set[str]] = {}
-            domain_resolutions: dict[tuple[str, str], dict[str, str]] = {}
-            action_ids_by_ref_by_domain: dict[tuple[str, str], dict[str, str]] = {}
-            entity_action_ids_by_domain: dict[tuple[str, str], dict[tuple[str, str], str]] = {}
 
             steps = self._collect_ordered_steps(t)
             for kind, step_spec in steps:

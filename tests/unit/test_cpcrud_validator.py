@@ -371,3 +371,87 @@ def test_validate_template_incremental_url_list_and_rule_cell_deltas_and_field_c
     rule_sem_errs = validate_template(add_rule_delta_tpl)
     assert len(rule_sem_errs) == 1
     assert "rules[0]" in rule_sem_errs[0]
+
+
+@pytest.mark.spec("SCN-CPCRUD-014-2", "SCN-CPCRUD-014-3")
+def test_schema_empty_list_and_semantic_default_type_and_is_cleanup_rule() -> None:
+    """SCN-CPCRUD-014-2/3: Schema rejects empty list cells, infers omitted type, accepts check_where_used, and is_cleanup_rule checks Any/Any/Any."""
+    from arodonata.core.models.rulebase import AccessRuleEntry
+    from arodonata.cpcrud.differ import DiffSafetyError, compute_rule_diff
+    from arodonata.cpcrud.position_helper import is_cleanup_rule
+
+    # 1. Empty list replacement rejected by schema and compute_rule_diff
+    empty_src_tpl: dict[str, Any] = {
+        "version": 1,
+        "mgmt_name": "mds1",
+        "domain": "Corp",
+        "rules": [{"type": "access-rule", "layer": "Network", "name": "R1", "source": []}],
+    }
+    assert validate_template(empty_src_tpl) != []
+
+    existing_acc = AccessRuleEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        layer_uid="lyr-1",
+        layer_name="Network",
+        uid="ar-1",
+        position=1,
+        source=["Host_1"],
+        install_on=[],
+    )
+    with pytest.raises(DiffSafetyError, match="empty"):
+        compute_rule_diff({"source": []}, existing_acc, rulebase_type="access")
+
+    # install-on incremental delta does NOT coerce unset install-on to 'Any'
+    inst_diffs, inst_upd = compute_rule_diff({"install-on": {"add": ["GW1"]}}, existing_acc, rulebase_type="access")
+    assert inst_upd["install-on"] == {"add": ["GW1"]}
+    assert inst_diffs["install-on"].old_value == []
+
+    # 2. Omitted type in rules/groups still enforces add+delta/remove semantic checks and operation > action precedence
+    omitted_type_tpl: dict[str, Any] = {
+        "version": 1,
+        "mgmt_name": "mds1",
+        "domain": "Corp",
+        "rules": [{"operation": "add", "layer": "Network", "name": "R2", "source": {"add": ["H1"]}}],
+        "groups": [{"operation": "add", "name": "G1", "members": {"remove": ["H1"]}}],
+    }
+    sem_errs = validate_template(omitted_type_tpl)
+    assert len(sem_errs) == 2
+
+    # 3. check_where_used is accepted on ObjectOperation
+    cwu_tpl: dict[str, Any] = {
+        "version": 1,
+        "mgmt_name": "mds1",
+        "domain": "Corp",
+        "objects": [{"operation": "delete", "type": "host", "name": "H_del", "check_where_used": True}],
+    }
+    assert validate_template(cwu_tpl) == []
+
+    # 4. is_cleanup_rule returns False when rule named *cleanup* has narrow traffic
+    narrow_cleanup = AccessRuleEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        layer_uid="lyr-1",
+        layer_name="Network",
+        uid="ar-narrow",
+        name="Pre-cleanup checks",
+        position=1,
+        source=["Host_1"],
+        destination=["Any"],
+        service=["Any"],
+    )
+    assert is_cleanup_rule(narrow_cleanup) is False
+
+    real_cleanup = AccessRuleEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        layer_uid="lyr-1",
+        layer_name="Network",
+        uid="ar-clean",
+        name="Cleanup rule",
+        position=2,
+        source=["Any"],
+        destination=["Any"],
+        service=["Any"],
+    )
+    assert is_cleanup_rule(real_cleanup) is True

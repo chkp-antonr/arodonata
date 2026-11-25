@@ -820,3 +820,71 @@ async def test_take_over_session_disconnect_flag_and_create_dedicated_session_er
     # Failed login in create_dedicated_session raises SessionError instead of returning empty SID
     with pytest.raises(SessionError):
         await api.create_dedicated_session("mds", "NoSuchDomain")
+
+
+@pytest.mark.spec("SCN-ITEST-019-1")
+@pytest.mark.asyncio
+async def test_wave8_emulator_track_wire_types_rollback_readonly_and_lazy_baseline() -> None:
+    """Verify Wave 8 emulator fixes: per-rulebase track wire types, failed set-host rollback, read_only switch/discard, and lazy in-memory baseline."""
+    from arodonata.testing._emulator_rulebase_fields import LOG_TRACK_UID, normalize_track
+
+    # 1. Per-rulebase track wire types
+    assert normalize_track("Log", rule_kind="access") == {"type": LOG_TRACK_UID}
+    assert normalize_track("Log", rule_kind="https") == "Log"
+    https_err = normalize_track({"type": "Log"}, rule_kind="https")
+    assert hasattr(https_err, "success") and not https_err.success  # type: ignore[union-attr]
+    threat_err = normalize_track({"type": "Log"}, rule_kind="threat")
+    assert hasattr(threat_err, "success") and not threat_err.success  # type: ignore[union-attr]
+
+    api = FileReplayApiMock()
+
+    # 2. Failed set-group with new-name + invalid member rolls back name without partial rename
+    sid_w, _ = await api.create_dedicated_session("mds", "Branch", session_name="rollback-test")
+    added = await api.api_call(
+        "mds",
+        "add-group",
+        {"name": "G_Orig_RB"},
+        domain="Branch",
+        sid=sid_w,
+    )
+    assert added.success
+    bad_set = await api.api_call(
+        "mds",
+        "set-group",
+        {"name": "G_Orig_RB", "new-name": "G_Renamed_Should_Rollback", "members": {"add": ["nonexistent-uid-999"]}},
+        domain="Branch",
+        sid=sid_w,
+    )
+    assert not bad_set.success
+    still_orig = await api.api_call("mds", "show-group", {"name": "G_Orig_RB"}, domain="Branch", sid=sid_w)
+    assert still_orig.success
+    assert not (
+        await api.api_call("mds", "show-group", {"name": "G_Renamed_Should_Rollback"}, domain="Branch", sid=sid_w)
+    ).success
+
+    # 3. read_only session cannot switch-session or discard
+    ro_login = await api.api_call("mds", "login", {"domain": "Branch", "read-only": True}, domain="Branch")
+    assert ro_login.success
+    sid_ro = str(ro_login.data["sid"])
+    w_uid = str((await api.api_call("mds", "show-session", {}, domain="Branch", sid=sid_w)).data["uid"])
+
+    sw_err = await api.api_call("mds", "switch-session", {"uid": w_uid}, domain="Branch", sid=sid_ro)
+    assert not sw_err.success
+    assert sw_err.status_code == 400
+
+    disc_err = await api.api_call("mds", "discard", {"uid": w_uid}, domain="Branch", sid=sid_ro)
+    assert not disc_err.success
+    assert disc_err.status_code == 400
+
+    # 4. Lazy in-memory _initial_domain_data snapshot before first mutation (without disk reload)
+    assert "Branch" not in api._initial_domain_data
+    pub = await api.api_call("mds", "publish", {}, domain="Branch", sid=sid_w)
+    assert pub.success
+    assert "Branch" in api._initial_domain_data
+    # Initial baseline must NOT contain G_Orig_RB (captured before publish mutated _domain_data["Branch"])
+    baseline_names = {
+        o.get("name")
+        for o in api._initial_domain_data["Branch"].get("show-groups", {}).get("objects", [])
+        if isinstance(o, dict)
+    }
+    assert "G_Orig_RB" not in baseline_names

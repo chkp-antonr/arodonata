@@ -72,10 +72,11 @@ def _apply_snapshot_locations_to_rules(
 
     all_rule_uids = [rc.uid for rc in rule_changes if rc.uid]
     all_layer_uids = [rc.layer_uid for rc in rule_changes if rc.layer_uid]
+    all_layer_names = [rc.layer_name for rc in rule_changes if rc.layer_name]
     locations = locate_rules_in_snapshot(
         snapshot,
         rule_uids=all_rule_uids,
-        layer_uids=all_layer_uids,
+        layer_uids=[*all_layer_uids, *all_layer_names],
     )
 
     for rc in rule_changes:
@@ -84,8 +85,26 @@ def _apply_snapshot_locations_to_rules(
             # Prefer package context location if available
             pkg_locs = [loc for loc in matched_locs if loc.context == "package"]
             best = pkg_locs[0] if pkg_locs else matched_locs[0]
-            if rc.old_rule_number and rc.old_rule_number != best.rule_number:
-                rc.moved = True
+            if rc.old_rule_number:
+                layer_prefix = ""
+                if best.position is not None and best.rule_number.endswith(f".{best.position}"):
+                    layer_prefix = best.rule_number[: -len(str(best.position))]
+                elif best.layer_uid and best.layer_uid in locations.layer_prefixes:
+                    p_locs = locations.layer_prefixes[best.layer_uid]
+                    if p_locs:
+                        layer_prefix = p_locs[0].prefix
+                prefixed_old = (
+                    f"{layer_prefix}{rc.old_rule_number}"
+                    if (
+                        layer_prefix
+                        and "." not in rc.old_rule_number
+                        and not rc.old_rule_number.startswith(layer_prefix)
+                    )
+                    else rc.old_rule_number
+                )
+                if prefixed_old != best.rule_number:
+                    rc.moved = True
+                    rc.old_rule_number = prefixed_old
             rc.rule_number = best.rule_number
             if not rc.package_uid and best.package_uid:
                 rc.package_uid = best.package_uid
@@ -105,19 +124,30 @@ def _apply_snapshot_locations_to_rules(
 
         # If a deleted or modified rule is not directly in the current snapshot by UID,
         # check if its layer has a known prefix so a relative rule number can still be prefixed.
-        if rc.layer_uid and rc.layer_uid in locations.layer_prefixes:
-            prefixes = locations.layer_prefixes[rc.layer_uid]
-            if prefixes:
-                p_loc = prefixes[0]
-                if not rc.package_uid and p_loc.package_uid:
-                    rc.package_uid = p_loc.package_uid
-                if not rc.package_name and p_loc.package_name:
-                    rc.package_name = p_loc.package_name
-                if rc.rule_number and p_loc.prefix and not rc.rule_number.startswith(p_loc.prefix):
-                    rc.rule_number = f"{p_loc.prefix}{rc.rule_number}"
-
         if rc.operation == "deleted" and not rc.rule_number:
             rc.rule_number = rc.old_rule_number or "DELETED"
+
+        prefixes = locations.layer_prefixes.get(rc.layer_uid or "") or locations.layer_prefixes.get(rc.layer_name or "")
+        if prefixes:
+            p_loc = prefixes[0]
+            if not rc.package_uid and p_loc.package_uid:
+                rc.package_uid = p_loc.package_uid
+            if not rc.package_name and p_loc.package_name:
+                rc.package_name = p_loc.package_name
+            if (
+                rc.rule_number
+                and rc.rule_number != "DELETED"
+                and p_loc.prefix
+                and not rc.rule_number.startswith(p_loc.prefix)
+            ):
+                rc.rule_number = f"{p_loc.prefix}{rc.rule_number}"
+            if (
+                rc.old_rule_number
+                and p_loc.prefix
+                and "." not in rc.old_rule_number
+                and not rc.old_rule_number.startswith(p_loc.prefix)
+            ):
+                rc.old_rule_number = f"{p_loc.prefix}{rc.old_rule_number}"
 
     group_order: dict[tuple[str, str, str], int] = {}
     for idx, rc in enumerate(rule_changes):

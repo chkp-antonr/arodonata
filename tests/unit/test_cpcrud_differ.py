@@ -336,3 +336,126 @@ def test_compute_url_list_case_folding_and_mixed_uid_group_members() -> None:
     )
     assert grp_diffs["members"].added_items == ["Host_3"]
     assert grp_diffs["members"].removed_items == ["Host_2"]
+
+
+@pytest.mark.spec("SCN-CPCRUD-014-1")
+def test_track_wire_encoding_and_subfield_diffs() -> None:
+    """SCN-CPCRUD-014-1: Access rules encode track as object with sub-fields; HTTPS/Threat encode as string."""
+    from arodonata.core.models.rulebase import AccessRuleEntry, NatRuleEntry
+    from arodonata.cpcrud._planner_helpers import _build_add_rule_payload, _build_prior_rule_state
+
+    # 1. Access rule add payload coerces string track -> {"type": "Log"} while HTTPS/Threat coerce dict -> "Log"
+    acc_add = _build_add_rule_payload(
+        rb_type="access",
+        spec={"layer": "Network", "source": ["Any"], "destination": ["Any"], "service": ["Any"], "track": "Log"},
+        layer="Network",
+        package="Standard",
+        position="top",
+    )
+    assert acc_add["track"] == {"type": "Log"}
+
+    https_add = _build_add_rule_payload(
+        rb_type="https",
+        spec={
+            "layer": "HTTPS",
+            "source": ["Any"],
+            "destination": ["Any"],
+            "service": ["Any"],
+            "track": {"type": "Log"},
+        },
+        layer="HTTPS",
+        package="Standard",
+        position="top",
+    )
+    assert https_add["track"] == "Log"
+
+    threat_add = _build_add_rule_payload(
+        rb_type="threat",
+        spec={"layer": "Threat", "track": {"type": "Detailed Log"}},
+        layer="Threat",
+        package="Standard",
+        position="top",
+    )
+    assert threat_add["track"] == "Detailed Log"
+
+    # 2. Access rule TrackSettingsForRequest sub-field diff (accounting=True) and prior_state preservation
+    existing_acc = AccessRuleEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        layer_uid="lyr-1",
+        layer_name="Network",
+        uid="ar-1",
+        position=1,
+        track="Log",
+        raw_data={"track": {"type": {"name": "Log"}, "accounting": False, "per-session": False}},
+    )
+    acc_diffs, acc_upd = compute_rule_diff(
+        {"track": {"type": "Log", "accounting": True}},
+        existing_acc,
+        rulebase_type="access",
+    )
+    assert "track" in acc_diffs
+    assert acc_upd["track"] == {"type": "Log", "accounting": True}
+
+    prior = _build_prior_rule_state(existing_acc, rulebase_type="access", layer="Network", package="Standard")
+    assert isinstance(prior["track"], dict)
+    assert prior["track"]["accounting"] is False
+
+    # 3. HTTPS rule track diff emits plain string wire value
+    existing_https = HttpsRuleEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        layer_uid="lyr-h",
+        layer_name="HTTPS",
+        uid="hr-1",
+        position=1,
+        track="None",
+    )
+    https_diffs, https_upd = compute_rule_diff(
+        {"track": {"type": "Log"}},
+        existing_https,
+        rulebase_type="https",
+    )
+    assert "track" in https_diffs
+    assert https_upd["track"] == "Log"
+
+    # 4. NAT diff and existing_nat_traffic_tuple honor raw_data['_resolved_objects'] (DA-056)
+    from arodonata.cpcrud.rule_identity import existing_nat_traffic_tuple
+
+    nat_rule = NatRuleEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        package_uid="pkg-1",
+        package_name="Standard",
+        uid="nr-1",
+        position=1,
+        method="hide",
+        original_source="uid-host-1",
+        raw_data={
+            "method": "hide",
+            "original-source": "uid-host-1",
+            "_resolved_objects": {"uid-host-1": {"uid": "uid-host-1", "name": "Host_A"}},
+        },
+    )
+    nat_diffs, _ = compute_rule_diff({"original-source": "Host_A"}, nat_rule, rulebase_type="nat")
+    assert nat_diffs == {}
+    assert existing_nat_traffic_tuple(nat_rule)[0] == "Host_A"
+
+
+@pytest.mark.spec("SCN-CPCRUD-014-2")
+def test_fail_closed_rule_defaults_match_across_add_and_identity() -> None:
+    """SCN-CPCRUD-014-2: Omitted rule actions default fail-closed per rulebase type identically in add and matching."""
+    from arodonata.cpcrud._planner_helpers import _build_add_rule_payload
+    from arodonata.cpcrud.rule_identity import desired_access_traffic_tuple
+
+    for rb_type, expected in (("access", "Drop"), ("https", "Inspect"), ("threat", "Optimized")):
+        spec = {"action": "present", "source": ["Any"], "destination": ["Any"], "service": ["Any"]}
+        add_payload = _build_add_rule_payload(
+            rb_type=rb_type,  # type: ignore[arg-type]
+            spec=spec,
+            layer="L1",
+            package="P1",
+            position="top",
+        )
+        assert add_payload["action"] == expected
+        assert desired_access_traffic_tuple(spec, rulebase_type=rb_type)[3] == expected

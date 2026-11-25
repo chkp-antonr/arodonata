@@ -591,3 +591,59 @@ async def test_cached_rulebase_source_cold_package_catalog_targeted_package_and_
         assert api.query_calls == []
     finally:
         await db.close()
+
+
+@pytest.mark.spec("SCN-RULE-007-2")
+def test_empty_inline_layer_and_name_keyed_prefix_lookup() -> None:
+    """SCN-RULE-007-2: Empty inline layers record LayerPrefixLocation and name-keyed lookups return prefixes."""
+    from arodonata.core.models.rulebase import AccessRuleEntry, PolicyPackageInfo, RulebaseLayerEntry
+    from arodonata.rulebase.numbering import locate_rules_in_snapshot
+
+    snap = DomainRulebaseSnapshot(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        packages=[
+            PolicyPackageInfo(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                uid="pkg-1",
+                name="Standard",
+                access_layers=[
+                    {
+                        "mgmt_name": "mds1",
+                        "domain_name": "Corp",
+                        "package_uid": "pkg-1",
+                        "package_name": "Standard",
+                        "rulebase_type": "access",
+                        "layer_uid": "l-parent",
+                        "layer_name": "Parent",
+                        "position": 1,
+                    }
+                ],
+            )
+        ],
+        layers=[
+            RulebaseLayerEntry(
+                mgmt_name="mds1", domain_name="Corp", uid="l-parent", name="Parent", rulebase_type="access"
+            ),
+            RulebaseLayerEntry(
+                mgmt_name="mds1", domain_name="Corp", uid="l-empty-inline", name="EmptyInline", rulebase_type="access"
+            ),
+        ],
+        access_rules=[
+            AccessRuleEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                layer_uid="l-parent",
+                layer_name="Parent",
+                uid="r-parent",
+                name="InlineAnchor",
+                position=1,
+                inline_layer_uid="l-empty-inline",
+                inline_layer_name="EmptyInline",
+            )
+        ],
+    )
+    locs = locate_rules_in_snapshot(snap, layer_uids=["EmptyInline"])
+    assert locs.layer_prefixes["EmptyInline"]
+    assert locs.layer_prefixes["EmptyInline"][0].prefix == "1."

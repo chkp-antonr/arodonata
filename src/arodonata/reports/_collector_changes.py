@@ -394,18 +394,12 @@ def _filter_range_sessions(
         to_bound_dt = min(to_bound_dt, s_dt) if to_bound_dt is not None else s_dt
 
     uids_in_order = [str(s.get("uid") or "") for _, _, s in with_ts]
-    allowed_uids: set[str] | None = None
-    if (scope.from_session and scope.from_session not in uid_to_dt) or (
-        scope.to_session and scope.to_session not in uid_to_dt
+    if (scope.from_session and scope.from_session not in uids_in_order) or (
+        scope.to_session and scope.to_session not in uids_in_order
     ):
-        start_idx = 0
-        end_idx = len(uids_in_order) - 1
-        if scope.from_session and scope.from_session in uids_in_order:
-            start_idx = uids_in_order.index(scope.from_session)
-        if scope.to_session and scope.to_session in uids_in_order:
-            end_idx = uids_in_order.index(scope.to_session)
-        lo, hi = min(start_idx, end_idx), max(start_idx, end_idx)
-        allowed_uids = set(uids_in_order[lo : hi + 1])
+        return []
+
+    allowed_uids: set[str] | None = None
 
     filtered: list[dict[str, Any]] = []
     for pub_dt, _idx, s in with_ts:

@@ -500,8 +500,8 @@ def _parse_route_nexthop_and_interface(route: dict[str, Any]) -> tuple[ipaddress
         or route.get("via")
     )
     # Check nested next-hop gateway list if formatted like Gaia / CPMI next-hop object
-    if nh_raw is None and isinstance(route.get("next-hop"), list) and route["next-hop"]:
-        nh_raw = route["next-hop"][0]
+    if isinstance(nh_raw, list) and nh_raw:
+        nh_raw = nh_raw[0]
 
     nh_str = ""
     if isinstance(nh_raw, dict):

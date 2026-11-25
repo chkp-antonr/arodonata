@@ -2400,3 +2400,166 @@ async def test_placement_skips_refresh_on_empty_or_system_data_domain_and_avoids
         assert empty_cma_report.numbering_source == "unnumbered"
     finally:
         await db.close()
+
+
+@pytest.mark.spec("SCN-REPORT-006-1", "SCN-REPORT-006-2", "SCN-REPORT-006-3")
+@pytest.mark.asyncio
+async def test_reports_range_bounds_owned_fallback_placement_diffs_and_safe_markup() -> None:
+    """SCN-REPORT-006-1..3: Fail-closed RangeScope UIDs, OwnedSession fallback, nested placement, unordered diffs, dotted plan numbers, and safe inline markup."""
+    from arodonata.core.models.rulebase import PolicyPackageInfo, RulebaseLayerEntry
+    from arodonata.cpcrud.models import Outcome, Plan, PlannedAction
+    from arodonata.reports._collector_changes import _filter_range_sessions
+    from arodonata.reports._collector_diffs import _list_field_diff
+    from arodonata.reports._renderer_formatting import _esc_md, render_safe_inline_markdown_md
+    from arodonata.reports.models import RangeScope, RuleChangeEntry
+    from arodonata.reports.placement import _apply_snapshot_locations_to_rules
+    from arodonata.reports.plan_report import build_change_report_from_plan
+
+    # 1. Missing RangeScope from_session / to_session UID fails closed (empty list)
+    sessions = [
+        {"uid": "s-1", "publish-time": {"iso-8601": "2026-10-23T12:00:00Z"}},
+        {"uid": "s-2", "publish-time": {"iso-8601": "2026-10-23T13:00:00Z"}},
+    ]
+    assert (
+        _filter_range_sessions(sessions, RangeScope(mgmt_name="mds1", domain="Corp", from_session="missing-uid")) == []
+    )
+    assert _filter_range_sessions(sessions, RangeScope(mgmt_name="mds1", domain="Corp", to_session="missing-uid")) == []
+
+    # 2. OwnedSession domain mismatch falls back to shared read-only session with warning
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = FakeReportsApi()
+    try:
+        api.sessions_by_uid["s-pub"] = {
+            "uid": "s-pub",
+            "name": "Pub1",
+            "state": "published",
+            "publish-time": {"iso-8601": "2026-10-23T12:00:00Z"},
+            "changes": 0,
+        }
+        api.changes_by_session["s-pub"] = {"tasks": [{"task-details": [{"operations": {}}]}]}
+        orig_api_call = api.api_call
+
+        async def _fail_owned_sid_call(
+            mgmt_name: str,
+            command: str,
+            payload: dict[str, Any] | None = None,
+            **kwargs: Any,
+        ) -> ApiCallResult:
+            if kwargs.get("sid") == "expired-owned-sid":
+                return ApiCallResult(
+                    success=False, status_code=401, error_code="err_login_failed", error_message="expired"
+                )
+            return await orig_api_call(mgmt_name, command, payload, **kwargs)
+
+        api.api_call = _fail_owned_sid_call  # type: ignore[method-assign]
+        expired_owned = OwnedSession(sid="expired-owned-sid", domain="Corp", server_ip="10.0.0.1")
+        rep = await collect_change_report(
+            api,
+            cache,
+            [SessionScope(mgmt_name="mds1", domain="Corp", session_uids=["s-pub"], owned_sessions=expired_owned)],
+        )
+        assert any(w.code == "owned_session_error" for w in rep.warnings)
+        assert len(rep.sessions) == 1
+    finally:
+        await db.close()
+
+    # 3. Nested rule placement does not falsely mark in-place edit as MOVED
+    snap = DomainRulebaseSnapshot(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        packages=[
+            PolicyPackageInfo(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                uid="pkg-1",
+                name="Standard",
+                access_layers=[
+                    {
+                        "mgmt_name": "mds1",
+                        "domain_name": "Corp",
+                        "package_uid": "pkg-1",
+                        "package_name": "Standard",
+                        "rulebase_type": "access",
+                        "layer_uid": "l-parent",
+                        "layer_name": "Parent",
+                        "position": 1,
+                    }
+                ],
+            )
+        ],
+        layers=[
+            RulebaseLayerEntry(
+                mgmt_name="mds1", domain_name="Corp", uid="l-parent", name="Parent", rulebase_type="access"
+            ),
+            RulebaseLayerEntry(
+                mgmt_name="mds1", domain_name="Corp", uid="l-inline", name="Inline", rulebase_type="access"
+            ),
+        ],
+        access_rules=[
+            AccessRuleEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                layer_uid="l-parent",
+                layer_name="Parent",
+                uid="r-parent",
+                name="InlineAnchor",
+                position=2,
+                inline_layer_uid="l-inline",
+            ),
+            AccessRuleEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                layer_uid="l-inline",
+                layer_name="Inline",
+                uid="r-child",
+                name="ChildRule",
+                position=3,
+            ),
+        ],
+    )
+    rc = RuleChangeEntry(
+        uid="r-child",
+        name="ChildRule",
+        rulebase_type="access",
+        operation="modified",
+        layer_uid="l-inline",
+        layer_name="Inline",
+        old_rule_number="1",
+    )
+    _apply_snapshot_locations_to_rules([rc], snap)
+    assert rc.rule_number == "1.1"
+    assert rc.moved is False
+
+    # 4. Reordered unordered Check Point list produces None FieldDiff
+    assert _list_field_diff("source", ["Host_A", "Host_B"], ["Host_B", "Host_A"]) is None
+
+    # 5. Dotted string rule_number preserved in build_change_report_from_plan
+    plan = Plan(
+        actions=[
+            PlannedAction(
+                action_id="a1",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="set",
+                object_type="access-rule",
+                name="SubRule",
+                layer="Inline",
+                outcome=Outcome.UPDATE,
+                desired_spec={"rule_number": "2.1", "layer": "Inline"},
+                payload={"comments": "updated"},
+            )
+        ]
+    )
+    plan_rep = build_change_report_from_plan(plan)
+    assert plan_rep.sessions[0].rule_changes[0].rule_number == "2.1"
+
+    # 6. Safe inline markdown neutralizes multiline backticks, unsafe hrefs, and CR/CRLF
+    multiline_md = render_safe_inline_markdown_md("`line1\n<script>alert(1)</script>`")
+    assert "<script>" not in multiline_md
+    bad_href_md = render_safe_inline_markdown_md('[click](https://evil.example/a"onclick=alert(1))')
+    assert "[click](https://evil.example" not in bad_href_md
+    assert "\\[click\\]" in bad_href_md
+    assert "\r" not in _esc_md("a\r\nb|c")
+    assert "a b\\|c" == _esc_md("a\r\nb|c")

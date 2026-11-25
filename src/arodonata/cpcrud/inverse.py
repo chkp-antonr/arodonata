@@ -16,6 +16,17 @@ from arodonata.cpcrud.models import ActionResult, ApplyReport, Outcome, Plan, Pl
 from arodonata.cpcrud.state_reader import OBJECT_ITEM_TYPES, SERVICE_ITEM_TYPES
 
 
+def _real_uid(*candidates: Any) -> str | None:
+    """Return the first non-empty candidate UID that is not a synthetic `'planned:...'` placeholder."""
+    for cand in candidates:
+        if cand is None:
+            continue
+        s = str(cand).strip()
+        if s and not s.startswith("planned:"):
+            return s
+    return None
+
+
 def _invert_single_action(
     action: PlannedAction,
     result: ActionResult | None = None,
@@ -70,8 +81,10 @@ def _invert_object_action(
             "type": obj_type,
             "name": action.resolved_name or action.name,
         }
-        if target_uid and not target_uid.startswith("planned:"):
-            op["uid"] = target_uid
+        if target_uid:
+            real_uid = _real_uid(target_uid)
+            if real_uid:
+                op["uid"] = real_uid
         return op
 
     if outcome == Outcome.UPDATE:
@@ -84,10 +97,9 @@ def _invert_object_action(
             "type": obj_type,
             "name": current_name,
         }
-        if target_uid:
-            op["uid"] = target_uid
-        elif prior.get("uid"):
-            op["uid"] = str(prior["uid"])
+        uid_val = _real_uid(target_uid, prior.get("uid"))
+        if uid_val:
+            op["uid"] = uid_val
         if prior_name != current_name:
             op["new-name"] = prior_name
 
@@ -182,10 +194,9 @@ def _invert_service_action(
             "type": svc_type,
             "name": current_name,
         }
-        if target_uid:
-            op["uid"] = target_uid
-        elif prior.get("uid"):
-            op["uid"] = str(prior["uid"])
+        uid_val = _real_uid(target_uid, prior.get("uid"))
+        if uid_val:
+            op["uid"] = uid_val
         if prior_name != current_name:
             op["new-name"] = prior_name
 
@@ -263,15 +274,14 @@ def _invert_group_action(
             "type": grp_type,
             "name": current_name,
         }
-        if target_uid:
-            op["uid"] = target_uid
-        elif prior.get("uid"):
-            op["uid"] = str(prior["uid"])
+        uid_val = _real_uid(target_uid, prior.get("uid"))
+        if uid_val:
+            op["uid"] = uid_val
         if prior_name != current_name:
             op["new-name"] = prior_name
         if "members" in prior and isinstance(prior["members"], list):
             op["members"] = [str(m) for m in prior["members"]]
-        for field_key in ("comments", "color", "tags"):
+        for field_key in ("comments", "color", "tags", "groups"):
             if field_key in prior and prior[field_key] is not None:
                 op[field_key] = prior[field_key]
         return op
@@ -286,7 +296,7 @@ def _invert_group_action(
         }
         if "members" in prior and isinstance(prior["members"], list):
             op["members"] = [str(m) for m in prior["members"]]
-        for field_key in ("comments", "color", "tags"):
+        for field_key in ("comments", "color", "tags", "groups"):
             if field_key in prior and prior[field_key] is not None:
                 op[field_key] = prior[field_key]
         return op
@@ -330,9 +340,9 @@ def _invert_rule_action(
             op["layer"] = str(layer)
         if package:
             op["package"] = str(package)
-        uid_val = target_uid or prior.get("uid")
+        uid_val = _real_uid(target_uid, prior.get("uid"))
         if uid_val:
-            op["uid"] = str(uid_val)
+            op["uid"] = uid_val
         prior_name = str(prior.get("name") or "")
         current_name = str((action.payload or {}).get("new-name") or action.resolved_name or action.name or "")
         if current_name and prior_name and current_name != prior_name:

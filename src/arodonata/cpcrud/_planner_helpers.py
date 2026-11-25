@@ -375,7 +375,12 @@ def _build_prior_rule_state(
             if act_val in eff_obj_dict:
                 act_val = str(eff_obj_dict[act_val].get("name") or act_val)
             state["rule_action"] = act_val
-        if rule.track:
+        if isinstance(rule, AccessRuleEntry) and isinstance(raw_exist.get("track"), Mapping):
+            raw_trk = dict(raw_exist["track"])
+            if "type" in raw_trk and str(raw_trk["type"]) in eff_obj_dict:
+                raw_trk["type"] = str(eff_obj_dict[str(raw_trk["type"])].get("name") or raw_trk["type"])
+            state["track"] = raw_trk
+        elif rule.track:
             trk_val = rule.track
             if trk_val in eff_obj_dict:
                 trk_val = str(eff_obj_dict[trk_val].get("name") or trk_val)
@@ -594,15 +599,11 @@ def _build_add_rule_payload(
             normalize_traffic_list(spec.get("destination"), name_resolutions=name_resolutions)
         )
         payload["service"] = list(normalize_traffic_list(spec.get("service"), name_resolutions=name_resolutions))
-        raw_act = spec.get("rule_action")
-        if raw_act is None and "action" in spec:
-            cand = spec["action"]
-            if isinstance(cand, str) and cand.lower() not in ("present", "absent", "add", "set", "update", "delete"):
-                raw_act = cand
-        payload["action"] = str(raw_act or "Accept").strip()
+        from arodonata.cpcrud.rule_identity import encode_track_for_rulebase, resolve_desired_rule_action
+
+        payload["action"] = resolve_desired_rule_action(spec, rulebase_type=rb_type)
         if "track" in spec and spec["track"] is not None:
-            t_val = spec["track"]
-            payload["track"] = {"type": t_val} if isinstance(t_val, str) else t_val
+            payload["track"] = encode_track_for_rulebase(spec["track"], rb_type)
         for snake_k, kebab_k in (
             ("source_negate", "source-negate"),
             ("destination_negate", "destination-negate"),
