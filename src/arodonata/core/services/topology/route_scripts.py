@@ -149,7 +149,7 @@ def build_route_collection_script(
         return (
             f"vs_name={safe_vs_name}\n"
             'vsid=$(vsx stat -l 2>/dev/null </dev/null | awk -v target="$vs_name" '
-            "'/^VSID:/ {id=$2} /^Name:/ && $2 == target {print id; exit}')\n"
+            '\'/^VSID:/ {id=$2} /^Name:[ \\t]*/ {sub(/^Name:[ \\t]*/, ""); sub(/[ \\t\\r]+$/, ""); if ($0 == target) {print id; exit}}\')\n'
             'case "$vsid" in\n'
             '  ""|0|*[!0-9]*) echo "_vs_error=unable to resolve vsid for $vs_name"; exit 1 ;;\n'
             "esac\n"
@@ -229,7 +229,7 @@ def build_route_collection_repository_script(
         '  vid = ""; vname = ""; vtype = "";\n'
         "}\n"
         "/^VSID:[ \\t]*/ { flush(); vid = $2; next }\n"
-        '/^Name:[ \\t]*/ { sub(/^Name:[ \\t]*/, ""); vname = $0; next }\n'
+        '/^Name:[ \\t]*/ { sub(/^Name:[ \\t]*/, ""); sub(/[ \\t\\r]+$/, ""); vname = $0; next }\n'
         '/^Type:[ \\t]*/ { sub(/^Type:[ \\t]*/, ""); vtype = $0; next }\n'
         "END { flush() }')\n"
         '    if [ -n "$_vs_list" ]; then\n'
@@ -313,7 +313,7 @@ def build_route_collection_repository_script(
         "fi\n"
         'if [ -n "$vs_name" ]; then\n'
         '  vsid=$(vsx stat -l 2>/dev/null </dev/null | awk -v target="$vs_name" '
-        "'/^VSID:/ {id=$2} /^Name:/ && $2 == target {print id; exit}')\n"
+        '\'/^VSID:/ {id=$2} /^Name:[ \\t]*/ {sub(/^Name:[ \\t]*/, ""); sub(/[ \\t\\r]+$/, ""); if ($0 == target) {print id; exit}}\')\n'
         '  case "$vsid" in\n'
         '    ""|0|*[!0-9]*) echo "_vs_error=unable to resolve vsid for $vs_name"; exit 1 ;;\n'
         "  esac\n"

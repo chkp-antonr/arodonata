@@ -30,7 +30,7 @@ from arodonata.mcp.quota import MCPToolQuotaManager
 from arodonata.mcp.tools._common import (
     MAX_MCP_API_TIMEOUT_SECONDS,
     _is_refresh_action,
-    _validate_optional_domains,
+    resolve_and_validate_scope,
 )
 from arodonata.reports import RangeScope, RenderOptions, ReportScope, SessionScope
 
@@ -109,19 +109,14 @@ def register_admin_tools(
             raise ToolFailure(f"Invalid cache_control action {action!r}. Expected 'status' or 'refresh'.")
 
         target_scope: SyncScope = scope or "objects"
-        target_domains = domains if domains is not None else ([domain] if domain else None)
-        if target_domains and len(target_domains) > 50:
-            raise ToolFailure(
-                "cache_control(action='refresh') supports at most 50 explicit domains per call.",
-                mgmt_name=eff_mgmt,
-            )
-        await _validate_optional_domains(client, eff_mgmt, target_domains, cache_mode=mode)
-
         if target_scope == "domains":
+            dom_cache_mode: Literal["cache", "smart", "force"] = (
+                "force" if mode == "force" else ("cache" if mode == "cache" else "smart")
+            )
             refreshed_domains = await client.get_domains(
                 mgmt_name=eff_mgmt,
                 include_global=include_global,
-                cache_mode="force" if mode == "force" else "smart",
+                cache_mode=dom_cache_mode,
             )
             known_sids = await collect_known_sids(client, eff_mgmt)
             return json_tool_result(
@@ -133,12 +128,31 @@ def register_admin_tools(
                 },
                 known_sids=known_sids,
             )
-        if mode != "cache":
-            if target_domains is not None:
-                fanout_count = max(1, len(target_domains))
-            else:
-                cached_doms = await client.cache.get_domains(mgmt_name=eff_mgmt, include_global=include_global)
-                fanout_count = min(max(1, len(cached_doms)), 50)
+
+        clean_domain_pre = domain.strip() if domain and domain.strip() else None
+        raw_domains = [d.strip() for d in domains if d and d.strip()] if domains is not None else None
+        pre_target_domains = raw_domains if domains is not None else ([clean_domain_pre] if clean_domain_pre else None)
+        if pre_target_domains and len(pre_target_domains) > 50:
+            raise ToolFailure(
+                "cache_control(action='refresh') supports at most 50 explicit domains per call.",
+                mgmt_name=eff_mgmt,
+            )
+        explicit_quota_charged = False
+        if mode != "cache" and pre_target_domains is not None and len(pre_target_domains) > 1:
+            consume_live_quota_if_needed(cost=len(pre_target_domains))
+            explicit_quota_charged = True
+
+        eff_mgmt, eff_domain, clean_domains = await resolve_and_validate_scope(
+            client,
+            mgmt_name,
+            domain=domain,
+            domains=domains,
+            cache_mode=mode,
+        )
+        target_domains = clean_domains if domains is not None else ([eff_domain] if eff_domain else None)
+        if mode != "cache" and not explicit_quota_charged and target_domains is None:
+            cached_doms = await client.cache.get_domains(mgmt_name=eff_mgmt, include_global=include_global)
+            fanout_count = min(max(1, len(cached_doms)), 50)
             if fanout_count > 1:
                 consume_live_quota_if_needed(
                     cost=fanout_count,
@@ -214,7 +228,22 @@ def register_admin_tools(
     ) -> CallToolResult:
         client = client_getter()
         eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain)
+        probed_servers: set[str] = set()
+        validated_dom_cache: dict[tuple[str, str], str] = {}
+
+        async def _validate_dom_once(srv: str, dom_val: str | None) -> str | None:
+            if not dom_val or not dom_val.strip():
+                return None
+            clean_d = dom_val.strip()
+            key = (srv, clean_d)
+            if key in validated_dom_cache:
+                return validated_dom_cache[key]
+            allow_live = srv not in probed_servers
+            probed_servers.add(srv)
+            res_d = await validate_domain_or_fail(client, srv, clean_d, allow_refresh=allow_live)
+            if res_d is not None:
+                validated_dom_cache[key] = res_d
+            return res_d
 
         parsed_scopes: list[ReportScope | dict[str, Any]] = []
         if scopes:
@@ -222,11 +251,14 @@ def register_admin_tools(
                 raise ToolFailure(
                     "change_report supports at most 20 scopes per request.",
                     mgmt_name=eff_mgmt,
-                    domain=eff_domain,
+                    domain=domain.strip() if domain and domain.strip() else None,
                 )
+            if len(scopes) > 1:
+                consume_live_quota_if_needed(cost=len(scopes))
+            eff_domain = await _validate_dom_once(eff_mgmt, domain)
             for raw_sc in scopes:
                 sc_mgmt = resolve_mgmt_name(client, raw_sc.get("mgmt_name") or eff_mgmt)
-                sc_dom = await validate_domain_or_fail(client, sc_mgmt, raw_sc.get("domain") or eff_domain)
+                sc_dom = await _validate_dom_once(sc_mgmt, raw_sc.get("domain") or eff_domain)
                 sc_copy = dict(raw_sc)
                 sc_copy["mgmt_name"] = sc_mgmt
                 sc_copy["domain"] = sc_dom
@@ -239,6 +271,7 @@ def register_admin_tools(
                         sc_copy[date_field] = _parse_iso_datetime(sc_copy[date_field], date_field, sc_mgmt, sc_dom)
                 parsed_scopes.append(sc_copy)
         elif session_uids:
+            eff_domain = await _validate_dom_once(eff_mgmt, domain)
             parsed_scopes.append(
                 SessionScope(
                     mgmt_name=eff_mgmt,
@@ -247,6 +280,7 @@ def register_admin_tools(
                 )
             )
         elif any(x is not None for x in (from_date, to_date, from_session, to_session)):
+            eff_domain = await _validate_dom_once(eff_mgmt, domain)
             parsed_from = _parse_iso_datetime(from_date, "from_date", eff_mgmt, eff_domain)
             parsed_to = _parse_iso_datetime(to_date, "to_date", eff_mgmt, eff_domain)
             parsed_scopes.append(
@@ -260,14 +294,12 @@ def register_admin_tools(
                 )
             )
         else:
+            eff_domain = await _validate_dom_once(eff_mgmt, domain)
             raise ToolFailure(
                 "Provide 'session_uids', range bounds ('from_date', 'to_date', 'from_session', 'to_session'), or 'scopes'.",
                 mgmt_name=eff_mgmt,
                 domain=eff_domain,
             )
-
-        if len(parsed_scopes) > 1:
-            consume_live_quota_if_needed(cost=len(parsed_scopes))
 
         options = RenderOptions(
             title=title,

@@ -28,6 +28,7 @@ from arodonata.mcp.tools._common import (
     _build_page_envelope,
     _compute_cache_age,
     _enforce_live_quota_if_sync_required,
+    _entity_scope_and_type,
     _is_live_cache_mode,
     _normalize_cache_mode,
     _serialize_any_entity,
@@ -244,7 +245,17 @@ def register_lookup_tools(
 
             if has_explicit_wildcard:
                 wildcard_matches = [c for c in candidates if fnmatchcase(c.name.lower(), query_lower)]
-                age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "*")
+                wc_pairs = (
+                    {_entity_scope_and_type(c) for c in wildcard_matches}
+                    if wildcard_matches
+                    else {(sc_name, "*") for sc_name, _ in lookup_scopes}
+                )
+                wc_ages = [
+                    a
+                    for sc_name, it_val in wc_pairs
+                    if (a := await _compute_cache_age(client, eff_mgmt, eff_domain, sc_name, it_val)) is not None
+                ]
+                age = max(wc_ages) if wc_ages else None
                 if len(wildcard_matches) == 1:
                     matched_domain = getattr(wildcard_matches[0], "domain_name", None) or target_domain
                     single_dict = _serialize_any_entity(wildcard_matches[0], details_level=details_level)
@@ -276,7 +287,13 @@ def register_lookup_tools(
 
             substring_matches = [c for c in candidates if query_lower and query_lower in c.name.lower()]
             if substring_matches:
-                age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "*")
+                sub_pairs = {_entity_scope_and_type(c) for c in substring_matches}
+                sub_ages = [
+                    a
+                    for sc_name, it_val in sub_pairs
+                    if (a := await _compute_cache_age(client, eff_mgmt, eff_domain, sc_name, it_val)) is not None
+                ]
+                age = max(sub_ages) if sub_ages else None
                 matched_sub_domain = (
                     (getattr(substring_matches[0], "domain_name", None) or target_domain)
                     if len(substring_matches) == 1
@@ -392,7 +409,10 @@ def register_lookup_tools(
             or sync_domain
             or target_domain
         )
-        age = await _compute_cache_age(client, eff_mgmt, matched_domain, "objects", "group")
+        grp_scope, grp_item_type = (
+            _entity_scope_and_type(resolved_group) if resolved_group is not None else ("objects", "group")
+        )
+        age = await _compute_cache_age(client, eff_mgmt, matched_domain, grp_scope, grp_item_type)
         serialized = [_serialize_any_entity(m, details_level="standard") for m in members]
         return json_tool_result(
             _build_page_envelope(

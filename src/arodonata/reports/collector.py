@@ -153,10 +153,19 @@ async def _discover_target_sessions(
                 )
 
                 candidate_sessions = [s for s in q_res.objects if isinstance(s, dict) and s.get("uid")]
-                candidate_uids = {str(s.get("uid") or "") for s in candidate_sessions}
-                if (scope.from_session and scope.from_session not in candidate_uids) or (
-                    scope.to_session and scope.to_session not in candidate_uids
-                ):
+                candidate_by_uid = {str(s.get("uid") or ""): s for s in candidate_sessions}
+                missing_bounds = [b for b in (scope.from_session, scope.to_session) if b and b not in candidate_by_uid]
+                unparsed_bounds = [
+                    b
+                    for b in (scope.from_session, scope.to_session)
+                    if b
+                    and b in candidate_by_uid
+                    and parse_cp_publish_timestamp(
+                        candidate_by_uid[b].get("publish-time") or candidate_by_uid[b].get("last-modify-time")
+                    )
+                    is None
+                ]
+                if missing_bounds:
                     warnings.append(
                         ReportWarning(
                             code="range_session_not_found",
@@ -165,6 +174,18 @@ async def _discover_target_sessions(
                             message=(
                                 f"Requested RangeScope session bound "
                                 f"(from={scope.from_session!r}, to={scope.to_session!r}) not found in {mgmt_name}:{dom_name}."
+                            ),
+                        )
+                    )
+                elif unparsed_bounds:
+                    warnings.append(
+                        ReportWarning(
+                            code="range_session_timestamp_missing",
+                            mgmt_name=mgmt_name,
+                            domain=dom_name or None,
+                            message=(
+                                f"Requested RangeScope session bound(s) {unparsed_bounds!r} lack a parseable "
+                                f"publish/modify timestamp in {mgmt_name}:{dom_name}; failing closed."
                             ),
                         )
                     )
@@ -268,8 +289,9 @@ async def _resolve_session_bare_uids(
                 inner = obj_res.data.get("object") if isinstance(obj_res.data.get("object"), dict) else obj_res.data
                 resolved_name = inner.get("name") if isinstance(inner, dict) else None
                 if isinstance(resolved_name, str) and resolved_name:
-                    known_names[u] = resolved_name
-                    global_resolved_uids[cache_key] = resolved_name
+                    safe_name = redact_sid(resolved_name, known_sids=known_sids)
+                    known_names[u] = safe_name
+                    global_resolved_uids[cache_key] = safe_name
                 else:
                     warnings.append(
                         ReportWarning(
@@ -572,13 +594,14 @@ async def collect_change_report(
                 filtered_count=filtered_sys_cnt,
             )
 
+        active_owned = owned if eff_sid is not None else None
         uid_lookup_count, lookup_cap_warned = await _resolve_session_bare_uids(
             api,
             cache,
             mgmt_name=mgmt_name,
             dom_name=dom_name,
             s_uid=s_uid,
-            owned=owned,
+            owned=active_owned,
             known_sids=known_sids,
             bare_uids=bare_uids,
             known_names=known_names,
@@ -619,13 +642,13 @@ async def collect_change_report(
             object_changes=object_changes,
             resolved_names=redacted_names,
         )
-        _replace_resolved_uids_in_session(session_report, known_names)
+        _replace_resolved_uids_in_session(session_report, redacted_names)
 
         await apply_session_rule_placement(
             session_report,
             api=api,
             cache=cache,
-            owned_session=owned,
+            owned_session=active_owned,
             warnings=warnings,
             now_fn=now_fn,
             refresh_rulebase_fn=refresh_rulebase_fn,

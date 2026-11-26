@@ -6,6 +6,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from typing import Protocol
 
+from arodonata.core.context import get_write_session
 from arodonata.core.errors import ServerIdentityError, redact_sid
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.objects import CPObject
@@ -69,9 +70,11 @@ async def _load_domain_package_snapshot(
     except ServerIdentityError:
         raise
     except Exception as exc:
+        active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=domain_name)
+        known_sids = [active_ws.sid] if active_ws is not None and active_ws.sid else None
         logger.debug(
             f"Lightweight package refresh skipped during topology extraction on {mgmt_name}:{domain_name}: "
-            f"{redact_sid(str(exc))}",
+            f"{redact_sid(str(exc), known_sids=known_sids)}",
             mgmt_name=mgmt_name,
             domain_name=domain_name,
         )

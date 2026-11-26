@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from arodonata.core.errors import REDACTED_PLACEHOLDER, MissingConfigurationError, SessionError, is_sensitive_key
 from arodonata.core.models.common import ApiCallResult
@@ -84,6 +84,11 @@ class AuthContext(BaseModel):
     password: str | None = Field(default=None, repr=False)
     api_key: str | None = Field(default=None, repr=False)
     user_id: str | None = None
+
+    @field_serializer("password", "api_key")
+    def _mask_secret_field(self, value: str | None) -> str | None:
+        """Mask secret fields during Pydantic serialization without hiding Python attributes."""
+        return REDACTED_PLACEHOLDER if value else value
 
     def model_post_init(self, __context: Any) -> None:
         has_key = bool(self.api_key)

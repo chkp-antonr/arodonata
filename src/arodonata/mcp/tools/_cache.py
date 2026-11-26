@@ -38,8 +38,11 @@ def _is_live_rulebase_call(kwargs: dict[str, Any]) -> bool:
 
 
 def _is_refresh_action(kwargs: dict[str, Any]) -> bool:
-    """Return `True` when `cache_control` invokes `action='refresh'`."""
-    return kwargs.get("action") == "refresh"
+    """Return `True` when `cache_control` invokes `action='refresh'` with a live-capable `mode`."""
+    if kwargs.get("action") != "refresh":
+        return False
+    mode_val = str(kwargs.get("mode") or "smart").strip().lower()
+    return mode_val != "cache"
 
 
 def _normalize_cache_mode(mode: str | None, *, default: CacheMode = "smart") -> tuple[CacheMode, bool]:
@@ -237,25 +240,38 @@ async def _compute_cache_age(
     scope: SyncScope,
     item_type: str = "*",
     *,
+    domains: Sequence[str] | None = None,
+    item_types: Sequence[str] | None = None,
     now_fn: Callable[[], datetime] = utc_now,
 ) -> float | None:
-    """Compute `cache_age_seconds` from `domain_sync_state` for `(mgmt_name, domain, scope, item_type)`."""
+    """Compute stalest `cache_age_seconds` (`min(synced_at)`) from `domain_sync_state` for touched scope/domains/types."""
     v2_cache = _get_v2_cache(client)
     states = await v2_cache.list_sync_states(
         mgmt_name=mgmt_name,
         domain_name=domain if domain else None,
         scope=scope,
     )
-    if item_type != "*":
-        matching = [s for s in states if s.item_type in (item_type, "*")]
-        if matching:
-            states = matching
+    if domains is not None:
+        domain_filter = {d.strip() for d in domains if d and d.strip()}
+        if domain_filter:
+            states = [s for s in states if s.domain_name in domain_filter]
+
+    if item_types is not None:
+        explicit_types = {t.strip() for t in item_types if t and t.strip()}
+        if explicit_types and explicit_types != {"*"}:
+            has_explicit = any(s.item_type in explicit_types for s in states)
+            if has_explicit:
+                states = [s for s in states if s.item_type in explicit_types or s.item_type == "*"]
+            else:
+                states = [s for s in states if s.item_type == "*"]
+    elif item_type != "*":
+        states = [s for s in states if s.item_type in (item_type, "*")]
 
     synced_times = [s.synced_at for s in states if s.synced_at is not None]
     if not synced_times:
         return None
-    latest = max(synced_times)
-    return float(max(0.0, round((now_fn() - latest).total_seconds(), 3)))
+    stalest = min(synced_times)
+    return float(max(0.0, round((now_fn() - stalest).total_seconds(), 3)))
 
 
 async def _raise_if_sync_failed(

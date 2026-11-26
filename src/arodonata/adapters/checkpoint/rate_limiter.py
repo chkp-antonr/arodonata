@@ -17,7 +17,7 @@ from typing import Any, TypeVar
 
 import arlogi
 
-from arodonata.core.errors import AuthenticationError, RateLimitTimeoutError
+from arodonata.core.errors import AuthenticationError, LockAcquisitionError, RateLimitTimeoutError
 from arodonata.core.ports import LockPort
 from arodonata.core.telemetry import span_attrs, traced
 
@@ -306,12 +306,19 @@ class LoginGate:
                 return
 
             lock_key = f"login_gate:{target_ip}"
-            async with self._lock_port.lock(
+            lock_cm = self._lock_port.lock(
                 lock_key,
                 ttl_seconds=self._gate_lock_ttl,
                 owner_id=f"{self._owner_prefix}:{uuid.uuid4().hex[:8]}",
                 wait_timeout=remaining,
-            ):
+            )
+            try:
+                await lock_cm.__aenter__()
+            except LockAcquisitionError as exc:
+                raise AuthenticationError(
+                    f"Timed out after {budget}s waiting for distributed LoginGate on MDS member {target_ip!r}: {exc}"
+                ) from exc
+            try:
                 cooldown_wait = self._next_allowed_at[target_ip] - self._monotonic()
                 if cooldown_wait > 0:
                     if self._monotonic() + cooldown_wait > deadline:
@@ -326,6 +333,11 @@ class LoginGate:
                         self._monotonic() + self._min_login_interval,
                     )
                 yield target_ip
+            except BaseException as exc:
+                if not await lock_cm.__aexit__(type(exc), exc, exc.__traceback__):
+                    raise
+            else:
+                await lock_cm.__aexit__(None, None, None)
         finally:
             local_lock.release()
 

@@ -11,6 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from arodonata.core.errors import is_script_permission_error, is_unsupported_script_command_error
 from arodonata.core.models.common import utc_now
 from arodonata.core.models.rulebase import (
     AccessRuleEntry,
@@ -24,6 +25,20 @@ from arodonata.core.ports import ApiPort
 from arodonata.core.telemetry import span_attrs, traced
 
 MAX_RULEBASE_PAGE_LIMIT = 100
+MAX_RULEBASE_PAGES = 10_000
+MAX_CONSECUTIVE_EMPTY_RULE_PAGES = 5
+
+
+def _synthetic_rule_uid(rulebase_type: RulebaseType, scope_uid: str, position: int) -> str:
+    """Return the canonical deterministic fallback UID when a rule object omits `uid`."""
+    prefix_map: dict[RulebaseType, str] = {
+        "access": "rule",
+        "nat": "nat-rule",
+        "https": "https-rule",
+        "threat": "threat-rule",
+    }
+    return f"{prefix_map[rulebase_type]}:{scope_uid}:{position}"
+
 
 RULEBASE_TYPE_TO_COMMAND: dict[RulebaseType, str] = {
     "access": "show-access-rulebase",
@@ -226,7 +241,7 @@ def parse_access_rule_entry(
 ) -> AccessRuleEntry:
     """Convert a raw Check Point access rule or `place-holder` dict into `AccessRuleEntry`."""
     od = obj_dict or {}
-    uid = str(raw_rule.get("uid") or f"rule:{layer_uid}:{position}")
+    uid = str(raw_rule.get("uid") or _synthetic_rule_uid("access", layer_uid, position))
     name = str(raw_rule.get("name") or "")
     rule_type = str(raw_rule.get("type") or "access-rule")
     rule_num_raw = raw_rule.get("rule-number")
@@ -293,7 +308,7 @@ def parse_nat_rule_entry(
 ) -> NatRuleEntry:
     """Convert a raw Check Point NAT rule dict into `NatRuleEntry`."""
     od = obj_dict or {}
-    uid = str(raw_rule.get("uid") or f"nat-rule:{package_uid}:{position}")
+    uid = str(raw_rule.get("uid") or _synthetic_rule_uid("nat", package_uid, position))
     name = str(raw_rule.get("name") or "")
     rule_type = str(raw_rule.get("type") or "nat-rule")
     rule_num_raw = raw_rule.get("rule-number")
@@ -344,7 +359,7 @@ def parse_https_rule_entry(
 ) -> HttpsRuleEntry:
     """Convert a raw Check Point HTTPS rule dict into `HttpsRuleEntry`."""
     od = obj_dict or {}
-    uid = str(raw_rule.get("uid") or f"https-rule:{layer_uid}:{position}")
+    uid = str(raw_rule.get("uid") or _synthetic_rule_uid("https", layer_uid, position))
     name = str(raw_rule.get("name") or "")
     rule_type = str(raw_rule.get("type") or "https-rule")
     rule_num_raw = raw_rule.get("rule-number")
@@ -395,7 +410,7 @@ def parse_threat_rule_entry(
 ) -> ThreatRuleEntry:
     """Convert a raw Check Point Threat Prevention rule dict into `ThreatRuleEntry`."""
     od = obj_dict or {}
-    uid = str(raw_rule.get("uid") or f"threat-rule:{layer_uid}:{position}")
+    uid = str(raw_rule.get("uid") or _synthetic_rule_uid("threat", layer_uid, position))
     name = str(raw_rule.get("name") or "")
     rule_type = str(raw_rule.get("type") or "threat-rule")
     rule_num_raw = raw_rule.get("rule-number")
@@ -472,8 +487,9 @@ async def fetch_paged_rulebase(
     sections_by_key: dict[str, RulebaseSectionEntry] = {}
     section_order: list[str] = []
     raw_sections_by_key: dict[str, dict[str, Any]] = {}
+    sec_rule_indices: dict[str, list[int]] = {}
 
-    seen_rule_uids: set[str] = set()
+    seen_rule_uids: dict[str, int] = {}
     ordered_raw_rules: list[tuple[dict[str, Any], str | None, str | None]] = []
 
     offset = 0
@@ -481,8 +497,17 @@ async def fetch_paged_rulebase(
     resolved_layer_uid = target_layer_uid
     resolved_layer_name = target_layer_name
     did_trailing_probe = False
+    pages_fetched = 0
+    drift_restarts = 0
+    consecutive_zero_new_pages = 0
 
     while True:
+        if pages_fetched >= MAX_RULEBASE_PAGES:
+            raise RuntimeError(
+                f"Rulebase pagination exceeded max_pages ({MAX_RULEBASE_PAGES}) for {command} on {mgmt_name}:{eff_domain}."
+            )
+        pages_fetched += 1
+
         payload: dict[str, Any] = {
             "limit": page_limit,
             "offset": offset,
@@ -526,6 +551,32 @@ async def fetch_paged_rulebase(
         if not resolved_layer_name and isinstance(data.get("name"), str) and data["name"]:
             resolved_layer_name = str(data["name"])
 
+        raw_total = data.get("total")
+        if isinstance(raw_total, int) and not isinstance(raw_total, bool):
+            page_total = int(raw_total)
+            is_trailing_eof = did_trailing_probe and page_total == 0 and not data.get("rulebase")
+            if total_reported is None:
+                total_reported = page_total
+            elif page_total != total_reported and not is_trailing_eof:
+                if drift_restarts < 1:
+                    drift_restarts += 1
+                    combined_obj_dict.clear()
+                    sections_by_key.clear()
+                    section_order.clear()
+                    raw_sections_by_key.clear()
+                    sec_rule_indices.clear()
+                    seen_rule_uids.clear()
+                    ordered_raw_rules.clear()
+                    offset = 0
+                    total_reported = None
+                    did_trailing_probe = False
+                    consecutive_zero_new_pages = 0
+                    continue
+                raise RuntimeError(
+                    f"Total rule count changed mid-fetch for {command} on {mgmt_name}:{eff_domain}: "
+                    f"expected {total_reported}, got {page_total} at offset {offset}."
+                )
+
         # Collect objects-dictionary entries from this page
         raw_obj_dict = data.get("objects-dictionary")
         if isinstance(raw_obj_dict, list):
@@ -540,10 +591,8 @@ async def fetch_paged_rulebase(
         raw_rulebase = data.get("rulebase")
         nodes = raw_rulebase if isinstance(raw_rulebase, list) else []
 
-        if total_reported is None and isinstance(data.get("total"), int):
-            total_reported = int(data["total"])
-
         rules_seen_in_page = 0
+        new_rules_in_page = 0
 
         for node in nodes:
             if not isinstance(node, dict):
@@ -582,6 +631,7 @@ async def fetch_paged_rulebase(
                     section_order.append(sec_uid)
                     raw_sections_by_key[sec_uid] = dict(node)
                     raw_sections_by_key[sec_uid]["rulebase"] = []
+                    sec_rule_indices[sec_uid] = []
                 else:
                     sec_entry = sections_by_key[sec_uid]
                     if sec_entry.from_rule is None and sec_from is not None:
@@ -594,25 +644,57 @@ async def fetch_paged_rulebase(
                     if not isinstance(child, dict):
                         continue
                     rules_seen_in_page += 1
-                    r_uid = str(child.get("uid") or f"rule:{len(ordered_raw_rules) + 1}")
-                    if r_uid not in sec_entry.rule_uids:
-                        sec_entry.rule_uids.append(r_uid)
-                        raw_sections_by_key[sec_uid]["rulebase"].append(child)
-                    if r_uid not in seen_rule_uids:
-                        seen_rule_uids.add(r_uid)
+                    raw_c_uid = child.get("uid")
+                    if isinstance(raw_c_uid, str) and raw_c_uid.strip():
+                        dedup_key = raw_c_uid.strip()
+                    else:
+                        dedup_key = f"__pos:{len(ordered_raw_rules) + 1}__"
+                    if dedup_key not in seen_rule_uids:
                         ordered_raw_rules.append((child, sec_uid, sec_name))
+                        r_pos = len(ordered_raw_rules)
+                        seen_rule_uids[dedup_key] = r_pos
+                        sec_rule_indices[sec_uid].append(r_pos)
+                        raw_sections_by_key[sec_uid]["rulebase"].append(child)
+                        new_rules_in_page += 1
+                    else:
+                        existing_pos = seen_rule_uids[dedup_key]
+                        if existing_pos not in sec_rule_indices[sec_uid]:
+                            sec_rule_indices[sec_uid].append(existing_pos)
+                            raw_sections_by_key[sec_uid]["rulebase"].append(child)
             else:
                 rules_seen_in_page += 1
-                r_uid = str(node.get("uid") or f"rule:{len(ordered_raw_rules) + 1}")
-                if r_uid not in seen_rule_uids:
-                    seen_rule_uids.add(r_uid)
+                raw_n_uid = node.get("uid")
+                if isinstance(raw_n_uid, str) and raw_n_uid.strip():
+                    dedup_key = raw_n_uid.strip()
+                else:
+                    dedup_key = f"__pos:{len(ordered_raw_rules) + 1}__"
+                if dedup_key not in seen_rule_uids:
                     ordered_raw_rules.append((node, None, None))
+                    seen_rule_uids[dedup_key] = len(ordered_raw_rules)
+                    new_rules_in_page += 1
+
+        if new_rules_in_page == 0:
+            if rules_seen_in_page > 0:
+                raise RuntimeError(
+                    f"Duplicate/stalled rulebase page for {command} on {mgmt_name}:{eff_domain} "
+                    f"at offset {offset}: 0 new rules in {rules_seen_in_page} item(s)."
+                )
+            consecutive_zero_new_pages += 1
+            if consecutive_zero_new_pages >= MAX_CONSECUTIVE_EMPTY_RULE_PAGES:
+                if total_reported is not None and len(ordered_raw_rules) < total_reported:
+                    raise RuntimeError(
+                        f"Rulebase pagination stalled after {consecutive_zero_new_pages} empty pages "
+                        f"for {command} on {mgmt_name}:{eff_domain} ({len(ordered_raw_rules)} of {total_reported})."
+                    )
+                break
+        else:
+            consecutive_zero_new_pages = 0
 
         to_index = data.get("to")
         if isinstance(to_index, int) and to_index > offset:
             next_offset = to_index
-        elif rules_seen_in_page > 0:
-            next_offset = offset + rules_seen_in_page
+        elif new_rules_in_page > 0:
+            next_offset = offset + new_rules_in_page
         else:
             break
 
@@ -620,9 +702,6 @@ async def fetch_paged_rulebase(
             if next_offset < total_reported and next_offset > offset:
                 offset = next_offset
                 continue
-            # If we just reached total_reported on a full page boundary (e.g. 100 of 100),
-            # do a single trailing probe at offset=total_reported in case Check Point has
-            # an empty trailing section after the last rule.
             if (
                 not did_trailing_probe
                 and total_reported > 0
@@ -649,8 +728,9 @@ async def fetch_paged_rulebase(
             f"collected {len(ordered_raw_rules)} of {total_reported} reported rules."
         )
 
-    # Finalize section entries with resolved layer_uid/layer_name and from_rule/to_rule bounds
+    # Finalize section entries with resolved layer_uid/layer_name and unified rule UIDs
     rule_pos_by_uid: dict[str, int] = {}
+    pos_to_uid: dict[int, str] = {}
     access_rules: list[AccessRuleEntry] = []
     nat_rules: list[NatRuleEntry] = []
     https_rules: list[HttpsRuleEntry] = []
@@ -659,74 +739,76 @@ async def fetch_paged_rulebase(
 
     for idx, (raw_rule, rule_sec_uid, rule_sec_name) in enumerate(ordered_raw_rules, start=1):
         raw_rules_list.append(raw_rule)
-        r_uid = str(raw_rule.get("uid") or f"rule:{idx}")
-        rule_pos_by_uid[r_uid] = idx
 
         if rulebase_type == "access":
-            access_rules.append(
-                parse_access_rule_entry(
-                    mgmt_name=mgmt_name,
-                    domain_name=eff_domain,
-                    layer_uid=final_layer_uid,
-                    layer_name=final_layer_name,
-                    raw_rule=raw_rule,
-                    position=idx,
-                    section_uid=rule_sec_uid,
-                    section_name=rule_sec_name,
-                    obj_dict=combined_obj_dict,
-                )
+            parsed_a = parse_access_rule_entry(
+                mgmt_name=mgmt_name,
+                domain_name=eff_domain,
+                layer_uid=final_layer_uid,
+                layer_name=final_layer_name,
+                raw_rule=raw_rule,
+                position=idx,
+                section_uid=rule_sec_uid,
+                section_name=rule_sec_name,
+                obj_dict=combined_obj_dict,
             )
+            access_rules.append(parsed_a)
+            final_u = parsed_a.uid
         elif rulebase_type == "nat":
-            nat_rules.append(
-                parse_nat_rule_entry(
-                    mgmt_name=mgmt_name,
-                    domain_name=eff_domain,
-                    package_uid=final_pkg_uid,
-                    package_name=final_pkg_name,
-                    raw_rule=raw_rule,
-                    position=idx,
-                    section_uid=rule_sec_uid,
-                    section_name=rule_sec_name,
-                    obj_dict=combined_obj_dict,
-                )
+            parsed_n = parse_nat_rule_entry(
+                mgmt_name=mgmt_name,
+                domain_name=eff_domain,
+                package_uid=final_pkg_uid,
+                package_name=final_pkg_name,
+                raw_rule=raw_rule,
+                position=idx,
+                section_uid=rule_sec_uid,
+                section_name=rule_sec_name,
+                obj_dict=combined_obj_dict,
             )
+            nat_rules.append(parsed_n)
+            final_u = parsed_n.uid
         elif rulebase_type == "https":
-            https_rules.append(
-                parse_https_rule_entry(
-                    mgmt_name=mgmt_name,
-                    domain_name=eff_domain,
-                    layer_uid=final_layer_uid,
-                    layer_name=final_layer_name,
-                    raw_rule=raw_rule,
-                    position=idx,
-                    section_uid=rule_sec_uid,
-                    section_name=rule_sec_name,
-                    obj_dict=combined_obj_dict,
-                )
+            parsed_h = parse_https_rule_entry(
+                mgmt_name=mgmt_name,
+                domain_name=eff_domain,
+                layer_uid=final_layer_uid,
+                layer_name=final_layer_name,
+                raw_rule=raw_rule,
+                position=idx,
+                section_uid=rule_sec_uid,
+                section_name=rule_sec_name,
+                obj_dict=combined_obj_dict,
             )
-        elif rulebase_type == "threat":
-            threat_rules.append(
-                parse_threat_rule_entry(
-                    mgmt_name=mgmt_name,
-                    domain_name=eff_domain,
-                    layer_uid=final_layer_uid,
-                    layer_name=final_layer_name,
-                    raw_rule=raw_rule,
-                    position=idx,
-                    section_uid=rule_sec_uid,
-                    section_name=rule_sec_name,
-                    obj_dict=combined_obj_dict,
-                )
+            https_rules.append(parsed_h)
+            final_u = parsed_h.uid
+        else:
+            parsed_t = parse_threat_rule_entry(
+                mgmt_name=mgmt_name,
+                domain_name=eff_domain,
+                layer_uid=final_layer_uid,
+                layer_name=final_layer_name,
+                raw_rule=raw_rule,
+                position=idx,
+                section_uid=rule_sec_uid,
+                section_name=rule_sec_name,
+                obj_dict=combined_obj_dict,
             )
+            threat_rules.append(parsed_t)
+            final_u = parsed_t.uid
+
+        rule_pos_by_uid[final_u] = idx
+        pos_to_uid[idx] = final_u
 
     final_sections: list[RulebaseSectionEntry] = []
     final_raw_sections: list[dict[str, Any]] = []
     for pos, s_key in enumerate(section_order, start=1):
         sec = sections_by_key[s_key]
-        positions = [rule_pos_by_uid[u] for u in sec.rule_uids if u in rule_pos_by_uid]
+        unified_uids = [pos_to_uid[p] for p in sec_rule_indices.get(s_key, []) if p in pos_to_uid]
+        positions = [rule_pos_by_uid[u] for u in unified_uids if u in rule_pos_by_uid]
         from_pos = min(positions) if positions else sec.from_rule
         to_pos = max(positions) if positions else sec.to_rule
-        if not sec.rule_uids:
+        if not unified_uids:
             from_pos = None
             to_pos = None
         updated_sec = RulebaseSectionEntry(
@@ -740,7 +822,7 @@ async def fetch_paged_rulebase(
             position=pos,
             from_rule=from_pos,
             to_rule=to_pos,
-            rule_uids=list(sec.rule_uids),
+            rule_uids=unified_uids,
             raw_data=dict(raw_sections_by_key.get(s_key, sec.raw_data)),
             updated_at=utc_now(),
         )
@@ -767,11 +849,96 @@ async def fetch_paged_rulebase(
     )
 
 
+def _is_permission_denial(
+    error_code: str | None,
+    error_message: str | None,
+    *,
+    status_code: int | None = None,
+) -> bool:
+    """Return `True` for explicit Check Point RBAC/permission denial errors (HTTP 403 or permission codes)."""
+    if status_code == 403:
+        return True
+    low_code = (error_code or "").strip().lower()
+    low_msg = (error_message or "").strip().lower()
+    if low_code in {"err_permissions", "err_permission_denied", "generic_err_no_permissions"}:
+        return True
+    if "permission" in low_msg and any(tok in low_msg for tok in ("denied", "no ", "insufficient", "lacks")):
+        return True
+    return is_script_permission_error(error_code, error_message)
+
+
+def _is_unsupported_command_error(error_code: str | None, error_message: str | None) -> bool:
+    """Return `True` when the target Management API explicitly reports the command is unsupported."""
+    if is_unsupported_script_command_error(error_code, error_message):
+        return True
+    low_msg = (error_message or "").strip().lower()
+    return any(tok in low_msg for tok in ("unsupported", "not supported", "unknown command"))
+
+
+async def list_collection_with_fallback(
+    api: ApiPort,
+    mgmt_name: str,
+    domain_name: str,
+    command: str,
+    *,
+    data_keys: tuple[str, ...],
+    sid: str | None = None,
+    server_ip: str | None = None,
+    strict: bool = True,
+) -> list[dict[str, Any]]:
+    """Query a paginated list command via `api_query`, falling back to `api_call` only if unsupported."""
+    q_res = await api.api_query(
+        mgmt_name,
+        command,
+        domain=domain_name,
+        details_level="full",
+        sid=sid,
+        server_ip=server_ip,
+    )
+    if q_res.success:
+        return [item for item in q_res.objects if isinstance(item, dict)]
+
+    if q_res.code == "paging_inconsistent":
+        err = q_res.error_message or "paging_inconsistent"
+        raise RuntimeError(f"Failed to fetch {command} on {mgmt_name}:{domain_name}: paging_inconsistent ({err})")
+
+    if _is_unsupported_command_error(q_res.code, q_res.error_message):
+        c_res = await api.api_call(
+            mgmt_name,
+            command,
+            {"details-level": "full"},
+            domain=domain_name,
+            sid=sid,
+            server_ip=server_ip,
+        )
+        if c_res.success and isinstance(c_res.data, dict):
+            for key in (*data_keys, "objects"):
+                cand = c_res.data.get(key)
+                if isinstance(cand, list):
+                    return [item for item in cand if isinstance(item, dict)]
+            return []
+        if not strict and _is_permission_denial(
+            c_res.error_code,
+            c_res.error_message,
+            status_code=c_res.status_code,
+        ):
+            return []
+        err = c_res.error_message or c_res.error_code or f"{command} failed with status {c_res.status_code}"
+        raise RuntimeError(f"Failed to fetch {command} on {mgmt_name}:{domain_name}: {err}")
+
+    if not strict and _is_permission_denial(q_res.code, q_res.error_message):
+        return []
+
+    err = q_res.error_message or q_res.code or f"{command} failed"
+    raise RuntimeError(f"Failed to fetch {command} on {mgmt_name}:{domain_name}: {err}")
+
+
 __all__ = [
     "MAX_RULEBASE_PAGE_LIMIT",
     "PagedRulebaseResult",
     "RULEBASE_TYPE_TO_COMMAND",
     "fetch_paged_rulebase",
+    "list_collection_with_fallback",
     "parse_access_rule_entry",
     "parse_https_rule_entry",
     "parse_nat_rule_entry",

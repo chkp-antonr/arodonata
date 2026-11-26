@@ -1179,3 +1179,243 @@ async def test_slice_sync_stamps_probe_start_and_preserves_mid_handler_invalidat
     assert probe_calls == prev_probes + 1
 
     await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-020-1")
+@pytest.mark.asyncio
+async def test_single_flight_cache_mode_ttl_invalidation_and_partial_failure_isolation() -> None:
+    """SCN-CACHE-020-1: mode='cache'/looser-TTL/invalidated flights do not suppress smart waiters, and fresh sibling slices stay ok."""
+    from datetime import timedelta
+
+    clock = [datetime(2026, 11, 26, 12, 0, 0)]
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = CoordinatorFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", cache_ttl=3600)
+    ds = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port, now_fn=lambda: clock[0])
+    ds.tracker.mark_refreshed("mds1")
+    dom = DomainInfo(mgmt_name="mds1", uid="d1", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1")
+    await cache.upsert_domains([dom])
+
+    coordinator = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=ds,
+        now_fn=lambda: clock[0],
+    )
+
+    # Seed fresh host sync state (10s old) and stale network sync state
+    await cache.upsert_sync_state(
+        DomainSyncState(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            scope="objects",
+            item_type="host",
+            last_published_at=datetime(2026, 10, 23, 12, 0, 0),
+            last_session_uid="sess-Corp",
+            synced_at=clock[0] - timedelta(seconds=10),
+            status="ok",
+            object_count=5,
+        )
+    )
+
+    # 1. Concurrent mode="cache" (or looser-TTL) flight must NOT suppress mode="smart" cache_ttl=0 waiter
+    gate_started = asyncio.Event()
+    gate_release = asyncio.Event()
+    orig_get_sync_state = cache.get_sync_state
+    hold_once = True
+
+    async def _slow_once(mgmt_name: str, dom_name: str, scope: str, item_type: str) -> DomainSyncState | None:
+        nonlocal hold_once
+        if hold_once and scope == "objects" and item_type == "host":
+            hold_once = False
+            gate_started.set()
+            await gate_release.wait()
+        return await orig_get_sync_state(mgmt_name, dom_name, scope, item_type)
+
+    cache.get_sync_state = _slow_once  # type: ignore[method-assign]
+
+    smart_calls = 0
+
+    async def _handler_count(probe: DomainProbeResult, _emit: Any) -> int:
+        nonlocal smart_calls
+        smart_calls += 1
+        return 1
+
+    t_cache = asyncio.create_task(
+        coordinator.ensure(
+            scope="objects",
+            item_types=["host"],
+            handler=_handler_count,
+            mgmt_name="mds1",
+            domains=["Corp"],
+            mode="cache",
+        )
+    )
+    await gate_started.wait()
+    api.published_sessions["Corp"] = {"uid": "sess-new", "publish-time": {"iso-8601": "2026-10-23T15:00:00Z"}}
+    t_smart = asyncio.create_task(
+        coordinator.ensure(
+            scope="objects",
+            item_types=["host"],
+            handler=_handler_count,
+            mgmt_name="mds1",
+            domains=["Corp"],
+            mode="smart",
+            cache_ttl=0,
+        )
+    )
+    await asyncio.sleep(0.01)
+    gate_release.set()
+    await asyncio.gather(t_cache, t_smart)
+    assert smart_calls == 1
+
+    # Also verify looser-TTL (cache_ttl=3600) fast-path does NOT suppress tighter-TTL (cache_ttl=0) waiter
+    api.published_sessions.pop("Corp", None)
+    await cache.upsert_sync_state(
+        DomainSyncState(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            scope="objects",
+            item_type="host",
+            last_published_at=datetime(2026, 10, 23, 12, 0, 0),
+            last_session_uid="sess-Corp",
+            synced_at=clock[0] - timedelta(seconds=10),
+            status="ok",
+            object_count=5,
+        )
+    )
+    cache.get_sync_state = orig_get_sync_state  # type: ignore[method-assign]
+    hold_once = True
+    gate_started.clear()
+    gate_release.clear()
+    cache.get_sync_state = _slow_once  # type: ignore[method-assign]
+    ttl_calls = 0
+
+    async def _handler_ttl(probe: DomainProbeResult, _emit: Any) -> int:
+        nonlocal ttl_calls
+        ttl_calls += 1
+        return 1
+
+    orig_api_call = api.api_call
+    probe_calls = 0
+
+    async def _counting_api_call(
+        mgmt_name: str, command: str, payload: dict[str, Any] | None = None, **kwargs: Any
+    ) -> ApiCallResult:
+        nonlocal probe_calls
+        if command == "show-last-published-session":
+            probe_calls += 1
+        return await orig_api_call(mgmt_name, command, payload, **kwargs)
+
+    api.api_call = _counting_api_call  # type: ignore[method-assign]
+
+    t_loose = asyncio.create_task(
+        coordinator.ensure(
+            scope="objects",
+            item_types=["host"],
+            handler=_handler_ttl,
+            mgmt_name="mds1",
+            domains=["Corp"],
+            mode="smart",
+            cache_ttl=3600,
+        )
+    )
+    await gate_started.wait()
+    probes_before = probe_calls
+    t_tight = asyncio.create_task(
+        coordinator.ensure(
+            scope="objects",
+            item_types=["host"],
+            handler=_handler_ttl,
+            mgmt_name="mds1",
+            domains=["Corp"],
+            mode="smart",
+            cache_ttl=0,
+        )
+    )
+    await asyncio.sleep(0.01)
+    gate_release.set()
+    await asyncio.gather(t_loose, t_tight)
+    # Waiter with cache_ttl=0 ran remote probe even though loose TTL leader skipped remote probe!
+    assert probe_calls == probes_before + 1
+    assert ttl_calls == 0
+
+    cache.get_sync_state = orig_get_sync_state  # type: ignore[method-assign]
+
+    # 2. Mid-flight invalidation prevents waiter from skipping
+    handler_entered = asyncio.Event()
+    allow_handler_exit = asyncio.Event()
+    inv_runs = 0
+
+    async def _inv_handler(probe: DomainProbeResult, _emit: Any) -> int:
+        nonlocal inv_runs
+        inv_runs += 1
+        if inv_runs == 1:
+            handler_entered.set()
+            api.published_sessions["Corp"] = {
+                "uid": "sess-after-pub",
+                "publish-time": {"iso-8601": "2026-10-23T19:00:00Z"},
+            }
+            coordinator.invalidate_domain("mds1", "Corp")
+            await allow_handler_exit.wait()
+        return 2
+
+    t_lead = asyncio.create_task(
+        coordinator.ensure(
+            scope="objects", item_types=["host"], handler=_inv_handler, mgmt_name="mds1", domains=["Corp"], mode="force"
+        )
+    )
+    await handler_entered.wait()
+    t_wait = asyncio.create_task(
+        coordinator.ensure(
+            scope="objects", item_types=["host"], handler=_inv_handler, mgmt_name="mds1", domains=["Corp"], mode="smart"
+        )
+    )
+    await asyncio.sleep(0.01)
+    allow_handler_exit.set()
+    await asyncio.gather(t_lead, t_wait)
+    assert inv_runs == 2
+
+    # 3. Partial failure on stale 'network' does NOT overwrite already-fresh sibling 'host' as status="failed"
+    api.published_sessions.pop("Corp", None)
+    clock[0] += timedelta(seconds=1)
+    await cache.upsert_sync_state(
+        DomainSyncState(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            scope="objects",
+            item_type="host",
+            last_published_at=datetime(2026, 10, 23, 12, 0, 0),
+            last_session_uid="sess-Corp",
+            synced_at=clock[0],
+            status="ok",
+            object_count=5,
+        )
+    )
+
+    async def _fail_network(probe: DomainProbeResult, _emit: Any) -> int:
+        assert probe.stale_types == ["network"]
+        assert probe.fresh_types == ["host"]
+        raise RuntimeError("network fetch failed")
+
+    outcome = await coordinator.ensure(
+        scope="objects",
+        item_types=["host", "network"],
+        handler=_fail_network,
+        mgmt_name="mds1",
+        domains=["Corp"],
+        mode="smart",
+        cache_ttl=0,
+    )
+    assert "mds1:Corp" in outcome.failed_domains
+    host_state = await cache.get_sync_state("mds1", "Corp", "objects", "host")
+    net_state = await cache.get_sync_state("mds1", "Corp", "objects", "network")
+    assert host_state is not None and host_state.status == "ok"
+    assert net_state is not None and net_state.status == "failed"
+
+    await db.close()

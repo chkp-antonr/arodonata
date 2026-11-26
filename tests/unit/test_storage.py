@@ -1236,3 +1236,47 @@ async def test_local_sqlite_cache_permissions_0700_dir_and_0600_file(tmp_path: P
         assert (os.stat(db_file).st_mode & 0o777) == 0o600
     finally:
         await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-020-2")
+async def test_sqlite_rejects_symlinks_and_tightens_preexisting_file_permissions(tmp_path: Path) -> None:
+    """SCN-CACHE-020-2: DatabaseManager rejects SQLite symlinks/non-regular files and tightens pre-existing 0644 files to 0600."""
+    import os
+
+    from arodonata.core.errors import CacheError
+
+    if os.name == "nt":  # pragma: no cover
+        pytest.skip("POSIX permissions and symlinks required")
+
+    # 1. Pre-existing regular file with 0644 is tightened to 0600
+    existing_db = tmp_path / "preexisting.db"
+    existing_db.write_bytes(b"")
+    os.chmod(existing_db, 0o644)
+    db = DatabaseManager(engine=f"sqlite+aiosqlite:///{existing_db}")
+    try:
+        await db.initialize()
+        assert (os.stat(existing_db).st_mode & 0o777) == 0o600
+    finally:
+        await db.close()
+
+    # 2. Pre-planted symlink (valid target and dangling) fails closed before SQLite opens it
+    target_file = tmp_path / "real_target.db"
+    target_file.write_bytes(b"original")
+    symlink_db = tmp_path / "symlink.db"
+    symlink_db.symlink_to(target_file)
+    with pytest.raises(CacheError, match="symlink"):
+        DatabaseManager(engine=f"sqlite+aiosqlite:///{symlink_db}")
+    assert target_file.read_bytes() == b"original"
+
+    dangling_link = tmp_path / "dangling.db"
+    dangling_target = tmp_path / "does_not_exist.db"
+    dangling_link.symlink_to(dangling_target)
+    with pytest.raises(CacheError, match="symlink"):
+        DatabaseManager(engine=f"sqlite+aiosqlite:///{dangling_link}")
+    assert not dangling_target.exists()
+
+    # 3. Non-regular path (directory) fails closed
+    dir_path = tmp_path / "dir_as_db.db"
+    dir_path.mkdir()
+    with pytest.raises(CacheError, match="regular file"):
+        DatabaseManager(engine=f"sqlite+aiosqlite:///{dir_path}")

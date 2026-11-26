@@ -16,6 +16,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -31,6 +32,7 @@ from arodonata.adapters.checkpoint.sessions import (
     is_session_expired_result,
     normalize_domain_key,
 )
+from arodonata.adapters.checkpoint.target_resolver import resolve_tls_identity_host
 from arodonata.adapters.checkpoint.task_waiter import TaskWaiter, extract_task_ids
 from arodonata.adapters.checkpoint.tls import TrustPolicy
 from arodonata.adapters.checkpoint.transport import (
@@ -76,6 +78,22 @@ from arodonata.core.telemetry import span_attrs, traced
 
 # Backward-compatible private alias (canonical implementation lives in `arodonata.core.context`).
 _update_overlay_from_command = update_overlay_from_command
+
+
+@dataclass(slots=True)
+class _ResolvedCallSession:
+    """Resolved session, target IP, rate-limiter MDS IP, and TLS identity state for `api_call`."""
+
+    active_sid: str
+    target_ip: str
+    mds_ip: str
+    port: int
+    raw_target_ip: str | None
+    tls_identity_host: str | None
+    using_cached_sid: bool
+    active_auth_identity: str | None
+    active_ws: WriteSession | None
+    session_scope: str | None
 
 
 class AMgmtClient:
@@ -267,40 +285,22 @@ class AMgmtClient:
         if self._on_domain_invalidated is not None:
             self._on_domain_invalidated(mgmt_name, domain)
 
-    @traced
-    async def api_call(
+    async def _resolve_call_session(
         self,
         mgmt_name: str,
-        command: str,
-        payload: dict[str, Any] | None = None,
+        clean_cmd: str,
+        domain: str | None,
+        dom_key: str,
         *,
-        domain: str | None = None,
-        sid: str | None = None,
-        server_ip: str | None = None,
-        wait_for_task: bool = True,
-        timeout: float | None = None,
-    ) -> ApiCallResult:
-        """Execute a single Check Point Management API command (`/web_api/<command>`).
-
-        - Uses explicit `sid` if provided, else active `WriteSession` from `contextvars` if matching
-          `(mgmt_name, domain)`, else shared read-only session from `LoginCoordinator` (`sid_cache`).
-        - Transparently evicts expired cached SIDs and retries once with a fresh session.
-        - Re-resolves domain `active_ip` on failover/unreachable error and retries once.
-        - Polls returned `task-id` / `tasks` via `TaskWaiter` when `wait_for_task=True`.
-        - Updates `WriteSession.overlay` on `add-*` / `set-*` / `delete-*` and invalidates domain on `publish`.
-        """
-        clean_cmd = validate_command_name(command)
-        if not self._db.is_initialized:
-            await self._db.initialize()
-
-        dom_key = normalize_domain_key(domain)
+        sid: str | None,
+        server_ip: str | None,
+        is_readonly: bool,
+    ) -> _ResolvedCallSession:
+        """Resolve active SID, pinned target IP, rate-limiter MDS IP, and TLS identity host."""
         endpoint = self._login_coordinator.get_server_endpoint(mgmt_name)
-        span_attrs(mgmt_name=mgmt_name, domain=dom_key, cp_command=clean_cmd, wait_for_task=wait_for_task)
-
         active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key)
         using_cached_sid = False
         active_auth_identity: str | None = None
-        is_readonly = is_readonly_command(clean_cmd)
 
         if sid is not None:
             active_sid = sid
@@ -338,32 +338,202 @@ class AMgmtClient:
                 explicit_server_ip=ro_ip,
             )
 
-        from arodonata.adapters.checkpoint.target_resolver import resolve_tls_identity_host
-
-        call_budget = timeout if timeout is not None else self._settings.api_timeout
+        tls_identity_host = resolve_tls_identity_host(raw_target_ip, target_ip)
+        if tls_identity_host is None and active_sid and (server_ip is None or server_ip == target_ip):
+            stored_tls_host = self._login_coordinator.get_tls_identity_host(mgmt_name, active_sid)
+            if stored_tls_host is not None:
+                tls_identity_host = resolve_tls_identity_host(stored_tls_host, target_ip)
         session_scope = derive_session_pool_scope(active_sid) if (not using_cached_sid and active_sid) else None
+        return _ResolvedCallSession(
+            active_sid=active_sid,
+            target_ip=target_ip,
+            mds_ip=mds_ip,
+            port=port,
+            raw_target_ip=raw_target_ip,
+            tls_identity_host=tls_identity_host,
+            using_cached_sid=using_cached_sid,
+            active_auth_identity=active_auth_identity,
+            active_ws=active_ws,
+            session_scope=session_scope,
+        )
 
-        async def _execute_once(curr_sid: str, curr_ip: str, curr_mds_ip: str) -> ApiCallResult:
-            curr_tls_identity = resolve_tls_identity_host(raw_target_ip, curr_ip)
-            exec_kwargs: dict[str, Any] = {
-                "port": port,
-                "sid": curr_sid,
-                "timeout": call_budget,
+    async def _execute_transport_call(
+        self,
+        clean_cmd: str,
+        payload: dict[str, Any] | None,
+        ctx: _ResolvedCallSession,
+        call_budget: float,
+    ) -> ApiCallResult:
+        """Execute one transport call under the target MDS rate-limiter slot."""
+        exec_kwargs: dict[str, Any] = {
+            "port": ctx.port,
+            "sid": ctx.active_sid,
+            "timeout": call_budget,
+        }
+        if ctx.session_scope is not None:
+            exec_kwargs["session_scope"] = ctx.session_scope
+        if ctx.tls_identity_host is not None:
+            exec_kwargs["tls_identity_host"] = ctx.tls_identity_host
+        async with self._rate_limiter.slot(ctx.mds_ip):
+            return await self._transport.execute(
+                ctx.target_ip,
+                clean_cmd,
+                payload,
+                **exec_kwargs,
+            )
+
+    async def _retry_domain_failover(
+        self,
+        mgmt_name: str,
+        domain: str | None,
+        dom_key: str,
+        clean_cmd: str,
+        payload: dict[str, Any] | None,
+        ctx: _ResolvedCallSession,
+        call_budget: float,
+    ) -> tuple[bool, ApiCallResult | None]:
+        """Re-resolve domain active IP from MDS and retry once if active IP changed."""
+        refreshed = await self._login_coordinator.refresh_domain_active_ip(mgmt_name, dom_key)
+        if refreshed is None or not refreshed.active_ip or refreshed.active_ip == ctx.target_ip:
+            return False, None
+        endpoint = self._login_coordinator.get_server_endpoint(mgmt_name)
+        ctx.target_ip = refreshed.active_ip
+        ctx.mds_ip = refreshed.active_mds_ip or endpoint.host
+        ctx.raw_target_ip = refreshed.active_ip
+        ctx.tls_identity_host = resolve_tls_identity_host(ctx.raw_target_ip, ctx.target_ip)
+        if ctx.using_cached_sid:
+            await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=ctx.active_auth_identity)
+            ctx.active_sid, ctx.target_ip = await self._login_coordinator.get_readonly_session(
+                mgmt_name,
+                domain,
+                server_ip=ctx.target_ip,
+                force_new=True,
+            )
+        return True, await self._execute_transport_call(clean_cmd, payload, ctx, call_budget)
+
+    async def _retry_expired_readonly_session(
+        self,
+        mgmt_name: str,
+        domain: str | None,
+        dom_key: str,
+        clean_cmd: str,
+        payload: dict[str, Any] | None,
+        server_ip: str | None,
+        ctx: _ResolvedCallSession,
+        call_budget: float,
+    ) -> ApiCallResult:
+        """Evict expired cached RO SID, re-login, re-resolve target/MDS IPs + TLS identity, and retry once."""
+        endpoint = self._login_coordinator.get_server_endpoint(mgmt_name)
+        await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=ctx.active_auth_identity)
+        new_sid, ro_ip = await self._login_coordinator.get_readonly_session(
+            mgmt_name,
+            domain,
+            server_ip=server_ip,
+            force_new=True,
+        )
+        raw_target_ip = server_ip or (endpoint.host if dom_key == SYSTEM_DOMAIN_SENTINEL else ro_ip)
+        target_ip, mds_ip, port = await self._login_coordinator.resolve_target_ips(
+            mgmt_name,
+            domain,
+            explicit_server_ip=ro_ip,
+        )
+        ctx.active_sid = new_sid
+        ctx.raw_target_ip = raw_target_ip
+        ctx.target_ip = target_ip
+        ctx.mds_ip = mds_ip
+        ctx.port = port
+        tls_identity = resolve_tls_identity_host(raw_target_ip, target_ip)
+        if tls_identity is None and (server_ip is None or server_ip == target_ip):
+            stored_tls_host = self._login_coordinator.get_tls_identity_host(mgmt_name, new_sid)
+            if stored_tls_host is not None:
+                tls_identity = resolve_tls_identity_host(stored_tls_host, target_ip)
+        ctx.tls_identity_host = tls_identity
+        return await self._execute_transport_call(clean_cmd, payload, ctx, call_budget)
+
+    async def _poll_task_if_needed(
+        self,
+        res: ApiCallResult,
+        clean_cmd: str,
+        wait_for_task: bool,
+        timeout: float | None,
+        ctx: _ResolvedCallSession,
+    ) -> ApiCallResult:
+        """Poll asynchronous Check Point tasks via `TaskWaiter` when `wait_for_task=True`."""
+        if not (res.success and wait_for_task and clean_cmd != "show-task"):
+            return res
+        task_ids = extract_task_ids(res.data)
+        if not task_ids:
+            return res
+
+        async def _poll_show_task(poll_payload: dict[str, Any]) -> ApiCallResult:
+            poll_kwargs: dict[str, Any] = {
+                "port": ctx.port,
+                "sid": ctx.active_sid,
+                "timeout": None,  # Uses max(api_timeout, login_timeout) + 5s socket read timeout
             }
-            if session_scope is not None:
-                exec_kwargs["session_scope"] = session_scope
-            if curr_tls_identity is not None:
-                exec_kwargs["tls_identity_host"] = curr_tls_identity
-            async with self._rate_limiter.slot(curr_mds_ip):
+            if ctx.session_scope is not None:
+                poll_kwargs["session_scope"] = ctx.session_scope
+            if ctx.tls_identity_host is not None:
+                poll_kwargs["tls_identity_host"] = ctx.tls_identity_host
+            async with self._rate_limiter.slot(ctx.mds_ip):
                 return await self._transport.execute(
-                    curr_ip,
-                    clean_cmd,
-                    payload,
-                    **exec_kwargs,
+                    ctx.target_ip,
+                    "show-task",
+                    poll_payload,
+                    **poll_kwargs,
                 )
 
+        return await self._task_waiter.wait_for_tasks(
+            task_ids,
+            _poll_show_task,
+            timeout=timeout if timeout is not None else self._settings.task_timeout,
+            initial_result=res,
+            known_sids=[ctx.active_sid] if ctx.active_sid else None,
+        )
+
+    @traced
+    async def api_call(
+        self,
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        domain: str | None = None,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        wait_for_task: bool = True,
+        timeout: float | None = None,
+    ) -> ApiCallResult:
+        """Execute a single Check Point Management API command (`/web_api/<command>`).
+
+        - Uses explicit `sid` if provided, else active `WriteSession` from `contextvars` if matching
+          `(mgmt_name, domain)`, else shared read-only session from `LoginCoordinator` (`sid_cache`).
+        - Transparently evicts expired cached SIDs and retries once with a fresh session.
+        - Re-resolves domain `active_ip` on failover/unreachable error and retries once.
+        - Polls returned `task-id` / `tasks` via `TaskWaiter` when `wait_for_task=True`.
+        - Updates `WriteSession.overlay` on `add-*` / `set-*` / `delete-*` and invalidates domain on `publish`.
+        """
+        clean_cmd = validate_command_name(command)
+        if not self._db.is_initialized:
+            await self._db.initialize()
+
+        dom_key = normalize_domain_key(domain)
+        span_attrs(mgmt_name=mgmt_name, domain=dom_key, cp_command=clean_cmd, wait_for_task=wait_for_task)
+        is_readonly = is_readonly_command(clean_cmd)
+        call_budget = timeout if timeout is not None else self._settings.api_timeout
+
+        ctx = await self._resolve_call_session(
+            mgmt_name,
+            clean_cmd,
+            domain,
+            dom_key,
+            sid=sid,
+            server_ip=server_ip,
+            is_readonly=is_readonly,
+        )
+
         try:
-            res = await _execute_once(active_sid, target_ip, mds_ip)
+            res = await self._execute_transport_call(clean_cmd, payload, ctx, call_budget)
         except (ServerIdentityError, RateLimitTimeoutError):
             raise
         except (ApiTimeoutError, TransportError) as exc:
@@ -378,42 +548,42 @@ class AMgmtClient:
                 and dom_key != SYSTEM_DOMAIN_SENTINEL
             )
             if can_retry_failover:
-                refreshed = await self._login_coordinator.refresh_domain_active_ip(mgmt_name, dom_key)
-                if refreshed is not None and refreshed.active_ip and refreshed.active_ip != target_ip:
-                    target_ip = refreshed.active_ip
-                    mds_ip = refreshed.active_mds_ip or endpoint.host
-                    if using_cached_sid:
-                        await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=active_auth_identity)
-                        active_sid, target_ip = await self._login_coordinator.get_readonly_session(
-                            mgmt_name,
-                            domain,
-                            server_ip=target_ip,
-                            force_new=True,
-                        )
-                    res = await _execute_once(active_sid, target_ip, mds_ip)
+                switched, retry_res = await self._retry_domain_failover(
+                    mgmt_name,
+                    domain,
+                    dom_key,
+                    clean_cmd,
+                    payload,
+                    ctx,
+                    call_budget,
+                )
+                if switched and retry_res is not None:
+                    res = retry_res
                 else:
-                    if using_cached_sid:
-                        await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=active_auth_identity)
+                    if ctx.using_cached_sid:
+                        await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=ctx.active_auth_identity)
                     raise
             else:
-                if using_cached_sid:
-                    await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=active_auth_identity)
+                if ctx.using_cached_sid:
+                    await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=ctx.active_auth_identity)
                 raise
 
         # Handle session expiration on cached read-only session -> evict SID, re-login, and retry once
         is_self_show_session = clean_cmd.lower() == "show-session" and not (payload and payload.get("uid"))
-        if using_cached_sid and is_session_expired_result(
+        if ctx.using_cached_sid and is_session_expired_result(
             res,
             command="show-session" if is_self_show_session else None,
         ):
-            await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=active_auth_identity)
-            active_sid, target_ip = await self._login_coordinator.get_readonly_session(
+            res = await self._retry_expired_readonly_session(
                 mgmt_name,
                 domain,
-                server_ip=server_ip,
-                force_new=True,
+                dom_key,
+                clean_cmd,
+                payload,
+                server_ip,
+                ctx,
+                call_budget,
             )
-            res = await _execute_once(active_sid, target_ip, mds_ip)
 
         # Handle domain failover error code returned in HTTP response (read-only commands only - C8)
         if (
@@ -423,63 +593,31 @@ class AMgmtClient:
             and dom_key != SYSTEM_DOMAIN_SENTINEL
             and is_failover_or_unreachable_result(res)
         ):
-            refreshed = await self._login_coordinator.refresh_domain_active_ip(mgmt_name, dom_key)
-            if refreshed is not None and refreshed.active_ip and refreshed.active_ip != target_ip:
-                target_ip = refreshed.active_ip
-                mds_ip = refreshed.active_mds_ip or endpoint.host
-                if using_cached_sid:
-                    await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=active_auth_identity)
-                    active_sid, target_ip = await self._login_coordinator.get_readonly_session(
-                        mgmt_name,
-                        domain,
-                        server_ip=target_ip,
-                        force_new=True,
-                    )
-                res = await _execute_once(active_sid, target_ip, mds_ip)
+            switched, retry_res = await self._retry_domain_failover(
+                mgmt_name,
+                domain,
+                dom_key,
+                clean_cmd,
+                payload,
+                ctx,
+                call_budget,
+            )
+            if switched and retry_res is not None:
+                res = retry_res
 
         # If keepalive returned success=False, evict immediately from sid_cache
-        if clean_cmd == "keepalive" and not res.success and using_cached_sid:
-            await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=active_auth_identity)
+        if clean_cmd == "keepalive" and not res.success and ctx.using_cached_sid:
+            await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=ctx.active_auth_identity)
 
-        # Poll asynchronous server tasks via TaskWaiter if requested
-        if res.success and wait_for_task and clean_cmd != "show-task":
-            task_ids = extract_task_ids(res.data)
-            if task_ids:
-
-                async def _poll_show_task(poll_payload: dict[str, Any]) -> ApiCallResult:
-                    poll_tls_identity = resolve_tls_identity_host(raw_target_ip, target_ip)
-                    poll_kwargs: dict[str, Any] = {
-                        "port": port,
-                        "sid": active_sid,
-                        "timeout": None,  # Uses max(api_timeout, login_timeout) + 5s socket read timeout
-                    }
-                    if session_scope is not None:
-                        poll_kwargs["session_scope"] = session_scope
-                    if poll_tls_identity is not None:
-                        poll_kwargs["tls_identity_host"] = poll_tls_identity
-                    async with self._rate_limiter.slot(mds_ip):
-                        return await self._transport.execute(
-                            target_ip,
-                            "show-task",
-                            poll_payload,
-                            **poll_kwargs,
-                        )
-
-                res = await self._task_waiter.wait_for_tasks(
-                    task_ids,
-                    _poll_show_task,
-                    timeout=timeout if timeout is not None else self._settings.task_timeout,
-                    initial_result=res,
-                    known_sids=[active_sid] if active_sid else None,
-                )
+        res = await self._poll_task_if_needed(res, clean_cmd, wait_for_task, timeout, ctx)
 
         # Update WriteSession overlay on mutation commands
-        if active_ws is not None and (sid is None or sid == active_ws.sid):
-            update_overlay_from_command(active_ws.overlay, clean_cmd, payload, res)
+        if ctx.active_ws is not None and (sid is None or sid == ctx.active_ws.sid):
+            update_overlay_from_command(ctx.active_ws.overlay, clean_cmd, payload, res)
 
         # Invalidate domain freshness memo on successful publish
         if clean_cmd == "publish" and res.success:
-            eff_domain = domain or (active_ws.domain_name if active_ws is not None else None)
+            eff_domain = domain or (ctx.active_ws.domain_name if ctx.active_ws is not None else None)
             self.invalidate_domain(mgmt_name, eff_domain)
 
         return res

@@ -104,6 +104,13 @@ def _real_uid(*candidates: Any) -> str | None:
     return None
 
 
+def _restore_empty_groups_tags(op: dict[str, Any], action: PlannedAction) -> None:
+    """Explicitly emit `groups: []` / `tags: []` when mutated from empty prior state."""
+    for field_key in ("groups", "tags"):
+        if (field_key in action.diffs or field_key in action.payload) and field_key not in op:
+            op[field_key] = []
+
+
 def _invert_single_action(
     action: PlannedAction,
     result: ActionResult | None = None,
@@ -182,6 +189,7 @@ def _invert_object_action(
 
         # Restore prior field values
         _copy_prior_fields(op, prior, _OBJECT_INVERSE_FIELDS)
+        _restore_empty_groups_tags(op, action)
         return op
 
     if outcome == Outcome.DELETE:
@@ -232,6 +240,7 @@ def _invert_service_action(
             op["new-name"] = prior_name
 
         _copy_prior_fields(op, prior, _SERVICE_INVERSE_FIELDS)
+        _restore_empty_groups_tags(op, action)
         return op
 
     if outcome == Outcome.DELETE:
@@ -243,6 +252,7 @@ def _invert_service_action(
             "name": str(prior.get("name") or action.name),
         }
         _copy_prior_fields(op, prior, _SERVICE_INVERSE_FIELDS)
+        _restore_empty_groups_tags(op, action)
         return op
 
     return None
@@ -283,6 +293,7 @@ def _invert_group_action(
         if "members" in prior and isinstance(prior["members"], list):
             op["members"] = [str(m) for m in prior["members"]]
         _copy_prior_fields(op, prior, _GROUP_INVERSE_FIELDS)
+        _restore_empty_groups_tags(op, action)
         return op
 
     if outcome == Outcome.DELETE:
@@ -296,6 +307,7 @@ def _invert_group_action(
         if "members" in prior and isinstance(prior["members"], list):
             op["members"] = [str(m) for m in prior["members"]]
         _copy_prior_fields(op, prior, _GROUP_INVERSE_FIELDS)
+        _restore_empty_groups_tags(op, action)
         return op
 
     return None

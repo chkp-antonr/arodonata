@@ -185,3 +185,41 @@ def test_domain_models_and_sid_cache_entry_hygiene() -> None:
     assert asset.asset_id == "mds1:CMA1:gw-cluster-1"
     assert asset.ipv4_address == "192.0.2.1"
     assert len(asset.interfaces) == 1
+
+
+@pytest.mark.spec("SCN-SESS-014-4")
+def test_auth_context_and_server_endpoint_config_mask_secrets_on_model_dump() -> None:
+    """SCN-SESS-014-4: AuthContext and ServerEndpointConfig mask secrets in model_dump and model_dump_json."""
+    from pydantic import BaseModel
+
+    from arodonata.core.config import ServerEndpointConfig
+
+    auth_pw = AuthContext(username="admin1", password="secret-password-123", user_id="u-1")
+    auth_key = AuthContext(api_key="secret-api-key-456", user_id="u-2")
+    endpoint = ServerEndpointConfig(name="mds1", host="10.0.0.1", port=443, api_key="endpoint-secret-789")
+
+    # Python attribute access still yields raw plaintext
+    assert auth_pw.password == "secret-password-123"
+    assert auth_key.api_key == "secret-api-key-456"
+    assert endpoint.api_key == "endpoint-secret-789"
+
+    # Direct model_dump() and model_dump_json() mask secrets
+    assert auth_pw.model_dump()["password"] == REDACTED_PLACEHOLDER
+    assert "secret-password-123" not in auth_pw.model_dump_json()
+    assert auth_key.model_dump()["api_key"] == REDACTED_PLACEHOLDER
+    assert "secret-api-key-456" not in auth_key.model_dump_json()
+    assert endpoint.model_dump()["api_key"] == REDACTED_PLACEHOLDER
+    assert "endpoint-secret-789" not in endpoint.model_dump_json()
+
+    # Nested inside enclosing Pydantic models also masks secrets
+    class _Envelope(BaseModel):
+        auth: AuthContext
+        server: ServerEndpointConfig
+
+    env = _Envelope(auth=auth_pw, server=endpoint)
+    dumped = env.model_dump()
+    assert dumped["auth"]["password"] == REDACTED_PLACEHOLDER
+    assert dumped["server"]["api_key"] == REDACTED_PLACEHOLDER
+    json_out = env.model_dump_json()
+    assert "secret-password-123" not in json_out
+    assert "endpoint-secret-789" not in json_out

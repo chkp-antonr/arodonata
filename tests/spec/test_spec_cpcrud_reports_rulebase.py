@@ -711,7 +711,13 @@ async def test_staged_adoption_refuses_foreign_smartconsole_discarded_and_omits_
 
     # Eligible empty-application session adopts non-disruptively with force_disconnect=False (no disconnect-active-session key)
     api.calls.clear()
-    res_ok = await executor.publish_staged_session("mds1", "Corp", session_uid="blank-app-uid", force_disconnect=False)
+    res_ok = await executor.publish_staged_session(
+        "mds1",
+        "Corp",
+        session_uid="blank-app-uid",
+        force_disconnect=False,
+        allow_stale=True,
+    )
     assert res_ok.success is True
     takeover_calls = [c for c in api.calls if c[1] == "take-over-session"]
     assert len(takeover_calls) == 1

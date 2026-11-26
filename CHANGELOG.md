@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **tls,sessions,sse,reports**: Bound `(host, port)` alongside `(id_host, port)` in `TrustPolicy.verify_fingerprint()` (`REQ-SESS-014`), added `REDACTED_PLACEHOLDER` serialization masks for `password`/`api_key` on `AuthContext` and `ServerEndpointConfig`, enforced `0o600` permissions and symlink rejection on existing SQLite cache files (`REQ-CACHE-020`), stripped CR/LF/NUL control characters and redacted SIDs in `SSEEvent.encode()` (`REQ-CLIENT-019`), escaped nested `[` and `]` inside bold/italic inline Markdown spans (`REQ-REPORT-008`), and scrubbed bare SIDs across `ScriptRepositoryService` write paths and targeted topology refresh errors (`REQ-TOPO-022`).
+- **mcp,cpcrud**: Hardened `mcp_tool_guard` error lookups against uninitialized DB errors, registered `stored_staged.sid` before staged execution, enforced owner-fair `plan_store` eviction (`REQ-MCP-016`), and failed closed on `Executor.publish_staged_session(..., allow_stale=False)` when no verified baseline stamp is available (`REQ-CPCRUD-017`).
+
+### Fixed
+
+- **wave-10-deep-audit**: Remediated 43 deep-audit findings across Sessions/MDSM (`DomainService` `status == "ok"` discovery gate, `LoginGate` `AuthenticationError` translation, target-MDS `SessionCleaner` rate-limit scoping, decomposed `AMgmtClient.api_call()` failover/IP-pin retries), Cache/Sync (`DomainSyncCoordinator` `mode="cache"` / looser-TTL / mid-flight invalidation isolation and healthy sibling preservation), Topology (`VsxBundleSlice` per-VS error isolation, post-collection `SyncCompletedEvent` ordering, LPM `best_entry` scoring, manual gateway prefix export, spaced VS `awk` extraction), Rulebase (`list_collection_with_fallback` fail-closed `paging_inconsistent` / non-RBAC errors, bounded `fetch_paged_rulebase` drift detection, unified synthetic UIDs, empty Global-placeholder / inline layer prefixes), CPCRUD & Reports (unified `check_where_used` / entity diff planning, empty `groups`/`tags` inverse rollback, fail-closed unparsed `RangeScope` timestamps, non-propagating invalidated `OwnedSession`), MCP & API Reference (`cache_mode="cache"` zero-live domain pre-validation, upfront explicit fan-out quota ordering, unified multi-MDS `search_objects`, `min(synced_at)` stalest cache age, UUID/`Cpmi*` `show_object`, clamped cached `show_rulebase`, Gaia/CME schema preservation under `v2.2`/`v2.0.1`), and Testing (`FileReplayApiMock` atomic section/group rollback, `switch-session` aliased SID rotation, read-only `disconnect` guard, clean direct-mutation baselines).
+
+### Changed
+
+- **openspec,tests**: Synced all 10 `wave-10-audit-remediation` delta specs into canonical `openspec/specs/` (replacing legacy startup-seed `REQ-SESS-004` with fail-closed session cleanup without RW cache seeding and adding `REQ-CACHE-020`, `REQ-CLIENT-019`, `REQ-CPCRUD-017`, `REQ-MCP-016`, `REQ-REPORT-008`, `REQ-RULE-009`, `REQ-SESS-014`, `REQ-TOPO-022`, `REQ-ITEST-021`, plus `REQ-APIREF-003`/`REQ-MCP-013` updates) with full `@pytest.mark.spec("SCN-...")` traceability across 361 scenarios.
+
 ## v2.6.7 (2026-11-25)
 
 ### Feat

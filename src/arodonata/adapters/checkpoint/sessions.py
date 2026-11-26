@@ -12,7 +12,7 @@ response classifiers, and shared `logger`:
   `login_throttle_window` (`70s`) on Check Point login throttling (bounded by `login_max_wait`),
   and retries transient database revision/lock conditions (`Database revision is in progress`).
 - Re-resolves domain `active_ip` and `active_mds_ip` from the MDS system domain on failover.
-- Cleans up stale sessions via `SessionCleaner` and seeds the system domain SID on startup.
+- Cleans up stale sessions via `SessionCleaner`.
 """
 
 from __future__ import annotations
@@ -116,10 +116,11 @@ class LoginCoordinator:
         self._sleep = sleep_fn
 
         self._domain_login_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self._inflight_logins: set[str] = set()
         self._evicted_auth_identities: set[tuple[str, str]] = set()
         self._resolved_principals: dict[tuple[str, str], str] = {}
         self._active_dedicated_sids: dict[tuple[str, str], str] = {}
+        self._dedicated_tls_identity_hosts: dict[tuple[str, str], str] = {}
+        self._readonly_tls_identity_hosts: dict[tuple[str, str], str] = {}
         self._known_mds_ips: dict[str, set[str]] = defaultdict(set)
         self._cleaning_max_sessions: set[str] = set()
 
@@ -150,10 +151,11 @@ class LoginCoordinator:
         """Attach `SessionCleaner` for max-sessions recovery."""
         self._session_cleaner = cleaner
 
-    def has_inflight_or_cached_login(self, mgmt_name: str, domain: str | None = None) -> bool:
-        """Return `True` if a login is currently in flight for `(mgmt_name, domain)`."""
-        dom_key = normalize_domain_key(domain)
-        return f"{mgmt_name}:{dom_key}" in self._inflight_logins
+    def get_tls_identity_host(self, mgmt_name: str, sid: str) -> str | None:
+        """Return remembered hostname-pin identity for `(mgmt_name, sid)` if any."""
+        return self._dedicated_tls_identity_hosts.get((mgmt_name, sid)) or self._readonly_tls_identity_hosts.get(
+            (mgmt_name, sid)
+        )
 
     def get_server_endpoint(self, mgmt_name: str) -> ServerEndpointConfig:
         """Resolve `ServerEndpointConfig` for `mgmt_name` from `ArodonataSettings`."""
@@ -257,10 +259,6 @@ class LoginCoordinator:
             session_expire_seconds=self._settings.session_expire_seconds,
         )
 
-    def adopt_dedicated_sid(self, mgmt_name: str, sid: str) -> None:
-        """Release `sid` from dedicated-session logout tracking after seeding it into `sid_cache`."""
-        self._active_dedicated_sids.pop((mgmt_name, sid), None)
-
     def _is_sid_entry_usable(self, entry: SIDCacheEntry, auth: AuthContext) -> bool:
         """Return `True` if `entry` is fresh and belongs to the exact same `auth.identity_key` (`C4`)."""
         return is_sid_entry_usable(
@@ -298,6 +296,8 @@ class LoginCoordinator:
         if not force_new:
             cached = await self._cache.get_sid(mgmt_name, dom_key, auth_identity=identity)
             if cached is not None and self._is_sid_entry_usable(cached, auth):
+                if cached.tls_identity_host:
+                    self._readonly_tls_identity_hosts[(mgmt_name, cached.sid)] = cached.tls_identity_host
                 span_attrs(sid_reused=True)
                 return cached.sid, (validated_ip or cached.server_ip)
 
@@ -305,36 +305,37 @@ class LoginCoordinator:
             if not force_new:
                 cached = await self._cache.get_sid(mgmt_name, dom_key, auth_identity=identity)
                 if cached is not None and self._is_sid_entry_usable(cached, auth):
+                    if cached.tls_identity_host:
+                        self._readonly_tls_identity_hosts[(mgmt_name, cached.sid)] = cached.tls_identity_host
                     span_attrs(sid_reused=True)
                     return cached.sid, (validated_ip or cached.server_ip)
 
-            self._inflight_logins.add(f"{mgmt_name}:{dom_key}")
-            try:
-                sid, resolved_ip, session_uid = await self._perform_gated_login(
-                    mgmt_name,
-                    domain,
-                    auth=auth,
-                    explicit_server_ip=server_ip,
-                    read_only=True,
-                )
-                now = self._now()
-                entry = SIDCacheEntry(
-                    id=f"{mgmt_name}:{dom_key}:{identity}",
-                    mgmt_name=mgmt_name,
-                    domain_name=dom_key,
-                    sid=sid,
-                    server_ip=resolved_ip,
-                    session_uid=session_uid,
-                    auth_identity=identity,
-                    created_at=now,
-                    last_used_at=now,
-                    expires_at=now + timedelta(seconds=self._settings.session_expire_seconds),
-                )
-                await self._cache.upsert_sid(entry)
-                span_attrs(sid_reused=False, server_ip=resolved_ip)
-                return sid, resolved_ip
-            finally:
-                self._inflight_logins.discard(f"{mgmt_name}:{dom_key}")
+            sid, resolved_ip, session_uid, tls_identity_host = await self._perform_gated_login_with_tls(
+                mgmt_name,
+                domain,
+                auth=auth,
+                explicit_server_ip=server_ip,
+                read_only=True,
+            )
+            if tls_identity_host:
+                self._readonly_tls_identity_hosts[(mgmt_name, sid)] = tls_identity_host
+            now = self._now()
+            entry = SIDCacheEntry(
+                id=f"{mgmt_name}:{dom_key}:{identity}",
+                mgmt_name=mgmt_name,
+                domain_name=dom_key,
+                sid=sid,
+                server_ip=resolved_ip,
+                tls_identity_host=tls_identity_host,
+                session_uid=session_uid,
+                auth_identity=identity,
+                created_at=now,
+                last_used_at=now,
+                expires_at=now + timedelta(seconds=self._settings.session_expire_seconds),
+            )
+            await self._cache.upsert_sid(entry)
+            span_attrs(sid_reused=False, server_ip=resolved_ip)
+            return sid, resolved_ip
 
     @traced
     async def create_dedicated_session(
@@ -355,7 +356,7 @@ class LoginCoordinator:
         eff_name = session_name or (resolved_user.session_name if resolved_user else None)
         eff_desc = session_description or (resolved_user.session_description if resolved_user else None)
 
-        sid, resolved_ip, session_uid = await self._perform_gated_login(
+        sid, resolved_ip, session_uid, tls_identity_host = await self._perform_gated_login_with_tls(
             mgmt_name,
             domain,
             auth=resolved_auth,
@@ -366,6 +367,8 @@ class LoginCoordinator:
             allow_max_sessions_cleanup=allow_max_sessions_cleanup,
         )
         self._active_dedicated_sids[(mgmt_name, sid)] = resolved_ip
+        if tls_identity_host:
+            self._dedicated_tls_identity_hosts[(mgmt_name, sid)] = tls_identity_host
         return sid, resolved_ip, session_uid
 
     async def _perform_gated_login(
@@ -381,6 +384,31 @@ class LoginCoordinator:
         allow_max_sessions_cleanup: bool = True,
     ) -> tuple[str, str, str | None]:
         """Authenticate against Check Point under `LoginGate` with throttle and transient retry handling."""
+        sid, resolved_ip, session_uid, _tls_identity_host = await self._perform_gated_login_with_tls(
+            mgmt_name,
+            domain,
+            auth=auth,
+            explicit_server_ip=explicit_server_ip,
+            session_name=session_name,
+            session_description=session_description,
+            read_only=read_only,
+            allow_max_sessions_cleanup=allow_max_sessions_cleanup,
+        )
+        return sid, resolved_ip, session_uid
+
+    async def _perform_gated_login_with_tls(
+        self,
+        mgmt_name: str,
+        domain: str | None,
+        *,
+        auth: AuthContext,
+        explicit_server_ip: str | None = None,
+        session_name: str | None = None,
+        session_description: str | None = None,
+        read_only: bool = False,
+        allow_max_sessions_cleanup: bool = True,
+    ) -> tuple[str, str, str | None, str | None]:
+        """Authenticate under `LoginGate` and return `(sid, target_ip, session_uid, tls_identity_host)`."""
         dom_key = normalize_domain_key(domain)
         target_ip, mds_ip, port = await self.resolve_target_ips(
             mgmt_name,
@@ -445,6 +473,7 @@ class LoginCoordinator:
                     )
                     if switched is not None:
                         target_ip, mds_ip = switched
+                        tls_identity_host = None
                         transport_retries = 0
                         transient_delay = 2.0
                         continue
@@ -495,7 +524,7 @@ class LoginCoordinator:
                     self._resolved_principals[(mgmt_name, auth.identity_key)] = resolved_user.strip()
                 session_uid = res.data.get("uid")
                 self._evicted_auth_identities.discard((mgmt_name, auth.identity_key))
-                return sid, target_ip, (str(session_uid) if session_uid else None)
+                return sid, target_ip, (str(session_uid) if session_uid else None), tls_identity_host
 
             # 1. Fast-fail on invalid credentials (never retry)
             if is_invalid_credentials_result(res):
@@ -541,6 +570,7 @@ class LoginCoordinator:
                 )
                 if switched is not None:
                     target_ip, mds_ip = switched
+                    tls_identity_host = None
                     continue
 
             # 4. Max sessions refusal -> trigger SessionCleaner once (guarded against recursion) if available
@@ -660,6 +690,17 @@ class LoginCoordinator:
         raw_target_ip = server_ip or (cached.server_ip if cached is not None else endpoint.host)
         target_ip, mds_ip, port = await self.resolve_target_ips(mgmt_name, domain, explicit_server_ip=raw_target_ip)
         tls_identity_host = resolve_tls_identity_host(raw_target_ip, target_ip)
+        if (
+            tls_identity_host is None
+            and cached is not None
+            and cached.tls_identity_host
+            and (server_ip is None or server_ip in (cached.server_ip, cached.tls_identity_host))
+        ):
+            tls_identity_host = resolve_tls_identity_host(cached.tls_identity_host, target_ip)
+        if tls_identity_host is None and server_ip is None:
+            stored_ro_host = self._readonly_tls_identity_hosts.get((mgmt_name, target_sid))
+            if stored_ro_host:
+                tls_identity_host = resolve_tls_identity_host(stored_ro_host, target_ip)
 
         try:
             async with self._rate_limiter.slot(mds_ip):
@@ -728,8 +769,11 @@ class LoginCoordinator:
             return False
         endpoint = self.get_server_endpoint(mgmt_name)
         dedicated_ip = self._active_dedicated_sids.get((mgmt_name, sid))
+        dedicated_tls_host = self._dedicated_tls_identity_hosts.get((mgmt_name, sid))
         cached_entries = await self._cache.list_sids(mgmt_name=mgmt_name)
         matching_entries = [entry for entry in cached_entries if entry.sid == sid]
+        cached_tls_host = next((e.tls_identity_host for e in matching_entries if e.tls_identity_host), None)
+        ro_tls_host = self._readonly_tls_identity_hosts.get((mgmt_name, sid))
 
         if server_ip:
             target_ip, mds_ip, port = await self.resolve_target_ips(
@@ -737,12 +781,22 @@ class LoginCoordinator:
                 explicit_server_ip=server_ip,
             )
             tls_identity_host = resolve_tls_identity_host(server_ip, target_ip)
+            if tls_identity_host is None:
+                known_host_candidate: str | None = None
+                if server_ip == dedicated_ip and dedicated_tls_host:
+                    known_host_candidate = dedicated_tls_host
+                elif any(e.server_ip == server_ip for e in matching_entries) and (cached_tls_host or ro_tls_host):
+                    known_host_candidate = cached_tls_host or ro_tls_host
+                tls_identity_host = resolve_tls_identity_host(known_host_candidate, target_ip)
         else:
             cached_ip = matching_entries[0].server_ip if matching_entries else None
             target_ip = dedicated_ip or cached_ip or endpoint.host
             mds_ip = endpoint.host
             port = endpoint.port
-            tls_identity_host = None
+            tls_identity_host = resolve_tls_identity_host(
+                dedicated_tls_host or cached_tls_host or ro_tls_host,
+                target_ip,
+            )
             if target_ip != endpoint.host:
                 cached_domains = await self._cache.get_domains(mgmt_name, include_global=True)
                 mds_ip = resolve_active_mds_ip_for_target(target_ip, endpoint.host, cached_domains)
@@ -769,6 +823,8 @@ class LoginCoordinator:
                 )
             if res.success:
                 self._active_dedicated_sids.pop((mgmt_name, sid), None)
+                self._dedicated_tls_identity_hosts.pop((mgmt_name, sid), None)
+                self._readonly_tls_identity_hosts.pop((mgmt_name, sid), None)
             return res.success
         except ServerIdentityError:
             raise
@@ -790,6 +846,7 @@ class LoginCoordinator:
                 if await self.logout_sid(entry.mgmt_name, entry.sid, server_ip=entry.server_ip):
                     logged_out += 1
                 else:
+                    self._readonly_tls_identity_hosts.pop((entry.mgmt_name, entry.sid), None)
                     await self._cache.evict_sid(
                         entry.mgmt_name,
                         entry.domain_name,

@@ -170,7 +170,11 @@ def extract_vs_slice_from_bundle(
     """Extract a specific Virtual System slice from VSX bundle output, or return original output if not bundled."""
     is_vs = (vsid is not None and int(vsid) > 0) or bool(vs_name and vs_name.strip())
     if VSX_BUNDLE_START_MARKER not in stdout:
-        if base_result is not None and not base_result.success:
+        if (
+            base_result is not None
+            and not base_result.success
+            and base_result.error_code not in ("vs_context_error", "vs_not_found_in_bundle")
+        ):
             return base_result
         if is_vs:
             return GatewayCliResult(
@@ -186,7 +190,11 @@ def extract_vs_slice_from_bundle(
                     "may be outdated or failed to detect VSX."
                 ),
             )
-        if base_result is not None and not base_result.success:
+        if (
+            base_result is not None
+            and not base_result.success
+            and base_result.error_code not in ("vs_context_error", "vs_not_found_in_bundle")
+        ):
             return base_result
         return GatewayCliResult(success=True, stdout=stdout, executor=executor)
 
@@ -238,7 +246,11 @@ def extract_vs_slice_from_bundle(
             ),
         )
 
-    if base_result is not None and not base_result.success:
+    if (
+        base_result is not None
+        and not base_result.success
+        and base_result.error_code not in ("vs_context_error", "vs_not_found_in_bundle")
+    ):
         err_code = base_result.error_code or (matched.error and "vs_context_error") or "vsx_bundle_run_failed"
         err_msg = base_result.error_message or (matched.error if matched else "") or "Underlying run-script task failed"
         return GatewayCliResult(

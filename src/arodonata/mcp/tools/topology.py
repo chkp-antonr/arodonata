@@ -15,8 +15,6 @@ from arodonata.mcp.errors import (
     collect_known_sids,
     json_tool_result,
     mcp_tool_guard,
-    resolve_mgmt_name,
-    validate_domain_or_fail,
 )
 from arodonata.mcp.quota import MCPToolQuotaManager
 from arodonata.mcp.tools._common import (
@@ -24,7 +22,7 @@ from arodonata.mcp.tools._common import (
     _enforce_live_quota_if_sync_required,
     _is_live_cache_mode,
     _normalize_cache_mode,
-    _validate_optional_domains,
+    resolve_and_validate_scope,
 )
 
 
@@ -59,14 +57,13 @@ def register_topology_tools(
         cache_mode: str = "smart",
     ) -> CallToolResult:
         client = client_getter()
-        eff_mgmt = resolve_mgmt_name(client, mgmt_name) if mgmt_name else None
         mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
-        if eff_mgmt and domain:
-            eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
-        else:
-            eff_domain = domain.strip() if domain and domain.strip() else None
-            if eff_domain:
-                await _validate_optional_domains(client, eff_mgmt, [eff_domain], cache_mode=mode)
+        eff_mgmt, eff_domain, _ = await resolve_and_validate_scope(
+            client,
+            mgmt_name,
+            domain=domain,
+            cache_mode=mode,
+        )
         eff_mode: CacheMode = "force" if is_live else mode
         await _enforce_live_quota_if_sync_required(client, eff_mgmt, eff_domain, "topology", eff_mode)
         candidates = await client.find_affected_gateways(
@@ -79,8 +76,7 @@ def register_topology_tools(
             include_policy_inferred=include_policy_inferred,
             cache_mode=eff_mode,
         )
-        target_mgmt = eff_mgmt or (client.settings.mgmt_names[0] if client.settings.mgmt_names else "default")
-        age = None if is_live else await _compute_cache_age(client, target_mgmt, eff_domain, "topology", "*")
+        age = None if is_live else await _compute_cache_age(client, eff_mgmt, eff_domain, "topology", "*")
         serialized = [c.model_dump(mode="json") for c in candidates]
         topology_warnings: list[str] = []
         for c in candidates:

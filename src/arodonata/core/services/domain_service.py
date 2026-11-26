@@ -275,7 +275,7 @@ class DomainService:
     ) -> None:
         existing = await self._cache.get_domains(mgmt_name, include_global=True)
         sync_state = await self._cache.get_sync_state(mgmt_name, SYSTEM_DOMAIN_KEY, "domains", "*")
-        persisted_synced_at = sync_state.synced_at if sync_state is not None else None
+        persisted_synced_at = sync_state.synced_at if (sync_state is not None and sync_state.status == "ok") else None
 
         if not self._tracker.needs_refresh(
             mgmt_name,
@@ -289,7 +289,9 @@ class DomainService:
         async with self._refresh_locks[mgmt_name]:
             existing = await self._cache.get_domains(mgmt_name, include_global=True)
             sync_state = await self._cache.get_sync_state(mgmt_name, SYSTEM_DOMAIN_KEY, "domains", "*")
-            persisted_synced_at = sync_state.synced_at if sync_state is not None else None
+            persisted_synced_at = (
+                sync_state.synced_at if (sync_state is not None and sync_state.status == "ok") else None
+            )
             if not self._tracker.needs_refresh(
                 mgmt_name,
                 has_cached_domains=bool(existing),
@@ -365,15 +367,18 @@ class DomainService:
                 error_code=res.error_code or str(res.status_code),
                 error_message=err_summary,
             )
-            # Record failure in domain_sync_state and return existing cached domains
+            # Record failure in domain_sync_state while preserving prior synced_at and existing cached domains
+            prior_state = await self._cache.get_sync_state(mgmt_name, SYSTEM_DOMAIN_KEY, "domains", "*")
             await self._cache.upsert_sync_state(
                 DomainSyncState(
                     mgmt_name=mgmt_name,
                     domain_name=SYSTEM_DOMAIN_KEY,
                     scope="domains",
                     item_type="*",
-                    synced_at=now,
+                    last_published_at=prior_state.last_published_at if prior_state is not None else None,
+                    synced_at=prior_state.synced_at if prior_state is not None else None,
                     status="failed",
+                    object_count=prior_state.object_count if prior_state is not None else 0,
                     last_error=err_summary,
                 )
             )

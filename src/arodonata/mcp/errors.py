@@ -494,14 +494,31 @@ def mcp_tool_guard(
                         is_error=True,
                     )
                 except InvalidCredentialsError as cred_exc:
-                    client = client_getter()
-                    eff_mgmt = (
-                        resolve_mgmt_name(client, mgmt_arg)
-                        if mgmt_arg
-                        else (client.settings.mgmt_names[0] if client.settings.mgmt_names else "default")
-                    )
-                    known = await get_known_domain_names(client, eff_mgmt, refresh_if_empty=False)
-                    known_sids = await collect_known_sids(client, eff_mgmt)
+                    client_or_none: ArodonataClient | None = None
+                    eff_mgmt = mgmt_arg or "default"
+                    known: list[str] = []
+                    try:
+                        client_or_none = client_getter()
+                        eff_mgmt = (
+                            resolve_mgmt_name(client_or_none, mgmt_arg)
+                            if mgmt_arg
+                            else (
+                                client_or_none.settings.mgmt_names[0]
+                                if client_or_none.settings.mgmt_names
+                                else "default"
+                            )
+                        )
+                    except Exception:
+                        pass
+                    if client_or_none is not None:
+                        try:
+                            known = await get_known_domain_names(client_or_none, eff_mgmt, refresh_if_empty=False)
+                        except Exception:
+                            known = []
+                    try:
+                        known_sids = await collect_known_sids(client_or_none, eff_mgmt)
+                    except Exception:
+                        known_sids = await collect_known_sids(None, eff_mgmt)
                     cred_failure = format_invalid_credentials_failure(
                         mgmt_name=eff_mgmt,
                         domain=domain_arg,
@@ -528,10 +545,24 @@ def mcp_tool_guard(
                     ConfigurationError,
                     ValidationError,
                 ) as dom_exc:
-                    client = client_getter()
-                    eff_mgmt = mgmt_arg or (client.settings.mgmt_names[0] if client.settings.mgmt_names else "default")
-                    known = await get_known_domain_names(client, eff_mgmt, refresh_if_empty=False)
-                    known_sids = await collect_known_sids(client, eff_mgmt)
+                    client_or_none = None
+                    eff_mgmt = mgmt_arg or "default"
+                    known = []
+                    try:
+                        client_or_none = client_getter()
+                        if not mgmt_arg and client_or_none.settings.mgmt_names:
+                            eff_mgmt = client_or_none.settings.mgmt_names[0]
+                    except Exception:
+                        pass
+                    if isinstance(dom_exc, (DomainNotFoundError, AmbiguousLayerName)) and client_or_none is not None:
+                        try:
+                            known = await get_known_domain_names(client_or_none, eff_mgmt, refresh_if_empty=False)
+                        except Exception:
+                            known = []
+                    try:
+                        known_sids = await collect_known_sids(client_or_none, eff_mgmt)
+                    except Exception:
+                        known_sids = await collect_known_sids(None, eff_mgmt)
                     extra_known = f" Known domains on {eff_mgmt!r}: {', '.join(known)}." if known else ""
                     msg = redact_sid(f"{dom_exc}{extra_known}", known_sids=known_sids)
                     logger.warning(

@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from arodonata.core.errors import (
@@ -78,6 +78,11 @@ class ServerEndpointConfig(BaseModel):
     port: int = Field(default=443, ge=1, le=65535)
     api_key: str | None = Field(default=None, repr=False)
     api_version: str | None = Field(default=None)
+
+    @field_serializer("api_key")
+    def _mask_api_key(self, value: str | None) -> str | None:
+        """Mask `api_key` during Pydantic serialization without hiding the Python attribute."""
+        return REDACTED_PLACEHOLDER if value else value
 
     def __repr__(self) -> str:
         key_state = REDACTED_PLACEHOLDER if self.api_key else None

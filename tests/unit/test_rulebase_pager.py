@@ -329,3 +329,121 @@ async def test_pager_zero_rule_advancing_page_and_truncated_total_error() -> Non
             layer_uid="layer-1",
             limit=1,
         )
+
+
+@pytest.mark.spec("SCN-RULE-009-1")
+@pytest.mark.asyncio
+async def test_pager_bounds_duplicate_pages_empty_page_cap_and_total_drift() -> None:
+    """SCN-RULE-009-1 (DA-029): Reject duplicate offset-ignoring pages, empty-page loops, and `total` drift."""
+    # 1. Repeated duplicate rules with omitted total fail instead of looping forever
+    dup_pages = {
+        0: {
+            "uid": "layer-1",
+            "name": "Network",
+            "rulebase": [{"uid": "r1", "name": "R1", "type": "access-rule", "rule-number": 1}],
+        },
+        1: {
+            "uid": "layer-1",
+            "name": "Network",
+            "rulebase": [{"uid": "r1", "name": "R1", "type": "access-rule", "rule-number": 1}],
+        },
+    }
+    with pytest.raises(RuntimeError, match="Duplicate/stalled rulebase page"):
+        await fetch_paged_rulebase(
+            PagerFakeApi(dup_pages),
+            "mds1",
+            "Corp",
+            rulebase_type="access",
+            layer_uid="layer-1",
+            limit=1,
+        )
+
+    # 2. Extreme total with consecutive empty advancing pages stalls out safely
+    empty_loop_pages = {
+        i: {"uid": "layer-1", "name": "Network", "from": i, "to": i + 1, "total": 10_000_000, "rulebase": []}
+        for i in range(10)
+    }
+    with pytest.raises(RuntimeError, match="stalled after"):
+        await fetch_paged_rulebase(
+            PagerFakeApi(empty_loop_pages),
+            "mds1",
+            "Corp",
+            rulebase_type="access",
+            layer_uid="layer-1",
+            limit=1,
+        )
+
+    # 3. Persistent mid-fetch data['total'] drift fails rather than silently truncating
+    drift_pages = {
+        0: {
+            "uid": "layer-1",
+            "name": "Network",
+            "from": 1,
+            "to": 1,
+            "total": 2,
+            "rulebase": [{"uid": "r1", "name": "R1", "type": "access-rule", "rule-number": 1}],
+        },
+        1: {
+            "uid": "layer-1",
+            "name": "Network",
+            "from": 2,
+            "to": 2,
+            "total": 4,
+            "rulebase": [{"uid": "r2", "name": "R2", "type": "access-rule", "rule-number": 2}],
+        },
+    }
+    with pytest.raises(RuntimeError, match="Total rule count changed mid-fetch"):
+        await fetch_paged_rulebase(
+            PagerFakeApi(drift_pages),
+            "mds1",
+            "Corp",
+            rulebase_type="access",
+            layer_uid="layer-1",
+            limit=1,
+        )
+
+
+@pytest.mark.spec("SCN-RULE-009-2")
+@pytest.mark.asyncio
+async def test_pager_unifies_synthetic_fallback_uids_across_sections_and_rulebase_types() -> None:
+    """SCN-RULE-009-2 (DA-047): `sec.rule_uids` and `rule_pos_by_uid` match parsed synthetic rule UIDs."""
+    for rb_type, scope_key, expected_prefix in (
+        ("access", "layer-acc", "rule:layer-acc:"),
+        ("https", "layer-https", "https-rule:layer-https:"),
+        ("threat", "layer-tp", "threat-rule:layer-tp:"),
+        ("nat", "pkg-nat", "nat-rule:pkg-nat:"),
+    ):
+        pages = {
+            0: {
+                "uid": scope_key,
+                "name": "ScopeName",
+                "from": 1,
+                "to": 2,
+                "total": 2,
+                "rulebase": [
+                    {
+                        "uid": "sec-mix",
+                        "name": "Mixed Section",
+                        "type": f"{rb_type}-section",
+                        "rulebase": [
+                            {"uid": f"{rb_type}-real-1", "name": "Real", "type": f"{rb_type}-rule", "rule-number": 1},
+                            {"name": "NoUid", "type": f"{rb_type}-rule", "rule-number": 2},
+                        ],
+                    }
+                ],
+            }
+        }
+        res = await fetch_paged_rulebase(
+            PagerFakeApi(pages),
+            "mds1",
+            "Corp",
+            rulebase_type=rb_type,  # type: ignore[arg-type]
+            layer_uid=scope_key,
+            package_uid=scope_key if rb_type == "nat" else None,
+            limit=10,
+        )
+        rules_list = getattr(res, f"{rb_type}_rules")
+        assert res.sections[0].rule_uids == [r.uid for r in rules_list]
+        assert res.sections[0].rule_uids[1] == f"{expected_prefix}2"
+        assert res.sections[0].from_rule == 1
+        assert res.sections[0].to_rule == 2

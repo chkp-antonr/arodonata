@@ -1256,3 +1256,71 @@ async def test_run_repository_script_preserves_server_identity_and_task_errors()
             active_ws=None,
             session_getter=None,
         )
+
+
+@pytest.mark.spec("SCN-TOPO-022-3")
+@pytest.mark.asyncio
+async def test_script_repository_write_paths_map_permission_errors_and_scrub_bare_sids() -> None:
+    """SCN-TOPO-022-3 (DA-028): `ensure_repository_script` / `delete_repository_script` map perms and scrub bare SIDs."""
+    from arodonata.core.context import WriteSession, write_session_context
+    from arodonata.core.errors import SessionError
+    from arodonata.core.models.common import ApiCallResult
+    from arodonata.core.services.script_service import ScriptRepositoryService
+
+    active_sid = "BareActiveScriptSid90909"
+    iso_sid = "BareIsoScriptSid80808"
+
+    class _PermApi:
+        def __init__(self, *, existing: bool = False, leaked_sid: str = iso_sid) -> None:
+            self._existing = existing
+            self._leaked_sid = leaked_sid
+
+        async def create_dedicated_session(self, *args: Any, **kwargs: Any) -> tuple[str, str]:
+            return self._leaked_sid, "10.0.0.1"
+
+        async def api_call(self, mgmt: str, cmd: str, *args: Any, **kwargs: Any) -> ApiCallResult:
+            if cmd == "show-repository-script":
+                if self._existing:
+                    return ApiCallResult(
+                        success=True,
+                        status_code=200,
+                        data={"uid": "u-1", "name": "app-diag", "script-body": ""},
+                    )
+                return ApiCallResult(
+                    success=False,
+                    status_code=404,
+                    error_code="generic_err_object_not_found",
+                    error_message="not found",
+                )
+            raise SessionError(f"Permission denied (403) while calling {cmd} for session {self._leaked_sid}")
+
+        async def logout_sid(self, mgmt: str, sid: str, **kwargs: Any) -> bool:
+            return True
+
+    # 1. Isolated WriteSession branches (no active session)
+    svc_iso = ScriptRepositoryService(api=_PermApi(existing=False, leaked_sid=iso_sid))  # type: ignore[arg-type]
+    with pytest.raises(RepositoryScriptPermissionError) as exc_ensure_iso:
+        await svc_iso.ensure_repository_script("mds1", "app-diag", "echo 1\n", domain="Corp")
+    assert iso_sid not in str(exc_ensure_iso.value)
+    assert REDACTED_PLACEHOLDER in str(exc_ensure_iso.value)
+
+    svc_iso_del = ScriptRepositoryService(api=_PermApi(existing=True, leaked_sid=iso_sid))  # type: ignore[arg-type]
+    with pytest.raises(RepositoryScriptPermissionError) as exc_del_iso:
+        await svc_iso_del.delete_repository_script("mds1", "app-diag", domain="Corp")
+    assert iso_sid not in str(exc_del_iso.value)
+    assert REDACTED_PLACEHOLDER in str(exc_del_iso.value)
+
+    # 2. Active WriteSession branches
+    ws = WriteSession(mgmt_name="mds1", domain_name="Corp", sid=active_sid, server_ip="10.0.0.1")
+    with write_session_context(ws):
+        svc_active = ScriptRepositoryService(api=_PermApi(existing=False, leaked_sid=active_sid))  # type: ignore[arg-type]
+        with pytest.raises(RepositoryScriptPermissionError) as exc_ensure_act:
+            await svc_active.ensure_repository_script("mds1", "app-diag", "echo 1\n", domain="Corp")
+        assert active_sid not in str(exc_ensure_act.value)
+        assert REDACTED_PLACEHOLDER in str(exc_ensure_act.value)
+
+        svc_active_del = ScriptRepositoryService(api=_PermApi(existing=True, leaked_sid=active_sid))  # type: ignore[arg-type]
+        with pytest.raises(RepositoryScriptPermissionError) as exc_del_act:
+            await svc_active_del.delete_repository_script("mds1", "app-diag", domain="Corp")
+        assert active_sid not in str(exc_del_act.value)
+        assert REDACTED_PLACEHOLDER in str(exc_del_act.value)

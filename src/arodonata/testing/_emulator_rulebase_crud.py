@@ -83,14 +83,15 @@ def _handle_section_crud(
         hit = locate_section_in_tree(nodes, req)
         if hit is None:
             return cp_error("generic_err_object_not_found", "Section not found", status_code=404), None
-        _, sec = hit
+        orig_idx, sec = hit
+        orig_sec = copy.deepcopy(sec)
         if req.get("new-name"):
             sec["name"] = str(req["new-name"])
         if "new-position" in req:
-            nodes.remove(sec)
+            nodes.pop(orig_idx)
             pos_err = insert_section_into_tree(nodes, sec, req.get("new-position"))
             if pos_err is not None:
-                nodes.append(sec)
+                nodes.insert(orig_idx, orig_sec)
                 return pos_err, None
         renumber_layer(layer_payload, dom_files, global_files, dom_name)
         sec_uid = str(sec["uid"])

@@ -386,26 +386,21 @@ def _filter_range_sessions(
     from_bound_dt = to_naive_utc(scope.from_date)
     to_bound_dt = to_naive_utc(scope.to_date)
 
-    if scope.from_session and scope.from_session in uid_to_dt:
+    # Fail closed if a requested session bound is missing or lacks a parseable timestamp.
+    if scope.from_session and scope.from_session not in uid_to_dt:
+        return []
+    if scope.to_session and scope.to_session not in uid_to_dt:
+        return []
+
+    if scope.from_session:
         s_dt = uid_to_dt[scope.from_session]
         from_bound_dt = max(from_bound_dt, s_dt) if from_bound_dt is not None else s_dt
-    if scope.to_session and scope.to_session in uid_to_dt:
+    if scope.to_session:
         s_dt = uid_to_dt[scope.to_session]
         to_bound_dt = min(to_bound_dt, s_dt) if to_bound_dt is not None else s_dt
 
-    uids_in_order = [str(s.get("uid") or "") for _, _, s in with_ts]
-    if (scope.from_session and scope.from_session not in uids_in_order) or (
-        scope.to_session and scope.to_session not in uids_in_order
-    ):
-        return []
-
-    allowed_uids: set[str] | None = None
-
     filtered: list[dict[str, Any]] = []
     for pub_dt, _idx, s in with_ts:
-        s_uid = str(s.get("uid") or "")
-        if allowed_uids is not None and s_uid not in allowed_uids:
-            continue
         if from_bound_dt is not None and (pub_dt is None or pub_dt < from_bound_dt):
             continue
         if to_bound_dt is not None and (pub_dt is None or pub_dt > to_bound_dt):

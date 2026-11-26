@@ -121,6 +121,17 @@ def handle_disconnect(
 ) -> ApiCallResult:
     """Handle `disconnect` and `continue-session-in-smartconsole` commands."""
     target_uid = str(req.get("uid") or "").strip()
+    if (
+        binding is not None
+        and (binding.read_only or (active_ws is not None and active_ws.read_only))
+        and target_uid
+        and (active_ws is None or target_uid != active_ws.uid)
+    ):
+        return cp_error(
+            "err_validation_failed",
+            "Read-only session cannot disconnect another session",
+            status_code=400,
+        )
     if target_uid:
         target_ws = mock._work_sessions.get(target_uid)
         if target_ws is None:
@@ -175,6 +186,26 @@ def handle_set_session(
     return cp_ok(active_ws.to_checkpoint_dict())
 
 
+def _rotate_other_active_bindings(
+    mock: FileReplayApiMock,
+    *,
+    binding: SidBinding,
+    target_ws: WorkSession,
+) -> None:
+    """Move any other active `SidBinding`s currently pointing at `target_ws.uid` onto fresh open sessions."""
+    for other_b in mock._sid_bindings.values():
+        if other_b.sid != binding.sid and other_b.session_uid == target_ws.uid and other_b.active:
+            fresh_other_ws = mock._create_work_session(
+                other_b.domain,
+                user_name=other_b.user_name,
+                name="",
+                description="",
+                application="WEB_API",
+                read_only=other_b.read_only,
+            )
+            other_b.session_uid = fresh_other_ws.uid
+
+
 def handle_take_over_session(
     mock: FileReplayApiMock,
     req: Mapping[str, Any],
@@ -222,16 +253,7 @@ def handle_take_over_session(
                 status_code=400,
             )
         else:
-            for other_b in other_active:
-                fresh_other_ws = mock._create_work_session(
-                    other_b.domain,
-                    user_name=other_b.user_name,
-                    name="",
-                    description="",
-                    application="WEB_API",
-                    read_only=other_b.read_only,
-                )
-                other_b.session_uid = fresh_other_ws.uid
+            _rotate_other_active_bindings(mock, binding=binding, target_ws=target_ws)
     if active_ws.uid != target_ws.uid:
         active_ws.state = "disconnected"
     target_ws.state = "open"
@@ -271,6 +293,7 @@ def handle_switch_session(
             f"Cannot switch to session [{target_uid}] in state {target_ws.state!r}",
             status_code=400,
         )
+    _rotate_other_active_bindings(mock, binding=binding, target_ws=target_ws)
     if active_ws.uid != target_ws.uid:
         active_ws.state = "disconnected"
     target_ws.state = "open"

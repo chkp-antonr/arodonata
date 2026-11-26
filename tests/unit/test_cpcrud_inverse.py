@@ -550,3 +550,85 @@ def test_inverse_strips_planned_uids_and_preserves_group_parents() -> None:
     assert sg_op["uid"] == "sg-uid-1"
     assert sg_op["groups"] == ["SG_parent"]
     assert sg_op["members"] == ["TCP_80"]
+
+
+@pytest.mark.spec("SCN-CPCRUD-017-3")
+def test_inverse_emits_empty_groups_and_tags_when_added_from_empty_prior_state() -> None:
+    """SCN-CPCRUD-017-3 (DA-020): Restore `groups: []` and `tags: []` when mutated from previously ungrouped/untagged state."""
+    from arodonata.cpcrud.models import FieldChange
+
+    plan = Plan(
+        actions=[
+            PlannedAction(
+                action_id="upd-host",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="set",
+                object_type="host",
+                name="H_plain",
+                target_uid="u-h-plain",
+                outcome=Outcome.UPDATE,
+                diffs={
+                    "groups": FieldChange(field="groups", old_value=[], new_value=["G1"]),
+                    "tags": FieldChange(field="tags", old_value=[], new_value=["prod"]),
+                },
+                prior_state={"uid": "u-h-plain", "name": "H_plain", "ipv4-address": "10.0.0.5"},
+                payload={"name": "H_plain", "groups": ["G1"], "tags": ["prod"]},
+            ),
+            PlannedAction(
+                action_id="upd-svc",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="set",
+                object_type="service-tcp",
+                name="S_plain",
+                target_uid="u-s-plain",
+                outcome=Outcome.UPDATE,
+                diffs={
+                    "groups": FieldChange(field="groups", old_value=[], new_value=["SG1"]),
+                    "tags": FieldChange(field="tags", old_value=[], new_value=["web"]),
+                },
+                prior_state={"uid": "u-s-plain", "name": "S_plain", "port": "443"},
+                payload={"name": "S_plain", "groups": ["SG1"], "tags": ["web"]},
+            ),
+            PlannedAction(
+                action_id="upd-grp",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="set",
+                object_type="group",
+                name="G_plain",
+                target_uid="u-g-plain",
+                outcome=Outcome.UPDATE,
+                diffs={
+                    "groups": FieldChange(field="groups", old_value=[], new_value=["G_parent"]),
+                    "tags": FieldChange(field="tags", old_value=[], new_value=["tier1"]),
+                },
+                prior_state={"uid": "u-g-plain", "name": "G_plain", "members": []},
+                payload={"name": "G_plain", "groups": ["G_parent"], "tags": ["tier1"]},
+            ),
+            PlannedAction(
+                action_id="upd-sg",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="set",
+                object_type="service-group",
+                name="SG_plain",
+                target_uid="u-sg-plain",
+                outcome=Outcome.UPDATE,
+                diffs={
+                    "groups": FieldChange(field="groups", old_value=[], new_value=["SG_parent"]),
+                    "tags": FieldChange(field="tags", old_value=[], new_value=["app"]),
+                },
+                prior_state={"uid": "u-sg-plain", "name": "SG_plain", "members": []},
+                payload={"name": "SG_plain", "groups": ["SG_parent"], "tags": ["app"]},
+            ),
+        ]
+    )
+
+    inverse = build_inverse_template(plan)
+    assert validate_template(inverse) == []
+    by_type = {op["type"]: op for op in inverse["operations"]}
+    for t in ("host", "service-tcp", "group", "service-group"):
+        assert by_type[t]["groups"] == []
+        assert by_type[t]["tags"] == []

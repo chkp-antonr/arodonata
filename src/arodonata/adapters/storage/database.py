@@ -26,6 +26,7 @@ from sqlmodel import SQLModel
 
 from arodonata.adapters.storage import tables as _tables  # noqa: F401
 from arodonata.adapters.storage.tables import ARODONATA_TABLE_NAMES, SchemaVersionRecord
+from arodonata.core.errors import CacheError
 from arodonata.core.models.common import utc_now
 from arodonata.core.telemetry import span_attrs, traced
 
@@ -265,16 +266,40 @@ class DatabaseManager:
                         if os.name != "nt" and hasattr(os, "chmod"):
                             for created_dir in missing_parents:
                                 os.chmod(created_dir, 0o700)
-                    if os.name != "nt" and not os.path.lexists(db_file):
-                        try:
-                            fd = os.open(str(db_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                    if os.name != "nt":
+                        if os.path.lexists(db_file):
                             try:
-                                if hasattr(os, "fchmod"):
-                                    os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)
-                            finally:
-                                os.close(fd)
-                        except FileExistsError:
-                            pass
+                                st = os.lstat(db_file)
+                            except OSError as exc:
+                                raise CacheError(f"Failed to stat SQLite cache file {str(db_file)!r}: {exc}") from exc
+                            if stat.S_ISLNK(st.st_mode):
+                                raise CacheError(
+                                    f"Unsafe symlink SQLite cache file {str(db_file)!r}: symlinks are forbidden."
+                                )
+                            if not stat.S_ISREG(st.st_mode):
+                                raise CacheError(f"Unsafe SQLite cache path {str(db_file)!r}: expected regular file.")
+                            euid = os.geteuid() if hasattr(os, "geteuid") else None
+                            if euid is not None and st.st_uid not in (euid, 0):
+                                raise CacheError(
+                                    f"Unsafe ownership on SQLite cache file {str(db_file)!r}: "
+                                    f"owned by uid {st.st_uid}, expected {euid}."
+                                )
+                            if (
+                                (euid is None or st.st_uid == euid)
+                                and (stat.S_IMODE(st.st_mode) & (stat.S_IRWXG | stat.S_IRWXO)) != 0
+                                and hasattr(os, "chmod")
+                            ):
+                                os.chmod(db_file, 0o600)
+                        else:
+                            try:
+                                fd = os.open(str(db_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                                try:
+                                    if hasattr(os, "fchmod"):
+                                        os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)
+                                finally:
+                                    os.close(fd)
+                            except FileExistsError:
+                                pass
                 engine = create_async_engine(url, connect_args=connect_args)
             _attach_sqlite_busy_timeout(engine, busy_timeout_ms)
             return engine

@@ -159,9 +159,9 @@ def _build_effective_gateway_entries(
             mgmt_val = ann0.mgmt_name
             dom_val = ann0.domain_name
             gw_id_val = f"{ann0.mgmt_name}:{ann0.domain_name}:{ann0.gateway_uid}"
-            gw_aid_val = gw_id_val
             gw_uid_val = ann0.gateway_uid
             gw_name_val = ann0.gateway_name or ann0.gateway_uid
+            gw_aid_val = f"{ann0.mgmt_name}:{ann0.domain_name}:{gw_name_val}"
             gw_type_val = "simple-gateway"
             inst_pol_val = None
             pkgs_val = []
@@ -236,13 +236,17 @@ def _score_interface_group(
     warnings: list[str] = []
     is_standby = False
 
-    # Find any matching prefix annotation across the matched entries
-    matched_ann: TopologyAnnotation | None = None
-    for e in matching_entries:
-        cand_ann = ann_by_if_cidr.get((if_name, e.cidr_or_range)) or ann_by_if_cidr.get(("*", e.cidr_or_range))
-        if cand_ann is not None:
-            matched_ann = cand_ann
-            break
+    # Match prefix annotations against the LPM `best_entry` CIDR (or entries sharing its exact span).
+    matched_ann: TopologyAnnotation | None = ann_by_if_cidr.get((if_name, best_entry.cidr_or_range)) or (
+        ann_by_if_cidr.get(("*", best_entry.cidr_or_range))
+    )
+    if matched_ann is None:
+        for e in matching_entries:
+            if e.ip_first_int == best_entry.ip_first_int and e.ip_last_int == best_entry.ip_last_int:
+                cand_ann = ann_by_if_cidr.get((if_name, e.cidr_or_range)) or ann_by_if_cidr.get(("*", e.cidr_or_range))
+                if cand_ann is not None:
+                    matched_ann = cand_ann
+                    break
 
     # 1. Live Route Evidence Deltas (highest single route delta on this interface)
     if "connected_route" in src_types:
@@ -727,8 +731,18 @@ async def export_topology_prefixes(
 
     exported: list[ExportedTopologyPrefix] = []
 
+    def _ann_group_matches_tokens(gw_key: tuple[str, str, str], gw_anns: Sequence[TopologyAnnotation]) -> bool:
+        m_name, d_name, gw_uid = gw_key
+        tokens: set[str] = {gw_uid.lower(), f"{m_name}:{d_name}:{gw_uid}".lower()}
+        for ann in gw_anns:
+            if ann.gateway_name:
+                tokens.add(ann.gateway_name.lower())
+                tokens.add(f"{m_name}:{d_name}:{ann.gateway_name}".lower())
+        return bool(tokens & gw_tokens)
+
     all_gw_keys = sorted(
-        set(entries_by_gw) | {k for k in anns_by_gw if not gw_tokens or k in entries_by_gw or k[2].lower() in gw_tokens}
+        set(entries_by_gw)
+        | {k for k in anns_by_gw if not gw_tokens or k in entries_by_gw or _ann_group_matches_tokens(k, anns_by_gw[k])}
     )
     for gw_key in all_gw_keys:
         raw_gw_entries = entries_by_gw.get(gw_key, [])
