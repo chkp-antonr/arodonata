@@ -1278,3 +1278,127 @@ async def test_write_session_reuses_keepalive_connection_and_closes_on_publish_a
         assert client.connection_pool.pooled_count(session_scope=derive_session_pool_scope(recorded_sid)) == 0
     finally:
         await client.close()
+
+
+@pytest.mark.spec("SCN-SESS-014-3")
+async def test_session_cleaner_throttles_target_mds_and_expired_sid_retry_refreshes_mds_ip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-SESS-014-3: SessionCleaner acquires RateLimiter slots on target mds_ip and expired-SID retry refreshes mds_ip."""
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    client = _build_client(tmp_path, server, rig)
+    await client.db.initialize()
+
+    # Seed multi-MDS domain DomB hosted on secondary MDS 10.0.2.1 (CMA 10.0.2.50), while endpoint.host is 10.0.0.1
+    await client.cache.upsert_domains(
+        [
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="dom-b",
+                name="DomB",
+                domain_type="domain",
+                active_ip="10.0.2.50",
+                active_mds_ip="10.0.2.1",
+            )
+        ]
+    )
+
+    slotted_ips: list[str] = []
+    orig_slot = client.rate_limiter.slot
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _recording_slot(mds_ip: str, **kwargs: Any):  # type: ignore[no-untyped-def]
+        slotted_ips.append(mds_ip)
+        async with orig_slot(mds_ip, **kwargs) as s:
+            yield s
+
+    monkeypatch.setattr(client.rate_limiter, "slot", _recording_slot)
+
+    # 1. SessionCleaner.cleanup_server_sessions("mds1", domain="DomB") bills RateLimiter on 10.0.2.1, not 10.0.0.1
+    server.handlers.append((200, {"sid": "sid_cleaner_domb", "uid": "cleaner-uid"}))
+    server.handlers.append(
+        (
+            200,
+            {
+                "objects": [
+                    {
+                        "uid": "stale-domb-1",
+                        "application": "WEB_API",
+                        "changes": 0,
+                        "locks": 0,
+                        "session-name": "arodonata-old",
+                    }
+                ]
+            },
+        )
+    )
+    server.handlers.append((200, {"message": "OK"}))  # discard
+    server.handlers.append((200, {"message": "OK"}))  # logout
+    assert await client.session_cleaner.cleanup_server_sessions("mds1", domain="DomB") is True
+    assert slotted_ips and all(ip == "10.0.2.1" for ip in slotted_ips)
+
+    # Seed cached RO SID pointing to MDS2 (10.0.2.50 / 10.0.2.1), then move DomB to MDS3 (10.0.3.50 / 10.0.3.1)
+    # when the expired-SID response is returned.
+    slotted_ips.clear()
+    identity = (await client.login_coordinator.resolve_credentials("mds1", "DomB")).identity_key
+    now = client.login_coordinator.now()
+    await client.cache.upsert_sid(
+        SIDCacheEntry(
+            id=f"mds1:DomB:{identity}",
+            mgmt_name="mds1",
+            domain_name="DomB",
+            sid="sid_old_mds2",
+            server_ip="10.0.2.50",
+            auth_identity=identity,
+            created_at=now,
+            last_used_at=now,
+            expires_at=now + timedelta(seconds=600),
+        )
+    )
+    _, default_fp = _make_der()
+    client.trust_policy._store.record("10.0.3.50", 443, default_fp, source="known-identity", persist=False)
+
+    orig_get_ro = client.login_coordinator.get_readonly_session
+
+    async def _get_ro_with_failover(mgmt: str, dom: str | None = None, **kwargs: Any) -> tuple[str, str]:
+        if kwargs.get("force_new"):
+            await client.cache.upsert_domains(
+                [
+                    DomainInfo(
+                        mgmt_name="mds1",
+                        uid="dom-b",
+                        name="DomB",
+                        domain_type="domain",
+                        active_ip="10.0.3.50",
+                        active_mds_ip="10.0.3.1",
+                    )
+                ]
+            )
+        return await orig_get_ro(mgmt, dom, **kwargs)
+
+    monkeypatch.setattr(client.login_coordinator, "get_readonly_session", _get_ro_with_failover)
+    server.handlers.append((400, {"code": "err_session_expired", "message": "Session expired"}))
+    server.handlers.append((200, {"sid": "sid_new_mds3", "uid": "u-new"}))
+    server.handlers.append((200, {"objects": []}))
+
+    res = await client.api_call("mds1", "show-hosts", {}, domain="DomB")
+    assert res.success is True
+    assert slotted_ips == ["10.0.2.1", "10.0.3.1"]
+    await client.close()
+
+
+@pytest.mark.spec("SCN-SESS-014-4")
+async def test_login_coordinator_omits_obsolete_startup_seed_residue(tmp_path: Path) -> None:
+    """SCN-SESS-014-4: LoginCoordinator omits dead adopt_dedicated_sid, has_inflight_or_cached_login, and _inflight_logins."""
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    client = _build_client(tmp_path, server, rig)
+    coord = client.login_coordinator
+    assert not hasattr(coord, "adopt_dedicated_sid")
+    assert not hasattr(coord, "has_inflight_or_cached_login")
+    assert not hasattr(coord, "_inflight_logins")
+    await client.close()

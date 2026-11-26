@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from arodonata.adapters.storage import DatabaseManager, SqlCacheAdapter
@@ -888,3 +890,61 @@ async def test_wave8_emulator_track_wire_types_rollback_readonly_and_lazy_baseli
         if isinstance(o, dict)
     }
     assert "G_Orig_RB" not in baseline_names
+
+
+@pytest.mark.spec("SCN-ITEST-021-2")
+@pytest.mark.asyncio
+async def test_switch_session_rotation_readonly_disconnect_guard_and_zero_disk_direct_baselines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-ITEST-021-2 (DA-035, DA-045): Switch-session rotates aliased SIDs, read-only disconnect fails, zero-disk reset."""
+    api = FileReplayApiMock()
+
+    # 1. handle_switch_session rotates other active SIDs already bound to target_ws
+    sid_a, _ = await api.create_dedicated_session("mds", "Branch", session_name="shared-ws")
+    sid_b, _ = await api.create_dedicated_session("mds", "Branch", session_name="other-ws")
+    ws_target_uid = str((await api.api_call("mds", "show-session", {}, domain="Branch", sid=sid_a)).data["uid"])
+
+    # Alias sid_b onto sid_a's work session via switch-session -> sid_a must rotate onto a fresh open session
+    sw = await api.api_call("mds", "switch-session", {"uid": ws_target_uid}, domain="Branch", sid=sid_b)
+    assert sw.success
+    sess_a_after = await api.api_call("mds", "show-session", {}, domain="Branch", sid=sid_a)
+    assert sess_a_after.success
+    assert str(sess_a_after.data["uid"]) != ws_target_uid
+    assert (await api.api_call("mds", "show-session", {}, domain="Branch", sid=sid_b)).data["uid"] == ws_target_uid
+
+    # 2. Read-only session cannot disconnect another active session
+    ro_login = await api.api_call("mds", "login", {"domain": "Branch", "read-only": True}, domain="Branch")
+    assert ro_login.success
+    sid_ro = str(ro_login.data["sid"])
+    disc_res = await api.api_call("mds", "disconnect", {"uid": ws_target_uid}, domain="Branch", sid=sid_ro)
+    assert not disc_res.success
+    assert disc_res.status_code == 400
+    assert disc_res.error_code == "err_validation_failed"
+
+    # 3. Direct domain mutations (assign-global-assignment, update_gateway_interfaces, bump_published_session)
+    #    capture clean baselines in memory so subsequent reset()/restore_state() performs zero disk reads
+    api2 = FileReplayApiMock()
+    disk_loads: list[str] = []
+    orig_load = api2._load_domain_files
+
+    def _spy_load(dom_name: str) -> dict[str, Any]:
+        disk_loads.append(dom_name)
+        return orig_load(dom_name)
+
+    monkeypatch.setattr(api2, "_load_domain_files", _spy_load)
+
+    sys_sid, _ = await api2.create_dedicated_session("mds", "System Data")
+    ga_res = await api2.api_call(
+        "mds",
+        "assign-global-assignment",
+        {"dependent-domain": "Branch", "global-domains": ["Global"]},
+        domain="System Data",
+        sid=sys_sid,
+        wait_for_task=True,
+    )
+    assert ga_res.success
+    api2.update_gateway_interfaces("DC_Spine", "dc-gw-spine-01", [])
+    api2.bump_published_session("DC_Spine", new_session_uid="bumped-head-1")
+    api2.reset()
+    assert disk_loads == []

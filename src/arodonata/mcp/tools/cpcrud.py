@@ -23,6 +23,7 @@ from arodonata.mcp.errors import (
     collect_known_sids,
     json_tool_result,
     mcp_tool_guard,
+    register_active_mcp_sid,
     resolve_mcp_caller_id,
     resolve_mgmt_name,
     validate_domain_or_fail,
@@ -71,7 +72,9 @@ def register_cpcrud_tools(
         plan_store[plan_id] = (owner_id, plan_obj, report_obj)
         plan_store.move_to_end(plan_id)
         while len(plan_store) > MAX_STORED_PLANS:
-            plan_store.popitem(last=False)
+            same_owner_key = next((k for k, v in plan_store.items() if v[0] == owner_id and k != plan_id), None)
+            evict_key = same_owner_key if same_owner_key is not None else next(iter(plan_store))
+            plan_store.pop(evict_key, None)
         if report_obj is not None:
             _record_last_report(owner_id, report_obj)
 
@@ -90,6 +93,7 @@ def register_cpcrud_tools(
             evict_key = same_owner_key if same_owner_key is not None else next(iter(staged_session_store))
             ev_info = staged_session_store.pop(evict_key)
             ev_owner, ev_mgmt, _ev_dom_key, ev_uid = evict_key
+            register_active_mcp_sid(ev_info.sid)
             try:
                 ev_res = await client.cpcrud.discard_staged_session(
                     ev_mgmt,
@@ -328,6 +332,8 @@ def register_cpcrud_tools(
                 domain=eff_domain,
             )
 
+        register_active_mcp_sid(stored_staged.sid)
+
         def _collect_staged_sids(base_sids: list[str]) -> list[str]:
             if stored_staged.sid and stored_staged.sid not in base_sids:
                 base_sids.append(stored_staged.sid)
@@ -344,6 +350,9 @@ def register_cpcrud_tools(
                 timeout=eff_timeout,
                 force_disconnect=False,
                 allow_stale=allow_stale,
+                baseline_readable=stored_staged.baseline_readable,
+                baseline_session_uid=stored_staged.baseline_session_uid,
+                baseline_published_at=stored_staged.baseline_published_at,
             )
             known_sids = _collect_staged_sids(await collect_known_sids(client, eff_mgmt))
             if not res.success:

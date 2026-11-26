@@ -334,7 +334,11 @@ async def _stream_targeted_gateway_refresh(
         except ServerIdentityError:
             raise
         except Exception as exc:
-            err_str = redact_sid(str(exc))
+            known_sid_list = await coordinator._collect_known_sids(dom.mgmt_name)
+            active_ws = get_write_session(mgmt_name=dom.mgmt_name, domain_name=dom.name)
+            if active_ws is not None and active_ws.sid and active_ws.sid not in known_sid_list:
+                known_sid_list.append(active_ws.sid)
+            err_str = redact_sid(str(exc), known_sids=known_sid_list or None)
             failed_domains[dom_label] = err_str
             logger.warning(
                 f"Targeted gateway topology refresh failed in {dom_label}: {err_str}",
@@ -543,6 +547,7 @@ async def stream_refresh_topology(
     global_trusted_cache: dict[str, bool] = {}
     global_obj_lock = asyncio.Lock()
     refreshed_labels: list[str] = []
+    pending_completed: SyncCompletedEvent | None = None
     async for event in coordinator.stream_ensure(
         scope="topology",
         item_types=["*"],
@@ -569,6 +574,8 @@ async def stream_refresh_topology(
     ):
         if isinstance(event, SyncCompletedEvent):
             refreshed_labels = list(event.details.get("refreshed_domains") or [])
+            pending_completed = event
+            continue
         yield event
 
     if collect_routes and mode != "cache":
@@ -588,6 +595,9 @@ async def stream_refresh_topology(
             repository_script_name=repository_script_name,
             repository_script_args_fn=repository_script_args_fn,
         )
+
+    if pending_completed is not None:
+        yield pending_completed
 
 
 async def refresh_topology(

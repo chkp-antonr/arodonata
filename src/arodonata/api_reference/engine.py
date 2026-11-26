@@ -243,10 +243,12 @@ class ApiReferenceEngine:
             return None
 
         supported = cmd.get("supported_versions") or []
-        if version and cmd.get("api_family") == "management" and not self._version_matches(supported, version):
+        is_mgmt = cmd.get("api_family") == "management"
+        if version and is_mgmt and not self._version_matches(supported, version):
             return None
 
-        filtered_fields = self._filter_fields(cmd.get("fields") or [], version)
+        field_filter_version = version if is_mgmt else None
+        filtered_fields = self._filter_fields(cmd.get("fields") or [], field_filter_version)
         valid_field_names = {f["name"] for f in filtered_fields}
 
         # Filter field_alternatives on individual fields and top-level groups to only valid fields in `version`
@@ -283,7 +285,13 @@ class ApiReferenceEngine:
 
         if resolve_nested:
             nested_schemas: dict[str, dict[str, Any]] = {}
-            self._collect_resolved_objects(filtered_fields, version, nested_schemas, depth=1, max_depth=2)
+            self._collect_resolved_objects(
+                filtered_fields,
+                field_filter_version,
+                nested_schemas,
+                depth=1,
+                max_depth=2,
+            )
             result["nested_objects"] = nested_schemas
             result["enums"] = self._collect_referenced_enums(filtered_fields, nested_schemas)
 

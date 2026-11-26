@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
@@ -235,8 +236,6 @@ async def test_rate_limiter_slot_propagates_cancelled_error_and_releases_local_s
         ) -> Any:
             raise NotImplementedError
 
-    from typing import Any
-
     limiter = RateLimiter(concurrent_limit=1, lock_port=SlowReleaseLockPort())  # type: ignore[arg-type]
     in_slot = asyncio.Event()
     exit_slot = asyncio.Event()
@@ -271,3 +270,22 @@ async def test_rate_limiter_slot_propagates_cancelled_error_and_releases_local_s
     allow_release_finish.set()
     await asyncio.wait_for(w_task, timeout=1.0)
     assert waiter_acquired.is_set()
+
+
+@pytest.mark.spec("SCN-SESS-014-3")
+async def test_login_gate_translates_distributed_lock_timeout_to_authentication_error() -> None:
+    """SCN-SESS-014-3: Distributed LockAcquisitionError in LoginGate.acquire() raises AuthenticationError."""
+    from contextlib import asynccontextmanager
+
+    from arodonata.core.errors import LockAcquisitionError
+
+    class _ContendedLockPort:
+        @asynccontextmanager
+        async def lock(self, lock_key: str, **_kwargs: Any):  # type: ignore[no-untyped-def]
+            raise LockAcquisitionError(f"Timed out acquiring {lock_key}")
+            yield  # pragma: no cover
+
+    gate = LoginGate(lock_port=_ContendedLockPort())  # type: ignore[arg-type]
+    with pytest.raises(AuthenticationError, match="distributed LoginGate"):
+        async with gate.acquire("10.0.2.1", wait_timeout=0.5):
+            pass

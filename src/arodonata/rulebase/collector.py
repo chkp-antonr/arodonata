@@ -22,7 +22,12 @@ from arodonata.core.models.rulebase import (
 )
 from arodonata.core.ports import ApiPort
 from arodonata.rulebase.models import PolicyPackageInfo
-from arodonata.rulebase.pager import MAX_RULEBASE_PAGE_LIMIT, PagedRulebaseResult, fetch_paged_rulebase
+from arodonata.rulebase.pager import (
+    MAX_RULEBASE_PAGE_LIMIT,
+    PagedRulebaseResult,
+    fetch_paged_rulebase,
+    list_collection_with_fallback,
+)
 
 
 def _extract_ordered_layers_from_package(pkg: dict[str, Any], key: str) -> list[dict[str, Any]]:
@@ -71,34 +76,16 @@ async def _fetch_domain_packages_raw(
     strict: bool = True,
 ) -> list[dict[str, Any]]:
     """Fetch policy packages (`show-packages`, `details-level='full'`) for `(mgmt_name, domain_name)`."""
-    pkg_query = await api.api_query(
+    return await list_collection_with_fallback(
+        api,
         mgmt_name,
+        domain_name,
         "show-packages",
-        domain=domain_name,
-        details_level="full",
+        data_keys=("packages",),
         sid=sid,
         server_ip=server_ip,
+        strict=strict,
     )
-    if pkg_query.success and pkg_query.objects:
-        return [p for p in pkg_query.objects if isinstance(p, dict)]
-
-    pkg_call = await api.api_call(
-        mgmt_name,
-        "show-packages",
-        {"details-level": "full"},
-        domain=domain_name,
-        sid=sid,
-        server_ip=server_ip,
-    )
-    if pkg_call.success and isinstance(pkg_call.data, dict):
-        raw_pkgs = pkg_call.data.get("packages") or pkg_call.data.get("objects") or []
-        if isinstance(raw_pkgs, list):
-            return [p for p in raw_pkgs if isinstance(p, dict)]
-
-    if strict and not pkg_query.success and not pkg_call.success:
-        err = pkg_query.error_message or pkg_call.error_message or pkg_call.error_code or "show-packages failed"
-        raise RuntimeError(f"Failed to fetch show-packages on {mgmt_name}:{domain_name}: {err}")
-    return []
 
 
 def _extract_package_layers_and_seeds(
@@ -645,21 +632,18 @@ async def collect_domain_rulebase_snapshot(
         ("threat", "show-threat-layers", "threat-layers"),
     )
     for r_type, list_cmd, list_key in layer_list_specs:
-        raw_list: list[Any] = []
-        q_res = await api.api_query(
-            mgmt_name, list_cmd, domain=domain_name, details_level="full", sid=sid, server_ip=server_ip
+        raw_list = await list_collection_with_fallback(
+            api,
+            mgmt_name,
+            domain_name,
+            list_cmd,
+            data_keys=(list_key, "layers"),
+            sid=sid,
+            server_ip=server_ip,
+            strict=False,
         )
-        if q_res.success and q_res.objects:
-            raw_list = list(q_res.objects)
-        else:
-            l_res = await api.api_call(
-                mgmt_name, list_cmd, {"details-level": "full"}, domain=domain_name, sid=sid, server_ip=server_ip
-            )
-            if l_res.success and isinstance(l_res.data, dict):
-                cand = l_res.data.get(list_key) or l_res.data.get("objects") or l_res.data.get("layers") or []
-                raw_list = cand if isinstance(cand, list) else []
         for l_dict in raw_list:
-            if isinstance(l_dict, dict) and (l_uid := str(l_dict.get("uid") or l_dict.get("name") or "")):
+            if l_uid := str(l_dict.get("uid") or l_dict.get("name") or ""):
                 initial_layers.append(
                     _QueuedLayer(r_type, l_uid, str(l_dict.get("name") or l_uid), raw_meta=dict(l_dict))
                 )

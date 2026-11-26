@@ -344,12 +344,14 @@ def register_rulebase_tools(
             output_format=format,
             cache_mode="cache",
         )
-        sliced_raw = filtered_res.raw_items[offset : offset + max(1, limit)]
+        eff_offset = max(0, int(offset))
+        eff_limit = max(1, min(int(limit), 500))
+        sliced_raw = filtered_res.raw_items[eff_offset : eff_offset + eff_limit]
         known_sids = await collect_known_sids(client, eff_mgmt)
         return json_tool_result(
             {
-                "from": (offset + 1) if sliced_raw else 0,
-                "to": offset + len(sliced_raw),
+                "from": (eff_offset + 1) if sliced_raw else 0,
+                "to": eff_offset + len(sliced_raw),
                 "total": filtered_res.matched_count,
                 "total_unfiltered": filtered_res.total_rules,
                 "source": "cache",

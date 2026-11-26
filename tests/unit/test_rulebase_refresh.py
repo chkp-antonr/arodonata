@@ -856,3 +856,49 @@ async def test_package_rulebase_refresh_honors_cache_ttl_after_invalidation_is_s
         assert not any(cmd.endswith("-rulebase") or cmd.endswith("-layers") for cmd, _ in api.calls)
     finally:
         await db.close()
+
+
+@pytest.mark.spec("SCN-RULE-009-1")
+@pytest.mark.asyncio
+async def test_collector_fails_closed_on_paging_inconsistent_and_non_rbac_errors() -> None:
+    """SCN-RULE-009-1 (DA-005): Do not commit 50-item fallback caches on `paging_inconsistent` or HTTP 500 errors."""
+    from arodonata.core.models.common import ApiCallResult, ApiQueryResult
+    from arodonata.rulebase.collector import collect_domain_rulebase_snapshot
+
+    class _FailFallbackApi:
+        def __init__(self, *, mode: str) -> None:
+            self.mode = mode
+            self.api_calls: list[str] = []
+
+        async def api_query(self, mgmt_name: str, command: str, **kwargs: Any) -> ApiQueryResult:
+            _ = (mgmt_name, kwargs)
+            if self.mode == "paging_inconsistent" and command == "show-packages":
+                return ApiQueryResult(success=False, code="paging_inconsistent", error_message="Total drifted")
+            if self.mode == "empty_ok" and command == "show-packages":
+                return ApiQueryResult(success=True, objects=[], total=0)
+            if self.mode == "http500":
+                return ApiQueryResult(success=False, code="internal_server_error", error_message="HTTP 500")
+            return ApiQueryResult(success=True, objects=[], total=0)
+
+        async def api_call(self, mgmt_name: str, command: str, payload: Any = None, **kwargs: Any) -> ApiCallResult:
+            _ = (mgmt_name, payload, kwargs)
+            self.api_calls.append(command)
+            return ApiCallResult(success=True, status_code=200, data={"packages": [{"uid": "p1", "name": "Std"}]})
+
+    # 1. paging_inconsistent raises immediately without calling unpaginated api_call
+    api_pi = _FailFallbackApi(mode="paging_inconsistent")
+    with pytest.raises(RuntimeError, match="paging_inconsistent"):
+        await collect_domain_rulebase_snapshot(api_pi, "mds1", "Corp")  # type: ignore[arg-type]
+    assert api_pi.api_calls == []
+
+    # 2. HTTP 500 / unexpected API errors raise rather than silently committing empty snapshot
+    api_500 = _FailFallbackApi(mode="http500")
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        await collect_domain_rulebase_snapshot(api_500, "mds1", "Corp")  # type: ignore[arg-type]
+    assert api_500.api_calls == []
+
+    # 3. Legitimately empty objects=[] does NOT fall back to api_call
+    api_empty = _FailFallbackApi(mode="empty_ok")
+    snap_empty = await collect_domain_rulebase_snapshot(api_empty, "mds1", "Corp")  # type: ignore[arg-type]
+    assert snap_empty.package_layers == []
+    assert api_empty.api_calls == []

@@ -154,6 +154,24 @@ class FacadeFakeApi:
         if self.slow_query_delay > 0:
             await asyncio.sleep(self.slow_query_delay)
         self.queries.append((mgmt_name, command, domain))
+        if command == "show-packages":
+            call_res = await self.api_call(
+                mgmt_name,
+                command,
+                payload,
+                domain=domain,
+                sid=sid,
+                server_ip=server_ip,
+            )
+            if not call_res.success:
+                return ApiQueryResult(
+                    success=False,
+                    code=call_res.error_code,
+                    error_message=call_res.error_message,
+                    status_code=call_res.status_code,
+                )
+            pkgs = list(call_res.data.get("packages") or [])
+            return ApiQueryResult(success=True, objects=pkgs, total=int(call_res.data.get("total", len(pkgs))))
         if command == "show-hosts":
             return ApiQueryResult(
                 success=True,

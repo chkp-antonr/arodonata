@@ -319,19 +319,26 @@ async def _validate_optional_domains(
     eff_mgmt: str | None,
     domains: Sequence[str] | None,
     cache_mode: CacheMode = "smart",
+    *,
+    probed_servers: set[str] | None = None,
 ) -> None:
     if not domains:
         return
     offline = cache_mode == "cache"
+    probed = probed_servers if probed_servers is not None else set()
     if eff_mgmt:
         for dom in domains:
-            await validate_domain_or_fail(client, eff_mgmt, dom, allow_refresh=not offline)
+            allow_live = not offline and eff_mgmt not in probed
+            probed.add(eff_mgmt)
+            await validate_domain_or_fail(client, eff_mgmt, dom, allow_refresh=allow_live)
         return
     mgmt_names = list(client.settings.mgmt_names) or [resolve_mgmt_name(client, None)]
     if len(mgmt_names) == 1:
         single_mgmt = resolve_mgmt_name(client, mgmt_names[0])
         for dom in domains:
-            await validate_domain_or_fail(client, single_mgmt, dom, allow_refresh=not offline)
+            allow_live = not offline and single_mgmt not in probed
+            probed.add(single_mgmt)
+            await validate_domain_or_fail(client, single_mgmt, dom, allow_refresh=allow_live)
         return
     for raw_dom in domains:
         clean_dom = raw_dom.strip() if raw_dom else ""
@@ -340,9 +347,11 @@ async def _validate_optional_domains(
         found = False
         known_all: list[str] = []
         for m_name in mgmt_names:
-            if not offline and not await client.cache.get_domains(mgmt_name=m_name, include_global=True):
+            allow_live = not offline and m_name not in probed
+            if allow_live and not await client.cache.get_domains(mgmt_name=m_name, include_global=True):
                 consume_live_quota_if_needed()
-            names = await get_known_domain_names(client, m_name, refresh_if_empty=not offline)
+            probed.add(m_name)
+            names = await get_known_domain_names(client, m_name, refresh_if_empty=allow_live)
             if clean_dom in names:
                 found = True
                 break
@@ -353,6 +362,31 @@ async def _validate_optional_domains(
                 f"Known domains: {', '.join(known_all)}.",
                 domain=clean_dom,
             )
+
+
+async def resolve_and_validate_scope(
+    client: ArodonataClient,
+    mgmt_name: str | None,
+    *,
+    domain: str | None = None,
+    domains: Sequence[str] | None = None,
+    cache_mode: CacheMode = "smart",
+) -> tuple[str | None, str | None, list[str] | None]:
+    """Resolve optional `mgmt_name`, normalize `domain`/`domains`, and pre-validate domains once."""
+    eff_mgmt = resolve_mgmt_name(client, mgmt_name) if mgmt_name else None
+    eff_domain = domain.strip() if domain and domain.strip() else None
+    clean_domains = [d.strip() for d in domains if d and d.strip()] if domains is not None else None
+
+    to_validate: list[str] = []
+    if eff_domain:
+        to_validate.append(eff_domain)
+    if clean_domains:
+        for dom in clean_domains:
+            if dom not in to_validate:
+                to_validate.append(dom)
+
+    await _validate_optional_domains(client, eff_mgmt, to_validate, cache_mode=cache_mode)
+    return eff_mgmt, eff_domain, clean_domains
 
 
 async def _fetch_live_collection(

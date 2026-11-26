@@ -786,3 +786,97 @@ async def test_invalid_rule_number_validation_and_sequential_global_publish_delt
     ]
     assert "H_Glob_Seq_2" in added_names
     assert "H_Glob_Seq_1" not in added_names
+
+
+@pytest.mark.spec("SCN-ITEST-021-1")
+@pytest.mark.asyncio
+async def test_emulator_atomic_rollback_on_failed_section_set_and_group_cross_field_errors() -> None:
+    """SCN-ITEST-021-1 (DA-034): Failed section set and group add/set mutations leave zero partial overlay corruption."""
+    api = FileReplayApiMock()
+    sid, _ = await api.create_dedicated_session("mds", "Branch", session_name="atomic-rb")
+
+    # 1. Section set with new-name + invalid new-position restores original index and original name
+    add_s1 = await api.api_call(
+        "mds",
+        "add-access-section",
+        {"layer": "Branch_Standard_Pkg Network", "name": "Sec_One", "position": "top"},
+        domain="Branch",
+        sid=sid,
+    )
+    add_s2 = await api.api_call(
+        "mds",
+        "add-access-section",
+        {"layer": "Branch_Standard_Pkg Network", "name": "Sec_Two", "position": "bottom"},
+        domain="Branch",
+        sid=sid,
+    )
+    assert add_s1.success and add_s2.success
+
+    bad_sec_set = await api.api_call(
+        "mds",
+        "set-access-section",
+        {
+            "layer": "Branch_Standard_Pkg Network",
+            "name": "Sec_One",
+            "new-name": "Sec_Renamed_Fail",
+            "new-position": {"above": "nonexistent-section-999"},
+        },
+        domain="Branch",
+        sid=sid,
+    )
+    assert not bad_sec_set.success
+
+    rb_after = await api.api_call(
+        "mds",
+        "show-access-rulebase",
+        {"name": "Branch_Standard_Pkg Network", "limit": 500},
+        domain="Branch",
+        sid=sid,
+    )
+    assert rb_after.success
+    sec_names = [n["name"] for n in rb_after.data["rulebase"] if n.get("type") == "access-section"]
+    assert "Sec_Renamed_Fail" not in sec_names
+    assert sec_names.index("Sec_One") < sec_names.index("Sec_Two")
+
+    # 2. Group add/set with valid members + invalid groups rolls back sibling object reverse groups links
+    h_res = await api.api_call(
+        "mds",
+        "add-host",
+        {"name": "H_Atomic_Sib", "ipv4-address": "10.99.99.1"},
+        domain="Branch",
+        sid=sid,
+    )
+    assert h_res.success
+
+    bad_grp_add = await api.api_call(
+        "mds",
+        "add-group",
+        {"name": "G_Fail_Parent", "members": ["H_Atomic_Sib"], "groups": ["NoSuchParentGrp999"]},
+        domain="Branch",
+        sid=sid,
+    )
+    assert not bad_grp_add.success
+    sib_after_add = await api.api_call("mds", "show-host", {"name": "H_Atomic_Sib"}, domain="Branch", sid=sid)
+    assert sib_after_add.success
+    assert [g.get("name") for g in sib_after_add.data.get("groups", [])] == []
+
+    # Same atomicity check for set-group
+    good_grp = await api.api_call(
+        "mds",
+        "add-group",
+        {"name": "G_Exist_Atomic"},
+        domain="Branch",
+        sid=sid,
+    )
+    assert good_grp.success
+    bad_grp_set = await api.api_call(
+        "mds",
+        "set-group",
+        {"name": "G_Exist_Atomic", "members": ["H_Atomic_Sib"], "groups": ["NoSuchParentGrp999"]},
+        domain="Branch",
+        sid=sid,
+    )
+    assert not bad_grp_set.success
+    sib_after_set = await api.api_call("mds", "show-host", {"name": "H_Atomic_Sib"}, domain="Branch", sid=sid)
+    assert sib_after_set.success
+    assert [g.get("name") for g in sib_after_set.data.get("groups", [])] == []

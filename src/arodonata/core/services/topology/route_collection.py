@@ -173,7 +173,12 @@ async def _execute_coalesced_target(
                 preclaimed_auto_probe=preclaimed,
             )
             if should_coalesce and is_leader and flight_fut is not None and not flight_fut.done():
-                flight_fut.set_result(res)
+                bundle_for_followers = (
+                    res.model_copy(update={"success": True, "error_code": None, "error_message": None, "exit_code": 0})
+                    if (res.bundle_stdout and res.error_code in ("vs_context_error", "vs_not_found_in_bundle"))
+                    else res
+                )
+                flight_fut.set_result(bundle_for_followers)
             return target, res
     except BaseException as exc:
         probe_exc = exc

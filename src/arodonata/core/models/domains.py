@@ -47,6 +47,7 @@ class SIDCacheEntry(BaseModel):
     domain_name: str
     sid: str = Field(repr=False, exclude=True)
     server_ip: str
+    tls_identity_host: str | None = None
     session_uid: str | None = None
     auth_identity: str | None = None
     created_at: datetime = Field(default_factory=utc_now)

@@ -916,6 +916,11 @@
         "on_name_conflict": {
           "$ref": "#/definitions/NameConflictPolicy"
         },
+        "check_where_used": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true with delete, verify where-used before deleting and block if active references remain."
+        },
         "depends_on": {
           "type": "array",
           "items": {

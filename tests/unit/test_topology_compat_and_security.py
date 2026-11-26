@@ -1059,3 +1059,129 @@ async def test_gateway_cli_result_and_repository_vs_error_stdout_redact_sids() -
     assert bare_ded_sid not in (res.error_message or "")
     assert REDACTED_PLACEHOLDER in res.stdout
     assert REDACTED_PLACEHOLDER in (res.error_message or "")
+
+
+@pytest.mark.spec("SCN-TOPO-022-3")
+@pytest.mark.asyncio
+async def test_targeted_refresh_and_lazy_package_load_scrub_active_write_session_sid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-TOPO-022-3 (DA-028): Targeted topology refresh and lazy package loader scrub active WriteSession SID."""
+    from arodonata.core.context import WriteSession, write_session_context
+
+    active_ws_sid = "TopoActiveWsBareSid778899"
+
+    db = DatabaseManager("sqlite+aiosqlite:///:memory:")
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    locks = SqlLockAdapter(db)
+    try:
+        settings = ArodonataSettings(
+            mgmt_name="mds1",
+            mgmt_ip="127.0.0.1",
+            api_key="k",
+            database_url="sqlite+aiosqlite:///:memory:",
+        )
+
+        class _ApiWithReadonly:
+            def get_cached_sid(self, mgmt: str, domain: str | None = None) -> str | None:
+                _ = (mgmt, domain)
+                return None
+
+            async def api_call(self, *args: Any, **kwargs: Any) -> ApiCallResult:
+                return ApiCallResult(success=True, status_code=200, data={})
+
+            async def api_query(self, *args: Any, **kwargs: Any) -> ApiQueryResult:
+                return ApiQueryResult(success=True, objects=[])
+
+        api = _ApiWithReadonly()
+        await cache.upsert_domains([DomainInfo(mgmt_name="mds1", uid="d-corp", name="Corp")])
+        domain_svc = DomainService(settings=settings, api=api, cache=cache, lock_port=locks)  # type: ignore[arg-type]
+        domain_svc.tracker.mark_refreshed("mds1")
+        coord = DomainSyncCoordinator(
+            settings=settings,
+            api=api,  # type: ignore[arg-type]
+            cache=cache,
+            lock_port=locks,
+            domain_service=domain_svc,
+        )
+        asset_svc = AssetRefreshService(
+            settings=settings,
+            api=api,  # type: ignore[arg-type]
+            cache=cache,
+            coordinator=coord,
+        )
+        obj_svc = ObjectService(settings=settings, api=api, cache=cache, coordinator=coord)  # type: ignore[arg-type]
+        topo_svc = TopologyService(
+            settings=settings,
+            api=api,  # type: ignore[arg-type]
+            cache=cache,
+            coordinator=coord,
+            asset_service=asset_svc,
+            object_service=obj_svc,
+        )
+
+        await cache.replace_domain_assets(
+            "mds1",
+            "Corp",
+            [
+                Asset(
+                    id="mds1:Corp:gw-a",
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    uid="gw-a",
+                    name="gw-a",
+                    type="simple-gateway",
+                )
+            ],
+        )
+        await cache.upsert_sync_state(
+            DomainSyncState(mgmt_name="mds1", domain_name="Corp", scope="assets", status="ok")
+        )
+
+        async def _boom_replace(*_args: Any, **_kwargs: Any) -> int:
+            raise RuntimeError(f"Targeted store failed leaking bare {active_ws_sid}")
+
+        monkeypatch.setattr(cache, "replace_domain_topology", _boom_replace)
+
+        ws = WriteSession(mgmt_name="mds1", domain_name="Corp", sid=active_ws_sid, server_ip="10.0.0.1")
+        with write_session_context(ws):
+            events: list[Any] = []
+            async for ev in topo_svc.stream_refresh_topology(
+                mgmt_name="mds1",
+                domains=["Corp"],
+                gateways=["gw-a"],
+                mode="smart",
+            ):
+                events.append(ev)
+
+            failed = [e for e in events if isinstance(e, DomainSyncFailedEvent)]
+            completed = [e for e in events if isinstance(e, SyncCompletedEvent)]
+            assert len(failed) == 1
+            assert active_ws_sid not in failed[0].error
+            assert REDACTED_PLACEHOLDER in failed[0].error
+            assert len(completed) == 1
+            assert active_ws_sid not in completed[0].details["failed_domains"]["mds1:Corp"]
+
+            # Verify _load_domain_package_snapshot scrubs active_ws SID on refresh failure logs
+            logged: list[str] = []
+            monkeypatch.setattr(policy_rules.logger, "debug", lambda msg, *a, **kw: logged.append(msg))
+
+            class _FakeRbRefresh:
+                _api = api
+
+                async def refresh_policy_packages(self, *args: Any, **kwargs: Any) -> Any:
+                    raise RuntimeError(f"Package refresh failed leaking bare {active_ws_sid}")
+
+            await policy_rules._load_domain_package_snapshot(
+                cache=cache,  # type: ignore[arg-type]
+                rulebase_refresh=_FakeRbRefresh(),  # type: ignore[arg-type]
+                mgmt_name="mds1",
+                domain_name="Corp",
+                allow_refresh=True,
+            )
+            assert logged
+            assert all(active_ws_sid not in msg for msg in logged)
+            assert any(REDACTED_PLACEHOLDER in msg for msg in logged)
+    finally:
+        await db.close()

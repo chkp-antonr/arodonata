@@ -359,3 +359,17 @@ Hexagonal layers (`core`, `adapters`, `cpcrud`, `rulebase`, `reports`, `mcp`) SH
 - **WHEN** callers evaluate `arodonata.core.models.sentinels`, `arodonata.core.primitives`, legacy re-export paths, and strict CPCRUD `normalize_mask_length(..., strict=True)`
 - **THEN** UID `6c488338-8eec-4103-ad21-cd461ac2c476` SHALL map strictly to `Policy Targets` (`type="Global"`) rather than `Drop`, and all moved helpers (`parse_cp_publish_timestamp`, `update_overlay_from_command`, `extract_policy_packages`, `PolicyPackageInfo`, sentinel normalizers) SHALL retain object identity at legacy import paths
 - **AND** `mask_to_prefix_len` SHALL validate contiguous netmasks (accepting integral floats such as `24.0` and hostmasks only with `allow_hostmask=True`), while desired CPCRUD specs with invalid `mask_length4` or `subnet_mask` SHALL raise `ValidationError`
+
+### Requirement: SSE Control Field Sanitization Against Frame Injection
+
+**ID**: REQ-CLIENT-019\
+**Intent**: Prevent CR/LF/NUL injection and SID leakage in SSE wire `id:` and `event:` headers.\
+**Non-goals**: Multiline JSON `data:` payload serialization (`REQ-CLIENT-016`).
+
+`SSEEvent.encode()` SHALL strip CR, LF, and NUL control characters from `id` and `event` header fields and apply SID redaction to `event` before formatting SSE wire frames.
+
+#### Scenario: SCN-CLIENT-019-1 — SSEEvent.encode strips newlines/NUL from id and event and redacts SIDs in event
+
+- **GIVEN** an `SSEEvent` or `to_sse_event(..., event_id=...)` input whose `id` or `event` contains `\r`, `\n`, `\x00`, or an embedded SID pattern
+- **WHEN** `encode()` formats the SSE wire frame
+- **THEN** the emitted frame SHALL contain zero injected `data:`/`event:` lines and SHALL scrub any SID pattern from both `id:` and `event:` headers

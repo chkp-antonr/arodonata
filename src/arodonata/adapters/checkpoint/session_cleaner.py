@@ -164,7 +164,12 @@ class SessionCleaner:
             return False
 
         try:
-            async with self._rate_limiter.slot(endpoint.host):
+            _, mds_ip, _ = await self._login_coordinator.resolve_target_ips(
+                mgmt_name,
+                domain,
+                explicit_server_ip=server_ip,
+            )
+            async with self._rate_limiter.slot(mds_ip):
                 res = await self._transport.execute(
                     server_ip,
                     "show-sessions",
@@ -209,7 +214,7 @@ class SessionCleaner:
                             domain=dom_key,
                             session_uid=target_uid,
                         )
-                        async with self._rate_limiter.slot(endpoint.host):
+                        async with self._rate_limiter.slot(mds_ip):
                             await self._transport.execute(
                                 server_ip,
                                 "discard",

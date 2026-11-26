@@ -242,6 +242,12 @@ def number_layer_rulebase(
                 children=children,
                 nested_sections=nested_sections,
             )
+            if (
+                entry.rule_type == "place-holder"
+                and target_dom_layer_uid
+                and numbered.placeholder_domain_layer_uid != target_dom_layer_uid
+            ):
+                numbered = numbered.model_copy(update={"placeholder_domain_layer_uid": target_dom_layer_uid})
             top_rules.append(numbered)
             flat_rules.append(numbered)
             _collect_flat_children(children, flat_rules)
@@ -508,6 +514,7 @@ def _record_layer_prefixes_from_rules(
     context: str,
     layer_prefixes: dict[str, list[LayerPrefixLocation]],
     seen_layer_uids: set[str] | None = None,
+    layer_name_by_uid: dict[str, str] | None = None,
 ) -> None:
     for r in rules:
         child_layer_uid: str | None = None
@@ -518,6 +525,11 @@ def _record_layer_prefixes_from_rules(
         elif r.inline_layer_uid:
             child_layer_uid = r.inline_layer_uid
             child_layer_name = r.inline_layer_name or ""
+        elif r.placeholder_domain_layer_uid:
+            child_layer_uid = r.placeholder_domain_layer_uid
+            child_layer_name = (layer_name_by_uid or {}).get(child_layer_uid, "")
+        if child_layer_uid and not child_layer_name and layer_name_by_uid:
+            child_layer_name = layer_name_by_uid.get(child_layer_uid, "")
         if child_layer_uid:
             if seen_layer_uids is not None:
                 seen_layer_uids.add(child_layer_uid)
@@ -548,6 +560,7 @@ def _record_layer_prefixes_from_rules(
                 context=context,
                 layer_prefixes=layer_prefixes,
                 seen_layer_uids=seen_layer_uids,
+                layer_name_by_uid=layer_name_by_uid,
             )
 
 
@@ -566,6 +579,7 @@ def locate_rules_in_snapshot(
 
     rule_locations: dict[str, list[RuleLocation]] = {u: [] for u in wanted_rules}
     layer_prefixes: dict[str, list[LayerPrefixLocation]] = {u: [] for u in wanted_layers}
+    layer_name_by_uid: dict[str, str] = {l_entry.uid: l_entry.name for l_entry in snapshot.layers}
 
     packages = extract_policy_packages(snapshot)
     seen_package_layer_uids: set[str] = set()
@@ -624,6 +638,8 @@ def locate_rules_in_snapshot(
                     package_name=pkg.name,
                     context="package",
                     layer_prefixes=layer_prefixes,
+                    seen_layer_uids=seen_package_layer_uids,
+                    layer_name_by_uid=layer_name_by_uid,
                 )
 
             for r in pkg_rb.flat_rules:
@@ -696,6 +712,7 @@ def locate_rules_in_snapshot(
                 package_name=None,
                 context="layer",
                 layer_prefixes=layer_prefixes,
+                layer_name_by_uid=layer_name_by_uid,
             )
 
         for r in layer_rb.flat_rules:

@@ -89,6 +89,7 @@ class SIDCacheRecord(SQLModel, table=True):
     domain_name: str = Field(index=True)
     sid: str = Field(repr=False)
     server_ip: str
+    tls_identity_host: str | None = Field(default=None)
     session_uid: str | None = Field(default=None)
     auth_identity: str | None = Field(default=None)
     created_at: datetime = Field(

@@ -28,6 +28,103 @@ from arodonata.cpcrud.models import ConflictPolicy, NamingPrefixes, Outcome, Pla
 from arodonata.cpcrud.state_reader import HybridStateReader, StateLookupError, normalize_mask_length
 
 
+async def _find_active_where_used_refs(
+    usage: Mapping[str, Any],
+    *,
+    mgmt_name: str,
+    domain_name: str,
+    reader: HybridStateReader,
+) -> list[str]:
+    """Collect active reference labels from Check Point `where-used` payload, ignoring virtually deleted entities."""
+    refs: list[str] = []
+    for bucket_name in ("used-directly", "used-indirectly"):
+        bucket = usage.get(bucket_name)
+        if not isinstance(bucket, Mapping):
+            continue
+        for category, items in bucket.items():
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, Mapping):
+                    continue
+                ref_uid = str(item.get("uid") or "").strip()
+                ref_name = str(item.get("name") or "").strip()
+                ref_type = str(item.get("type") or "").strip().lower() or None
+                if (ref_uid or ref_name) and reader.is_entity_virtually_deleted(
+                    mgmt_name,
+                    domain_name,
+                    uid=ref_uid or None,
+                    name=ref_name or None,
+                    entity_type=ref_type,
+                ):
+                    continue
+                label = ref_name or ref_uid or f"{category}-entry"
+                if ref_uid and ref_name:
+                    label = f"{ref_name} ({ref_uid})"
+                elif not ref_uid and not ref_name:
+                    rule_obj = item.get("rule")
+                    if isinstance(rule_obj, Mapping):
+                        r_name = str(rule_obj.get("name") or "").strip()
+                        r_uid = str(rule_obj.get("uid") or "").strip()
+                        r_num = item.get("position")
+                        label = r_name or r_uid or (f"rule#{r_num}" if r_num is not None else label)
+                if label not in refs:
+                    refs.append(label)
+    return refs
+
+
+async def _plan_delete_with_where_used(
+    *,
+    action_id: str,
+    mgmt_name: str,
+    domain_name: str,
+    entity_type: str,
+    display_name: str,
+    spec: Mapping[str, Any],
+    existing: CPObject | CPService | None,
+    reader: HybridStateReader,
+) -> PlannedAction:
+    """Enforce `check_where_used: true` before planning an entity delete across objects, services, and groups."""
+    if existing is not None and not str(existing.uid).startswith("planned:") and spec.get("check_where_used"):
+        usage = await reader.check_where_used(mgmt_name, domain_name, uid=existing.uid, name=existing.name)
+        active_refs = await _find_active_where_used_refs(
+            usage,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            reader=reader,
+        )
+        if active_refs:
+            preview = ", ".join(active_refs[:5])
+            if len(active_refs) > 5:
+                preview = f"{preview}, +{len(active_refs) - 5} more"
+            return _make_error_action(
+                action_id=action_id,
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                operation="delete",
+                object_type=entity_type,
+                name=existing.name,
+                requested_name=display_name,
+                resolved_name=existing.name,
+                target_uid=existing.uid,
+                desired_spec=spec,
+                error=(
+                    f"Cannot delete {entity_type} {existing.name!r}: referenced by {len(active_refs)} "
+                    f"active object(s)/rule(s) ({preview}) while check_where_used=True."
+                ),
+            )
+    return _plan_entity_delete(
+        action_id=action_id,
+        mgmt_name=mgmt_name,
+        domain_name=domain_name,
+        entity_type=entity_type,
+        display_name=display_name,
+        spec=spec,
+        existing=existing,
+        reader=reader,
+    )
+
+
 async def _find_object_value_matches(
     *,
     mgmt_name: str,
@@ -116,9 +213,7 @@ async def plan_object_step(
             existing = await reader.get_object_by_name(mgmt_name, domain_name, obj_type, req_name)
 
         if verb == "delete":
-            if existing is not None and not str(existing.uid).startswith("planned:") and spec.get("check_where_used"):
-                _ = await reader.check_where_used(mgmt_name, domain_name, uid=existing.uid, name=existing.name)
-            return _plan_entity_delete(
+            return await _plan_delete_with_where_used(
                 action_id=action_id,
                 mgmt_name=mgmt_name,
                 domain_name=domain_name,
@@ -279,7 +374,7 @@ async def plan_service_step(
             existing = await reader.get_service_by_name(mgmt_name, domain_name, svc_type, req_name)
 
         if verb == "delete":
-            return _plan_entity_delete(
+            return await _plan_delete_with_where_used(
                 action_id=action_id,
                 mgmt_name=mgmt_name,
                 domain_name=domain_name,
@@ -433,7 +528,7 @@ async def plan_group_step(
                 existing = await reader.get_object_by_name(mgmt_name, domain_name, "group", req_name)
 
         if verb == "delete":
-            return _plan_entity_delete(
+            return await _plan_delete_with_where_used(
                 action_id=action_id,
                 mgmt_name=mgmt_name,
                 domain_name=domain_name,

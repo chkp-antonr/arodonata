@@ -562,3 +562,38 @@ def test_trust_store_symlink_parent_dir_and_configmap_permissions(
     monkeypatch.setattr(os, "lstat", _mock_root_lstat)
     assert TrustStore(path=readable_kh, trust_mode="tofu").get("10.0.0.1", 443) is not None
     assert warn_events == []
+
+
+@pytest.mark.spec("SCN-SESS-014-1")
+def test_trust_policy_binds_both_resolved_ip_and_identity_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SCN-SESS-014-1: First-contact TOFU/lab-memory/known-identity binds both IP and identity_host."""
+    der_a, fp_a = _make_der("host-a")
+    der_rogue, _ = _make_der("rogue")
+
+    # 1. TOFU first contact via resolved IP + identity_host binds BOTH keys
+    tofu_kh = tmp_path / "tofu_id.json"
+    tofu = TrustPolicy(mode="tofu", known_hosts_path=tofu_kh)
+    assert tofu.verify_der("10.0.0.50", 443, der_a, identity_host="mgmt.example.com") == fp_a
+    assert tofu.trust_store.get("10.0.0.50", 443) is not None
+    assert tofu.trust_store.get("mgmt.example.com", 443) is not None
+    # Connecting to second resolved IP with same identity_host rejects rogue cert
+    with pytest.raises(CertificateMismatchError):
+        tofu.verify_der("10.0.0.51", 443, der_rogue, identity_host="mgmt.example.com")
+    # Connecting to second resolved IP with matching cert binds 10.0.0.51 as known-identity
+    assert tofu.verify_der("10.0.0.51", 443, der_a, identity_host="mgmt.example.com") == fp_a
+    second_entry = tofu.trust_store.get("10.0.0.51", 443)
+    assert second_entry is not None and second_entry.source == "known-identity"
+
+    # 2. Pre-trusted fingerprint elsewhere binds both host and id_host on first contact
+    der_b, fp_b = _make_der("host-b")
+    assert tofu.verify_der("10.0.0.60", 443, der_b) == fp_b
+    assert tofu.verify_der("10.0.0.61", 443, der_b, identity_host="alt.example.com") == fp_b
+    assert tofu.trust_store.get("10.0.0.61", 443) is not None
+    assert tofu.trust_store.get("alt.example.com", 443) is not None
+
+    # 3. lab-memory also binds both IP and identity_host
+    monkeypatch.setenv("ARODONATA_LAB", "1")
+    lab = TrustPolicy(mode="lab-memory", known_hosts_path=tmp_path / "unused_lab.json")
+    assert lab.verify_der("10.1.0.10", 443, der_a, identity_host="lab.example.com") == fp_a
+    assert lab.trust_store.get("10.1.0.10", 443) is not None
+    assert lab.trust_store.get("lab.example.com", 443) is not None

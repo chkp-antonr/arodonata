@@ -81,19 +81,20 @@ The system SHALL authenticate shared `arodonata_sid_cache` sessions with `"read-
 - **WHEN** `AMgmtClient.api_call` receives a mutating command (`add-*`, `set-*`, `delete-*`, `publish`, `discard`, `install-policy`, `run-script`, etc.) without an explicit `sid` or active `WriteSession` in `contextvars`
 - **THEN** `AMgmtClient` SHALL refuse to run it on the shared `arodonata_sid_cache` session by raising `SessionStateError`
 
-### Requirement: Stale Session Cleanup and Startup Session Seed
+### Requirement: Stale Session Cleanup Without Read-Write Cache Seeding
 
 **ID**: REQ-SESS-004\
-**Intent**: Reclaim abandoned Arodonata API sessions safely without ever touching human or dirty sessions, and reuse the startup probe session.\
+**Intent**: Reclaim abandoned Arodonata API sessions fail-closed without ever touching human/dirty sessions or placing read-write SIDs into shared read-only caches.\
 **Non-goals**: Read-only SID cache scoping (`REQ-SESS-003`).
 
-The session manager SHALL clean up stale or abandoned Arodonata-owned API sessions on configured management servers on startup (when static credentials are available) and upon max-sessions refusal, logging `DEBUG` entries when discarding stale Arodonata sessions, and strictly restricting `discard` to sessions created by Arodonata (`application == "arodonata"` or `arodonata` session-name prefix) that have `changes == 0` and `locks == 0`.
+The session manager SHALL clean up stale or abandoned Arodonata-owned sessions on startup (when static credentials exist) and on max-sessions refusal, restricting `discard` to Arodonata sessions (`application == "arodonata"` or `arodonata` prefix) with `changes == 0` and `locks == 0`, and SHALL log out its read-write cleanup session without seeding `arodonata_sid_cache`.
 
-#### Scenario: SCN-SESS-004-1 — Startup cleanup seeds system domain SID when cache is empty
+#### Scenario: SCN-SESS-004-1 — Startup cleanup logs out read-write probe session without seeding shared read-only SID cache
 
-- **GIVEN** static credentials and no cached SID or in-flight login for a server's system domain
-- **WHEN** startup session cleanup runs on client entry
-- **THEN** the session opened to inspect/discard stale sessions SHALL be retained in `arodonata_sid_cache` for subsequent read calls rather than logged out
+- **GIVEN** static credentials on client entry
+- **WHEN** startup session cleanup runs `show-sessions` and discards stale Arodonata sessions using its temporary read-write cleanup session
+- **THEN** `SessionCleaner` SHALL close that temporary read-write session via `logout_sid` on completion or error
+- **AND** it SHALL NEVER insert a read-write SID into `arodonata_sid_cache` (so subsequent read-only calls acquire fresh `"read-only": true` sessions under `REQ-SESS-003`)
 
 #### Scenario: SCN-SESS-004-2 — Foreign administrator sessions and sessions with unpublished changes are never discarded
 
@@ -250,3 +251,36 @@ When an explicit `server_ip` hostname is resolved and pinned to a canonical trus
 - **WHEN** repository scripts run (with normal completion, validation failure, or session errors) or multi-gateway route collection executes
 - **THEN** every session exception branch and task output SHALL scrub SIDs uniformly and close dedicated sessions cleanly
 - **AND** coalescing execution, per-gateway persistence, and post-TaskGroup domain sync-state finalization SHALL run via isolated composable helpers
+
+### Requirement: Lifecycle TLS Identity Binding, Discovery Retry Integrity, and Session Secret Hardening
+
+**ID**: REQ-SESS-014\
+**Intent**: Preserve hostname-bound TLS pins across the full session lifecycle, prevent failed domain discovery from suppressing retries, enforce target-MDS throttling and typed lock-timeout errors, and mask secrets on model serialization.\
+**Non-goals**: Base rate-limit sizing (`REQ-SESS-007`) or initial TOFU enrollment policy (`REQ-TRANS-002`).
+
+`ArodonataClient` SHALL preserve hostname TLS pin binding across cached/dedicated sessions and expired-SID retries, gate `domain_list_ttl` on `status == "ok"`, translate distributed login-gate lock timeouts to `AuthenticationError`, throttle stale-session cleanup on the target MDS member, and mask secrets in `AuthContext` and `ServerEndpointConfig` `model_dump()` outputs.
+
+#### Scenario: SCN-SESS-014-1 — Hostname-bound TLS pinning persists across first-contact TOFU, keepalive/logout sweeps, and expired-SID retries
+
+- **GIVEN** a hostname endpoint (`mgmt.example.com`) verified via `TrustPolicy` in `tofu` or `pinned` mode
+- **WHEN** first-contact TOFU records fingerprints, cached or dedicated sessions run `keepalive` / `logout` / non-system `api_call()`, or an expired read-only SID retries
+- **THEN** `TrustPolicy` SHALL bind both `(resolved_ip, port)` and `(hostname, port)`, and session operations SHALL preserve `tls_identity_host` and target IP pinning end-to-end
+
+#### Scenario: SCN-SESS-014-2 — Failed domain discovery does not suppress subsequent smart refreshes for domain_list_ttl
+
+- **GIVEN** a management server whose cached domain list exceeded `domain_list_ttl` and whose `show-domains` call fails transiently (`status="failed"`)
+- **WHEN** a caller (including a restarted process or sibling worker) invokes `get_domains(cache_mode="smart")` shortly thereafter
+- **THEN** `DomainService` SHALL treat `status != "ok"` sync state as stale and re-attempt live domain discovery instead of suppressing retries for `domain_list_ttl`
+
+#### Scenario: SCN-SESS-014-3 — Distributed LoginGate timeout raises AuthenticationError and SessionCleaner throttles target MDS member
+
+- **GIVEN** a contended distributed `login_gate:<mds_ip>` lock or a multi-MDS domain hosted on a secondary MDS member
+- **WHEN** `LoginGate.acquire()` times out on `LockPort` or `SessionCleaner` runs `show-sessions` / `discard` for that domain
+- **THEN** `LoginGate.acquire()` SHALL raise `AuthenticationError` rather than `LockAcquisitionError`
+- **AND** `SessionCleaner` SHALL acquire `RateLimiter` slots against the target domain's resolved `mds_ip` (while expired-SID retries in `api_call` also refresh `mds_ip`)
+
+#### Scenario: SCN-SESS-014-4 — AuthContext and ServerEndpointConfig mask password and api_key on model_dump and clean obsolete login residue
+
+- **GIVEN** `AuthContext` or `ServerEndpointConfig` instances populated with `password` or `api_key`
+- **WHEN** `.model_dump()` or `.model_dump_json()` is called directly or through an enclosing Pydantic model
+- **THEN** `password` and `api_key` SHALL be emitted as `REDACTED_PLACEHOLDER` (never plaintext), while `LoginCoordinator` omits dead startup-seeding methods and racy `_inflight_logins` state

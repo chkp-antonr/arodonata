@@ -6,6 +6,8 @@ import ast
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import pytest
+
 from arodonata.adapters.sse import SSEEvent, stream_as_sse, to_sse_event
 from arodonata.core import events as core_events
 from arodonata.core.errors import REDACTED_PLACEHOLDER
@@ -109,3 +111,26 @@ async def test_domain_events_convert_to_sse_with_sid_redaction() -> None:
     wire_4 = to_sse_event(ev4).encode()
     assert "raw_staged_sid_value" not in wire_4
     assert "sess-uid-99" in wire_4
+
+
+@pytest.mark.spec("SCN-CLIENT-019-1")
+def test_sse_event_encode_strips_control_chars_and_redacts_sids() -> None:
+    """SCN-CLIENT-019-1: SSEEvent.encode strips CR/LF/NUL from id and event and redacts SIDs."""
+    malicious_id = 'req-1\r\n\x00event: cpcrud_completed\ndata: {"succeeded_count":1}\nX-chkp-sid: secret-sid-123'
+    malicious_event = 'sync_started\r\n\x00data: {"forged":true} X-chkp-sid: secret-sid-456'
+
+    ev = SSEEvent(id=malicious_id, event=malicious_event, data={"ok": True})
+    wire = ev.encode()
+
+    # No injected lines: only id:, event:, data:, and trailing blank line
+    lines = wire.rstrip("\n").split("\n")
+    assert len(lines) == 3
+    assert lines[0].startswith("id: ")
+    assert lines[1].startswith("event: ")
+    assert lines[2].startswith("data: ")
+    assert "\x00" not in wire
+    assert "\r" not in wire
+    assert "secret-sid-123" not in wire
+    assert "secret-sid-456" not in wire
+    assert REDACTED_PLACEHOLDER in lines[0]
+    assert REDACTED_PLACEHOLDER in lines[1]

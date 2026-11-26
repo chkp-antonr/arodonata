@@ -597,30 +597,22 @@ async def test_cached_rulebase_source_cold_package_catalog_targeted_package_and_
 @pytest.mark.spec("SCN-RULE-007-2")
 def test_empty_inline_layer_and_name_keyed_prefix_lookup() -> None:
     """SCN-RULE-007-2: Empty inline layers record LayerPrefixLocation and name-keyed lookups return prefixes."""
-    from arodonata.core.models.rulebase import AccessRuleEntry, PolicyPackageInfo, RulebaseLayerEntry
+    from arodonata.core.models.rulebase import AccessRuleEntry, RulebaseLayerEntry, RulebasePackageLayerEntry
     from arodonata.rulebase.numbering import locate_rules_in_snapshot
 
     snap = DomainRulebaseSnapshot(
         mgmt_name="mds1",
         domain_name="Corp",
-        packages=[
-            PolicyPackageInfo(
+        package_layers=[
+            RulebasePackageLayerEntry(
                 mgmt_name="mds1",
                 domain_name="Corp",
-                uid="pkg-1",
-                name="Standard",
-                access_layers=[
-                    {
-                        "mgmt_name": "mds1",
-                        "domain_name": "Corp",
-                        "package_uid": "pkg-1",
-                        "package_name": "Standard",
-                        "rulebase_type": "access",
-                        "layer_uid": "l-parent",
-                        "layer_name": "Parent",
-                        "position": 1,
-                    }
-                ],
+                package_uid="pkg-1",
+                package_name="Standard",
+                rulebase_type="access",
+                layer_uid="l-parent",
+                layer_name="Parent",
+                position=1,
             )
         ],
         layers=[
@@ -646,7 +638,8 @@ def test_empty_inline_layer_and_name_keyed_prefix_lookup() -> None:
         ],
     )
     locs = locate_rules_in_snapshot(snap, layer_uids=["EmptyInline"])
-    assert locs.layer_prefixes["EmptyInline"]
+    assert len(locs.layer_prefixes["EmptyInline"]) == 1
+    assert locs.layer_prefixes["EmptyInline"][0].context == "package"
     assert locs.layer_prefixes["EmptyInline"][0].prefix == "1."
 
 
@@ -786,3 +779,89 @@ def test_service_matching_cycles_and_markdown_cell_escaping() -> None:
     md = format_rules_markdown("Std", "access", [rule])
     assert r"allow \| pipe newline" in md
     assert r"H1 \| evil" in md
+
+
+@pytest.mark.spec("SCN-RULE-009-2")
+def test_locate_rules_preserves_package_prefix_for_empty_global_placeholder_and_unnamed_inline() -> None:
+    """SCN-RULE-009-2 (DA-033): Preserve package prefix for empty Global-placeholder & unnamed empty inline layers."""
+    from arodonata.core.models.rulebase import AccessRuleEntry, RulebaseLayerEntry, RulebasePackageLayerEntry
+    from arodonata.rulebase.numbering import locate_rules_in_snapshot
+
+    snap = DomainRulebaseSnapshot(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        package_layers=[
+            RulebasePackageLayerEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                package_uid="pkg-1",
+                package_name="Standard",
+                rulebase_type="access",
+                layer_uid="l-global",
+                layer_name="Global",
+                position=1,
+            ),
+            RulebasePackageLayerEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                package_uid="pkg-1",
+                package_name="Standard",
+                rulebase_type="access",
+                layer_uid="l-dom-empty",
+                layer_name="Corp Network",
+                position=2,
+            ),
+        ],
+        layers=[
+            RulebaseLayerEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                uid="l-global",
+                name="Global",
+                rulebase_type="access",
+                is_global=True,
+            ),
+            RulebaseLayerEntry(
+                mgmt_name="mds1", domain_name="Corp", uid="l-dom-empty", name="Corp Network", rulebase_type="access"
+            ),
+            RulebaseLayerEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                uid="l-inline-unnamed",
+                name="UnnamedInline",
+                rulebase_type="access",
+            ),
+        ],
+        access_rules=[
+            AccessRuleEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                layer_uid="l-global",
+                layer_name="Global",
+                uid="r-g1",
+                name="UnnamedInlineAnchor",
+                position=1,
+                inline_layer_uid="l-inline-unnamed",
+                inline_layer_name=None,
+            ),
+            AccessRuleEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                layer_uid="l-global",
+                layer_name="Global",
+                uid="r-ph",
+                name="Placeholder",
+                rule_type="place-holder",
+                position=2,
+                placeholder_domain_layer_uid=None,
+            ),
+        ],
+    )
+    locs = locate_rules_in_snapshot(snap, layer_uids=["Corp Network", "UnnamedInline"])
+    assert len(locs.layer_prefixes["Corp Network"]) == 1
+    assert locs.layer_prefixes["Corp Network"][0].context == "package"
+    assert locs.layer_prefixes["Corp Network"][0].prefix == "2."
+
+    assert len(locs.layer_prefixes["UnnamedInline"]) == 1
+    assert locs.layer_prefixes["UnnamedInline"][0].context == "package"
+    assert locs.layer_prefixes["UnnamedInline"][0].prefix == "1."
