@@ -400,3 +400,29 @@ def test_api_reference_batch_cap_dedup_and_list_enum_validation() -> None:
     bad_fields = {issue["field"] for issue in bad_res["errors"]}
     assert bad_fields == {"inline-modes", "ref-levels"}
     assert all(issue["code"] == "invalid_enum_value" for issue in bad_res["errors"])
+
+
+@pytest.mark.spec("SCN-APIREF-003-3")
+def test_gaia_and_cme_commands_preserve_fields_and_validate_under_v2_versions() -> None:
+    """SCN-APIREF-003-3 (DA-031): Gaia/CME commands retain fields & validate payloads under v2.2 and v2.0.1."""
+    for target_ver in ("v2.2", "v2.0.1"):
+        gaia_desc = describe_api_command("gaia-show-interface", version=target_ver)
+        assert gaia_desc is not None
+        assert gaia_desc["api_family"] == "gaia"
+        assert len(gaia_desc["fields"]) > 0
+
+        cme_azure_desc = describe_api_command("cme-azure", version=target_ver)
+        assert cme_azure_desc is not None
+        assert cme_azure_desc["api_family"] == "cme"
+        assert len(cme_azure_desc["fields"]) > 0
+
+        cme_mgmt_desc = describe_api_command("cme-management", version=target_ver)
+        assert cme_mgmt_desc is not None
+        assert cme_mgmt_desc["api_family"] == "cme"
+        assert len(cme_mgmt_desc["fields"]) > 0
+
+        val_gaia = validate_api_payload("gaia-show-interface", {"name": "eth0"}, version=target_ver)
+        assert val_gaia["valid"] is True
+
+        val_cme = validate_api_payload("cme-management", {"name": "mgmt1"}, version=target_ver)
+        assert val_cme["valid"] is True

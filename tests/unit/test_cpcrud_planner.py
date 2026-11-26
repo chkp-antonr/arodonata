@@ -1474,3 +1474,117 @@ def test_resolve_domain_name_treats_none_as_empty() -> None:
     assert _resolve_domain_name({"domain": None}, default="Corp") == "Corp"
     assert _resolve_domain_name({"domain": None}, default="") == ""
     assert _resolve_domain_name({"domain": "Global"}, default="Corp") == "Global"
+
+
+@pytest.mark.spec("SCN-CPCRUD-017-2")
+@pytest.mark.asyncio
+async def test_check_where_used_blocks_referenced_entities_and_ignores_deleted_siblings() -> None:
+    """SCN-CPCRUD-017-2 (DA-014, DA-051): Block delete with check_where_used=True when active refs exist across host/service/group/service-group."""
+    db = DatabaseManager("sqlite+aiosqlite:///:memory:")
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    api = PlannerFakeApi()
+
+    await _seed_fresh_cache(
+        cache,
+        objects=[
+            CPObject.from_cp_dict(
+                "mds1", "Corp", {"uid": "u-h1", "name": "H_Used", "type": "host", "ipv4-address": "10.1.1.1"}
+            ),
+            CPObject.from_cp_dict(
+                "mds1", "Corp", {"uid": "u-g1", "name": "G_Used", "type": "group", "members": ["H_Used"]}
+            ),
+            CPObject.from_cp_dict(
+                "mds1", "Corp", {"uid": "u-g-ref", "name": "G_Holder", "type": "group", "members": ["H_Dead"]}
+            ),
+        ],
+        services=[
+            CPService.from_cp_dict(
+                "mds1", "Corp", {"uid": "u-s1", "name": "S_Used", "type": "service-tcp", "port": "8080"}
+            ),
+            CPService.from_cp_dict(
+                "mds1", "Corp", {"uid": "u-sg1", "name": "SG_Used", "type": "service-group", "members": []}
+            ),
+        ],
+    )
+
+    orig_call = api.api_call
+
+    async def _where_used_call(
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        domain: str | None = None,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        wait_for_task: bool = True,
+    ) -> ApiCallResult:
+        if command == "where-used":
+            target = (payload or {}).get("uid") or (payload or {}).get("name")
+            if target in ("u-h1", "H_Used"):
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "used-directly": {
+                            "objects": [{"uid": "u-g1", "name": "G_Used", "type": "group"}],
+                            "access-control-rules": [],
+                        },
+                        "used-indirectly": {"objects": []},
+                    },
+                )
+            if target in ("u-s1", "S_Used", "u-g1", "G_Used", "u-sg1", "SG_Used"):
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "used-directly": {
+                            "objects": [{"uid": "u-g-ref", "name": "G_Holder", "type": "group"}],
+                        },
+                        "used-indirectly": {"objects": []},
+                    },
+                )
+            return ApiCallResult(success=True, data={"used-directly": {}, "used-indirectly": {}})
+        return await orig_call(
+            mgmt_name,
+            command,
+            payload,
+            domain=domain,
+            sid=sid,
+            server_ip=server_ip,
+            wait_for_task=wait_for_task,
+        )
+
+    api.api_call = _where_used_call  # type: ignore[method-assign]
+    planner = Planner(api=api, cache=cache)
+    try:
+        # 1. Referenced host, service-tcp, group, and service-group all fail with Outcome.ERROR
+        blocked_plan = await planner.decide(
+            {
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "operations": [
+                    {"operation": "delete", "type": "host", "name": "H_Used", "check_where_used": True},
+                    {"operation": "delete", "type": "service-tcp", "name": "S_Used", "check_where_used": True},
+                    {"operation": "delete", "type": "group", "name": "G_Used", "check_where_used": True},
+                    {"operation": "delete", "type": "service-group", "name": "SG_Used", "check_where_used": True},
+                ],
+            }
+        )
+        assert len(blocked_plan.actions) == 4
+        assert all(act.outcome == Outcome.ERROR for act in blocked_plan.actions)
+        assert all("where" in (act.error or "").lower() for act in blocked_plan.actions)
+
+        # 2. Deleting referencing sibling G_Used first allows H_Used delete in the same plan
+        unblocked_plan = await planner.decide(
+            {
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "operations": [
+                    {"operation": "delete", "type": "group", "name": "G_Used", "check_where_used": False},
+                    {"operation": "delete", "type": "host", "name": "H_Used", "check_where_used": True},
+                ],
+            }
+        )
+        assert [a.outcome for a in unblocked_plan.actions] == [Outcome.DELETE, Outcome.DELETE]
+    finally:
+        await db.close()

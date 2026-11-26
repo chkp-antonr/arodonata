@@ -12,6 +12,12 @@ from arodonata.core.errors import redact_sid, sanitize_mapping
 from arodonata.core.events import DomainEvent
 
 
+def _sanitize_sse_header_value(value: str) -> str:
+    """Strip CR, LF, and NUL control characters and redact SIDs from SSE wire header fields."""
+    cleaned = value.replace("\r", "").replace("\n", "").replace("\x00", "")
+    return redact_sid(cleaned)
+
+
 class SSEEvent(BaseModel):
     """Server-Sent Event wire model."""
 
@@ -26,9 +32,11 @@ class SSEEvent(BaseModel):
         """Serialize the event into a standard SSE wire frame (`event: ...\\ndata: ...\\n\\n`)."""
         lines: list[str] = []
         if self.id is not None:
-            lines.append(f"id: {redact_sid(self.id)}")
+            lines.append(f"id: {_sanitize_sse_header_value(self.id)}")
         if self.event:
-            lines.append(f"event: {self.event}")
+            safe_event = _sanitize_sse_header_value(self.event)
+            if safe_event:
+                lines.append(f"event: {safe_event}")
         if self.retry is not None:
             lines.append(f"retry: {self.retry}")
         safe_payload = sanitize_mapping(self.data)

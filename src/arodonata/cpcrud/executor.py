@@ -82,7 +82,9 @@ class Executor:
         mgmt_name: str,
         domain_name: str,
     ) -> tuple[bool, str | None, datetime | None, str | None]:
-        """Read `show-last-published-session` and return `(readable, uid, published_at, error)`."""
+        """Read `show-last-published-session` (or injected `check_domain_head`) and return head status."""
+        if self._check_domain_head is not None:
+            return await self._check_domain_head(mgmt_name, domain_name)
         return await check_current_domain_head(self._api, mgmt_name, domain_name)
 
     async def _stream_single_pass(
@@ -297,6 +299,9 @@ class Executor:
         expected_session_name: str | None = None,
         allow_foreign: bool = False,
         allow_stale: bool = False,
+        baseline_readable: bool | None = None,
+        baseline_session_uid: str | None = None,
+        baseline_published_at: datetime | None = None,
     ) -> AsyncIterator[CPCRUDEvent]:
         """Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate domain cache."""
         dom_label = f"{mgmt_name}:{domain}" if domain else mgmt_name
@@ -344,27 +349,58 @@ class Executor:
 
         known_sids = [s for s in (sid, active_sid) if s]
         staged_entry = self._staged_sessions.get((mgmt_name, dom_key, session_uid))
+        has_explicit_baseline = (
+            baseline_readable is not None or baseline_session_uid is not None or baseline_published_at is not None
+        )
+        if has_explicit_baseline:
+            eff_baseline: tuple[bool, str | None, datetime | None] | None = (
+                bool(baseline_readable)
+                if baseline_readable is not None
+                else bool(baseline_session_uid or baseline_published_at),
+                baseline_session_uid,
+                baseline_published_at,
+            )
+        elif staged_entry is not None:
+            eff_baseline = (
+                staged_entry.baseline_readable,
+                staged_entry.baseline_session_uid,
+                staged_entry.baseline_published_at,
+            )
+        else:
+            eff_baseline = None
 
         async def _do_publish() -> ApiCallResult:
             is_stale = False
             stale_reason = ""
             head_check = self._check_domain_head or self._check_current_domain_head
-            if not allow_stale and staged_entry is not None:
+            if not allow_stale:
+                if eff_baseline is None:
+                    return ApiCallResult(
+                        success=False,
+                        status_code=409,
+                        error_message=(
+                            f"Refusing to publish staged session {session_uid}: "
+                            "no verified pre-apply domain head baseline is available "
+                            "(pass allow_stale=True or an explicit baseline stamp)."
+                        ),
+                        error_code="stale_plan",
+                    )
                 from arodonata.cpcrud.models import DomainStamp
 
+                b_readable, b_session_uid, b_published_at = eff_baseline
                 head_readable, curr_uid, curr_pub, head_err = await head_check(mgmt_name, domain or "")
                 baseline_stamp = DomainStamp(
                     mgmt_name=mgmt_name,
                     domain_name=dom_key,
-                    readable=staged_entry.baseline_readable,
-                    last_session_uid=staged_entry.baseline_session_uid,
-                    last_published_at=staged_entry.baseline_published_at,
+                    readable=b_readable,
+                    last_session_uid=b_session_uid,
+                    last_published_at=b_published_at,
                     captured_at=self._now(),
                 )
                 if _is_domain_head_stale(baseline_stamp, curr_uid, curr_pub, head_readable):
                     is_stale = True
                     safe_head_err = redact_sid(head_err, known_sids=known_sids) if head_err else None
-                    if not staged_entry.baseline_readable:
+                    if not b_readable:
                         stale_reason = safe_head_err or "pre-apply domain head baseline was unreadable"
                     else:
                         stale_reason = safe_head_err or f"published head drifted to {curr_uid or curr_pub}"
@@ -459,6 +495,9 @@ class Executor:
         expected_session_name: str | None = None,
         allow_foreign: bool = False,
         allow_stale: bool = False,
+        baseline_readable: bool | None = None,
+        baseline_session_uid: str | None = None,
+        baseline_published_at: datetime | None = None,
     ) -> ApiCallResult:
         """Adopt `session_uid`, publish it, log out, and invalidate the domain cache."""
         span_attrs(mgmt_name=mgmt_name, domain=domain, session_uid=session_uid)
@@ -474,6 +513,9 @@ class Executor:
             expected_session_name=expected_session_name,
             allow_foreign=allow_foreign,
             allow_stale=allow_stale,
+            baseline_readable=baseline_readable,
+            baseline_session_uid=baseline_session_uid,
+            baseline_published_at=baseline_published_at,
         ):
             pass
         assert self._last_staged_publish_result is not None

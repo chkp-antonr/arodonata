@@ -442,6 +442,20 @@ class MCPFakeApi:
                 ],
                 total=3,
             )
+        if command == "show-packages":
+            return ApiQueryResult(
+                success=True,
+                objects=[
+                    {
+                        "uid": "pkg-std",
+                        "name": "Standard",
+                        "access": True,
+                        "nat-policy": True,
+                        "access-layers": [{"uid": "lay-net", "name": "Network", "position": 1}],
+                    }
+                ],
+                total=1,
+            )
         return ApiQueryResult(success=True, objects=[], total=0)
 
     async def create_dedicated_session(
@@ -2398,3 +2412,276 @@ async def test_multi_scope_query_and_search_report_max_cache_age() -> None:
         s_payload_rev = json.loads(_get_tool_text(s_res_rev))
         assert s_payload_rev["cache_age_seconds"] is not None
         assert s_payload_rev["cache_age_seconds"] >= 7200
+
+
+@pytest.mark.spec("SCN-MCP-013-1")
+@pytest.mark.asyncio
+async def test_cache_control_refresh_mode_cache_charges_zero_live_quota_and_calls_no_show_domains() -> None:
+    """SCN-MCP-013-1 (DA-032): `cache_control(action='refresh', mode='cache', scope='domains')` is offline."""
+    from arodonata.mcp.quota import MCPToolQuotaManager
+
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+    async with ArodonataClient(settings, api=fake_api) as client:
+        quota = MCPToolQuotaManager(live_rate_limit_per_minute=1)
+        server = create_mcp_server(client, auth_mode="host", quota_manager=quota)
+
+        fake_api.calls.clear()
+        fake_api.queries.clear()
+        res = await server.call_tool(
+            "cache_control",
+            {"action": "refresh", "mgmt_name": "mds1", "scope": "domains", "mode": "cache"},
+        )
+        assert res.is_error is False
+        assert not any(c[1] == "show-domains" for c in fake_api.calls)
+        # Live quota bucket (limit=1) remains untouched, so a subsequent live call succeeds once then hits quota
+        live_ok = await server.call_tool(
+            "cache_control",
+            {"action": "refresh", "mgmt_name": "mds1", "scope": "domains", "mode": "force"},
+        )
+        assert live_ok.is_error is False
+        quota_hit = await server.call_tool(
+            "cache_control",
+            {"action": "refresh", "mgmt_name": "mds1", "scope": "domains", "mode": "force"},
+        )
+        assert quota_hit.is_error is True
+
+
+@pytest.mark.spec("SCN-MCP-016-1")
+@pytest.mark.asyncio
+async def test_fanout_quota_upfront_multi_mds_search_and_stalest_cache_age() -> None:
+    """SCN-MCP-016-1 (DA-009, DA-013, DA-016, DA-037): Fan-out quota before show-domains, multi-MDS search, min synced_at."""
+    from datetime import timedelta
+
+    from arodonata.core.models.common import utc_now
+    from arodonata.core.models.domains import DomainInfo, DomainSyncState
+    from arodonata.core.models.objects import CPObject
+    from arodonata.mcp.quota import MCPToolQuotaManager
+
+    # 1. Oversize cache_control and change_report fan-out rejected BEFORE show-domains calls
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+    async with ArodonataClient(settings, api=fake_api) as client:
+        quota = MCPToolQuotaManager(live_rate_limit_per_minute=2)
+        server = create_mcp_server(client, auth_mode="host", quota_manager=quota)
+        fake_api.calls.clear()
+
+        cc_res = await server.call_tool(
+            "cache_control",
+            {
+                "action": "refresh",
+                "mgmt_name": "mds1",
+                "domains": ["D1", "D2", "D3"],
+                "scope": "objects",
+                "mode": "smart",
+            },
+        )
+        assert cc_res.is_error is True
+        assert not any(c[1] == "show-domains" for c in fake_api.calls)
+
+        cr_res = await server.call_tool(
+            "change_report",
+            {
+                "mgmt_name": "mds1",
+                "scopes": [
+                    {"mgmt_name": "mds1", "domain": "D1", "session_uids": ["s1"]},
+                    {"mgmt_name": "mds1", "domain": "D2", "session_uids": ["s2"]},
+                    {"mgmt_name": "mds1", "domain": "D3", "session_uids": ["s3"]},
+                ],
+            },
+        )
+        assert cr_res.is_error is True
+        assert not any(c[1] == "show-domains" for c in fake_api.calls)
+
+    # 2. Multi-MDS search_objects(mgmt_name=None, domain=...) spans all servers + stalest min(synced_at) across domains
+    settings_multi = ArodonataSettings(
+        mgmt_names=["mds1", "mds2"],
+        mgmt_servers=["10.0.0.1", "10.0.0.2"],
+        api_keys=["secret1", "secret2"],
+    )
+    async with ArodonataClient(settings_multi, api=MCPFakeApi()) as client:
+        await client.cache.upsert_domains(
+            [
+                DomainInfo(mgmt_name="mds1", uid="d1", name="DomA"),
+                DomainInfo(mgmt_name="mds2", uid="d2", name="DomB"),
+            ]
+        )
+        now_t = utc_now()
+        old_t = now_t - timedelta(seconds=7200)
+        fresh_t = now_t - timedelta(seconds=60)
+        await client.cache.upsert_objects(
+            [
+                CPObject.from_cp_dict(
+                    "mds2", "DomB", {"uid": "h-m2", "name": "Web_DomB", "type": "host", "ipv4-address": "10.2.2.2"}
+                )
+            ]
+        )
+        await client.cache.upsert_sync_state(
+            DomainSyncState(
+                mgmt_name="mds1", domain_name="DomA", scope="objects", item_type="host", synced_at=old_t, status="ok"
+            )
+        )
+        await client.cache.upsert_sync_state(
+            DomainSyncState(
+                mgmt_name="mds2", domain_name="DomB", scope="objects", item_type="host", synced_at=fresh_t, status="ok"
+            )
+        )
+        server = create_mcp_server(client, auth_mode="host")
+        res = await server.call_tool(
+            "search_objects",
+            {"query": "Web_DomB", "domain": "DomB", "cache_mode": "cache"},
+        )
+        assert res.is_error is False
+        data = _parse_tool_json(res)
+        assert data["total"] == 1
+        assert data["objects"][0]["name"] == "Web_DomB"
+        assert data["cache_age_seconds"] is not None
+        assert data["cache_age_seconds"] < 300
+
+        all_doms_res = await server.call_tool(
+            "search_objects",
+            {"query": "Web", "cache_mode": "cache"},
+        )
+        assert all_doms_res.is_error is False
+        assert _parse_tool_json(all_doms_res)["cache_age_seconds"] >= 7200
+
+
+@pytest.mark.spec("SCN-MCP-016-2")
+@pytest.mark.asyncio
+async def test_guard_offline_errors_staged_sid_registration_and_owner_fair_plan_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-MCP-016-2 (DA-015, DA-024): Guard offline errors without DB, register staged SID, and fair plan_store."""
+    from arodonata.core.models.domains import DomainInfo
+    from arodonata.mcp.errors import _ACTIVE_MCP_EXTRA_SIDS
+
+    # 1. api_reference ValidationError on an uninitialized DB does not touch arodonata_domains or raise OperationalError
+    client = ArodonataClient(
+        settings=ArodonataSettings(
+            mgmt_name="mds1",
+            mgmt_ip="10.0.0.1",
+            api_key="secret",
+            database_url="sqlite+aiosqlite:///:memory:",
+        )
+    )
+    server = create_mcp_server(client, auth_mode="host")
+    err_res = await server.call_tool("api_reference", {"action": "describe", "command": [f"c{i}" for i in range(51)]})
+    assert err_res.is_error is True
+    assert "OperationalError" not in _get_tool_text(err_res)
+
+    # 2. cpcrud_staged_session registers stored_staged.sid for exception redaction + owner-fair plan_store
+    fake_api = MCPFakeApi()
+    async with ArodonataClient(
+        settings=ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret"), api=fake_api
+    ) as cl2:
+        await cl2.cache.upsert_domains([DomainInfo(mgmt_name="mds1", uid="d1", name="Corp")])
+        srv2 = create_mcp_server(cl2, auth_mode="host", cpcrud=True)
+
+        seen_extra_sids: list[str] = []
+        orig_pub = cl2.cpcrud.publish_staged_session
+
+        async def _boom_pub(*args: Any, **kwargs: Any) -> Any:
+            _ = (args, kwargs)
+            seen_extra_sids.extend(_ACTIVE_MCP_EXTRA_SIDS.get(()))
+            raise RuntimeError("boom with StoredBareSid778899")
+
+        with user_context(user_id="alice", client_id="alice"):
+            p_res = await srv2.call_tool(
+                "cpcrud_plan",
+                {
+                    "template": {
+                        "version": 1,
+                        "mgmt_name": "mds1",
+                        "domain": "Corp",
+                        "objects": [{"type": "host", "name": "H_stage", "ipv4-address": "10.0.0.99"}],
+                    }
+                },
+            )
+            p_id = _parse_tool_json(p_res)["plan_id"]
+            assert p_id
+
+        monkeypatch.setattr(cpcrud_mod, "MAX_STORED_PLANS", 2)
+        with user_context(user_id="bob", client_id="bob"):
+            for idx in range(3):
+                await srv2.call_tool(
+                    "cpcrud_plan",
+                    {
+                        "template": {
+                            "version": 1,
+                            "mgmt_name": "mds1",
+                            "domain": "Corp",
+                            "objects": [{"type": "host", "name": f"H_bob_{idx}", "ipv4-address": "10.0.0.50"}],
+                        }
+                    },
+                )
+
+        with user_context(user_id="alice", client_id="alice"):
+            apply_res = await srv2.call_tool(
+                "cpcrud_apply", {"plan_id": p_id, "no_publish": True, "keep_session": True}
+            )
+            assert apply_res.is_error is False
+            staged_uid = _parse_tool_json(apply_res)["staged_sessions"][0]["session_uid"]
+
+            cl2.cpcrud.publish_staged_session = _boom_pub  # type: ignore[method-assign]
+            try:
+                st_res = await srv2.call_tool(
+                    "cpcrud_staged_session",
+                    {"mgmt_name": "mds1", "domain": "Corp", "session_uid": staged_uid, "action": "publish"},
+                )
+                assert st_res.is_error is True
+                assert seen_extra_sids  # stored_staged.sid was registered before publish_staged_session ran
+            finally:
+                cl2.cpcrud.publish_staged_session = orig_pub  # type: ignore[method-assign]
+
+
+@pytest.mark.spec("SCN-MCP-016-3")
+@pytest.mark.asyncio
+async def test_typed_uuid_show_object_cpmi_aliases_and_clamped_show_rulebase() -> None:
+    """SCN-MCP-016-3 (DA-017, DA-043): Typed UUID uid lookup, Cpmi*/underscore aliases, and clamped show_rulebase."""
+    from arodonata.core.models.domains import DomainInfo
+    from arodonata.mcp.tools._show_object import validate_show_object_type
+
+    assert validate_show_object_type("CpmiGatewayCluster", "mds1", "Corp") == "simple-cluster"
+    assert validate_show_object_type("simple_gateway", "mds1", "Corp") == "simple-gateway"
+
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+    async with ArodonataClient(settings, api=fake_api) as client:
+        await client.cache.upsert_domains([DomainInfo(mgmt_name="mds1", uid="d1", name="Corp")])
+        await client.refresh_rulebases(mgmt_name="mds1", domains=["Corp"])
+        server = create_mcp_server(client, auth_mode="host")
+
+        # 1. Typed UUID live lookup sends payload["uid"] (not "name")
+        uuid_target = "12345678-1234-1234-1234-1234567890ab"
+        fake_api.calls.clear()
+        await server.call_tool(
+            "show_object",
+            {
+                "uid_or_name": uuid_target,
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "obj_type": "host",
+                "cache_mode": "live",
+            },
+        )
+        host_calls = [c[2] for c in fake_api.calls if c[1] == "show-host"]
+        assert host_calls
+        assert host_calls[-1].get("uid") == uuid_target
+        assert "name" not in host_calls[-1]
+
+        # 2. Cached show_rulebase clamps negative offset and excessive limit
+        rb_res = await server.call_tool(
+            "show_rulebase",
+            {
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "package": "Standard",
+                "offset": -5,
+                "limit": 100000,
+                "cache_mode": "cache",
+            },
+        )
+        assert rb_res.is_error is False
+        rb_data = _parse_tool_json(rb_res)
+        assert rb_data["from"] == 1
+        assert rb_data["to"] >= 1

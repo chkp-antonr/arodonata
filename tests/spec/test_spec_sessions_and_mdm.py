@@ -676,3 +676,112 @@ async def test_hostname_pinned_and_tofu_fingerprints_enforced_across_ip_pinning(
         assert len(server.calls) == calls_before
     finally:
         await client.close(logout=False)
+
+
+@pytest.mark.spec("SCN-SESS-014-1")
+@pytest.mark.asyncio
+async def test_hostname_tls_pin_preserved_across_keepalive_sweep_logout_all_and_cached_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-SESS-014-1: Cached/dedicated session lifecycle preserves tls_identity_host for keepalive, logout_all, and cached calls."""
+    from arodonata.adapters.checkpoint import target_resolver
+    from arodonata.adapters.checkpoint.tls import compute_der_fingerprint
+    from arodonata.core.errors import CertificateMismatchError
+
+    rig = _FakeTimeRig()
+    server = _ScriptedServer()
+    expected_der = b"expected-mgmt-cert"
+    rogue_der = b"rogue-other-pinned-cert"
+    expected_fp = compute_der_fingerprint(expected_der)
+    rogue_fp = compute_der_fingerprint(rogue_der)
+
+    async def _fake_resolve(host: str) -> set[str]:
+        if host == "mgmt.example.com":
+            return {"10.0.0.50"}
+        return set()
+
+    monkeypatch.setattr(target_resolver, "_resolve_hostname_ips", _fake_resolve)
+
+    # Pin mgmt.example.com to expected_fp and other.example.com to rogue_fp (10.0.0.50 is not directly pinned).
+    policy = TrustPolicy(
+        mode="pinned",
+        known_hosts_path=tmp_path / "tls_known_hosts.json",
+        pinned_fingerprints=f"mgmt.example.com:443={expected_fp},other.example.com:443={rogue_fp}",
+    )
+    presented = {"der": expected_der}
+
+    cfg = ArodonataSettings(
+        mgmt_name="mds1",
+        mgmt_ip="mgmt.example.com",
+        api_key="static-secret-key",
+        tls_trust="pinned",
+    )
+    transport = ApiTransport(
+        settings=cfg,
+        trust_policy=policy,
+        peer_cert_getter=lambda _h, _p: presented["der"],
+        request_sender=server.sender,
+    )
+    client = AMgmtClient(
+        settings=cfg,
+        engine=None,
+        transport=transport,
+        trust_policy=policy,
+        monotonic_fn=rig.monotonic,
+        now_fn=lambda: rig.now().replace(tzinfo=None),
+        sleep_fn=rig.sleep,
+    )
+    await client.initialize()
+    try:
+        # 1. Login via hostname server_ip -> SIDCacheEntry retains tls_identity_host="mgmt.example.com"
+        ro_sid, ro_ip = await client.login_coordinator.get_readonly_session(
+            "mds1",
+            "Corp",
+            server_ip="mgmt.example.com",
+        )
+        assert ro_ip == "10.0.0.50"
+        cached = await client.cache.get_sid(
+            "mds1",
+            "Corp",
+            auth_identity=(await client.login_coordinator.resolve_credentials("mds1", "Corp")).identity_key,
+        )
+        assert cached is not None and cached.tls_identity_host == "mgmt.example.com"
+
+        # 2. Dedicated session also retains tls_identity_host for logout_all
+        ded_sid, ded_ip = await client.create_dedicated_session("mds1", "Corp")
+        assert ded_ip == "mgmt.example.com" or ded_ip == "10.0.0.50"
+        ded_host_sid, ded_host_ip, _ = await client.login_coordinator.create_dedicated_session(
+            "mds1",
+            None,
+            server_ip="mgmt.example.com",
+        )
+        assert ded_host_ip == "10.0.0.50"
+
+        # 3. Switch presented cert to rogue_der (trusted only for other.example.com):
+        #    non-system cached api_call, sweep_keepalives(), and logout_all() MUST reject before sending X-chkp-sid!
+        client.connection_pool.close_all()
+        presented["der"] = rogue_der
+        calls_before = len(server.calls)
+
+        with pytest.raises(CertificateMismatchError):
+            await client.api_call("mds1", "show-hosts", {}, domain="Corp")
+        assert len(server.calls) == calls_before
+
+        with pytest.raises(CertificateMismatchError):
+            await client.login_coordinator.sweep_keepalives("mds1")
+        assert len(server.calls) == calls_before
+
+        with pytest.raises(CertificateMismatchError):
+            await client.login_coordinator.logout_sid("mds1", ded_host_sid, server_ip="10.0.0.50")
+        assert len(server.calls) == calls_before
+
+        with pytest.raises(CertificateMismatchError):
+            await client.login_coordinator.logout_all(include_cached_readonly=True)
+        assert len(server.calls) == calls_before
+
+        assert ro_sid
+        assert ded_sid
+    finally:
+        presented["der"] = expected_der
+        await client.close(logout=False)

@@ -324,6 +324,32 @@ class _HybridStateReaderBase:
             deleted.add(f"uid:{uid}")
             bucket.pop(f"uid:{uid}", None)
 
+    def is_entity_virtually_deleted(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        *,
+        uid: str | None = None,
+        name: str | None = None,
+        entity_type: str | None = None,
+    ) -> bool:
+        """Return `True` if `(uid, name)` was already marked deleted in this run's virtual overlay."""
+        dom_key = (mgmt_name, domain_name)
+        del_sets = (
+            self._deleted_objects.get(dom_key, set()),
+            self._deleted_services.get(dom_key, set()),
+        )
+        for del_set in del_sets:
+            if uid and f"uid:{uid}" in del_set:
+                return True
+            if name:
+                if entity_type and f"name:{entity_type}:{name}" in del_set:
+                    return True
+                suffix = f":{name}"
+                if any(entry.startswith("name:") and entry.endswith(suffix) for entry in del_set):
+                    return True
+        return False
+
     @staticmethod
     def _merge_entity_overlay[T: (CPObject, CPService)](
         entity_type: str,
@@ -496,24 +522,18 @@ class _HybridStateReaderBase:
                 raise StateLookupError(
                     f"Cache lookup failed for {entity_type} {name!r} in {mgmt_name}:{domain_name}: {exc}"
                 ) from exc
-            for item in items:
-                if item.name != name:
-                    continue
-                resolved = _apply_fetched_entity_overlay(entity_type, item, del_set, virt_map)
-                if resolved is not None:
-                    return resolved
-            if dot_fallback:
-                dot_name = f".{name}"
-                if f"name:dns-domain:{dot_name}" in del_set:
-                    return None
-                dot_virt = virt_map.get(f"name:dns-domain:{dot_name}")
-                if dot_virt is not None:
-                    return dot_virt
+            for target_name in lookup_names:
+                if target_name != name:
+                    if f"name:dns-domain:{target_name}" in del_set:
+                        return None
+                    if (dot_virt := virt_map.get(f"name:dns-domain:{target_name}")) is not None:
+                        return dot_virt
                 for item in items:
-                    if item.name != dot_name:
-                        continue
-                    resolved = _apply_fetched_entity_overlay(entity_type, item, del_set, virt_map)
-                    if resolved is not None:
+                    if (
+                        item.name == target_name
+                        and (resolved := _apply_fetched_entity_overlay(entity_type, item, del_set, virt_map))
+                        is not None
+                    ):
                         return resolved
             return None
 

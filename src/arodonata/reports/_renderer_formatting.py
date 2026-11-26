@@ -73,9 +73,11 @@ def render_safe_inline_markdown_md(text: str) -> str:
         if part.startswith("`") and part.endswith("`") and len(part) >= 2:
             out.append(f"`{html.escape(part[1:-1], quote=False)}`")
         elif part.startswith("**") and part.endswith("**") and len(part) >= 4:
-            out.append(f"**{html.escape(part[2:-2], quote=False)}**")
+            inner = html.escape(part[2:-2], quote=True).replace("[", "\\[").replace("]", "\\]")
+            out.append(f"**{inner}**")
         elif part.startswith("*") and part.endswith("*") and len(part) >= 2:
-            out.append(f"*{html.escape(part[1:-1], quote=False)}*")
+            inner = html.escape(part[1:-1], quote=True).replace("[", "\\[").replace("]", "\\]")
+            out.append(f"*{inner}*")
         elif part.startswith("!["):
             out.append(html.escape(part, quote=True).replace("[", "\\[").replace("]", "\\]"))
         elif part.startswith("[") and "](" in part and part.endswith(")"):

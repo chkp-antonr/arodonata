@@ -316,6 +316,7 @@ async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_
             "mds1",
             "Corp",
             session_uid="staged-sess-uid-777",
+            allow_stale=True,
         )
     ]
     assert isinstance(pub_events[0], CPCRUDStartedEvent)
@@ -349,6 +350,7 @@ async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_
         session_uid="staged-sess-uid-777",
         sid="active-staged-sid-555",
         server_ip="10.1.0.1",
+        allow_stale=True,
     )
     assert reuse_res.success is True
     assert invalidated == [("mds1", "Corp")]
@@ -367,6 +369,7 @@ async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_
         session_uid="staged-sess-uid-888",
         sid="expired-staged-sid-111",
         server_ip="10.1.0.1",
+        allow_stale=True,
     )
     assert pub_res.success is True
     assert invalidated == [("mds1", "Corp")]
@@ -385,6 +388,7 @@ async def test_staged_session_takeover_publish_discard_expired_sid_fallback_and_
         "mds1",
         "Corp",
         session_uid="staged-sess-uid-889",
+        allow_stale=True,
     )
     assert pub_sw_res.success is True
     assert invalidated == [("mds1", "Corp")]
@@ -704,8 +708,8 @@ async def test_staged_session_mmp_restart_web_api_provenance_and_adopt_helper_cl
     executor = Executor(api=api, on_domain_invalidated=lambda m, d: invalidated.append((m, d)))
     assert len(executor._staged_sessions) == 0
 
-    # 1. Own MMP `WEB_API` session after restart succeeds without extra args and discards `adopt-helper-uid-000`
-    pub_own = await executor.publish_staged_session("mds1", "Corp", session_uid="mmp-own-draft-uid")
+    # 1. Own MMP `WEB_API` session after restart succeeds with explicit allow_stale=True and discards `adopt-helper-uid-000`
+    pub_own = await executor.publish_staged_session("mds1", "Corp", session_uid="mmp-own-draft-uid", allow_stale=True)
     assert pub_own.success is True
     assert invalidated == [("mds1", "Corp")]
     assert ("mds1", "take-over-session", {"uid": "mmp-own-draft-uid"}, "Corp", "secret-ws-sid-999") in api.calls
@@ -756,6 +760,7 @@ async def test_staged_session_mmp_restart_web_api_provenance_and_adopt_helper_cl
         "Corp",
         session_uid="mmp-other-admin-draft-uid",
         expected_session_name="[bob]-MMP_Rules-261102-Draft-99999999",
+        allow_stale=True,
     )
     assert expected_name_ok.success is True
     assert ("mds1", "discard", {"uid": "adopt-helper-uid-000"}, "Corp", "secret-ws-sid-999") in api.calls
@@ -923,7 +928,10 @@ async def test_staged_publish_head_staleness_and_arodonata_provenance() -> None:
 
     api2.api_call = _arodonata_session_call  # type: ignore[method-assign]
     exec2 = Executor(api=api2)
-    pub_ok = await exec2.publish_staged_session("mds1", "Corp", session_uid="aro-restart-uid")
+    pub_blocked = await exec2.publish_staged_session("mds1", "Corp", session_uid="aro-restart-uid")
+    assert pub_blocked.success is False
+    assert pub_blocked.error_code == "stale_plan"
+    pub_ok = await exec2.publish_staged_session("mds1", "Corp", session_uid="aro-restart-uid", allow_stale=True)
     assert pub_ok.success is True
 
 
@@ -1054,3 +1062,85 @@ async def test_cpcrud_redaction_unreadable_baseline_and_shielded_logout(monkeypa
             error_code="discard_failed",
             action=_raise_identity,
         )
+
+
+@pytest.mark.spec("SCN-CPCRUD-017-1")
+@pytest.mark.asyncio
+async def test_staged_publish_baseline_fail_closed_and_check_domain_head_dispatch() -> None:
+    """SCN-CPCRUD-017-1 (DA-008, DA-044): Fail closed without baseline unless explicit stamp or allow_stale; invoke check_domain_head everywhere."""
+    from datetime import UTC, datetime
+
+    from arodonata.cpcrud.executor import Executor
+    from arodonata.cpcrud.models import DomainStamp, Outcome, Plan, PlannedAction
+
+    api = ExecutorFakeApi()
+    head_calls: list[tuple[str, str]] = []
+    ts_head = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+
+    async def _custom_head(mgmt_name: str, domain_name: str) -> tuple[bool, str | None, datetime | None, str | None]:
+        head_calls.append((mgmt_name, domain_name))
+        return True, "head-uid-1", ts_head, None
+
+    executor = Executor(api=api, check_domain_head=_custom_head)
+
+    # 1. Evicted/missing _staged_sessions entry fails closed when allow_stale=False
+    blocked = await executor.publish_staged_session("mds1", "Corp", session_uid="evicted-sess-uid")
+    assert blocked.success is False
+    assert blocked.error_code == "stale_plan"
+    assert "baseline" in (blocked.error_message or "").lower()
+
+    # 2. Explicit baseline parameters matching domain head succeed
+    head_calls.clear()
+    explicit_ok = await executor.publish_staged_session(
+        "mds1",
+        "Corp",
+        session_uid="evicted-sess-uid",
+        baseline_readable=True,
+        baseline_session_uid="head-uid-1",
+        baseline_published_at=ts_head,
+    )
+    assert explicit_ok.success is True
+    assert head_calls == [("mds1", "Corp")]
+
+    # 3. Drifted explicit baseline fails closed with stale_plan
+    drifted = await executor.publish_staged_session(
+        "mds1",
+        "Corp",
+        session_uid="evicted-sess-uid",
+        baseline_readable=True,
+        baseline_session_uid="head-uid-OLD",
+        baseline_published_at=ts_head,
+    )
+    assert drifted.success is False
+    assert drifted.error_code == "stale_plan"
+
+    # 4. Injected check_domain_head callback is used in apply() / retry_remaining passes
+    head_calls.clear()
+    plan = Plan(
+        domain_stamps={
+            "mds1:Corp": DomainStamp(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                readable=True,
+                last_session_uid="head-uid-1",
+                last_published_at=ts_head,
+                captured_at=ts_head,
+            )
+        },
+        actions=[
+            PlannedAction(
+                action_id="a-ok",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="add",
+                object_type="host",
+                name="H_exec",
+                outcome=Outcome.CREATE,
+                command="add-host",
+                payload={"name": "H_exec", "ipv4-address": "10.0.0.10"},
+            )
+        ],
+    )
+    rep = await executor.apply(plan)
+    assert rep.created_count == 1
+    assert head_calls == [("mds1", "Corp"), ("mds1", "Corp")]

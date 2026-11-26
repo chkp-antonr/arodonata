@@ -4942,3 +4942,218 @@ async def test_wave8_topology_bundle_errors_nexthop_list_identity_and_manual_exp
     assert exported[0].gateway_uid == "gw-manual-only"
     assert exported[0].cidr_or_range == "192.168.55.0/24"
     assert "manual" in exported[0].source_types
+
+
+@pytest.mark.spec("SCN-TOPO-022-1")
+@pytest.mark.asyncio
+async def test_coalescing_leader_vs_slice_error_does_not_fail_healthy_siblings() -> None:
+    """SCN-TOPO-022-1 (DA-002): Coalesced leader VS error must not poison sibling Virtual Systems."""
+    from arodonata import ArodonataClient, ArodonataSettings
+    from arodonata.testing import FileReplayApiMock
+
+    api_mock = FileReplayApiMock()
+    settings = ArodonataSettings(
+        mgmt_name="mds",
+        mgmt_ip="127.0.0.1",
+        api_key="mock-key",
+        database_url="sqlite+aiosqlite:///:memory:",
+        max_routes_per_gateway=100,
+    )
+
+    async with ArodonataClient(settings=settings, api=api_mock) as client:
+        await client.refresh_assets(mgmt_name="mds", domains=["DC_Spine"], mode="force")
+        await client.ensure_route_collection_script("mds", "DC_Spine")
+
+        api_mock.allow_one_time_script = False
+        api_mock.allow_repository_script = True
+
+        # dc-vsx-spine-vs02 sorts alphabetically first -> it is the coalescing leader.
+        api_mock.cli_mock.set_cli_stdout(
+            "dc-vsx-chassis-02",
+            2,
+            "===ARODONATA_VS_ERROR vsid=2 name=dc-vsx-spine-vs02 error=vsenv 2 context failed===\n",
+        )
+        api_mock.reset_counters()
+
+        out = await client.collect_gateway_routes(
+            mgmt_name="mds",
+            domains=["DC_Spine"],
+            gateways=["dc-vsx-spine-vs02", "dc-vsx-spine-vs03", "dc-vsx-spine-vs04"],
+            cprid_script_mode="repository",
+        )
+        assert out.total_gateways == 3
+        assert out.succeeded_gateways == 2
+        assert out.failed_gateways == 1
+        statuses = {g.gateway_name: g for g in out.gateways}
+        assert statuses["dc-vsx-spine-vs02"].success is False
+        assert "vsenv 2 context failed" in (statuses["dc-vsx-spine-vs02"].error or "")
+        assert statuses["dc-vsx-spine-vs03"].success is True
+        assert statuses["dc-vsx-spine-vs03"].routes_collected > 0
+        assert statuses["dc-vsx-spine-vs04"].success is True
+        assert statuses["dc-vsx-spine-vs04"].routes_collected > 0
+
+
+@pytest.mark.spec("SCN-TOPO-022-2")
+@pytest.mark.asyncio
+async def test_stream_refresh_completion_order_lpm_annotation_manual_export_and_spaced_vs() -> None:
+    """SCN-TOPO-022-2 (DA-011, DA-012, DA-039, DA-042): Event ordering, LPM annotation, manual filter, spaced VS awk."""
+    from unittest.mock import AsyncMock
+
+    from arodonata import ArodonataClient, ArodonataSettings
+    from arodonata.core.config import TopologyConfidenceWeights
+    from arodonata.core.events import SyncCompletedEvent
+    from arodonata.core.models.topology import GatewayTopologyEntry, TopologyAnnotation
+    from arodonata.core.services.topology.route_scripts import (
+        build_route_collection_repository_script,
+        build_route_collection_script,
+    )
+    from arodonata.core.services.topology.scoring import _score_interface_group, export_topology_prefixes
+    from arodonata.testing import FileReplayApiMock
+
+    # 1. Hold SyncCompletedEvent until collect_routes completes in stream_refresh_topology(collect_routes=True)
+    api_mock = FileReplayApiMock()
+    settings = ArodonataSettings(
+        mgmt_name="mds",
+        mgmt_ip="127.0.0.1",
+        api_key="mock-key",
+        database_url="sqlite+aiosqlite:///:memory:",
+        max_routes_per_gateway=100,
+    )
+    route_cli_calls = 0
+
+    async def _counting_cli(target: Any, script: str) -> str:
+        nonlocal route_cli_calls
+        _ = (target, script)
+        route_cli_calls += 1
+        return "===ARODONATA_IP_ROUTE_START===\n10.99.0.0/24 dev eth0 proto kernel scope link\n===ARODONATA_IP_ROUTE_END===\n"
+
+    async with ArodonataClient(settings=settings, api=api_mock, gateway_cli=_counting_cli) as client:
+        events_seen: list[Any] = []
+        calls_at_completed: list[int] = []
+
+        async for ev in client.topology_service.stream_refresh_topology(
+            mgmt_name="mds",
+            domains=["DC_Spine"],
+            mode="force",
+            collect_routes=True,
+        ):
+            events_seen.append(ev)
+            if isinstance(ev, SyncCompletedEvent) and ev.scope == "topology":
+                calls_at_completed.append(route_cli_calls)
+
+        assert isinstance(events_seen[-1], SyncCompletedEvent)
+        assert events_seen[-1].scope == "topology"
+        assert route_cli_calls > 0
+        assert calls_at_completed == [route_cli_calls]
+
+    # 2. LPM best_entry annotation matching ignores coarse standby container annotation
+    weights = TopologyConfidenceWeights()
+    coarse_entry = GatewayTopologyEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        gateway_uid="gw-1",
+        gateway_name="gw-1",
+        gateway_type="simple-gateway",
+        interface_name="eth1",
+        source_type="interface_connected",
+        cidr_or_range="10.0.0.0/8",
+        ip_first_int=0x0A000000,
+        ip_last_int=0x0AFFFFFF,
+        prefix_len=8,
+    )
+    specific_entry = GatewayTopologyEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        gateway_uid="gw-1",
+        gateway_name="gw-1",
+        gateway_type="simple-gateway",
+        interface_name="eth1",
+        source_type="connected_route",
+        cidr_or_range="10.10.1.0/24",
+        ip_first_int=0x0A0A0100,
+        ip_last_int=0x0A0A01FF,
+        prefix_len=24,
+    )
+    coarse_only_ann = {
+        ("eth1", "10.0.0.0/8"): TopologyAnnotation(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            gateway_uid="gw-1",
+            gateway_name="gw-1",
+            interface_name="eth1",
+            cidr_or_range="10.0.0.0/8",
+            disposition="standby_dynamic",
+        )
+    }
+    best, _score, is_standby, deltas, _warns = _score_interface_group(
+        if_name="eth1",
+        matching_entries=[coarse_entry, specific_entry],
+        all_gw_entries=[coarse_entry, specific_entry],
+        has_live_routes=True,
+        ann_by_if_cidr=coarse_only_ann,
+        weights=weights,
+    )
+    assert best.cidr_or_range == "10.10.1.0/24"
+    assert is_standby is False
+    assert all(d.code != "standby_dynamic_ignored" for d in deltas)
+
+    specific_ann = {
+        ("eth1", "10.10.1.0/24"): TopologyAnnotation(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            gateway_uid="gw-1",
+            gateway_name="gw-1",
+            interface_name="eth1",
+            cidr_or_range="10.10.1.0/24",
+            disposition="standby_dynamic",
+        )
+    }
+    _best2, _score2, is_standby2, _d2, _w2 = _score_interface_group(
+        if_name="eth1",
+        matching_entries=[coarse_entry, specific_entry],
+        all_gw_entries=[coarse_entry, specific_entry],
+        has_live_routes=True,
+        ann_by_if_cidr=specific_ann,
+        weights=weights,
+    )
+    assert is_standby2 is True
+
+    # 3. export_topology_prefixes matches manual-only annotation gateway by name, UID, or composite ID
+    class _ManualFilterCache:
+        async def get_gateway_topology(self, **kwargs: Any) -> list[Any]:
+            return []
+
+        async def get_topology_annotations(self, **kwargs: Any) -> list[TopologyAnnotation]:
+            return [
+                TopologyAnnotation(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    gateway_uid="gw-man-uid",
+                    gateway_name="gw-man-name",
+                    interface_name="eth3",
+                    cidr_or_range="192.168.55.0/24",
+                    disposition="manual",
+                )
+            ]
+
+    for gw_selector in ("gw-man-name", "gw-man-uid", "mds1:Corp:gw-man-uid"):
+        exported = await export_topology_prefixes(
+            cache=_ManualFilterCache(),  # type: ignore[arg-type]
+            weights=weights,
+            refresh_topology_fn=AsyncMock(),
+            mgmt_name="mds1",
+            domain="Corp",
+            gateways=[gw_selector],
+            include_ignored=True,
+            cache_mode="cache",
+        )
+        assert len(exported) == 1
+        assert exported[0].gateway_uid == "gw-man-uid"
+        assert exported[0].gateway_asset_id == "mds1:Corp:gw-man-name"
+
+    # 4. Inline and repository route scripts extract full spaced VS Name in awk instead of $2
+    inline_script = build_route_collection_script(vs_name="VS Prod 01")
+    repo_script = build_route_collection_repository_script()
+    for script_text in (inline_script, repo_script):
+        assert 'sub(/^Name:[ \\t]*/, "")' in script_text
+        assert "$2 == target" not in script_text

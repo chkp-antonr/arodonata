@@ -172,6 +172,7 @@ class FileReplayApiMock(ApiPort):
         return baseline
 
     def _mark_domain_mutated(self, dom_name: str) -> None:
+        self._get_clean_domain_baseline(dom_name)
         self._dirty_domains.add(dom_name)
         self._domain_generation[dom_name] += 1
 

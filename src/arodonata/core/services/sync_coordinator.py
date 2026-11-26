@@ -80,6 +80,7 @@ class DomainProbeResult:
         probe_started_at: datetime | None = None,
         invalidation_seq_at_start: int = 0,
         invalidation_at_start: tuple[datetime | None, int] = (None, 0),
+        verified_remote: bool = False,
     ) -> None:
         self.mgmt_name = mgmt_name
         self.domain = domain
@@ -92,6 +93,7 @@ class DomainProbeResult:
         self.probe_started_at = probe_started_at
         self.invalidation_seq_at_start = invalidation_seq_at_start
         self.invalidation_at_start = invalidation_at_start
+        self.verified_remote = verified_remote
 
     @property
     def is_stale(self) -> bool:
@@ -110,9 +112,12 @@ class _InFlightDomainSync:
     """In-process single-flight state for an active `(mgmt_name, domain_name, scope)` synchronization."""
 
     mode: CacheMode
+    effective_ttl: float = 0.0
     done: asyncio.Event = field(default_factory=asyncio.Event)
     completed_ok: bool = False
+    verified_remote: bool = False
     covered_types: frozenset[str] = field(default_factory=frozenset)
+    invalidation_at_start: tuple[datetime | None, int] = (None, 0)
     identity_error: ServerIdentityError | None = None
 
 
@@ -627,6 +632,7 @@ class DomainSyncCoordinator:
                 probe_started_at=probe_started_at,
                 invalidation_seq_at_start=inv_seq_before,
                 invalidation_at_start=inv_before,
+                verified_remote=True,
             )
 
         stale_types: list[str] = []
@@ -701,7 +707,351 @@ class DomainSyncCoordinator:
             probe_started_at=probe_started_at,
             invalidation_seq_at_start=inv_seq_before,
             invalidation_at_start=inv_before,
+            verified_remote=True,
         )
+
+    async def _collect_discovery_failures(
+        self,
+        *,
+        scope: SyncScope,
+        mgmt_name: str | None,
+        domains: Sequence[str] | str | None,
+        target_domains: list[DomainInfo],
+        mode: CacheMode,
+    ) -> tuple[dict[str, str], list[DomainSyncFailedEvent]]:
+        """Collect per-server domain-discovery failures when `mode != 'cache'`."""
+        failed_domains: dict[str, str] = {}
+        events: list[DomainSyncFailedEvent] = []
+        if mode == "cache":
+            return failed_domains, events
+
+        explicit_dom_names: set[str] | None = (
+            (set(normalize_str_sequence(domains)) or None) if domains is not None else None
+        )
+        matched_dom_names = {d.name for d in target_domains}
+        all_explicit_resolved = (
+            mgmt_name is None and explicit_dom_names is not None and explicit_dom_names.issubset(matched_dom_names)
+        )
+        if all_explicit_resolved:
+            return failed_domains, events
+
+        target_mgmts = self._domain_service.resolve_mgmt_names(mgmt_name)
+        mgmts_with_domains = {d.mgmt_name for d in target_domains}
+        for m_name in target_mgmts:
+            if m_name in mgmts_with_domains:
+                continue
+            dom_sync = await self._cache.get_sync_state(m_name, SYSTEM_DOMAIN_KEY, "domains", "*")
+            if dom_sync is not None and dom_sync.status == "failed":
+                known_sids = await self._collect_known_sids(m_name)
+                err_str = redact_sid(
+                    dom_sync.last_error or f"Domain discovery failed on {m_name}",
+                    known_sids=known_sids,
+                )
+                dom_label = f"{m_name}:{SYSTEM_DOMAIN_KEY}"
+                failed_domains[dom_label] = err_str
+                fail_ev = DomainSyncFailedEvent(
+                    scope=scope,
+                    mgmt_name=m_name,
+                    domain=SYSTEM_DOMAIN_KEY,
+                    error=err_str,
+                    message=f"Failed to synchronize {dom_label}: {err_str}",
+                )
+                logger.warning(
+                    fail_ev.message,
+                    scope=scope,
+                    mgmt_name=m_name,
+                    domain=SYSTEM_DOMAIN_KEY,
+                    error=err_str,
+                )
+                events.append(fail_ev)
+        return failed_domains, events
+
+    def _can_reuse_in_flight(
+        self,
+        existing_flight: _InFlightDomainSync,
+        *,
+        mgmt_name: str,
+        domain_name: str,
+        req_types_set: frozenset[str],
+        mode: CacheMode,
+        eff_ttl: float,
+    ) -> bool:
+        """Return `True` if a completed in-flight sync satisfies this waiter's mode, TTL, and invalidation state."""
+        if not existing_flight.completed_ok:
+            return False
+        if not req_types_set.issubset(existing_flight.covered_types):
+            return False
+        if self._effective_invalidation(mgmt_name, domain_name) != existing_flight.invalidation_at_start:
+            return False
+        if mode == "force" and existing_flight.mode != "force":
+            return False
+        return existing_flight.verified_remote or (
+            mode != "force" and existing_flight.mode != "cache" and existing_flight.effective_ttl <= eff_ttl
+        )
+
+    async def _run_locked_domain_sync(
+        self,
+        *,
+        dom: DomainInfo,
+        lock_key: str,
+        lock_ttl_seconds: float,
+        probe: DomainProbeResult,
+        handler: DomainSyncHandler,
+        emit: Callable[[SyncProgressEvent], Awaitable[None]],
+    ) -> int:
+        """Execute `handler` under distributed `LockPort` with periodic lock renewal."""
+        async with self._lock_port.lock(lock_key, ttl_seconds=lock_ttl_seconds) as owner_id:
+            heartbeat_interval = max(0.05, float(lock_ttl_seconds) / 3.0)
+
+            async def _heartbeat_loop() -> None:
+                while True:
+                    await asyncio.sleep(heartbeat_interval)
+                    with _suppress(Exception):
+                        await self._lock_port.renew(
+                            lock_key,
+                            ttl_seconds=lock_ttl_seconds,
+                            owner_id=owner_id,
+                        )
+
+            hb_task = asyncio.create_task(_heartbeat_loop())
+            try:
+                await self.verify_session_clean(dom.mgmt_name, dom.name)
+                return await handler(probe, emit)
+            finally:
+                hb_task.cancel()
+                with _suppress(asyncio.CancelledError, Exception):
+                    await hb_task
+
+    async def _record_domain_failure(
+        self,
+        *,
+        dom: DomainInfo,
+        scope: SyncScope,
+        failed_types: Sequence[str],
+        exc: Exception,
+        state_lock: asyncio.Lock,
+        failed_domains: dict[str, str],
+        emit: Callable[[SyncProgressEvent], Awaitable[None]],
+    ) -> None:
+        """Persist `status='failed'` only for failed item types while preserving cached rows and sibling fresh slices."""
+        dom_label = f"{dom.mgmt_name}:{dom.name}"
+        known_sids = await self._collect_known_sids(dom.mgmt_name)
+        err_str = redact_sid(str(exc), known_sids=known_sids)
+        async with state_lock:
+            failed_domains[dom_label] = err_str
+        now = self._now()
+        for item_type in failed_types:
+            prev = await self._cache.get_sync_state(dom.mgmt_name, dom.name, scope, item_type)
+            await self._cache.upsert_sync_state(
+                DomainSyncState(
+                    mgmt_name=dom.mgmt_name,
+                    domain_name=dom.name,
+                    scope=scope,
+                    item_type=item_type,
+                    last_published_at=prev.last_published_at if prev else None,
+                    last_session_uid=prev.last_session_uid if prev else None,
+                    synced_at=prev.synced_at if prev else now,
+                    status="failed",
+                    object_count=prev.object_count if prev else 0,
+                    last_error=err_str,
+                )
+            )
+        await emit(
+            DomainSyncFailedEvent(
+                scope=scope,
+                mgmt_name=dom.mgmt_name,
+                domain=dom.name,
+                error=err_str,
+                message=f"Failed to synchronize {dom_label}: {err_str}",
+            )
+        )
+
+    async def _sync_single_domain(
+        self,
+        *,
+        dom: DomainInfo,
+        mds_key: str,
+        sem: asyncio.Semaphore,
+        is_reentrant: bool,
+        scope: SyncScope,
+        type_list: list[str],
+        req_types_set: frozenset[str],
+        handler: DomainSyncHandler,
+        mode: CacheMode,
+        cache_ttl: float | None,
+        eff_ttl: float,
+        lock_ttl_seconds: float,
+        sync_registry: _ProcessSyncRegistry,
+        state_lock: asyncio.Lock,
+        refreshed_domains: list[str],
+        skipped_domains: list[str],
+        failed_domains: dict[str, str],
+        total_items_box: list[int],
+        emit: Callable[[SyncProgressEvent], Awaitable[None]],
+    ) -> None:
+        """Synchronize one domain with single-flight coalescing, MDS permit gating, and failure recording."""
+        dom_label = f"{dom.mgmt_name}:{dom.name}"
+        lock_key = f"sync:{dom.mgmt_name}:{dom.name}:{scope}"
+
+        my_flight: _InFlightDomainSync | None = None
+        if mode != "cache":
+            while True:
+                existing_flight = sync_registry.get_in_flight(lock_key)
+                if existing_flight is None:
+                    my_flight = _InFlightDomainSync(mode=mode, effective_ttl=eff_ttl)
+                    sync_registry.set_in_flight(lock_key, my_flight)
+                    break
+                await existing_flight.done.wait()
+                if existing_flight.identity_error is not None:
+                    raise existing_flight.identity_error
+                if self._can_reuse_in_flight(
+                    existing_flight,
+                    mgmt_name=dom.mgmt_name,
+                    domain_name=dom.name,
+                    req_types_set=req_types_set,
+                    mode=mode,
+                    eff_ttl=eff_ttl,
+                ):
+                    async with state_lock:
+                        skipped_domains.append(dom_label)
+                    await emit(
+                        DomainSyncSkippedEvent(
+                            scope=scope,
+                            mgmt_name=dom.mgmt_name,
+                            domain=dom.name,
+                            item_type=",".join(type_list) if type_list else "*",
+                            message=f"Domain {dom_label} was synchronized by an in-flight request; skipping.",
+                        )
+                    )
+                    return
+
+        probe: DomainProbeResult | None = None
+        try:
+            async with sem:
+                permit_token = (
+                    None
+                    if is_reentrant
+                    else _HELD_MDS_PERMITS.set(_HELD_MDS_PERMITS.get() | {(id(sync_registry), mds_key)})
+                )
+                try:
+                    try:
+                        probe = await self.probe_domain_staleness(
+                            dom,
+                            scope=scope,
+                            item_types=type_list,
+                            mode=mode,
+                            cache_ttl=cache_ttl,
+                        )
+                        if not probe.is_stale:
+                            if (
+                                my_flight is not None
+                                and self._effective_invalidation(dom.mgmt_name, dom.name) == probe.invalidation_at_start
+                            ):
+                                my_flight.completed_ok = True
+                                my_flight.verified_remote = probe.verified_remote
+                                my_flight.covered_types = req_types_set
+                                my_flight.invalidation_at_start = probe.invalidation_at_start
+                            async with state_lock:
+                                skipped_domains.append(dom_label)
+                            await emit(
+                                DomainSyncSkippedEvent(
+                                    scope=scope,
+                                    mgmt_name=dom.mgmt_name,
+                                    domain=dom.name,
+                                    item_type=",".join(probe.fresh_types) if probe.fresh_types else "*",
+                                    message=f"Domain {dom_label} is fresh; skipping.",
+                                )
+                            )
+                            return
+
+                        if probe.probe_error is not None:
+                            raise probe.probe_error
+
+                        await emit(
+                            DomainSyncStartedEvent(
+                                scope=scope,
+                                mgmt_name=dom.mgmt_name,
+                                domain=dom.name,
+                                item_type=",".join(probe.stale_types),
+                                message=f"Synchronizing {dom_label} ({', '.join(probe.stale_types)}).",
+                            )
+                        )
+
+                        count = await self._run_locked_domain_sync(
+                            dom=dom,
+                            lock_key=lock_key,
+                            lock_ttl_seconds=lock_ttl_seconds,
+                            probe=probe,
+                            handler=handler,
+                            emit=emit,
+                        )
+
+                        # Only advance slice sequence watermarks and mark flight ok when no invalidation arrived mid-flight.
+                        if self._effective_invalidation(dom.mgmt_name, dom.name) == probe.invalidation_at_start:
+                            self._record_slice_synced(
+                                dom.mgmt_name,
+                                dom.name,
+                                scope,
+                                probe.stale_types,
+                                target_seq=probe.invalidation_seq_at_start,
+                            )
+                            if my_flight is not None:
+                                my_flight.completed_ok = True
+                                my_flight.verified_remote = probe.verified_remote
+                                my_flight.covered_types = req_types_set
+                                my_flight.invalidation_at_start = probe.invalidation_at_start
+
+                        async with state_lock:
+                            refreshed_domains.append(dom_label)
+                            total_items_box[0] += count
+
+                        await emit(
+                            DomainSyncCompletedEvent(
+                                scope=scope,
+                                mgmt_name=dom.mgmt_name,
+                                domain=dom.name,
+                                item_type=",".join(probe.stale_types),
+                                processed=count,
+                                total=count,
+                                message=f"Synchronized {count} {scope} item(s) for {dom_label}.",
+                            )
+                        )
+                    except ServerIdentityError as id_exc:
+                        if my_flight is not None:
+                            my_flight.identity_error = id_exc
+                        raise
+                    except LockAcquisitionError as exc:
+                        async with state_lock:
+                            skipped_domains.append(dom_label)
+                        await emit(
+                            DomainSyncSkippedEvent(
+                                scope=scope,
+                                mgmt_name=dom.mgmt_name,
+                                domain=dom.name,
+                                item_type=",".join(probe.stale_types) if (probe and probe.stale_types) else "*",
+                                message=f"Domain {dom_label} sync lock is held by another worker; skipping ({exc}).",
+                            )
+                        )
+                    except Exception as exc:
+                        failed_types = (
+                            list(probe.stale_types) if (probe is not None and probe.stale_types) else type_list
+                        )
+                        await self._record_domain_failure(
+                            dom=dom,
+                            scope=scope,
+                            failed_types=failed_types,
+                            exc=exc,
+                            state_lock=state_lock,
+                            failed_domains=failed_domains,
+                            emit=emit,
+                        )
+                finally:
+                    if permit_token is not None:
+                        _HELD_MDS_PERMITS.reset(permit_token)
+        finally:
+            if my_flight is not None:
+                sync_registry.clear_in_flight(lock_key, my_flight)
+                my_flight.done.set()
 
     async def stream_ensure(
         self,
@@ -724,6 +1074,7 @@ class DomainSyncCoordinator:
             mode=mode,
         )
         type_list = list(item_types)
+        eff_ttl = float(cache_ttl) if cache_ttl is not None else float(self._settings.cache_ttl)
 
         started_msg = f"Starting {scope} sync (mode={mode}) across {len(target_domains)} domain(s)."
         logger.debug(
@@ -745,51 +1096,22 @@ class DomainSyncCoordinator:
             },
         )
 
-        failed_domains: dict[str, str] = {}
-        if mode != "cache":
-            explicit_dom_names: set[str] | None = (
-                (set(normalize_str_sequence(domains)) or None) if domains is not None else None
-            )
-            matched_dom_names = {d.name for d in target_domains}
-            all_explicit_resolved = (
-                mgmt_name is None and explicit_dom_names is not None and explicit_dom_names.issubset(matched_dom_names)
-            )
-            if not all_explicit_resolved:
-                target_mgmts = self._domain_service.resolve_mgmt_names(mgmt_name)
-                mgmts_with_domains = {d.mgmt_name for d in target_domains}
-                for m_name in target_mgmts:
-                    if m_name in mgmts_with_domains:
-                        continue
-                    dom_sync = await self._cache.get_sync_state(m_name, SYSTEM_DOMAIN_KEY, "domains", "*")
-                    if dom_sync is not None and dom_sync.status == "failed":
-                        known_sids = await self._collect_known_sids(m_name)
-                        err_str = redact_sid(
-                            dom_sync.last_error or f"Domain discovery failed on {m_name}",
-                            known_sids=known_sids,
-                        )
-                        dom_label = f"{m_name}:{SYSTEM_DOMAIN_KEY}"
-                        failed_domains[dom_label] = err_str
-                        fail_ev = DomainSyncFailedEvent(
-                            scope=scope,
-                            mgmt_name=m_name,
-                            domain=SYSTEM_DOMAIN_KEY,
-                            error=err_str,
-                            message=f"Failed to synchronize {dom_label}: {err_str}",
-                        )
-                        logger.warning(
-                            fail_ev.message,
-                            scope=scope,
-                            mgmt_name=m_name,
-                            domain=SYSTEM_DOMAIN_KEY,
-                            error=err_str,
-                        )
-                        yield fail_ev
+        failed_domains, discovery_fail_events = await self._collect_discovery_failures(
+            scope=scope,
+            mgmt_name=mgmt_name,
+            domains=domains,
+            target_domains=target_domains,
+            mode=mode,
+        )
+        for fail_ev in discovery_fail_events:
+            yield fail_ev
 
         if not target_domains:
-            if failed_domains:
-                empty_msg = f"Completed {scope} sync: 0 refreshed, 0 skipped, {len(failed_domains)} failed."
-            else:
-                empty_msg = f"Completed {scope} sync: 0 domains targeted."
+            empty_msg = (
+                f"Completed {scope} sync: 0 refreshed, 0 skipped, {len(failed_domains)} failed."
+                if failed_domains
+                else f"Completed {scope} sync: 0 domains targeted."
+            )
             logger.debug(
                 empty_msg,
                 scope=scope,
@@ -813,7 +1135,6 @@ class DomainSyncCoordinator:
             )
             return
 
-        # Group domains by active_mds_ip
         mds_groups: dict[str, list[DomainInfo]] = defaultdict(list)
         for dom in target_domains:
             ep = self._settings.servers.get(dom.mgmt_name)
@@ -828,228 +1149,49 @@ class DomainSyncCoordinator:
 
         refreshed_domains: list[str] = []
         skipped_domains: list[str] = []
-        total_items = 0
+        total_items_box = [0]
         state_lock = asyncio.Lock()
 
         async def _emit(ev: SyncProgressEvent) -> None:
             ev_mgmt = getattr(ev, "mgmt_name", mgmt_name)
             ev_dom = getattr(ev, "domain", None)
             if isinstance(ev, DomainSyncFailedEvent):
-                logger.warning(
-                    ev.message,
-                    scope=scope,
-                    mgmt_name=ev_mgmt,
-                    domain=ev_dom,
-                    error=ev.error,
-                )
+                logger.warning(ev.message, scope=scope, mgmt_name=ev_mgmt, domain=ev_dom, error=ev.error)
             else:
-                logger.debug(
-                    ev.message,
-                    scope=scope,
-                    mgmt_name=ev_mgmt,
-                    domain=ev_dom,
-                )
+                logger.debug(ev.message, scope=scope, mgmt_name=ev_mgmt, domain=ev_dom)
             await queue.put(ev)
-
-        async def _process_domain(
-            dom: DomainInfo,
-            mds_key: str,
-            sem: asyncio.Semaphore,
-            *,
-            is_reentrant: bool,
-        ) -> None:
-            nonlocal total_items
-            dom_label = f"{dom.mgmt_name}:{dom.name}"
-            lock_key = f"sync:{dom.mgmt_name}:{dom.name}:{scope}"
-
-            my_flight: _InFlightDomainSync | None = None
-            while True:
-                existing_flight = sync_registry.get_in_flight(lock_key)
-                if existing_flight is None:
-                    my_flight = _InFlightDomainSync(mode=mode)
-                    sync_registry.set_in_flight(lock_key, my_flight)
-                    break
-                await existing_flight.done.wait()
-                if existing_flight.identity_error is not None:
-                    raise existing_flight.identity_error
-                if (
-                    existing_flight.completed_ok
-                    and req_types_set.issubset(existing_flight.covered_types)
-                    and (mode != "force" or existing_flight.mode == "force")
-                ):
-                    async with state_lock:
-                        skipped_domains.append(dom_label)
-                    await _emit(
-                        DomainSyncSkippedEvent(
-                            scope=scope,
-                            mgmt_name=dom.mgmt_name,
-                            domain=dom.name,
-                            item_type=",".join(type_list) if type_list else "*",
-                            message=f"Domain {dom_label} was synchronized by an in-flight request; skipping.",
-                        )
-                    )
-                    return
-
-            try:
-                async with sem:
-                    permit_token = (
-                        None
-                        if is_reentrant
-                        else _HELD_MDS_PERMITS.set(_HELD_MDS_PERMITS.get() | {(id(sync_registry), mds_key)})
-                    )
-                    try:
-                        try:
-                            probe = await self.probe_domain_staleness(
-                                dom,
-                                scope=scope,
-                                item_types=type_list,
-                                mode=mode,
-                                cache_ttl=cache_ttl,
-                            )
-                            if not probe.is_stale:
-                                my_flight.completed_ok = True
-                                my_flight.covered_types = req_types_set
-                                async with state_lock:
-                                    skipped_domains.append(dom_label)
-                                await _emit(
-                                    DomainSyncSkippedEvent(
-                                        scope=scope,
-                                        mgmt_name=dom.mgmt_name,
-                                        domain=dom.name,
-                                        item_type=",".join(probe.fresh_types) if probe.fresh_types else "*",
-                                        message=f"Domain {dom_label} is fresh; skipping.",
-                                    )
-                                )
-                                return
-
-                            if probe.probe_error is not None:
-                                raise probe.probe_error
-
-                            await _emit(
-                                DomainSyncStartedEvent(
-                                    scope=scope,
-                                    mgmt_name=dom.mgmt_name,
-                                    domain=dom.name,
-                                    item_type=",".join(probe.stale_types),
-                                    message=f"Synchronizing {dom_label} ({', '.join(probe.stale_types)}).",
-                                )
-                            )
-
-                            async with self._lock_port.lock(lock_key, ttl_seconds=lock_ttl_seconds) as owner_id:
-                                heartbeat_interval = max(0.05, float(lock_ttl_seconds) / 3.0)
-
-                                async def _heartbeat_loop() -> None:
-                                    while True:
-                                        await asyncio.sleep(heartbeat_interval)
-                                        with _suppress(Exception):
-                                            await self._lock_port.renew(
-                                                lock_key,
-                                                ttl_seconds=lock_ttl_seconds,
-                                                owner_id=owner_id,
-                                            )
-
-                                hb_task = asyncio.create_task(_heartbeat_loop())
-                                try:
-                                    await self.verify_session_clean(dom.mgmt_name, dom.name)
-                                    count = await handler(probe, _emit)
-                                finally:
-                                    hb_task.cancel()
-                                    with _suppress(asyncio.CancelledError, Exception):
-                                        await hb_task
-
-                            # Only advance slice sequence watermarks when no invalidation arrived after probe start.
-                            if self._effective_invalidation(dom.mgmt_name, dom.name) == probe.invalidation_at_start:
-                                self._record_slice_synced(
-                                    dom.mgmt_name,
-                                    dom.name,
-                                    scope,
-                                    probe.stale_types,
-                                    target_seq=probe.invalidation_seq_at_start,
-                                )
-                            my_flight.completed_ok = True
-                            my_flight.covered_types = req_types_set
-                            async with state_lock:
-                                refreshed_domains.append(dom_label)
-                                total_items += count
-
-                            await _emit(
-                                DomainSyncCompletedEvent(
-                                    scope=scope,
-                                    mgmt_name=dom.mgmt_name,
-                                    domain=dom.name,
-                                    item_type=",".join(probe.stale_types),
-                                    processed=count,
-                                    total=count,
-                                    message=f"Synchronized {count} {scope} item(s) for {dom_label}.",
-                                )
-                            )
-                        except ServerIdentityError as id_exc:
-                            my_flight.identity_error = id_exc
-                            raise
-                        except LockAcquisitionError as exc:
-                            # Another worker holds the distributed sync lock for this domain (W14):
-                            # skip without marking arodonata_domain_sync_state.status="failed" or emitting DomainSyncFailedEvent!
-                            async with state_lock:
-                                skipped_domains.append(dom_label)
-                            await _emit(
-                                DomainSyncSkippedEvent(
-                                    scope=scope,
-                                    mgmt_name=dom.mgmt_name,
-                                    domain=dom.name,
-                                    item_type=",".join(probe.stale_types) if probe.stale_types else "*",
-                                    message=f"Domain {dom_label} sync lock is held by another worker; skipping ({exc}).",
-                                )
-                            )
-                        except Exception as exc:
-                            known_sids = await self._collect_known_sids(dom.mgmt_name)
-                            err_str = redact_sid(str(exc), known_sids=known_sids)
-                            async with state_lock:
-                                failed_domains[dom_label] = err_str
-                            # Record failed status in arodonata_domain_sync_state without wiping existing cached objects
-                            now = self._now()
-                            for item_type in type_list:
-                                prev = await self._cache.get_sync_state(dom.mgmt_name, dom.name, scope, item_type)
-                                await self._cache.upsert_sync_state(
-                                    DomainSyncState(
-                                        mgmt_name=dom.mgmt_name,
-                                        domain_name=dom.name,
-                                        scope=scope,
-                                        item_type=item_type,
-                                        last_published_at=prev.last_published_at if prev else None,
-                                        last_session_uid=prev.last_session_uid if prev else None,
-                                        synced_at=prev.synced_at if prev else now,
-                                        status="failed",
-                                        object_count=prev.object_count if prev else 0,
-                                        last_error=err_str,
-                                    )
-                                )
-                            await _emit(
-                                DomainSyncFailedEvent(
-                                    scope=scope,
-                                    mgmt_name=dom.mgmt_name,
-                                    domain=dom.name,
-                                    error=err_str,
-                                    message=f"Failed to synchronize {dom_label}: {err_str}",
-                                )
-                            )
-                    finally:
-                        if permit_token is not None:
-                            _HELD_MDS_PERMITS.reset(permit_token)
-            finally:
-                sync_registry.clear_in_flight(lock_key, my_flight)
-                my_flight.done.set()
 
         async def _run_mds_group(mds_key: str, group_domains: list[DomainInfo]) -> None:
             is_reentrant = (id(sync_registry), mds_key) in _HELD_MDS_PERMITS.get()
-            # Nested coordinator calls made inside an active domain handler reuse the caller's held MDS permit
-            # serialized via a local 1-permit semaphore so they cannot deadlock or exceed MDS concurrency.
             sem = (
                 asyncio.Semaphore(1) if is_reentrant else sync_registry.get_mds_semaphore(mds_key, per_mds_concurrency)
             )
             try:
                 async with asyncio.TaskGroup() as tg:
                     for d in group_domains:
-                        tg.create_task(_process_domain(d, mds_key, sem, is_reentrant=is_reentrant))
+                        tg.create_task(
+                            self._sync_single_domain(
+                                dom=d,
+                                mds_key=mds_key,
+                                sem=sem,
+                                is_reentrant=is_reentrant,
+                                scope=scope,
+                                type_list=type_list,
+                                req_types_set=req_types_set,
+                                handler=handler,
+                                mode=mode,
+                                cache_ttl=cache_ttl,
+                                eff_ttl=eff_ttl,
+                                lock_ttl_seconds=lock_ttl_seconds,
+                                sync_registry=sync_registry,
+                                state_lock=state_lock,
+                                refreshed_domains=refreshed_domains,
+                                skipped_domains=skipped_domains,
+                                failed_domains=failed_domains,
+                                total_items_box=total_items_box,
+                                emit=_emit,
+                            )
+                        )
             except* ServerIdentityError as eg:
                 raise eg.exceptions[0] from None
 
@@ -1078,6 +1220,7 @@ class DomainSyncCoordinator:
                 with _suppress(asyncio.CancelledError, Exception):
                     await runner_task
 
+        total_items = total_items_box[0]
         completed_msg = (
             f"Completed {scope} sync: {len(refreshed_domains)} refreshed, "
             f"{len(skipped_domains)} skipped, {len(failed_domains)} failed."

@@ -241,6 +241,21 @@ def _normalize_subnet_fields(target: dict[str, Any], updates: Mapping[str, Any])
             target["subnet-mask"] = computed_mask
 
 
+def _snapshot_entity_buckets(dom_files: Mapping[str, Any]) -> dict[str, Any]:
+    """Deep-copy all entity buckets in `dom_files` for atomic rollback on validation errors."""
+    return {
+        cand_spec.plural_show: copy.deepcopy(dom_files[cand_spec.plural_show])
+        for cand_spec in ENTITY_SPECS
+        if cand_spec.plural_show in dom_files
+    }
+
+
+def _restore_entity_buckets(dom_files: dict[str, Any], snapshots: Mapping[str, Any]) -> None:
+    """Restore `dom_files` entity buckets from an atomic pre-mutation snapshot."""
+    for b_key, b_val in snapshots.items():
+        dom_files[b_key] = b_val
+
+
 def _apply_entity_fields(
     obj: dict[str, Any],
     req: Mapping[str, Any],
@@ -475,6 +490,9 @@ def handle_entity_crud(
             new_obj["members"] = []
 
         bucket = ensure_entity_bucket(dom_files, spec)
+        add_snapshots = (
+            _snapshot_entity_buckets(dom_files) if ((spec.is_group and "members" in req) or "groups" in req) else None
+        )
         bucket.append(new_obj)
         err = _apply_entity_fields(
             new_obj,
@@ -485,7 +503,10 @@ def handle_entity_crud(
             dom_name=dom_name,
         )
         if err is not None:
-            bucket.remove(new_obj)
+            if add_snapshots is not None:
+                _restore_entity_buckets(dom_files, add_snapshots)
+            else:
+                bucket.remove(new_obj)
             return err, None
         refresh_entity_bucket_counts(dom_files, spec)
         locked_uids_out.add(assigned_uid)
@@ -526,6 +547,9 @@ def handle_entity_crud(
         obj_uid = str(obj["uid"])
         locked_uids_out.add(obj_uid)
         orig_obj = copy.deepcopy(obj)
+        set_snapshots = (
+            _snapshot_entity_buckets(dom_files) if ((spec.is_group and "members" in req) or "groups" in req) else None
+        )
         new_name = str(req.get("new-name") or "").strip()
         renamed = bool(new_name and new_name != obj.get("name"))
         if renamed:
@@ -550,8 +574,11 @@ def handle_entity_crud(
             dom_name=dom_name,
         )
         if err is not None:
-            obj.clear()
-            obj.update(orig_obj)
+            if set_snapshots is not None:
+                _restore_entity_buckets(dom_files, set_snapshots)
+            else:
+                obj.clear()
+                obj.update(orig_obj)
             return err, None
         if renamed:
             _propagate_object_rename(dom_files, obj)

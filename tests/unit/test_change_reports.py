@@ -2659,3 +2659,123 @@ def test_report_redaction_and_markdown_injection_escaping() -> None:
     assert "[click](https://evil.test)" not in md
     assert "![exfil](https://evil.test/x.png)" not in md
     assert r"\[click\]" in md
+
+
+@pytest.mark.spec("SCN-REPORT-008-1")
+@pytest.mark.asyncio
+async def test_unparsed_range_bound_fails_closed_and_invalid_owned_session_not_forwarded() -> None:
+    """SCN-REPORT-008-1 (DA-025, DA-026): Unparsed range bounds fail closed with warning, invalidated OwnedSession stops propagating, and known_names redact SIDs."""
+    from arodonata.core.errors import REDACTED_PLACEHOLDER
+    from arodonata.core.models.common import ApiCallResult, ApiQueryResult
+    from arodonata.reports.collector import collect_change_report
+    from arodonata.reports.models import OwnedSession, RangeScope, SessionScope
+
+    # 1. RangeScope bound lacking parseable timestamp fails closed + emits warning
+    class _UnparsedRangeApi:
+        async def api_query(self, mgmt: str, cmd: str, **kwargs: Any) -> ApiQueryResult:
+            _ = (mgmt, cmd, kwargs)
+            return ApiQueryResult(
+                success=True,
+                objects=[
+                    {"uid": "s-bad-ts", "name": "NoTs"},
+                    {"uid": "s-other", "name": "HasTs", "publish-time": {"iso-8601": "2026-04-01T10:00:00Z"}},
+                ],
+                total=2,
+            )
+
+        async def api_call(self, *args: Any, **kwargs: Any) -> ApiCallResult:
+            return ApiCallResult(success=True, data={})
+
+    db = DatabaseManager("sqlite+aiosqlite:///:memory:")
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    try:
+        rep = await collect_change_report(
+            api=_UnparsedRangeApi(),  # type: ignore[arg-type]
+            cache=cache,  # type: ignore[arg-type]
+            scopes=[RangeScope(mgmt_name="mds1", domains=["Corp"], from_session="s-bad-ts")],
+        )
+        assert rep.sessions == []
+        assert any(w.code == "range_session_timestamp_missing" for w in rep.warnings)
+
+        # 2. Invalidated OwnedSession SID is NOT passed to show-object, and resolved names are redacted
+        owned_sid = "OwnedLeakedBareSid556677"
+        calls_seen: list[tuple[str, str | None]] = []
+        bare_uid = "11111111-1111-1111-1111-111111111111"
+
+        class _OwnedFailApi:
+            async def api_query(self, *args: Any, **kwargs: Any) -> ApiQueryResult:
+                return ApiQueryResult(success=True, objects=[])
+
+            async def api_call(self, mgmt: str, cmd: str, payload: Any = None, **kwargs: Any) -> ApiCallResult:
+                _ = (mgmt, payload)
+                sid_arg = kwargs.get("sid")
+                calls_seen.append((cmd, sid_arg))
+                if cmd == "show-session" and sid_arg == owned_sid:
+                    return ApiCallResult(success=False, error_code="wrong_session_id", error_message="bad sid")
+                if cmd == "show-session":
+                    return ApiCallResult(
+                        success=True,
+                        data={"uid": "s-1", "name": "S1", "publish-time": {"iso-8601": "2026-04-01T10:00:00Z"}},
+                    )
+                if cmd == "show-changes" and sid_arg == owned_sid:
+                    return ApiCallResult(success=False, error_code="wrong_session_id", error_message="bad sid")
+                if cmd == "show-changes":
+                    return ApiCallResult(
+                        success=True,
+                        data={
+                            "changes": [
+                                {
+                                    "operations": {
+                                        "added-objects": [
+                                            {
+                                                "uid": "g-wrap-1",
+                                                "name": "Grp1",
+                                                "type": "group",
+                                                "members": [bare_uid],
+                                            }
+                                        ],
+                                    }
+                                }
+                            ]
+                        },
+                    )
+                if cmd == "show-object":
+                    return ApiCallResult(
+                        success=True,
+                        data={"object": {"uid": bare_uid, "name": f"Host_{owned_sid}", "type": "host"}},
+                    )
+                return ApiCallResult(success=True, data={})
+
+        rep2 = await collect_change_report(
+            api=_OwnedFailApi(),  # type: ignore[arg-type]
+            cache=cache,  # type: ignore[arg-type]
+            scopes=[
+                SessionScope(
+                    mgmt_name="mds1",
+                    domain="Corp",
+                    session_uids=["s-1"],
+                    owned_sessions=OwnedSession(mgmt_name="mds1", domain="Corp", sid=owned_sid),
+                )
+            ],
+        )
+        assert not any(cmd == "show-object" and sid == owned_sid for cmd, sid in calls_seen)
+        assert len(rep2.sessions) == 1
+        assert owned_sid not in str(rep2.sessions[0].resolved_names)
+        assert REDACTED_PLACEHOLDER in str(rep2.sessions[0].resolved_names)
+        assert owned_sid not in str(rep2.sessions[0].object_changes)
+    finally:
+        await db.close()
+
+
+@pytest.mark.spec("SCN-REPORT-008-2")
+def test_render_safe_inline_markdown_md_blocks_nested_links_and_images_in_bold_and_italic() -> None:
+    """SCN-REPORT-008-2 (DA-018): Escape nested `[` / `]` inside `**bold**` and `*italic*` Markdown spans."""
+    from arodonata.reports._renderer_formatting import render_safe_inline_markdown_md
+
+    bold_js = render_safe_inline_markdown_md("**[click](javascript:alert(1))**")
+    italic_img = render_safe_inline_markdown_md("*![beacon](https://example.invalid/x.png)*")
+    assert bold_js == r"**\[click\](javascript:alert(1))**"
+    assert italic_img == r"*!\[beacon\](https://example.invalid/x.png)*"
+    assert "[click]" not in bold_js
+    assert "![beacon]" not in italic_img

@@ -138,6 +138,45 @@ def _format_run_args(args: Sequence[str] | str | None) -> str:
     return " ".join(parts)
 
 
+def _scrub_and_map_session_exception(
+    exc: Exception,
+    *,
+    mgmt_name: str,
+    dom_key: str,
+    ref: str,
+    operation: str,
+    known_sids: Sequence[str] | None,
+) -> tuple[Exception, bool]:
+    """Scrub bare SIDs and map session/auth permission errors to `RepositoryScriptPermissionError`.
+
+    Returns `(mapped_exc, suppress_cause)` so callers can `raise mapped_exc from None` when
+    scrubbing stripped a bare SID from the original exception's message/chain.
+    """
+    if isinstance(exc, RepositoryScriptError):
+        return exc, False
+    raw_msg = str(exc)
+    has_bare_sid = bool(known_sids and redact_sid(raw_msg, known_sids=known_sids) != raw_msg)
+    if isinstance(exc, (SessionError, SessionStateError, AuthenticationError)):
+        if is_script_permission_error(None, raw_msg):
+            return (
+                RepositoryScriptPermissionError(
+                    mgmt_name,
+                    dom_key,
+                    ref,
+                    operation=operation,
+                    message=raw_msg,
+                    known_sids=known_sids or None,
+                ),
+                has_bare_sid,
+            )
+        if has_bare_sid:
+            return RepositoryScriptError(raw_msg, known_sids=known_sids), True
+        return exc, False
+    if has_bare_sid:
+        return RepositoryScriptError(raw_msg, known_sids=known_sids), True
+    return exc, False
+
+
 def _metadata_matches(
     existing: RepositoryScript,
     *,
@@ -762,7 +801,25 @@ class ScriptRepositoryService:
 
         active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key)
         if active_ws is not None:
-            action, script_obj = await _apply_in_session([active_ws.sid] if active_ws.sid else None)
+            active_sids = [active_ws.sid] if active_ws.sid else None
+            try:
+                action, script_obj = await _apply_in_session(active_sids)
+            except ServerIdentityError:
+                raise
+            except Exception as exc:
+                mapped, suppress_cause = _scrub_and_map_session_exception(
+                    exc,
+                    mgmt_name=mgmt_name,
+                    dom_key=dom_key,
+                    ref=clean_name,
+                    operation="ensure-repository-script",
+                    known_sids=active_sids,
+                )
+                if suppress_cause:
+                    raise mapped from None
+                if mapped is exc:
+                    raise
+                raise mapped from exc
             return EnsureRepositoryScriptResult(
                 mgmt_name=mgmt_name,
                 domain_name=dom_key,
@@ -782,23 +839,22 @@ class ScriptRepositoryService:
                 if opened_ws.sid:
                     ws_sids.append(opened_ws.sid)
                 action, script_obj = await _apply_in_session(ws_sids)
-        except (SessionError, AuthenticationError) as exc:
-            has_bare_sid = bool(ws_sids and redact_sid(str(exc), known_sids=ws_sids) != str(exc))
-            if is_script_permission_error(None, str(exc)):
-                perm_err = RepositoryScriptPermissionError(
-                    mgmt_name,
-                    dom_key,
-                    clean_name,
-                    operation="publish",
-                    message=str(exc),
-                    known_sids=ws_sids or None,
-                )
-                if has_bare_sid:
-                    raise perm_err from None
-                raise perm_err from exc
-            if has_bare_sid:
-                raise RepositoryScriptError(str(exc), known_sids=ws_sids) from None
+        except ServerIdentityError:
             raise
+        except Exception as exc:
+            mapped, suppress_cause = _scrub_and_map_session_exception(
+                exc,
+                mgmt_name=mgmt_name,
+                dom_key=dom_key,
+                ref=clean_name,
+                operation="publish",
+                known_sids=ws_sids or None,
+            )
+            if suppress_cause:
+                raise mapped from None
+            if mapped is exc:
+                raise
+            raise mapped from exc
 
         return EnsureRepositoryScriptResult(
             mgmt_name=mgmt_name,
@@ -848,7 +904,25 @@ class ScriptRepositoryService:
 
         active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key)
         if active_ws is not None:
-            return await _delete_in_session([active_ws.sid] if active_ws.sid else None)
+            active_sids = [active_ws.sid] if active_ws.sid else None
+            try:
+                return await _delete_in_session(active_sids)
+            except ServerIdentityError:
+                raise
+            except Exception as exc:
+                mapped, suppress_cause = _scrub_and_map_session_exception(
+                    exc,
+                    mgmt_name=mgmt_name,
+                    dom_key=dom_key,
+                    ref=ref,
+                    operation="delete-repository-script",
+                    known_sids=active_sids,
+                )
+                if suppress_cause:
+                    raise mapped from None
+                if mapped is exc:
+                    raise
+                raise mapped from exc
 
         ws_sids: list[str] = []
         try:
@@ -861,23 +935,22 @@ class ScriptRepositoryService:
                 if opened_ws.sid:
                     ws_sids.append(opened_ws.sid)
                 return await _delete_in_session(ws_sids)
-        except (SessionError, AuthenticationError) as exc:
-            has_bare_sid = bool(ws_sids and redact_sid(str(exc), known_sids=ws_sids) != str(exc))
-            if is_script_permission_error(None, str(exc)):
-                perm_err = RepositoryScriptPermissionError(
-                    mgmt_name,
-                    dom_key,
-                    ref,
-                    operation="delete-repository-script",
-                    message=str(exc),
-                    known_sids=ws_sids or None,
-                )
-                if has_bare_sid:
-                    raise perm_err from None
-                raise perm_err from exc
-            if has_bare_sid:
-                raise RepositoryScriptError(str(exc), known_sids=ws_sids) from None
+        except ServerIdentityError:
             raise
+        except Exception as exc:
+            mapped, suppress_cause = _scrub_and_map_session_exception(
+                exc,
+                mgmt_name=mgmt_name,
+                dom_key=dom_key,
+                ref=ref,
+                operation="delete-repository-script",
+                known_sids=ws_sids or None,
+            )
+            if suppress_cause:
+                raise mapped from None
+            if mapped is exc:
+                raise
+            raise mapped from exc
 
     @traced
     async def run_repository_script(

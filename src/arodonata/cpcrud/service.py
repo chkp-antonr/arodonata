@@ -219,6 +219,9 @@ class CPCRUDService:
         expected_session_name: str | None = None,
         allow_foreign: bool = False,
         allow_stale: bool = False,
+        baseline_readable: bool | None = None,
+        baseline_session_uid: str | None = None,
+        baseline_published_at: datetime | None = None,
     ) -> ApiCallResult:
         """Adopt `session_uid`, publish it, log out, and invalidate the domain cache."""
         if self._ensure_initialized is not None:
@@ -238,6 +241,9 @@ class CPCRUDService:
             expected_session_name=expected_session_name,
             allow_foreign=allow_foreign,
             allow_stale=allow_stale,
+            baseline_readable=baseline_readable,
+            baseline_session_uid=baseline_session_uid,
+            baseline_published_at=baseline_published_at,
         )
 
     async def stream_publish_staged_session(
@@ -254,6 +260,9 @@ class CPCRUDService:
         expected_session_name: str | None = None,
         allow_foreign: bool = False,
         allow_stale: bool = False,
+        baseline_readable: bool | None = None,
+        baseline_session_uid: str | None = None,
+        baseline_published_at: datetime | None = None,
     ) -> AsyncIterator[CPCRUDEvent]:
         """Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate the domain cache."""
         if self._ensure_initialized is not None:
@@ -273,6 +282,9 @@ class CPCRUDService:
             expected_session_name=expected_session_name,
             allow_foreign=allow_foreign,
             allow_stale=allow_stale,
+            baseline_readable=baseline_readable,
+            baseline_session_uid=baseline_session_uid,
+            baseline_published_at=baseline_published_at,
         ):
             yield ev
 

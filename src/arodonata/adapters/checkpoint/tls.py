@@ -684,6 +684,14 @@ class TrustPolicy:
             )
         matched_entry = stored_entry if stored_entry is not None else stored_id_entry
         if matched_entry is not None:
+            if stored_entry is None and stored_id_entry is not None and self._mode in ("tofu", "lab-memory"):
+                self._store.record(
+                    host,
+                    port,
+                    presented,
+                    source="known-identity",
+                    persist=(self._mode == "tofu"),
+                )
             decision_by_source = {
                 "tofu": "tofu_match",
                 "stored": "stored_match",
@@ -697,13 +705,22 @@ class TrustPolicy:
         # 3. Check if this certificate belongs to a known MDS member already trusted on another IP
         if self._is_fingerprint_trusted_elsewhere(presented):
             if self._mode in ("tofu", "lab-memory"):
+                persist_known = self._mode == "tofu"
                 self._store.record(
                     host,
                     port,
                     presented,
                     source="known-identity",
-                    persist=(self._mode == "tofu"),
+                    persist=persist_known,
                 )
+                if id_host is not None and id_key != key:
+                    self._store.record(
+                        id_host,
+                        port,
+                        presented,
+                        source="known-identity",
+                        persist=persist_known,
+                    )
             span_attrs(tls_decision="known_identity_match")
             return presented
 
@@ -726,6 +743,8 @@ class TrustPolicy:
         if self._mode == "tofu":
             try:
                 self._store.record(host, port, presented, source="tofu", persist=True)
+                if id_host is not None and id_key != key:
+                    self._store.record(id_host, port, presented, source="tofu", persist=True)
             except CertificateMismatchError:
                 span_attrs(tls_decision="mismatch")
                 logger.error(
@@ -751,6 +770,8 @@ class TrustPolicy:
 
         # mode == "lab-memory"
         self._store.record(host, port, presented, source="lab-memory", persist=False)
+        if id_host is not None and id_key != key:
+            self._store.record(id_host, port, presented, source="lab-memory", persist=False)
         span_attrs(tls_decision="lab_memory_first_contact")
         logger.warning(
             "tls_tofu_first_contact",

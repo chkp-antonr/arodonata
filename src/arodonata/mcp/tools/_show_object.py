@@ -29,22 +29,42 @@ from arodonata.rulebase.numbering import extract_policy_packages
 EntityUnion = CPObject | CPService | Asset | RulebaseLayerEntry | PolicyPackageInfo
 
 
+_CPMI_TO_CANONICAL_ASSET_TYPE: dict[str, str] = {
+    "cpmigatewayplain": "simple-gateway",
+    "cpmigatewaycluster": "simple-cluster",
+    "cpmiclustermember": "cluster-member",
+    "cpmivsxnetobj": "vsx-gateway",
+    "cpmivsxclusternetobj": "vsx-cluster",
+    "cpmivsxclustermember": "vsx-cluster-member",
+    "cpmivsnetobj": "virtual-system",
+    "cpmivsclusternetobj": "virtual-system",
+    "cpmihostckp": "checkpoint-host",
+}
+
+_ASSET_LIVE_REST_TYPES: frozenset[str] = frozenset({"simple-gateway", "simple-cluster"})
+
+
 def validate_show_object_type(obj_type: str | None, eff_mgmt: str, eff_domain: str | None) -> str | None:
     """Validate and canonicalize an optional `show_object(obj_type=...)` parameter."""
     if obj_type is None or not obj_type.strip():
         return None
-    try:
-        validated_cmd = validate_command_name(f"show-{obj_type.strip()}")
-    except ValidationError as exc:
-        raise ToolFailure(f"Invalid obj_type {obj_type!r}: {exc}", mgmt_name=eff_mgmt, domain=eff_domain) from exc
-    normalized = normalize_any_type(validated_cmd.removeprefix("show-"))
+    raw_clean = obj_type.strip()
+    lowered = raw_clean.lower()
+    mapped = _CPMI_TO_CANONICAL_ASSET_TYPE.get(lowered, lowered)
+    normalized = normalize_any_type(mapped)
+    if normalized == lowered and "_" in normalized:
+        normalized = normalize_any_type(normalized.replace("_", "-"))
     if normalized not in CANONICAL_SHOW_OBJECT_TYPES:
         raise ToolFailure(
             f"Unsupported obj_type {obj_type!r}. Expected a canonical Check Point object, service, asset, or layer type.",
             mgmt_name=eff_mgmt,
             domain=eff_domain,
         )
-    return normalized
+    try:
+        validated_cmd = validate_command_name(f"show-{normalized}")
+    except ValidationError as exc:
+        raise ToolFailure(f"Invalid obj_type {obj_type!r}: {exc}", mgmt_name=eff_mgmt, domain=eff_domain) from exc
+    return validated_cmd.removeprefix("show-")
 
 
 async def _fetch_candidate_scope(
@@ -273,11 +293,25 @@ async def live_show_object(
 ) -> CallToolResult:
     """Fallback live `show-*` API call when cached tiers miss or `cache_mode='live'` is requested."""
     is_typed = bool(clean_obj_type and clean_obj_type not in CANONICAL_LAYER_AND_PACKAGE_TYPES)
-    cmd = f"show-{clean_obj_type}" if is_typed else "show-object"
+    use_show_object_for_asset = bool(
+        clean_obj_type
+        and clean_obj_type in {t.lower() for t in CANONICAL_SHOW_OBJECT_TYPES}
+        and clean_obj_type
+        in {
+            "cluster-member",
+            "vsx-gateway",
+            "vsx-cluster",
+            "vsx-cluster-member",
+            "virtual-system",
+            "vs-netobj",
+            "checkpoint-host",
+        }
+    )
+    cmd = "show-object" if (not is_typed or use_show_object_for_asset) else f"show-{clean_obj_type}"
     payload: dict[str, Any] = {"details-level": details_level}
-    if is_uuid(query_str) and not clean_obj_type:
+    if is_uuid(query_str):
         payload["uid"] = query_str
-    elif is_typed:
+    elif is_typed and not use_show_object_for_asset:
         payload["name"] = query_str
     else:
         payload["uid"] = query_str

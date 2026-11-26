@@ -309,6 +309,28 @@ def _compute_post_update_members(
     return surviving_ids, existing_dicts
 
 
+def _apply_groups_overlay_update(
+    existing_raw: Mapping[str, Any] | None,
+    diffs: Mapping[str, FieldChange],
+    update_payload: Mapping[str, Any],
+) -> list[str] | None:
+    """Return updated `groups` string list for the virtual overlay when `groups` is in `update_payload`."""
+    if "groups" not in update_payload:
+        return None
+    grp_val = update_payload["groups"]
+    if isinstance(grp_val, list):
+        return [str(g) for g in grp_val]
+    if isinstance(grp_val, Mapping):
+        _, new_raw_grps = _compute_post_update_members(
+            [],
+            {"members": existing_raw.get("groups") if isinstance(existing_raw, Mapping) else []},
+            {"members": diffs["groups"]} if "groups" in diffs else {},
+            {"members": grp_val},
+        )
+        return [str(d.get("name") or d.get("uid") or "") for d in new_raw_grps if d.get("name") or d.get("uid")]
+    return None
+
+
 def _apply_object_update_to_model(
     existing: CPObject,
     diffs: Mapping[str, FieldChange],
@@ -368,20 +390,8 @@ def _apply_object_update_to_model(
         updates["members"] = new_members
         new_raw["members"] = new_raw_members
 
-    if "groups" in update_payload:
-        grp_val = update_payload["groups"]
-        if isinstance(grp_val, list):
-            new_raw["groups"] = [str(g) for g in grp_val]
-        elif isinstance(grp_val, Mapping):
-            _, new_raw_grps = _compute_post_update_members(
-                [],
-                {"members": existing.raw_data.get("groups") if isinstance(existing.raw_data, Mapping) else []},
-                {"members": diffs["groups"]} if "groups" in diffs else {},
-                {"members": grp_val},
-            )
-            new_raw["groups"] = [
-                str(d.get("name") or d.get("uid") or "") for d in new_raw_grps if d.get("name") or d.get("uid")
-            ]
+    if (new_grps := _apply_groups_overlay_update(existing.raw_data, diffs, update_payload)) is not None:
+        new_raw["groups"] = new_grps
 
     updates["raw_data"] = new_raw
     return existing.model_copy(update=updates)
@@ -438,23 +448,110 @@ def _apply_service_update_to_model(
         updates["members"] = new_members
         new_raw["members"] = new_raw_members
 
-    if "groups" in update_payload:
-        grp_val = update_payload["groups"]
-        if isinstance(grp_val, list):
-            new_raw["groups"] = [str(g) for g in grp_val]
-        elif isinstance(grp_val, Mapping):
-            _, new_raw_grps = _compute_post_update_members(
-                [],
-                {"members": existing.raw_data.get("groups") if isinstance(existing.raw_data, Mapping) else []},
-                {"members": diffs["groups"]} if "groups" in diffs else {},
-                {"members": grp_val},
-            )
-            new_raw["groups"] = [
-                str(d.get("name") or d.get("uid") or "") for d in new_raw_grps if d.get("name") or d.get("uid")
-            ]
+    if (new_grps := _apply_groups_overlay_update(existing.raw_data, diffs, update_payload)) is not None:
+        new_raw["groups"] = new_grps
 
     updates["raw_data"] = new_raw
     return existing.model_copy(update=updates)
+
+
+def _plan_existing_entity_diff[T: (CPObject, CPService)](
+    *,
+    action_id: str,
+    mgmt_name: str,
+    domain_name: str,
+    verb: str,
+    entity_type: str,
+    display_name: str,
+    spec: Mapping[str, Any],
+    existing: T,
+    policy: ConflictPolicy,
+    res_map: dict[str, str],
+    diff_fn: Callable[..., tuple[dict[str, FieldChange], dict[str, Any]]],
+    prior_state_fn: Callable[[T], dict[str, Any]],
+    apply_update_fn: Callable[[T, Mapping[str, FieldChange], Mapping[str, Any]], T],
+    record_virtual_fn: Callable[[T, str | None], None],
+) -> PlannedAction:
+    """Shared diff planner, conflict gate, and virtual overlay update for `CPObject` and `CPService`."""
+    try:
+        diffs, update_payload = diff_fn(spec, existing, name_resolutions=res_map)
+    except DiffSafetyError as exc:
+        return _make_error_action(
+            action_id=action_id,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            operation=verb,
+            object_type=entity_type,
+            name=existing.name,
+            requested_name=display_name,
+            resolved_name=existing.name,
+            target_uid=existing.uid,
+            prior_state=prior_state_fn(existing),
+            desired_spec=spec,
+            error=str(exc),
+        )
+    if not diffs:
+        return PlannedAction(
+            action_id=action_id,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            operation=verb,
+            object_type=entity_type,
+            name=existing.name,
+            requested_name=display_name,
+            resolved_name=existing.name,
+            target_uid=existing.uid,
+            outcome=Outcome.UNCHANGED,
+            prior_state=prior_state_fn(existing),
+            desired_spec=dict(spec),
+            message=f"{entity_type} {existing.name!r} is unchanged.",
+        )
+    if policy.on_name_conflict == "error":
+        diff_keys = ", ".join(sorted(diffs.keys()))
+        err_msg = (
+            f"Name conflict on {entity_type} {existing.name!r}: differs on [{diff_keys}] and on_name_conflict='error'."
+        )
+        return PlannedAction(
+            action_id=action_id,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            operation=verb,
+            object_type=entity_type,
+            name=existing.name,
+            requested_name=display_name,
+            resolved_name=existing.name,
+            target_uid=existing.uid,
+            outcome=Outcome.ERROR,
+            diffs=diffs,
+            prior_state=prior_state_fn(existing),
+            desired_spec=dict(spec),
+            message=err_msg,
+            error=err_msg,
+        )
+
+    update_payload.update(_entity_wire_identity(existing))
+    new_target_name = str(update_payload.get("new-name") or existing.name)
+    updated_model = apply_update_fn(existing, diffs, update_payload)
+    record_virtual_fn(updated_model, existing.name)
+
+    return PlannedAction(
+        action_id=action_id,
+        mgmt_name=mgmt_name,
+        domain_name=domain_name,
+        operation="set",
+        object_type=entity_type,
+        name=existing.name,
+        requested_name=display_name,
+        resolved_name=new_target_name,
+        target_uid=existing.uid,
+        outcome=Outcome.UPDATE,
+        command=f"set-{entity_type}",
+        payload=update_payload,
+        diffs=diffs,
+        prior_state=prior_state_fn(existing),
+        desired_spec=dict(spec),
+        message=f"Update {entity_type} {existing.name!r} ({', '.join(sorted(diffs.keys()))}).",
+    )
 
 
 def _plan_existing_object_diff(
@@ -472,84 +569,21 @@ def _plan_existing_object_diff(
     res_map: dict[str, str],
 ) -> PlannedAction:
     """Compute field diffs, enforce `on_name_conflict`, and update virtual overlay for an existing `CPObject`."""
-    try:
-        diffs, update_payload = compute_object_diff(spec, existing, name_resolutions=res_map)
-    except DiffSafetyError as exc:
-        return _make_error_action(
-            action_id=action_id,
-            mgmt_name=mgmt_name,
-            domain_name=domain_name,
-            operation=verb,
-            object_type=obj_type,
-            name=existing.name,
-            requested_name=display_name,
-            resolved_name=existing.name,
-            target_uid=existing.uid,
-            prior_state=_build_prior_object_state(existing),
-            desired_spec=spec,
-            error=str(exc),
-        )
-    if not diffs:
-        return PlannedAction(
-            action_id=action_id,
-            mgmt_name=mgmt_name,
-            domain_name=domain_name,
-            operation=verb,
-            object_type=obj_type,
-            name=existing.name,
-            requested_name=display_name,
-            resolved_name=existing.name,
-            target_uid=existing.uid,
-            outcome=Outcome.UNCHANGED,
-            prior_state=_build_prior_object_state(existing),
-            desired_spec=dict(spec),
-            message=f"{obj_type} {existing.name!r} is unchanged.",
-        )
-    if policy.on_name_conflict == "error":
-        diff_keys = ", ".join(sorted(diffs.keys()))
-        err_msg = (
-            f"Name conflict on {obj_type} {existing.name!r}: differs on [{diff_keys}] and on_name_conflict='error'."
-        )
-        return PlannedAction(
-            action_id=action_id,
-            mgmt_name=mgmt_name,
-            domain_name=domain_name,
-            operation=verb,
-            object_type=obj_type,
-            name=existing.name,
-            requested_name=display_name,
-            resolved_name=existing.name,
-            target_uid=existing.uid,
-            outcome=Outcome.ERROR,
-            diffs=diffs,
-            prior_state=_build_prior_object_state(existing),
-            desired_spec=dict(spec),
-            message=err_msg,
-            error=err_msg,
-        )
-
-    update_payload.update(_entity_wire_identity(existing))
-    new_target_name = str(update_payload.get("new-name") or existing.name)
-    updated_model = _apply_object_update_to_model(existing, diffs, update_payload)
-    reader.record_virtual_object(updated_model, previous_name=existing.name)
-
-    return PlannedAction(
+    return _plan_existing_entity_diff(
         action_id=action_id,
         mgmt_name=mgmt_name,
         domain_name=domain_name,
-        operation="set",
-        object_type=obj_type,
-        name=existing.name,
-        requested_name=display_name,
-        resolved_name=new_target_name,
-        target_uid=existing.uid,
-        outcome=Outcome.UPDATE,
-        command=f"set-{obj_type}",
-        payload=update_payload,
-        diffs=diffs,
-        prior_state=_build_prior_object_state(existing),
-        desired_spec=dict(spec),
-        message=f"Update {obj_type} {existing.name!r} ({', '.join(sorted(diffs.keys()))}).",
+        verb=verb,
+        entity_type=obj_type,
+        display_name=display_name,
+        spec=spec,
+        existing=existing,
+        policy=policy,
+        res_map=res_map,
+        diff_fn=compute_object_diff,
+        prior_state_fn=_build_prior_object_state,
+        apply_update_fn=_apply_object_update_to_model,
+        record_virtual_fn=lambda m, prev: reader.record_virtual_object(m, previous_name=prev),
     )
 
 
@@ -568,82 +602,19 @@ def _plan_existing_service_diff(
     res_map: dict[str, str],
 ) -> PlannedAction:
     """Compute field diffs, enforce `on_name_conflict`, and update virtual overlay for an existing `CPService`."""
-    try:
-        diffs, update_payload = compute_service_diff(spec, existing, name_resolutions=res_map)
-    except DiffSafetyError as exc:
-        return _make_error_action(
-            action_id=action_id,
-            mgmt_name=mgmt_name,
-            domain_name=domain_name,
-            operation=verb,
-            object_type=svc_type,
-            name=existing.name,
-            requested_name=display_name,
-            resolved_name=existing.name,
-            target_uid=existing.uid,
-            prior_state=_build_prior_service_state(existing),
-            desired_spec=spec,
-            error=str(exc),
-        )
-    if not diffs:
-        return PlannedAction(
-            action_id=action_id,
-            mgmt_name=mgmt_name,
-            domain_name=domain_name,
-            operation=verb,
-            object_type=svc_type,
-            name=existing.name,
-            requested_name=display_name,
-            resolved_name=existing.name,
-            target_uid=existing.uid,
-            outcome=Outcome.UNCHANGED,
-            prior_state=_build_prior_service_state(existing),
-            desired_spec=dict(spec),
-            message=f"{svc_type} {existing.name!r} is unchanged.",
-        )
-    if policy.on_name_conflict == "error":
-        diff_keys = ", ".join(sorted(diffs.keys()))
-        err_msg = (
-            f"Name conflict on {svc_type} {existing.name!r}: differs on [{diff_keys}] and on_name_conflict='error'."
-        )
-        return PlannedAction(
-            action_id=action_id,
-            mgmt_name=mgmt_name,
-            domain_name=domain_name,
-            operation=verb,
-            object_type=svc_type,
-            name=existing.name,
-            requested_name=display_name,
-            resolved_name=existing.name,
-            target_uid=existing.uid,
-            outcome=Outcome.ERROR,
-            diffs=diffs,
-            prior_state=_build_prior_service_state(existing),
-            desired_spec=dict(spec),
-            message=err_msg,
-            error=err_msg,
-        )
-
-    update_payload.update(_entity_wire_identity(existing))
-    new_target_name = str(update_payload.get("new-name") or existing.name)
-    updated_svc = _apply_service_update_to_model(existing, diffs, update_payload)
-    reader.record_virtual_service(updated_svc, previous_name=existing.name)
-
-    return PlannedAction(
+    return _plan_existing_entity_diff(
         action_id=action_id,
         mgmt_name=mgmt_name,
         domain_name=domain_name,
-        operation="set",
-        object_type=svc_type,
-        name=existing.name,
-        requested_name=display_name,
-        resolved_name=new_target_name,
-        target_uid=existing.uid,
-        outcome=Outcome.UPDATE,
-        command=f"set-{svc_type}",
-        payload=update_payload,
-        diffs=diffs,
-        prior_state=_build_prior_service_state(existing),
-        desired_spec=dict(spec),
-        message=f"Update {svc_type} {existing.name!r} ({', '.join(sorted(diffs.keys()))}).",
+        verb=verb,
+        entity_type=svc_type,
+        display_name=display_name,
+        spec=spec,
+        existing=existing,
+        policy=policy,
+        res_map=res_map,
+        diff_fn=compute_service_diff,
+        prior_state_fn=_build_prior_service_state,
+        apply_update_fn=_apply_service_update_to_model,
+        record_virtual_fn=lambda m, prev: reader.record_virtual_service(m, previous_name=prev),
     )

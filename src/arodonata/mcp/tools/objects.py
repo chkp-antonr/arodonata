@@ -48,7 +48,7 @@ from arodonata.mcp.tools._common import (
     _serialize_object,
     _serialize_service,
     _upgrade_uninitialized_cache_mode,
-    _validate_optional_domains,
+    resolve_and_validate_scope,
 )
 
 
@@ -175,7 +175,14 @@ def register_object_tools(
                 client, eff_mgmt, eff_domain, "objects", obj_item_type, has_cached_data=bool(objs)
             )
         filtered = _filter_cp_objects(objs, filter)
-        age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", obj_item_type)
+        age = await _compute_cache_age(
+            client,
+            eff_mgmt,
+            eff_domain,
+            "objects",
+            obj_item_type,
+            item_types=normalized_types,
+        )
         serialized = [_serialize_object(o, details_level=details_level) for o in filtered]
         envelope = _build_page_envelope(
             serialized,
@@ -254,7 +261,14 @@ def register_object_tools(
                 client, eff_mgmt, eff_domain, "services", svc_item_type, has_cached_data=bool(svcs)
             )
         filtered = _filter_cp_services(svcs, filter)
-        age = await _compute_cache_age(client, eff_mgmt, eff_domain, "services", svc_item_type)
+        age = await _compute_cache_age(
+            client,
+            eff_mgmt,
+            eff_domain,
+            "services",
+            svc_item_type,
+            item_types=normalized_types,
+        )
         serialized = [_serialize_service(s, details_level=details_level) for s in filtered]
         envelope = _build_page_envelope(
             serialized,
@@ -380,15 +394,15 @@ def register_object_tools(
         cache_mode: str = "smart",
     ) -> CallToolResult:
         client = client_getter()
-        eff_mgmt = resolve_mgmt_name(client, mgmt_name) if (mgmt_name or domain or domains) else None
         mode, _ = _normalize_cache_mode(cache_mode, default="smart")
-        eff_domain = (
-            await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
-            if eff_mgmt
-            else None
+        eff_mgmt, eff_domain, clean_domains = await resolve_and_validate_scope(
+            client,
+            mgmt_name,
+            domain=domain,
+            domains=domains,
+            cache_mode=mode,
         )
-        target_domains = domains if domains is not None else ([eff_domain] if eff_domain else None)
-        await _validate_optional_domains(client, eff_mgmt, target_domains, cache_mode=mode)
+        target_domains = clean_domains if domains is not None else ([eff_domain] if eff_domain else None)
 
         raw_types = [t.strip() for t in types if t and t.strip()] if types else None
         canonical_assets_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
@@ -437,11 +451,11 @@ def register_object_tools(
         )
         search_ages: list[float] = []
         if want_search_objects:
-            obj_age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "*")
+            obj_age = await _compute_cache_age(client, eff_mgmt, eff_domain, "objects", "*", domains=target_domains)
             if obj_age is not None:
                 search_ages.append(obj_age)
         if want_search_assets:
-            asset_age = await _compute_cache_age(client, eff_mgmt, eff_domain, "assets", "*")
+            asset_age = await _compute_cache_age(client, eff_mgmt, eff_domain, "assets", "*", domains=target_domains)
             if asset_age is not None:
                 search_ages.append(asset_age)
         age = max(search_ages) if search_ages else None
@@ -499,15 +513,14 @@ def register_object_tools(
         cache_mode: str = "smart",
     ) -> CallToolResult:
         client = client_getter()
-        eff_mgmt = resolve_mgmt_name(client, mgmt_name) if mgmt_name else None
         mode, _ = _normalize_cache_mode(cache_mode, default="smart")
-        if eff_mgmt and domain:
-            eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
-        else:
-            eff_domain = domain.strip() if domain and domain.strip() else None
-            if eff_domain:
-                await _validate_optional_domains(client, eff_mgmt, [eff_domain], cache_mode=mode)
-        await _validate_optional_domains(client, eff_mgmt, domains, cache_mode=mode)
+        eff_mgmt, eff_domain, clean_domains = await resolve_and_validate_scope(
+            client,
+            mgmt_name,
+            domain=domain,
+            domains=domains,
+            cache_mode=mode,
+        )
 
         canonical_asset_types_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
         if aggregate == "describe":
@@ -580,10 +593,21 @@ def register_object_tools(
             offset=eff_offset,
             cache_mode=eff_mode,
         )
+        age_scopes: list[tuple[SyncScope, list[str] | None]] = (
+            [("objects", None), ("services", None), ("assets", None)] if aggregate == "describe" else target_scopes
+        )
         query_ages: list[float] = []
-        for q_scope, q_types in target_scopes:
+        for q_scope, q_types in age_scopes:
             q_item_type = q_types[0] if q_types and len(q_types) == 1 else "*"
-            scope_age = await _compute_cache_age(client, eff_mgmt, eff_domain, q_scope, q_item_type)
+            scope_age = await _compute_cache_age(
+                client,
+                eff_mgmt,
+                eff_domain,
+                q_scope,
+                q_item_type,
+                domains=clean_domains,
+                item_types=q_types,
+            )
             if scope_age is not None:
                 query_ages.append(scope_age)
         age: float | None = max(query_ages) if query_ages else None

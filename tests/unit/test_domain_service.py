@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -757,3 +758,87 @@ async def test_discover_mds_domains_stalled_pagination_and_write_session_error_p
     with pytest.raises(ValueError, match="original body error"):
         async with open_api_write_session(_FailingDiscardApi(), "mds1", "Corp"):  # type: ignore[arg-type]
             raise ValueError("original body error")
+
+
+@pytest.mark.spec("SCN-SESS-014-2")
+@pytest.mark.asyncio
+async def test_failed_domain_discovery_does_not_suppress_smart_retries(tmp_path: Path) -> None:
+    """SCN-SESS-014-2: Failed show-domains sync state does not suppress subsequent smart refreshes for domain_list_ttl."""
+    from arodonata.core.context import SYSTEM_DOMAIN_KEY
+    from arodonata.core.models.domains import DomainInfo, DomainSyncState
+
+    clock = [datetime(2026, 11, 26, 12, 0, 0)]
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+
+    class _FlakyApi:
+        def __init__(self) -> None:
+            self.should_fail = True
+            self.calls = 0
+
+        async def api_call(
+            self,
+            mgmt_name: str,
+            command: str,
+            payload: dict[str, Any] | None = None,
+            *,
+            domain: str | None = None,
+            **_kwargs: Any,
+        ) -> ApiCallResult:
+            if command == "show-domains":
+                self.calls += 1
+                if self.should_fail:
+                    return ApiCallResult(success=False, status_code=503, error_message="MDS unavailable")
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "objects": [
+                            {"uid": "d-corp", "name": "Corp", "type": "domain", "servers": []},
+                        ]
+                    },
+                )
+            if command == "show-global-domain":
+                return ApiCallResult(success=False, status_code=404, error_message="no global")
+            return ApiCallResult(success=True, data={})
+
+    api = _FlakyApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret", domain_list_ttl=3600)
+    svc = DomainService(settings=settings, api=api, cache=cache, now_fn=lambda: clock[0])  # type: ignore[arg-type]
+
+    # Seed an old cached domain row whose 1-hour TTL has expired
+    stale_time = clock[0] - timedelta(seconds=3700)
+    await cache.upsert_domains(
+        [DomainInfo(mgmt_name="mds1", uid="d-old", name="OldDom", domain_type="domain", updated_at=stale_time)]
+    )
+    await cache.upsert_sync_state(
+        DomainSyncState(
+            mgmt_name="mds1",
+            domain_name=SYSTEM_DOMAIN_KEY,
+            scope="domains",
+            item_type="*",
+            synced_at=stale_time,
+            status="ok",
+            object_count=1,
+        )
+    )
+
+    # 1. Transient show-domains failure -> status="failed", prior synced_at preserved
+    doms_1 = await svc.get_domains("mds1", cache_mode="smart")
+    assert [d.name for d in doms_1] == ["OldDom"]
+    assert api.calls == 1
+    failed_state = await cache.get_sync_state("mds1", SYSTEM_DOMAIN_KEY, "domains", "*")
+    assert failed_state is not None and failed_state.status == "failed"
+    assert failed_state.synced_at == stale_time
+
+    # 2. Simulate restarted process / fresh tracker 5s later after MDS recovers -> smart mode MUST retry immediately
+    clock[0] += timedelta(seconds=5)
+    api.should_fail = False
+    restarted_svc = DomainService(settings=settings, api=api, cache=cache, now_fn=lambda: clock[0])  # type: ignore[arg-type]
+    doms_2 = await restarted_svc.get_domains("mds1", cache_mode="smart")
+    assert api.calls == 2
+    assert any(d.name == "Corp" for d in doms_2)
+    ok_state = await cache.get_sync_state("mds1", SYSTEM_DOMAIN_KEY, "domains", "*")
+    assert ok_state is not None and ok_state.status == "ok"
+
+    await db.close()
