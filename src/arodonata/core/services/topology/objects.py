@@ -8,6 +8,7 @@ from collections import deque
 from collections.abc import Sequence
 from typing import Any
 
+from arodonata.core.context import get_write_session
 from arodonata.core.errors import ServerIdentityError
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.objects import CPObject
@@ -340,6 +341,58 @@ def _index_objects(
     return by_uid, by_name
 
 
+def _enqueue_missing_cached_members(
+    start_obj: CPObject,
+    *,
+    obj_by_uid: dict[str, CPObject],
+    obj_by_name: dict[str, CPObject],
+    checked_cached_uids: set[str],
+    is_trusted_cached: Any,
+    pending_out: list[tuple[str | None, str | None]],
+    resolved_uids: set[str] | None = None,
+) -> None:
+    """BFS-walk `start_obj` and append any uncached or untrusted member references to `pending_out`."""
+    walk_q: deque[CPObject] = deque([start_obj])
+    while walk_q:
+        cur_obj = walk_q.popleft()
+        if cur_obj.uid in checked_cached_uids:
+            continue
+        checked_cached_uids.add(cur_obj.uid)
+        for m_ref in cur_obj.members:
+            child = obj_by_uid.get(m_ref) or obj_by_name.get(m_ref)
+            if child is None:
+                pending_out.append((m_ref, None))
+            elif not is_trusted_cached(child) and (resolved_uids is None or child.uid not in resolved_uids):
+                pending_out.append((child.uid, child.name))
+            elif child.uid not in checked_cached_uids:
+                walk_q.append(child)
+
+
+async def _merge_global_object_cache(
+    mgmt_name: str,
+    new_global: list[CPObject],
+    global_cache: dict[str, list[CPObject]],
+    global_lock: asyncio.Lock | None,
+) -> None:
+    """Thread-safely merge newly fetched `Global` objects into the shared per-refresh cache."""
+
+    def _apply_merge() -> None:
+        cur_glob = {o.uid: o for o in global_cache.get(mgmt_name, [])}
+        for g_obj in new_global:
+            cur_glob[g_obj.uid] = g_obj
+        global_cache[mgmt_name] = ObjectService.apply_context_overlay(
+            list(cur_glob.values()),
+            mgmt_name=mgmt_name,
+            domain_name="Global",
+        )
+
+    if global_lock is not None:
+        async with global_lock:
+            _apply_merge()
+    else:
+        _apply_merge()
+
+
 async def _resolve_topology_objects_on_demand(
     api: ApiPort,
     cache: ObjectCachePort,
@@ -382,20 +435,14 @@ async def _resolve_topology_objects_on_demand(
             pending_wave.append((clean_uid, clean_name))
             continue
 
-        walk_q: deque[CPObject] = deque([root])
-        while walk_q:
-            cur_obj = walk_q.popleft()
-            if cur_obj.uid in checked_cached_uids:
-                continue
-            checked_cached_uids.add(cur_obj.uid)
-            for m_ref in cur_obj.members:
-                child = obj_by_uid.get(m_ref) or obj_by_name.get(m_ref)
-                if child is None:
-                    pending_wave.append((m_ref, None))
-                elif not _is_trusted_cached(child):
-                    pending_wave.append((child.uid, child.name))
-                elif child.uid not in checked_cached_uids:
-                    walk_q.append(child)
+        _enqueue_missing_cached_members(
+            root,
+            obj_by_uid=obj_by_uid,
+            obj_by_name=obj_by_name,
+            checked_cached_uids=checked_cached_uids,
+            is_trusted_cached=_is_trusted_cached,
+            pending_out=pending_wave,
+        )
 
     if not pending_wave:
         return merged_objects
@@ -474,20 +521,15 @@ async def _resolve_topology_objects_on_demand(
                         next_wave.append((c_uid, c_name))
                     else:
                         # Walk any already-cached child group to catch deeper missing or untrusted members
-                        walk_q2: deque[CPObject] = deque([cached_child])
-                        while walk_q2:
-                            cur2 = walk_q2.popleft()
-                            if cur2.uid in checked_cached_uids:
-                                continue
-                            checked_cached_uids.add(cur2.uid)
-                            for m_ref2 in cur2.members:
-                                ch2 = obj_by_uid.get(m_ref2) or obj_by_name.get(m_ref2)
-                                if ch2 is None:
-                                    next_wave.append((m_ref2, None))
-                                elif not _is_trusted_cached(ch2) and ch2.uid not in resolved_uids:
-                                    next_wave.append((ch2.uid, ch2.name))
-                                elif ch2.uid not in checked_cached_uids:
-                                    walk_q2.append(ch2)
+                        _enqueue_missing_cached_members(
+                            cached_child,
+                            obj_by_uid=obj_by_uid,
+                            obj_by_name=obj_by_name,
+                            checked_cached_uids=checked_cached_uids,
+                            is_trusted_cached=_is_trusted_cached,
+                            pending_out=next_wave,
+                            resolved_uids=resolved_uids,
+                        )
 
         pending_wave = next_wave
 
@@ -495,29 +537,15 @@ async def _resolve_topology_objects_on_demand(
         return merged_objects
 
     newly_fetched = list(fetched_by_dom_uid.values())
-    await cache.upsert_objects(newly_fetched, sync_states=None)
+    persistable = [
+        o for o in newly_fetched if get_write_session(mgmt_name=mgmt_name, domain_name=o.domain_name) is None
+    ]
+    if persistable:
+        await cache.upsert_objects(persistable, sync_states=None)
 
     new_global = [o for o in newly_fetched if o.domain_name == "Global"]
-    if new_global and global_cache is not None:
-        if global_lock is not None:
-            async with global_lock:
-                cur_glob = {o.uid: o for o in global_cache.get(mgmt_name, [])}
-                for g_obj in new_global:
-                    cur_glob[g_obj.uid] = g_obj
-                global_cache[mgmt_name] = ObjectService.apply_context_overlay(
-                    list(cur_glob.values()),
-                    mgmt_name=mgmt_name,
-                    domain_name="Global",
-                )
-        else:
-            cur_glob = {o.uid: o for o in global_cache.get(mgmt_name, [])}
-            for g_obj in new_global:
-                cur_glob[g_obj.uid] = g_obj
-            global_cache[mgmt_name] = ObjectService.apply_context_overlay(
-                list(cur_glob.values()),
-                mgmt_name=mgmt_name,
-                domain_name="Global",
-            )
+    if new_global and global_cache is not None and get_write_session(mgmt_name=mgmt_name, domain_name="Global") is None:
+        await _merge_global_object_cache(mgmt_name, new_global, global_cache, global_lock)
 
     # Deduplicate merged_objects by (domain_name, uid) with newly fetched objects applied, then write-session overlay
     by_dom_uid: dict[tuple[str, str], CPObject] = {(o.domain_name, o.uid): o for o in existing_objects}

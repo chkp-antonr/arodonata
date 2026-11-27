@@ -190,6 +190,7 @@ class StagedSessionInfo(BaseModel):
     baseline_readable: bool = False
     baseline_session_uid: str | None = None
     baseline_published_at: datetime | None = None
+    owner_key: str = Field(default="", exclude=True, repr=False)
     _sid: str = PrivateAttr(default="")
 
     def __init__(self, *, sid: str = "", **data: Any) -> None:

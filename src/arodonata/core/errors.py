@@ -14,6 +14,13 @@ _SID_JSON_RE = re.compile(
     r"""(?i)(['"]?(?:sid|session-id|api-key|api_key|password|secret|token)['"]?\s*:\s*['"])([^'"]+)(['"])"""
 )
 _BEARER_RE = re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)([^\s,'\";]+)")
+_KV_EQUALS_QUOTED_RE = re.compile(
+    r"""(?i)\b(sid|session[-_]id|api[-_]key|password|passwd|shared[-_]secret|one[-_]time[-_]password|access[-_]token|bearer[-_]token|secret|token)\s*=\s*(['"])([^'"]*)\2"""
+)
+_KV_EQUALS_UNQUOTED_RE = re.compile(
+    r"(?i)\b(sid|session[-_]id|api[-_]key|password|passwd|shared[-_]secret|one[-_]time[-_]password|access[-_]token|bearer[-_]token|secret|token)\s*=\s*(?!['\"])([^\s,'\";&}]+)"
+)
+_URL_PASSWORD_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://[^:/@\s]+:)([^@\s]+)(@)")
 
 SENSITIVE_FIELD_NAMES: frozenset[str] = frozenset(
     {
@@ -60,6 +67,9 @@ def redact_sid(text: str, known_sids: Iterable[str] | None = None) -> str:
     sanitized = _SID_HEADER_RE.sub(rf"\1{REDACTED_PLACEHOLDER}\3", text)
     sanitized = _SID_JSON_RE.sub(rf"\1{REDACTED_PLACEHOLDER}\3", sanitized)
     sanitized = _BEARER_RE.sub(rf"\1{REDACTED_PLACEHOLDER}", sanitized)
+    sanitized = _KV_EQUALS_QUOTED_RE.sub(rf"\1=\2{REDACTED_PLACEHOLDER}\2", sanitized)
+    sanitized = _KV_EQUALS_UNQUOTED_RE.sub(rf"\1={REDACTED_PLACEHOLDER}", sanitized)
+    sanitized = _URL_PASSWORD_RE.sub(rf"\1{REDACTED_PLACEHOLDER}\3", sanitized)
     if known_sids:
         for sid in known_sids:
             if sid and len(sid) >= 4 and sid in sanitized:
@@ -341,6 +351,30 @@ class RepositoryScriptPermissionError(RepositoryScriptError):
         eff_msg = message or (
             f"Permission denied for repository script {operation!r} on {script_ref!r} "
             f"({mgmt_name!r}, domain {domain_name!r})."
+        )
+        super().__init__(eff_msg, known_sids=known_sids)
+        self.mgmt_name = mgmt_name
+        self.domain_name = domain_name
+        self.script_ref = script_ref
+        self.operation = operation
+
+
+class RepositoryScriptUnsupportedError(RepositoryScriptError):
+    """Raised when the Check Point Management API does not support Script Repository commands (< R81.20 / v1.9)."""
+
+    def __init__(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        script_ref: str,
+        operation: str = "execute",
+        message: str | None = None,
+        *,
+        known_sids: Iterable[str] | None = None,
+    ) -> None:
+        eff_msg = message or (
+            f"Check Point Script Repository API command {operation!r} is not supported on "
+            f"{mgmt_name!r} ({domain_name!r})."
         )
         super().__init__(eff_msg, known_sids=known_sids)
         self.mgmt_name = mgmt_name

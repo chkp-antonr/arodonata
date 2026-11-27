@@ -46,6 +46,62 @@ class HybridStateReader(_ObjectLookupMixin, _ServiceLookupMixin):
     # Rulebase & Where-Used Lookups
     # ------------------------------------------------------------------
 
+    def _apply_virtual_rules(
+        self,
+        paged: PagedRulebaseResult,
+        *,
+        mgmt_name: str,
+        domain_name: str,
+        rulebase_type: RulebaseType,
+        target_key: str,
+    ) -> PagedRulebaseResult:
+        """Merge intra-plan virtual rule creations, updates, and deletions onto `paged` without mutating cache."""
+        rb_key = (mgmt_name, domain_name, rulebase_type, target_key)
+        del_set = self._deleted_rules.get(rb_key, set())
+        virt_map = self._virtual_rules.get(rb_key, {})
+        if not del_set and not virt_map:
+            return paged
+
+        attr_map: dict[RulebaseType, str] = {
+            "access": "access_rules",
+            "nat": "nat_rules",
+            "https": "https_rules",
+            "threat": "threat_rules",
+        }
+        attr = attr_map[rulebase_type]
+        base_rules = list(getattr(paged, attr))
+        merged_rules: list[Any] = []
+        seen_uids: set[str] = set()
+        seen_names: set[str] = set()
+
+        for rule in base_rules:
+            if (rule.uid and f"uid:{rule.uid}" in del_set) or (rule.name and f"name:{rule.name}" in del_set):
+                continue
+            override = (virt_map.get(f"uid:{rule.uid}") if rule.uid else None) or (
+                virt_map.get(f"name:{rule.name}") if rule.name else None
+            )
+            eff = override if override is not None else rule
+            merged_rules.append(eff)
+            if eff.uid:
+                seen_uids.add(eff.uid)
+            if eff.name:
+                seen_names.add(eff.name)
+
+        for v_rule in virt_map.values():
+            if v_rule.uid and v_rule.uid in seen_uids:
+                continue
+            if v_rule.name and v_rule.name in seen_names:
+                continue
+            if (v_rule.uid and f"uid:{v_rule.uid}" in del_set) or (v_rule.name and f"name:{v_rule.name}" in del_set):
+                continue
+            merged_rules.append(v_rule)
+            if v_rule.uid:
+                seen_uids.add(v_rule.uid)
+            if v_rule.name:
+                seen_names.add(v_rule.name)
+
+        return paged.model_copy(update={attr: merged_rules})
+
     async def get_rulebase(
         self,
         mgmt_name: str,
@@ -59,7 +115,13 @@ class HybridStateReader(_ObjectLookupMixin, _ServiceLookupMixin):
         target_key = layer or package or ""
         memo_key = (mgmt_name, domain_name, rulebase_type, target_key)
         if memo_key in self._rulebase_memo:
-            return self._rulebase_memo[memo_key]
+            return self._apply_virtual_rules(
+                self._rulebase_memo[memo_key],
+                mgmt_name=mgmt_name,
+                domain_name=domain_name,
+                rulebase_type=rulebase_type,
+                target_key=target_key,
+            )
 
         try:
             paged = await fetch_paged_rulebase(
@@ -78,7 +140,13 @@ class HybridStateReader(_ObjectLookupMixin, _ServiceLookupMixin):
             ) from exc
 
         self._rulebase_memo[memo_key] = paged
-        return paged
+        return self._apply_virtual_rules(
+            paged,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+            rulebase_type=rulebase_type,
+            target_key=target_key,
+        )
 
     async def check_where_used(
         self,

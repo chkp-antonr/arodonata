@@ -264,6 +264,11 @@ erDiagram
         json virtual_system_asset_ids
         json interfaces
         json network_security_blades
+        json management_blades
+        string asset_role "INDEX"
+        string platform_family "INDEX"
+        boolean is_policy_target "INDEX"
+        boolean is_execution_target "INDEX"
     }
     arodonata_gateway_topology {
         string id PK "mgmt_name:domain_name:gw_uid:iface:src_type:cidr"
@@ -533,6 +538,11 @@ Cached gateways, clusters, cluster members, VSX gateways/clusters/virtual system
 | `virtual_system_uids`, `virtual_system_asset_ids` | `list[str]` (JSON) | `NOT NULL` | Child VSX virtual system UIDs and human-readable `asset_id` values |
 | `interfaces` | `list[dict]` (JSON) | `NOT NULL` | Normalized network interfaces (`name`, `ipv4-address`, `ipv4-network-mask`, `topology`) |
 | `network_security_blades` | `dict` (JSON) | `NOT NULL` | Enabled software blades (`firewall`, `ips`, `url-filtering`, `anti-bot`, etc.) |
+| `management_blades` | `dict \| None` (JSON) | — | Enabled management blades (`multi-domain-server`, `network-policy-management`, `logging-and-status`, etc.); nullable for in-place `ALTER TABLE` evolution |
+| `asset_role` | `str \| None` | `INDEX` | Normalized vendor-neutral role (`gateway`, `cluster`, `cluster_member`, `vsx_gateway`, `vsx_cluster`, `vsx_cluster_member`, `virtual_system`, `management_server`, `mds`, `log_server`, `interoperable_device`, `unknown`); legacy `NULL` rows auto-classify on read |
+| `platform_family` | `str \| None` | `INDEX` | Normalized vendor platform (`gaia`, `gaia_embedded`, `maestro`, `cloudguard`, `open_server`, `unknown`); legacy `NULL` rows auto-classify on read |
+| `is_policy_target` | `bool \| None` | `INDEX` | `True` for policy-enforcing targets (`gateway`, `cluster`, `virtual_system`); legacy `NULL` rows auto-classify on read |
+| `is_execution_target` | `bool \| None` | `INDEX` | `True` for OS-backed CLI/upgrade hosts (`gateway`, `cluster_member`, `vsx_gateway`, `vsx_cluster_member`, `management_server`, `mds`, `log_server`); legacy `NULL` rows auto-classify on read |
 | `comments`, `raw_data`, `updated_at` | `str / JSON / datetime` | `NOT NULL` | Metadata, raw payload, and naive UTC timestamp (`color` is nullable) |
 
 ---
@@ -710,6 +720,7 @@ class SIDCacheRecord(SQLModel, table=True):
     domain_name: str = Field(index=True)
     sid: str = Field(repr=False)
     server_ip: str
+    tls_identity_host: str | None = Field(default=None)
     session_uid: str | None = Field(default=None)
     auth_identity: str | None = Field(default=None)
     created_at: datetime = Field(
@@ -891,6 +902,14 @@ class AssetRecord(SQLModel, table=True):
         default_factory=dict,
         sa_column=Column(JSON, nullable=False),
     )
+    management_blades: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
+    asset_role: str | None = Field(default=None, index=True)
+    platform_family: str | None = Field(default=None, index=True)
+    is_policy_target: bool | None = Field(default=None, index=True)
+    is_execution_target: bool | None = Field(default=None, index=True)
     comments: str = Field(default="")
     color: str | None = Field(default=None)
     raw_data: dict[str, Any] = Field(
@@ -1480,6 +1499,13 @@ The documentation bundle build MUST generate a deterministic, compact Markdown S
 - **THEN** the output Markdown SHALL match `arodonata.__version__` and include verified signatures and model fields for `ArodonataClient`, `Asset`, `CPObject`, `CPService`, `ScriptRepositoryService`, `CPCRUDService`, and `ApiReferenceEngine`
 - **AND** re-running the generator without source edits SHALL produce byte-identical output
 
+#### Scenario: SCN-AIBUILD-003-2 — Valid default-factory rendering and complete arodonata.testing method coverage
+
+- **GIVEN** Pydantic fields using `lambda` `default_factory` expressions (including `ArodonataSettings.tls_known_hosts_path`) and public methods on `FileReplayApiMock` and `CheckPointReplayHttpServer`
+- **WHEN** the documentation bundle build generates `docs-notebooklm/05-sdk-quickref.md`
+- **THEN** lambda-backed defaults SHALL render valid Python expressions without invalid `lambda: ...()` syntax
+- **AND** `FileReplayApiMock` and `CheckPointReplayHttpServer` sections SHALL include all public methods and properties without `[:8]` truncation
+
 
 ---
 
@@ -1529,7 +1555,7 @@ Defines the bundled multi-version Check Point API schema index (`cp_api_index.js
 **Intent**: Expose accurate, version-scoped request schemas and examples on demand for one or more commands.\
 **Non-goals**: Ranking or searching commands by keyword (`REQ-APIREF-002`) or validating user payloads (`REQ-APIREF-004`).
 
-`ApiReferenceEngine.describe_command` (and top-level helper `describe_api_command`) SHALL accept one or more command names and return resolved schemas (`fields`, `field_alternatives`, `nested_objects`, `enums`, `example`) dynamically filtered to the target API version.
+`ApiReferenceEngine.describe_command` (and top-level helper `describe_api_command`) SHALL accept one or more command names and return resolved schemas (`fields`, `field_alternatives`, `nested_objects`, `enums`, `example`) dynamically filtered to the target API version for `"management"` commands while preserving fields for non-management (`"gaia"`/`"cme"`) commands.
 
 #### Scenario: SCN-APIREF-003-1 — Step 2 describe dynamically filters fields and nested objects by target version
 
@@ -1542,6 +1568,12 @@ Defines the bundled multi-version Check Point API schema index (`cp_api_index.js
 - **WHEN** `describe_command(["add-host", "set-host"], version="v2.2")` is called with a list of command names
 - **THEN** it SHALL return resolved command descriptions for each requested command
 - **AND** it SHALL report any unknown or version-unsupported command names clearly
+
+#### Scenario: SCN-APIREF-003-3 — Gaia and CME commands preserve fields and validate payloads under default v2.2 and v2.0.1
+
+- **GIVEN** bundled `"gaia"` and `"cme"` commands (such as `gaia-show-interface`, `cme-azure`, `cme-management`)
+- **WHEN** `describe_command()` or `validate_payload()` is called with default `version="v2.2"` or `version="v2.0.1"`
+- **THEN** non-management commands SHALL retain their `fields` and nested objects without management-version stripping and validate valid payloads as `valid=True`
 
 ### Requirement: Offline Request Payload Validation Against Versioned Schema
 
@@ -1936,6 +1968,68 @@ When `ArodonataClient` synchronizes cached domain slices (`objects`, `services`,
 - **THEN** all exported symbols, `@traced` span names/qualnames, and hexagonal AST layer boundaries SHALL remain preserved
 - **AND** cluster, local VSX, and cross-domain VSX parent-child links and slot metadata SHALL reconcile consistently without duplicated link loops
 
+### Requirement: Vendor-Neutral Asset Role and Platform Classification
+
+**ID**: REQ-CACHE-019\
+**Intent**: Expose vendor-neutral Asset role, platform, and target flags.\
+**Non-goals**: Customer hostname rules or live SSH probing.
+
+`Asset` SHALL expose `management_blades`, `asset_role`, `platform_family`, `is_policy_target`, and `is_execution_target` from API metadata; asset enrichment SHALL inherit parent cluster fields and isolate VSX links; and asset/search/MCP queries SHALL normalize `"mds"`/`"CpmiMds"` and support role/platform filtering consistently.
+
+#### Scenario: SCN-CACHE-019-1 — Vendor-neutral role classification across gateways, clusters, VSX, management, and log servers
+
+- **GIVEN** raw Check Point asset payloads for standalone gateways (`simple-gateway`, `CpmiGatewayPlain`), clusters (`simple-cluster`, `CpmiGatewayCluster`), cluster members (`cluster-member`, `CpmiClusterMember`), VSX hosts/clusters/members/virtual systems, `mds`, `checkpoint-host` / `CpmiHostCkp` servers with `management-blades` or `network-security-blades`, and `interoperable-device`
+- **WHEN** `Asset.from_cp_dict()` or `classify_asset_role()` classifies each asset
+- **THEN** `asset_role` SHALL resolve deterministically across `"gateway"`, `"cluster"`, `"cluster_member"`, `"vsx_gateway"`, `"vsx_cluster"`, `"vsx_cluster_member"`, `"virtual_system"`, `"management_server"`, `"mds"`, `"log_server"`, `"interoperable_device"`, and `"unknown"`
+- **AND** `is_policy_target` SHALL match `is_policy_enforcing_gateway()` (`True` only for `"gateway"`, `"cluster"`, and `"virtual_system"`, preserving `CpmiHostCkp` with `firewall=True` as `"gateway"`), while `is_execution_target` SHALL be `True` only for OS-backed execution hosts (`"gateway"`, `"cluster_member"`, `"vsx_gateway"`, `"vsx_cluster_member"`, `"management_server"`, `"mds"`, `"log_server"`)
+
+#### Scenario: SCN-CACHE-019-2 — Vendor-neutral platform family classification across Gaia, Gaia Embedded, Maestro, CloudGuard, and Open Server
+
+- **GIVEN** Check Point asset payloads with vendor `os-name`, `hardware`, or `raw_data` platform metadata (and ignoring arbitrary `name`, `comments`, or `tags`)
+- **WHEN** `Asset.from_cp_dict()` or `classify_asset_platform()` classifies `platform_family`
+- **THEN** it SHALL classify `"gaia_embedded"` before generic `"gaia"`, `"maestro"` (`MHO`/`SMO`/`SGM`/`Orchestrator`/`Scalable Platform`), `"cloudguard"` (CloudGuard/AWS/Azure/GCP/VMSS), `"open_server"`, `"gaia"`, or `"unknown"` strictly from vendor attributes
+
+#### Scenario: SCN-CACHE-019-3 — Cluster member metadata inheritance and re-classification during ClusterRelationshipManager enrichment
+
+- **GIVEN** a parent cluster (`simple-cluster`, `CpmiGatewayCluster`, `vsx-cluster`, or `CpmiVsxClusterNetobj`) carrying `hardware`, `os_name`, and `version`, and linked child members missing one or more of those fields
+- **WHEN** `ClusterRelationshipManager.enrich()` enriches the assets
+- **THEN** each linked member SHALL inherit missing `hardware`, `os_name`, and `version` from its parent cluster without overwriting non-empty member values
+- **AND** `ClusterRelationshipManager` SHALL recompute member `asset_role` (promoting `"cluster_member"` under a VSX cluster parent to `"vsx_cluster_member"`), `platform_family`, `is_policy_target`, and `is_execution_target`
+
+#### Scenario: SCN-CACHE-019-4 — Cache persistence, in-place schema migration, and role/platform filtering and grouping
+
+- **GIVEN** an existing `arodonata_assets` cache table (including legacy rows with `NULL` classification columns) and newly synced assets
+- **WHEN** `DatabaseManager.initialize()` evolves the schema, `Asset` rows are round-tripped through `arodonata_assets`, and callers invoke `get_assets()`, `get_gateways()`, `query_objects()`, `describe_objects()`, MCP `list_assets()`, or MCP `query_objects()`
+- **THEN** missing classification columns SHALL migrate in place without wiping cached rows and legacy `NULL` rows SHALL auto-classify on hydration
+- **AND** `get_assets()`, `get_gateways()`, and MCP `list_assets()` SHALL support `roles` and `platforms` filtering, while `query_objects()` and `describe_objects()` SHALL support filtering (`roles`, `platforms`, `is_policy_target`, `is_execution_target`) and `group_by` across `asset_role`, `platform_family`, `is_policy_target`, and `is_execution_target` (including `"role"` and `"platform"` aliases)
+
+#### Scenario: SCN-CACHE-019-5 — Canonical MDS asset routing, VSX member/self-link isolation, and MCP query_objects asset-scope parity
+
+- **GIVEN** `"mds"` / `"CpmiMds"` assets, `vsx_cluster_member`/`vs_netobj` underscore aliases, VSX/cluster parent-child link candidates (parent lists, slot objects, pass-2 cluster links), and MCP `query_objects` calls grouping by `role`/`asset_role`/`platform`/`platform_family`/`is_policy_target`/`is_execution_target` with `types=None`
+- **WHEN** callers normalize aliases, query, look up, search, enrich VSX/cluster relationships, or invoke MCP `query_objects`
+- **THEN** every `ASSET_TYPE_EQUIVALENTS` alias (including `vsx_cluster_member` and `vs_netobj`) and `"mds"`/`"CpmiMds"` SHALL normalize and route cleanly to `scope="assets"`, and VSX/cluster enrichment SHALL exclude cluster members, VSX parents, Virtual Systems (from cluster members), and self-links across parent lists, slots, and cross-domain links
+- **AND** MCP `query_objects` SHALL pass normalized `group_by` and asset classification filters to scope resolution so live quota, cold-cache auto-upgrade, and `cache_age_seconds` evaluate against `scope="assets"`
+
+### Requirement: Single-Flight Coalescing Freshness Integrity and Hardened SQLite Cache Permissions
+
+**ID**: REQ-CACHE-020\
+**Intent**: Prevent stale or offline single-flight operations from suppressing concurrent smart refreshes and ensure existing SQLite cache files reject symlinks and enforce owner-only permissions.\
+**Non-goals**: Base domain sync lock heartbeats (`REQ-CACHE-004`) or schema hash auto-migration (`REQ-CACHE-001`).
+
+`DomainSyncCoordinator` SHALL prevent `mode="cache"`, looser-TTL skips, and mid-flight-invalidated flights from suppressing concurrent `mode="smart"` waiters or mislabeling fresh slices as `"failed"`, and `DatabaseManager` SHALL reject SQLite symlinks and tighten pre-existing SQLite cache files to `0o600`.
+
+#### Scenario: SCN-CACHE-020-1 — Single-flight coalescing preserves mid-flight invalidations, mode="cache" isolation, and fresh sibling slices
+
+- **GIVEN** concurrent `DomainSyncCoordinator.stream_ensure()` callers across `mode="cache"`, `mode="smart"` with differing `cache_ttl` values, or mid-flight `invalidate_domain()` calls
+- **WHEN** a `mode="cache"` or TTL-skipped leader completes, an invalidation arrives mid-flight, or one stale item type fails while sibling item types already passed
+- **THEN** waiters requiring server verification or observing newer invalidations SHALL NOT skip syncing, and sibling `fresh_types` SHALL retain `status="ok"`
+
+#### Scenario: SCN-CACHE-020-2 — DatabaseManager rejects SQLite symlinks and enforces 0o600 on pre-existing cache files
+
+- **GIVEN** a pre-existing SQLite cache path that is a symlink (including a dangling symlink) or an owner-owned regular file with `0644` permissions
+- **WHEN** `DatabaseManager.initialize()` opens the SQLite engine
+- **THEN** symlinks and non-regular files SHALL fail closed before SQLite opens them, and pre-existing regular files with group/other permission bits SHALL be tightened to `0o600`
+
 
 ---
 
@@ -2162,6 +2256,41 @@ The change report builder SHALL number added, modified, moved, and deleted rules
 - **WHEN** `build_change_report()`, `build_plan_report()`, `render_change_report()`, or `format_plan_report()` renders object summaries and `Details` cells
 - **THEN** all present canonical attributes SHALL be emitted in plain summaries, dry-run plan summaries, and both HTML and Markdown modified-object `Details` cells without silent field loss
 - **AND** `_SUMMARY_SPLIT_RE` token parsing SHALL recognize every emitted canonical key consistently across collectors and renderers
+
+### Requirement: Fail-Closed Timestamp Bounds, Validated Owned-Session Forwarding, and Nested Markdown Escaping
+
+**ID**: REQ-REPORT-008\
+**Intent**: Prevent unparsed bound sessions from leaking full domain history, avoid reusing invalidated `OwnedSession` instances or unredacted `known_names`, and block nested Markdown links/images inside bold/italic spans.\
+**Non-goals**: Dry-run plan report field summaries (`REQ-REPORT-007`).
+
+`collect_change_report()` SHALL fail closed when a requested `from_session`/`to_session` lacks a parseable timestamp, omit invalidated `OwnedSession` instances from downstream resolution/placement, redact substituted `known_names`, and neutralize nested Markdown links and images inside `**bold**` and `*italic*` spans.
+
+#### Scenario: SCN-REPORT-008-1 — Unparsed range bounds fail closed, invalidated OwnedSession stops propagating, and known_names are redacted
+
+- **GIVEN** a `RangeScope(from_session=...)` whose bound session exists without a parseable timestamp, or a `SessionScope` whose `OwnedSession` fails `show-session`/`show-changes` while `show-object` resolves a name containing a SID
+- **WHEN** `collect_change_report()` filters sessions, resolves bare UIDs, and runs rule placement
+- **THEN** the unparsed range bound SHALL fail closed with a warning and empty session set instead of returning full domain history
+- **AND** invalidated `OwnedSession` instances SHALL NOT be forwarded to bare-UID lookup/placement, and substituted names SHALL pass `redact_sid(..., known_sids=...)`
+
+#### Scenario: SCN-REPORT-008-2 — render_safe_inline_markdown_md blocks nested javascript: links and external images inside bold/italic spans
+
+- **GIVEN** Markdown `title` or `header_fields` strings containing `**[label](javascript:alert(1))**` or `*![beacon](https://example.invalid/x.png)*`
+- **WHEN** `render_safe_inline_markdown_md()` renders the Markdown report
+- **THEN** nested `[` and `]` characters inside `**...**` and `*...*` spans SHALL be escaped so no active Markdown links or external image beacons are emitted
+
+### Requirement: RangeScope Target Session Date Omission, Warning Schema Parity, and Single-Warning OwnedSession Context
+
+**ID**: REQ-REPORT-009\
+**Intent**: Ensure `to_session`-bounded ranges omit server-side date filters symmetrically with `from_session`, keep `WarningCode` aligned with emitted codes, and centralize `OwnedSession` invalidation cleanly.\
+**Non-goals**: Unparsed timestamp fail-closed behavior (`REQ-REPORT-008`) or inline Markdown escaping (`REQ-REPORT-008`).
+
+`RangeScope` SHALL omit server date bounds whenever `to_session` is specified, `WarningCode` SHALL include `"range_session_not_found"`, and `_OwnedSessionContext` SHALL track and disable failing `OwnedSession` credentials cleanly with a single warning.
+
+#### Scenario: SCN-REPORT-009-1 — RangeScope to_session server-date omission, range_session_not_found schema parity, and single-disable OwnedSession context
+
+- **GIVEN** a `RangeScope(to_session=..., from_date=..., to_date=...)` alongside a `SessionScope` whose `OwnedSession` fails on initial `show-session`
+- **WHEN** `collect_change_report()` discovers target sessions and collects metadata/changes/UIDs
+- **THEN** `show-sessions` SHALL omit `from` and `to` date parameters when `to_session` is set, `WarningCode` SHALL validate `"range_session_not_found"`, and `_OwnedSessionContext` SHALL disable the failing `OwnedSession` once with a single warning so subsequent calls never reuse it
 
 
 ---
@@ -2530,6 +2659,40 @@ Hexagonal layers (`core`, `adapters`, `cpcrud`, `rulebase`, `reports`, `mcp`) SH
 - **THEN** UID `6c488338-8eec-4103-ad21-cd461ac2c476` SHALL map strictly to `Policy Targets` (`type="Global"`) rather than `Drop`, and all moved helpers (`parse_cp_publish_timestamp`, `update_overlay_from_command`, `extract_policy_packages`, `PolicyPackageInfo`, sentinel normalizers) SHALL retain object identity at legacy import paths
 - **AND** `mask_to_prefix_len` SHALL validate contiguous netmasks (accepting integral floats such as `24.0` and hostmasks only with `allow_hostmask=True`), while desired CPCRUD specs with invalid `mask_length4` or `subnet_mask` SHALL raise `ValidationError`
 
+### Requirement: SSE Control Field Sanitization Against Frame Injection
+
+**ID**: REQ-CLIENT-019\
+**Intent**: Prevent CR/LF/NUL injection and SID leakage in SSE wire `id:` and `event:` headers.\
+**Non-goals**: Multiline JSON `data:` payload serialization (`REQ-CLIENT-016`).
+
+`SSEEvent.encode()` SHALL strip CR, LF, and NUL control characters from `id` and `event` header fields and apply SID redaction to `event` before formatting SSE wire frames.
+
+#### Scenario: SCN-CLIENT-019-1 — SSEEvent.encode strips newlines/NUL from id and event and redacts SIDs in event
+
+- **GIVEN** an `SSEEvent` or `to_sse_event(..., event_id=...)` input whose `id` or `event` contains `\r`, `\n`, `\x00`, or an embedded SID pattern
+- **WHEN** `encode()` formats the SSE wire frame
+- **THEN** the emitted frame SHALL contain zero injected `data:`/`event:` lines and SHALL scrub any SID pattern from both `id:` and `event:` headers
+
+### Requirement: Extended Secret Redaction, Shielded Write-Session Cancellation, and Script Unsupported Error Handling
+
+**ID**: REQ-CLIENT-020\
+**Intent**: Prevent secret leakage in key-value and DB URL diagnostics, guarantee clean discard on write-session cancellation or pre-send publish failure, rollback standalone mutations cleanly, and surface unsupported script-repository responses explicitly.\
+**Non-goals**: SSE wire frame formatting (`REQ-CLIENT-019`) or CLI logging configuration (`REQ-AIBUILD-003`).
+
+`redact_sid()` SHALL mask key=value secrets and URL passwords, write-session lifecycle helpers SHALL shield discard/logout while propagating `CancelledError`/`ServerIdentityError`, standalone `_mutate_object()` SHALL discard on failure, and `ScriptRepositoryService` SHALL scrub active SIDs and map unsupported script responses cleanly.
+
+#### Scenario: SCN-CLIENT-020-1 — Extended key-value/URL secret redaction, shielded write-session cancellation/discard, and standalone mutation rollback
+
+- **GIVEN** text containing `password=...`/`api_key=...`/`secret=...` or `scheme://user:pass@host` URLs, a write session experiencing `CancelledError` or pre-send `publish` `TransportError`, or a standalone `_mutate_object()` failure
+- **WHEN** `redact_sid()`, `run_write_session_lifecycle()`, or `_mutate_object()` executes
+- **THEN** key-value and URL credentials SHALL be redacted consistently, cancellations and identity errors SHALL propagate after shielded discard/logout, and failed `_mutate_object()` calls SHALL execute `discard` without leaving dirty server state
+
+#### Scenario: SCN-CLIENT-020-2 — Unsupported repository-script classification and active write-session SID scrubbing
+
+- **GIVEN** a Check Point server returning an unsupported repository-script error on `show-repository-scripts` / `show-repository-script`, or an active `WriteSession` whose SID appears in `ScriptRepositoryService` errors or `RepositoryScriptStatus.error`
+- **WHEN** `get_repository_script()`, `list_repository_scripts()`, `check_repository_script()`, `ensure_repository_script()`, or route script execution runs
+- **THEN** unsupported errors SHALL map to `RepositoryScriptUnsupportedError`, `RouteCollectionService` SHALL handle fallback cleanly, and active `WriteSession` SIDs SHALL be scrubbed everywhere including `RepositoryScriptStatus.error`
+
 
 ---
 
@@ -2732,12 +2895,17 @@ The system SHALL support hierarchical dotted-prefix span gating via `ARODONATA_T
 **Intent**: Expose typed, validated settings fields for multi-server API versions, ports, session TTLs, login throttling, cache windows, SQLite busy timeouts, CPCRUD schema path overrides, and topology confidence weights.\
 **Non-goals**: Core required `mgmt_names`/`mgmt_servers` parsing (`REQ-CONFIG-001`) or timeout calculation rules (`REQ-CONFIG-004`).
 
-`ArodonataSettings` SHALL expose and validate `api_versions`, `api_version`, `mgmt_port`, `session_expire_seconds`, `login_throttle_window`, `login_max_wait`, `domain_list_ttl`, `max_incremental_changes`, `sqlite_busy_timeout_ms`, `cpcrud_schema_path`, and `topology_confidence_weights` with safe defaults and per-server resolution.
+`ArodonataSettings` SHALL expose and validate `api_versions`, `api_version`, `mgmt_port` (`1..65535`), `max_response_bytes` (`>= 1024`, default `67108864`), `max_query_pages` (`>= 1`, default `5000`), `max_query_objects` (`>= 1`, default `1000000`), `session_expire_seconds`, `login_throttle_window`, `login_max_wait`, `domain_list_ttl`, `max_incremental_changes`, `sqlite_busy_timeout_ms`, `cpcrud_schema_path`, and `topology_confidence_weights` with safe defaults and per-server resolution.
 
 #### Scenario: SCN-CONFIG-009-1 — Operational and per-server version settings resolve with validated defaults and overrides
 
-- **WHEN** `ArodonataSettings` is constructed with defaults or overrides for `api_versions`, `api_version`, `mgmt_port`, `session_expire_seconds`, `login_throttle_window`, `login_max_wait`, `domain_list_ttl`, `max_incremental_changes`, `sqlite_busy_timeout_ms`, `cpcrud_schema_path`, and `topology_confidence_weights`
-- **THEN** all fields SHALL enforce their Pydantic numeric bounds and per-server `api_versions` resolution SHALL fall back to `api_version` when a server entry is omitted
+- **WHEN** `ArodonataSettings` is constructed with defaults or overrides (including `mgmt_port <= 0` / `> 65535`, `max_response_bytes < 1024`, `api_versions`, `api_version`, `session_expire_seconds`, `login_throttle_window`, `login_max_wait`, `domain_list_ttl`, `max_incremental_changes`, `sqlite_busy_timeout_ms`, `cpcrud_schema_path`, and `topology_confidence_weights`)
+- **THEN** all fields SHALL enforce their Pydantic numeric bounds (`mgmt_port` within `1..65535`, `max_response_bytes >= 1024`) and per-server `api_versions` resolution SHALL fall back to `api_version` when a server entry is omitted
+
+#### Scenario: SCN-CONFIG-009-2 — Pagination page and object caps bound api_query and rulebase paging
+
+- **WHEN** `AMgmtClient.api_query()` exceeds `max_query_pages` or `max_query_objects`, OR `fetch_paged_rulebase()` exceeds `MAX_RULEBASE_OBJECTS`
+- **THEN** `api_query()` SHALL return `ApiQueryResult(success=False, code="paging_limit_exceeded")` before unbounded accumulation, and rulebase paging SHALL stop cleanly at the configured object cap
 
 
 ---
@@ -3231,6 +3399,53 @@ When a domain's service cache slice is absent or stale during `CPCRUDService.pla
 - **THEN** `_collect_ordered_steps` SHALL be evaluated at most once per target during `Planner.decide()` with per-domain state stored in `_DomainPlanState`
 - **AND** per-type object and rule diff helpers SHALL produce identical actions and field diffs across every entity and rulebase type
 
+### Requirement: Fail-Closed Staged Publishing, Active Where-Used Enforcement, Empty-List Inverse Rollback, and Unified Entity Planning
+
+**ID**: REQ-CPCRUD-017\
+**Intent**: Prevent stale staged publishes after LRU eviction or restart, enforce `check_where_used` across all entity deletions, restore newly added groups/tags on rollback, and honor `check_domain_head` consistently.\
+**Non-goals**: Base CPCRUD shorthand parsing (`REQ-CPCRUD-002`) or HMAC MCP plan signing (`REQ-MCP-009`).
+
+`Executor` SHALL fail closed on `publish_staged_session(..., allow_stale=False)` when no verified baseline stamp is present, honor `check_domain_head` across all passes, enforce non-empty `check_where_used` usage across objects, services, and groups via unified entity planning, and emit `groups: []` / `tags: []` in `inverse()` when newly added.
+
+#### Scenario: SCN-CPCRUD-017-1 — Fail-closed allow_stale=False staged publishing and consistent check_domain_head dispatch
+
+- **GIVEN** a staged session whose entry was evicted from `Executor._staged_sessions` or adopted post-restart, or an `Executor(check_domain_head=custom_cb)` instance
+- **WHEN** `stream_publish_staged_session(..., allow_stale=False)` runs without an explicit baseline stamp, or `apply()` / `stream_apply()` runs retry passes
+- **THEN** `stream_publish_staged_session` SHALL fail closed when no verified baseline stamp is available (while accepting explicit baseline stamps forwarded from `stored_staged`)
+- **AND** `apply()` and `stream_apply()` SHALL invoke `check_domain_head` consistently across all domain-head verification paths
+
+#### Scenario: SCN-CPCRUD-017-2 — check_where_used blocks referenced objects, services, and groups via unified entity planner
+
+- **GIVEN** a CPCRUD `delete` step with `check_where_used: true` on an object (`host`), service (`service-tcp`), `group`, or `service-group` that has active `used-directly`/`used-indirectly` references outside deleted plan entities
+- **WHEN** `CPCRUDService.plan()` executes via the consolidated entity planner
+- **THEN** `plan()` SHALL emit `Outcome.ERROR` and block deletion rather than discarding `where-used` usage data
+
+#### Scenario: SCN-CPCRUD-017-3 — inverse() restores empty groups and tags on previously ungrouped/untagged entities
+
+- **GIVEN** an existing host, service, `group`, or `service-group` with `groups=[]` and `tags=[]` that was updated to add parent `groups` or `tags`
+- **WHEN** `CPCRUDService.inverse(plan, report)` generates a compensating rollback template
+- **THEN** the rollback `set-*` operations SHALL emit `groups: []` and `tags: []` whenever those fields were mutated from empty prior state
+
+### Requirement: Strict Operation IDs, Virtual Rule Overlay Integrity, Protocol Zero Fidelity, and Concurrent/Owner-Fair Execution
+
+**ID**: REQ-CPCRUD-018\
+**Intent**: Reject blank or duplicate template IDs via unified verb normalization, prevent intra-plan virtual rule traffic collisions, preserve `ip_protocol=0` and access inline layers, restore empty description/additional-categories fields, and make concurrent executor/registry state race-free and owner-fair.\
+**Non-goals**: Staged baseline verification (`REQ-CPCRUD-017`) or schema path settings (`REQ-CONFIG-009`).
+
+CPCRUD SHALL reject blank/duplicate IDs via shared verb parsing, preserve `ip_protocol=0`, dereference `AccessRuleEntry` inline layers, isolate planned virtual rule traffic matching, restore empty `description`/`additional-categories` on rolling back `UPDATE`s, return per-call `ApplyReport`s, and evict staged sessions owner-fairly.
+
+#### Scenario: SCN-CPCRUD-018-1 — Non-blank unique operation IDs, intra-plan virtual rule overlays, IP protocol zero, inline-layer deref, and empty-field inverse rollback
+
+- **GIVEN** templates with blank or duplicate `id` fields, virtual rules created then chained in one plan (`explicit id` or distinct-named bottom rules), a service with `ip_protocol=0` (`HOPOPT`), an `AccessRuleEntry` with `inline-layer`, or an `UPDATE` adding `description`/`additional-categories` from empty prior state
+- **WHEN** validation, planning, diffing, or `inverse()` runs
+- **THEN** validator and planner SHALL reject blank/duplicate IDs via shared verb normalization, planner SHALL update virtual rule overlays without colliding differently named rules across traffic tuples, differ SHALL preserve `0` protocols and access inline layers, and inverse SHALL emit empty `""`/`[]` restoration values
+
+#### Scenario: SCN-CPCRUD-018-2 — Race-free concurrent Executor.apply reports and owner-fair staged session registry eviction
+
+- **GIVEN** concurrent `Executor.apply()` coroutines on one `Executor` instance, or a full 256-entry staged session registry holding single-session peers alongside a greedy multi-session owner
+- **WHEN** concurrent applies execute or a new owner stages a 257th session
+- **THEN** each `Executor.apply()` call SHALL return its own isolated `ApplyReport` from the completion event without shared-attribute races, and staged registry eviction SHALL discard the new or greedy multi-session owner's oldest SID while preserving single-session peers
+
 
 ---
 
@@ -3676,6 +3891,46 @@ The cache layer SHALL persist `TopologyAnnotation` records in `arodonata_topolog
 - **WHEN** topology normalization, VSX bundle parsing, or `export_topology_prefixes(include_ignored=True)` runs
 - **THEN** list-valued `next-hop` entries SHALL be unwrapped, space-containing VS error markers SHALL populate `VsxBundleSlice.error`, and `export_topology_prefixes(include_ignored=True)` SHALL retain all `manual` prefixes and manual-only gateways
 
+### Requirement: Isolated VSX Coalescing, Accurate LPM/Export Scoring, Atomic Route Streaming, and Scrubbed Topology Errors
+
+**ID**: REQ-TOPO-022\
+**Intent**: Ensure VSX coalesced execution isolates per-VS errors, topology streaming orders completion events accurately, LPM/export/VSID matching covers nested/manual/spaced targets, and topology/script errors scrub bare SIDs.\
+**Non-goals**: Base VSX repository bundle parsing (`REQ-TOPO-008`) or LPM penalty weights (`REQ-TOPO-010`).
+
+Topology and script services SHALL isolate per-VS bundle slice errors during VSX coalescing, hold `SyncCompletedEvent` until route collection completes, match annotations strictly on LPM `best_entry`, filter manual gateways across all canonical identifiers, resolve spaced VS names in `awk`, and scrub bare SIDs across write/topology error paths.
+
+#### Scenario: SCN-TOPO-022-1 — Coalescing leader VS slice failure does not fail healthy sibling Virtual Systems
+
+- **GIVEN** a physical VSX node hosting an alphabetically first broken Virtual System (`vs_context_error` or `vs_not_found_in_bundle`) alongside healthy sibling Virtual Systems
+- **WHEN** `collect_gateway_routes()` runs in `"repository"` or `"auto"` mode
+- **THEN** healthy sibling Virtual Systems SHALL still extract and persist their route slices while only the broken Virtual System records its error
+
+#### Scenario: SCN-TOPO-022-2 — Streamed topology refresh, LPM annotation lookup, manual gateway export, and spaced VSID resolution
+
+- **GIVEN** `stream_refresh_topology(collect_routes=True)`, overlapping interface subnets (`10.0.0.0/8` `standby_dynamic` + `10.10.1.0/24`), manual-only annotation gateways, or space-containing VS names without numeric `vsid`
+- **WHEN** topology refresh streams, flows score, prefixes export by gateway name/composite ID, or inline/SSH route scripts run `vsx stat -l`
+- **THEN** `SyncCompletedEvent` SHALL be yielded only after route collection completes, `_score_interface_group` SHALL match annotations for LPM `best_entry`, `export_topology_prefixes` SHALL match manual gateways by name/UID/composite ID, and `awk` SHALL resolve spaced VS names
+
+#### Scenario: SCN-TOPO-022-3 — ScriptRepositoryService write paths and targeted topology refresh scrub bare SIDs and map permission errors
+
+- **GIVEN** an active or isolated `WriteSession` in `ensure_repository_script` / `delete_repository_script`, or an exception during targeted topology refresh or lazy package loading
+- **WHEN** a `SessionError`, `AuthenticationError`, or generic `Exception` embeds a bare session SID
+- **THEN** `ScriptRepositoryService` SHALL map permission errors to `RepositoryScriptPermissionError` consistently and all error/log/event outputs SHALL scrub bare cached and active SIDs via `known_sids`
+
+### Requirement: WriteSession Cache Isolation, Server-Scoped CLI Targets, Canonical Annotations, and Zero-Prefix Routes
+
+**ID**: REQ-TOPO-023\
+**Intent**: Prevent uncommitted `WriteSession` overlays from leaking into persistent SQL topology caches, enforce clean-session checks on targeted gateway refreshes, avoid cross-management CLI target leakage, match all canonical annotation IDs, and preserve `/0` default routes.\
+**Non-goals**: Coalescing leader error isolation (`REQ-TOPO-022`) or LPM penalty scoring (`REQ-TOPO-010`).
+
+`TopologyService` SHALL skip SQL persistence during active `WriteSession` resolution, enforce clean sessions on targeted refresh, scope CLI target resolution to `gateway_asset.mgmt_name`, match all four canonical IDs in annotations, and preserve zero-length route prefixes.
+
+#### Scenario: SCN-TOPO-023-1 — WriteSession SQL cache isolation, server-scoped CLI targets, canonical annotation IDs, and zero-prefix route normalization
+
+- **GIVEN** an active `WriteSession` during on-demand topology object resolution, a targeted gateway refresh, multi-MDS cluster/VSX assets during `resolve_gateway_cli_targets()`, topology annotations using UID or composite IDs, or a static route with `mask-length: 0`
+- **WHEN** topology resolution, targeted refresh, annotation lookup, or normalizer route parsing runs
+- **THEN** on-demand object/global resolutions SHALL NOT write to persistent SQL tables under an active `WriteSession`, targeted refresh SHALL call `verify_session_clean()`, CLI targets SHALL be scoped to `gateway_asset.mgmt_name`, annotations SHALL match all 4 canonical keys, and `mask-length: 0` SHALL normalize to prefix `/0`
+
 
 ---
 
@@ -4103,6 +4358,26 @@ The repository SHALL provide a runnable `examples/` catalog demonstrating Arodon
 - **THEN** `find_unused_objects()` SHALL scan rulebases and groups once via `collect_referenced_uids()` and return every truly unreferenced local object
 - **AND** `delete_unused_objects()` SHALL preserve multi-pass cascading cleanup (removing parent groups first, then newly unreferenced child objects) using one single-pass reference scan per fixed-point iteration
 
+### Requirement: Atomic Emulator Rollback, Aliased SID Rotation, Read-Only Disconnect Guard, and Zero-Disk Mutation Baselines
+
+**ID**: REQ-ITEST-021\
+**Intent**: Ensure failed section/group CRUD calls leave overlays clean, `switch-session` isolates aliased SIDs and read-only sessions cannot disconnect peers, and direct-mutation helpers keep `reset()`/`restore_state()` free of disk reads.\
+**Non-goals**: Base replay fixture loading (`REQ-ITEST-008`) or rule CRUD semantics (`REQ-ITEST-012`).
+
+`FileReplayApiMock` SHALL roll back failed section `set` and group `add`/`set` mutations atomically (including sibling reverse `groups` links), rotate aliased SIDs on valid `switch-session`, reject read-only `disconnect` calls targeting other sessions, and capture clean baselines before direct domain mutations.
+
+#### Scenario: SCN-ITEST-021-1 — Atomic rollback on failed section set and cross-field group add/set mutations
+
+- **GIVEN** a `FileReplayApiMock` write session executing `set-*-section` with an invalid `new-position` or `add-group`/`set-group` with valid `members` and invalid `groups`
+- **WHEN** the command fails validation
+- **THEN** original section order/name and all sibling entity `groups` lists in the overlay SHALL remain completely unchanged
+
+#### Scenario: SCN-ITEST-021-2 — Switch-session SID rotation, read-only disconnect rejection, and zero-disk direct-mutation baseline capture
+
+- **GIVEN** two active SIDs aliased onto the same work session, a read-only session invoking `disconnect` on another session UID, or direct `assign-global-assignment` / `update_gateway_interfaces` / `bump_published_session` mutations
+- **WHEN** `switch-session`, read-only `disconnect`, or `reset()` / `restore_state()` runs
+- **THEN** `switch-session` SHALL rotate other active SIDs onto fresh work sessions, read-only `disconnect` on foreign sessions SHALL fail with HTTP 400, and `reset()` / `restore_state()` SHALL perform zero disk fixture reads
+
 
 ---
 
@@ -4377,16 +4652,16 @@ The `arodonata.mcp` server SHALL enforce per-caller (`client_id[:user_id]` or `"
 ### Requirement: Cache-Only Domain Pre-Validation Without Live Refresh or Quota Charge
 
 **ID**: REQ-MCP-013\
-**Intent**: Keep MCP tool calls using `cache_mode="cache"` free of forced live domain discovery calls and live quota charges during domain pre-validation.\
+**Intent**: Keep MCP tool calls using `cache_mode="cache"` (or `mode="cache"`) free of forced live domain discovery calls and live quota charges during domain pre-validation.\
 **Non-goals**: Smart-mode domain-miss refresh fallback (`REQ-MCP-010`) or rate-limit bucket accounting (`REQ-MCP-012`).
 
-When an MCP tool is invoked with `cache_mode="cache"` (with or without explicit `mgmt_name`), domain pre-validation SHALL inspect cached `arodonata_domains` rows only without invoking live `get_domains(cache_mode="force")` refreshes or consuming `live` quota slots.
+When an MCP tool is invoked with `cache_mode="cache"` or `cache_control(action="refresh", mode="cache")` (with or without explicit `mgmt_name`), domain pre-validation and refresh routing SHALL inspect cached `arodonata_domains` rows only without invoking live `show-domains` refreshes or consuming `live` quota slots.
 
 #### Scenario: SCN-MCP-013-1 — Cache-only multi-server and single-server domain pre-validation performs zero live calls or quota charges
 
 - **GIVEN** single- or multi-management MCP configuration where one or more servers have an empty `arodonata_domains` cache while another server has cached domains and initialized objects
-- **WHEN** `locate_gateways(..., cache_mode="cache")`, `cache_control(action="refresh", cache_mode="cache", ...)`, or `query_objects(..., cache_mode="cache", domains=[...])` runs domain pre-validation (with or without `mgmt_name`)
-- **THEN** domain pre-validation SHALL execute zero live `get_domains(cache_mode="force")` API calls and charge zero `live` quota slots
+- **WHEN** `locate_gateways(..., cache_mode="cache")`, `cache_control(action="refresh", mode="cache", ...)`, or `query_objects(..., cache_mode="cache", domains=[...])` runs domain pre-validation and tool execution (with or without `mgmt_name`)
+- **THEN** the invocation SHALL execute zero live `get_domains(cache_mode="force")` or `show-domains` API calls and charge zero `live` quota slots
 - **AND** when cached domains are present for the evaluated server(s) and do not contain the requested domain, pre-validation SHALL fail with `ToolFailure` listing the cached known domains
 
 ### Requirement: Bounded Multi-Domain Fan-Out Quota Charging and Slot Rollback
@@ -4424,6 +4699,49 @@ When `query_objects` or `search_objects` evaluates cached entities across multip
 - **GIVEN** `objects` synchronized `7200` seconds ago and `services` (or `assets`) synchronized `120` seconds ago on the same domain
 - **WHEN** `query_objects(types=["host", "service-tcp"], cache_mode="cache")` or `search_objects(query="gw", types=["host", "gateway"], cache_mode="cache")` executes
 - **THEN** the response envelope `cache_age_seconds` SHALL reflect the stalest touched scope (`>= 7200` seconds) rather than only the first or last scope evaluated
+
+### Requirement: Pre-Validation Fan-Out Quota Ordering, Unified Multi-MDS Scoping, Stalest Cache Age, and Guardrail Hardening
+
+**ID**: REQ-MCP-016\
+**Intent**: Enforce explicit fan-out quota before live domain discovery, unify multi-MDS scope resolution, report true stalest cache ages, harden error guards and staged SID/plan isolation, and fix typed `show_object` and `show_rulebase` bounds.\
+**Non-goals**: `REQ-MCP-004` `group_by` asset routing in `query_objects` (tracked separately).
+
+MCP tools SHALL charge explicit fan-out quotas before live domain pre-validation, unify multi-MDS scope validation across `search_objects` and siblings, report `min(synced_at)` stalest ages, guard error-handler cache lookups, protect staged SIDs and `plan_store`, handle typed UUID/`Cpmi*` `show_object` calls, and clamp cached `show_rulebase` paging.
+
+#### Scenario: SCN-MCP-016-1 — Upfront fan-out quota rejection, unified multi-MDS scoping, and stalest cache_age_seconds
+
+- **GIVEN** an oversize `cache_control(domains=...)` / `change_report(scopes=...)` fan-out, a multi-MDS `search_objects(mgmt_name=None, domain=...)` call, or multi-type/multi-domain caches with differing `synced_at` ages
+- **WHEN** the MCP tool validates quota, resolves management scope, or computes `cache_age_seconds`
+- **THEN** oversize fan-out SHALL fail quota checks BEFORE executing live `show-domains` pre-validation (probing failing servers at most once per call)
+- **AND** `search_objects` SHALL span all configured servers when `mgmt_name` is omitted, and `cache_age_seconds` SHALL report the stalest (`min(synced_at)`) age across touched scopes, domains, and item types
+
+#### Scenario: SCN-MCP-016-2 — Defensive error-guard lookups, staged SID redaction, and owner-fair plan_store eviction
+
+- **GIVEN** an uninitialized cache DB during offline `api_reference` `ValidationError`, an exception during `cpcrud_staged_session`, or >256 `cpcrud_plan` calls by a second caller
+- **WHEN** `mcp_tool_guard` handles the error or `cpcrud` tools manage staged SIDs and stored plans
+- **THEN** `mcp_tool_guard` SHALL never leak unhandled `OperationalError` (and offline `api_reference` errors SHALL skip domain cache queries)
+- **AND** `cpcrud_staged_session` SHALL register `stored_staged.sid` before execution, and `plan_store` SHALL evict same-owner entries first before cross-caller entries
+
+#### Scenario: SCN-MCP-016-3 — Typed UUID live show_object lookups, Cpmi*/underscore type normalization, and clamped cached show_rulebase
+
+- **GIVEN** a typed UUID `show_object(uid_or_name=<uuid>, obj_type='host')`, `obj_type='CpmiGatewayCluster'` / `'simple_gateway'`, or cached `show_rulebase(offset=-2, limit=100000)`
+- **WHEN** `show_object` or `show_rulebase` executes
+- **THEN** `live_show_object` SHALL send `uid` rather than `name` for UUIDs and `validate_show_object_type` SHALL normalize `Cpmi*`/underscore aliases safely
+- **AND** cached `show_rulebase` SHALL clamp `offset >= 0` and `1 <= limit <= 500`
+
+### Requirement: Accurate Tool Naming Hints, Multi-Domain Cold Upgrade, Asset Classification MCP Filters, and Peer-Safe Staged Registry
+
+**ID**: REQ-MCP-017\
+**Intent**: Keep MCP error hints accurate to consolidated tool names, evaluate multi-domain `domains` cold-cache upgrades reliably, expose asset role/platform filtering on MCP tools alongside shared list helpers, and prevent third-caller staged session exhaustion of peer callers.\
+**Non-goals**: Initial MCP quota enforcement (`REQ-MCP-016`) or HMAC plan verification (`REQ-MCP-009`).
+
+MCP error hints SHALL reference `list_domains` rather than `show_domains`, `_upgrade_uninitialized_cache_mode()` SHALL evaluate multi-domain `domains` scopes, `list_assets`/`query_objects` SHALL expose role/platform classification filters alongside shared typed-list execution, and `staged_session_store` SHALL protect single-session peers.
+
+#### Scenario: SCN-MCP-017-1 — Accurate list_domains guidance, multi-domain cold-cache upgrade, asset role/platform MCP filters, and owner-fair staged session capacity
+
+- **GIVEN** empty cached domain errors, a multi-domain `domains` list containing an uncached domain under `cache_mode="cache"`, `list_objects`/`list_services`/`list_assets`/`query_objects` classification queries, or a saturated `staged_session_store`
+- **WHEN** `format_invalid_credentials_failure()`, `_upgrade_uninitialized_cache_mode()`, object/asset tools, or `_store_staged_session()` executes
+- **THEN** credential errors SHALL instruct callers to run `list_domains`, `_upgrade_uninitialized_cache_mode()` SHALL upgrade when any requested domain is cold, `list_assets` and `query_objects` SHALL filter by `roles`/`platforms` (and target flags on `query_objects`), and `_store_staged_session()` SHALL evict greedy multi-slot owners first or discard and fail cleanly rather than evicting single-session peers
 
 
 ---
@@ -4611,6 +4929,27 @@ Rulebase synchronization SHALL paginate `show-access-layers`, `show-https-layers
 - **THEN** `filter_numbered_rulebase()` SHALL build the object and service membership graphs at most once rather than per rule
 - **AND** matched rule UIDs and ordering SHALL match direct `rule_matches_filter()` evaluation identically across nested group, IP, CIDR, range, and wildcard tokens
 
+### Requirement: Fail-Closed Rulebase Snapshot Collection, Bounded Drift-Safe Paging, and Empty Embedded Layer Prefix Continuity
+
+**ID**: REQ-RULE-009\
+**Intent**: Prevent rulebase collection from committing truncated 50-item fallbacks as `"ok"`, bound pagination against infinite loops and `total` drift, unify fallback UIDs, and preserve package prefixes for empty embedded layers.\
+**Non-goals**: Hierarchical SmartConsole rule numbering syntax (`REQ-RULE-004`).
+
+Rulebase snapshot collection SHALL fail closed on `paging_inconsistent` and non-RBAC errors without 50-item unpaginated fallbacks, bound `fetch_paged_rulebase` against infinite loops and `total` drift, emit consistent synthetic fallback UIDs, and preserve package prefixes for empty Global-placeholder and unnamed inline layers.
+
+#### Scenario: SCN-RULE-009-1 — Fail-closed paging_inconsistent handling, bounded pagination, and total drift detection
+
+- **GIVEN** a domain with >50 packages/layers encountering `paging_inconsistent` or API errors, or a layer page stream with omitted `total`, repeated UIDs, or mid-fetch `total` growth
+- **WHEN** `collect_domain_rulebase_snapshot()` or `fetch_paged_rulebase()` executes
+- **THEN** `collect_domain_rulebase_snapshot()` SHALL raise rather than committing truncated/empty 50-item fallback caches as `status="ok"`
+- **AND** `fetch_paged_rulebase()` SHALL enforce `max_pages` and zero-new-rule bounds and fail or restart on mid-fetch `total` discontinuities
+
+#### Scenario: SCN-RULE-009-2 — Unified synthetic fallback rule UIDs and empty Global-placeholder / inline layer prefixes
+
+- **GIVEN** a section mixing real-UID and missing-UID rules or a package referencing an empty Global-placeholder domain layer or unnamed empty inline layer
+- **WHEN** `fetch_paged_rulebase()` parses rules/sections or `locate_rules_in_snapshot()` indexes layer prefixes
+- **THEN** `sec.rule_uids` SHALL match parsed rule UIDs identically across rulebase types, and `locate_rules_in_snapshot()` SHALL emit the package prefix (`"2."`) without duplicate standalone `prefix=""` entries
+
 
 ---
 
@@ -4699,19 +5038,20 @@ The system SHALL authenticate shared `arodonata_sid_cache` sessions with `"read-
 - **WHEN** `AMgmtClient.api_call` receives a mutating command (`add-*`, `set-*`, `delete-*`, `publish`, `discard`, `install-policy`, `run-script`, etc.) without an explicit `sid` or active `WriteSession` in `contextvars`
 - **THEN** `AMgmtClient` SHALL refuse to run it on the shared `arodonata_sid_cache` session by raising `SessionStateError`
 
-### Requirement: Stale Session Cleanup and Startup Session Seed
+### Requirement: Stale Session Cleanup Without Read-Write Cache Seeding
 
 **ID**: REQ-SESS-004\
-**Intent**: Reclaim abandoned Arodonata API sessions safely without ever touching human or dirty sessions, and reuse the startup probe session.\
+**Intent**: Reclaim abandoned Arodonata API sessions fail-closed without ever touching human/dirty sessions or placing read-write SIDs into shared read-only caches.\
 **Non-goals**: Read-only SID cache scoping (`REQ-SESS-003`).
 
-The session manager SHALL clean up stale or abandoned Arodonata-owned API sessions on configured management servers on startup (when static credentials are available) and upon max-sessions refusal, logging `DEBUG` entries when discarding stale Arodonata sessions, and strictly restricting `discard` to sessions created by Arodonata (`application == "arodonata"` or `arodonata` session-name prefix) that have `changes == 0` and `locks == 0`.
+The session manager SHALL clean up stale or abandoned Arodonata-owned sessions on startup (when static credentials exist) and on max-sessions refusal, restricting `discard` to Arodonata sessions (`application == "arodonata"` or `arodonata` prefix) with `changes == 0` and `locks == 0`, and SHALL log out its read-write cleanup session without seeding `arodonata_sid_cache`.
 
-#### Scenario: SCN-SESS-004-1 — Startup cleanup seeds system domain SID when cache is empty
+#### Scenario: SCN-SESS-004-1 — Startup cleanup logs out read-write probe session without seeding shared read-only SID cache
 
-- **GIVEN** static credentials and no cached SID or in-flight login for a server's system domain
-- **WHEN** startup session cleanup runs on client entry
-- **THEN** the session opened to inspect/discard stale sessions SHALL be retained in `arodonata_sid_cache` for subsequent read calls rather than logged out
+- **GIVEN** static credentials on client entry
+- **WHEN** startup session cleanup runs `show-sessions` and discards stale Arodonata sessions using its temporary read-write cleanup session
+- **THEN** `SessionCleaner` SHALL close that temporary read-write session via `logout_sid` on completion or error
+- **AND** it SHALL NEVER insert a read-write SID into `arodonata_sid_cache` (so subsequent read-only calls acquire fresh `"read-only": true` sessions under `REQ-SESS-003`)
 
 #### Scenario: SCN-SESS-004-2 — Foreign administrator sessions and sessions with unpublished changes are never discarded
 
@@ -4869,6 +5209,53 @@ When an explicit `server_ip` hostname is resolved and pinned to a canonical trus
 - **THEN** every session exception branch and task output SHALL scrub SIDs uniformly and close dedicated sessions cleanly
 - **AND** coalescing execution, per-gateway persistence, and post-TaskGroup domain sync-state finalization SHALL run via isolated composable helpers
 
+### Requirement: Lifecycle TLS Identity Binding, Discovery Retry Integrity, and Session Secret Hardening
+
+**ID**: REQ-SESS-014\
+**Intent**: Preserve hostname-bound TLS pins across the full session lifecycle, prevent failed domain discovery from suppressing retries, enforce target-MDS throttling and typed lock-timeout errors, and mask secrets on model serialization.\
+**Non-goals**: Base rate-limit sizing (`REQ-SESS-007`) or initial TOFU enrollment policy (`REQ-TRANS-002`).
+
+`ArodonataClient` SHALL preserve hostname TLS pin binding across cached/dedicated sessions and expired-SID retries, gate `domain_list_ttl` on `status == "ok"`, translate distributed login-gate lock timeouts to `AuthenticationError`, throttle stale-session cleanup on the target MDS member, and mask secrets in `AuthContext` and `ServerEndpointConfig` `model_dump()` outputs.
+
+#### Scenario: SCN-SESS-014-1 — Hostname-bound TLS pinning persists across first-contact TOFU, keepalive/logout sweeps, and expired-SID retries
+
+- **GIVEN** a hostname endpoint (`mgmt.example.com`) verified via `TrustPolicy` in `tofu` or `pinned` mode
+- **WHEN** first-contact TOFU records fingerprints, cached or dedicated sessions run `keepalive` / `logout` / non-system `api_call()`, or an expired read-only SID retries
+- **THEN** `TrustPolicy` SHALL bind both `(resolved_ip, port)` and `(hostname, port)`, and session operations SHALL preserve `tls_identity_host` and target IP pinning end-to-end
+
+#### Scenario: SCN-SESS-014-2 — Failed domain discovery does not suppress subsequent smart refreshes for domain_list_ttl
+
+- **GIVEN** a management server whose cached domain list exceeded `domain_list_ttl` and whose `show-domains` call fails transiently (`status="failed"`)
+- **WHEN** a caller (including a restarted process or sibling worker) invokes `get_domains(cache_mode="smart")` shortly thereafter
+- **THEN** `DomainService` SHALL treat `status != "ok"` sync state as stale and re-attempt live domain discovery instead of suppressing retries for `domain_list_ttl`
+
+#### Scenario: SCN-SESS-014-3 — Distributed LoginGate timeout raises AuthenticationError and SessionCleaner throttles target MDS member
+
+- **GIVEN** a contended distributed `login_gate:<mds_ip>` lock or a multi-MDS domain hosted on a secondary MDS member
+- **WHEN** `LoginGate.acquire()` times out on `LockPort` or `SessionCleaner` runs `show-sessions` / `discard` for that domain
+- **THEN** `LoginGate.acquire()` SHALL raise `AuthenticationError` rather than `LockAcquisitionError`
+- **AND** `SessionCleaner` SHALL acquire `RateLimiter` slots against the target domain's resolved `mds_ip` (while expired-SID retries in `api_call` also refresh `mds_ip`)
+
+#### Scenario: SCN-SESS-014-4 — AuthContext and ServerEndpointConfig mask password and api_key on model_dump and clean obsolete login residue
+
+- **GIVEN** `AuthContext` or `ServerEndpointConfig` instances populated with `password` or `api_key`
+- **WHEN** `.model_dump()` or `.model_dump_json()` is called directly or through an enclosing Pydantic model
+- **THEN** `password` and `api_key` SHALL be emitted as `REDACTED_PLACEHOLDER` (never plaintext), while `LoginCoordinator` omits dead startup-seeding methods and racy `_inflight_logins` state
+
+### Requirement: SessionCleaner Identity Fail-Fast, Keepalive Isolation, and Single-Resolution Read-Only Target Lookup
+
+**ID**: REQ-SESS-015\
+**Intent**: Prevent silent swallowing of TLS identity errors in background session cleanup, isolate dedicated SIDs from `auth_identity=None` keepalive sweeps, and eliminate redundant DNS resolution.\
+**Non-goals**: Base rate-limiting rules (`REQ-SESS-007`) or startup cleanup SID exclusion (`REQ-SESS-004`).
+
+`SessionCleaner` SHALL propagate `ServerIdentityError` immediately, `LoginCoordinator.keepalive_sid()` SHALL avoid `auth_identity=None` fallbacks and route dedicated SIDs safely, `target_resolver` SHALL guard `evict_sid` when `expired_identity is None`, and `get_readonly_session()` SHALL pass prevalidated host targets without repeating DNS resolution.
+
+#### Scenario: SCN-SESS-015-1 — SessionCleaner identity propagation, dedicated keepalive isolation, and single-DNS read-only login
+
+- **GIVEN** a TLS `ServerIdentityError` inside `SessionCleaner`, a `keepalive_sid()` sweep across explicit dedicated SIDs or credential errors, or an explicit hostname target in `get_readonly_session()`
+- **WHEN** cleanup, keepalive maintenance, or read-only session acquisition runs
+- **THEN** `SessionCleaner` SHALL re-raise `ServerIdentityError`, `keepalive_sid()` SHALL return `False` on credential failure without evicting unrelated `auth_identity=None` caches, and `get_readonly_session()` SHALL resolve explicit hostnames once per call
+
 
 ---
 
@@ -4885,15 +5272,15 @@ Defines the native `asyncio` Check Point Management API HTTPS transport (`AMgmtC
 ### Requirement: Strict Web API Command Name Validation
 
 **ID**: REQ-TRANS-001\
-**Intent**: Block path traversal, query injection, and malformed API commands on the client before opening connections or touching pools.\
+**Intent**: Block path traversal, query injection, and malformed API commands on the client before opening connections, logging in, or touching pools.\
 **Non-goals**: Payload schema validation against Check Point API reference (`REQ-APIREF-004`).
 
-`AMgmtClient` transport execution SHALL validate every Check Point Web API command string against `^[a-z0-9]+(-[a-z0-9]+)*$` before constructing the request URL, rejecting path traversal sequences, slashes, percent-encoding, whitespace, and uppercase characters.
+`AMgmtClient` transport and `api_call` execution SHALL validate every Check Point Web API command string against `^[a-z0-9]+(-[a-z0-9]+)*$` before `is_readonly_command()` classification, login, or request URL construction, rejecting whitespace, slashes, traversal, percent-encoding, and uppercase characters.
 
 #### Scenario: SCN-TRANS-001-1 — Path traversal or malformed command rejected before network I/O
 
-- **WHEN** a call executes with a command violating `^[a-z0-9]+(-[a-z0-9]+)*$` (such as `"show-hosts/../publish"`, `"show-x/%2e%2e/publish"`, `"../../gaia_api/v1.7/run-script"`, `"show-hosts?x=1"`, or `"SHOW-HOSTS"`)
-- **THEN** the transport SHALL raise `ValidationError` before acquiring a connection or sending any network bytes
+- **WHEN** `AMgmtClient.api_call` or transport execution receives a command violating `^[a-z0-9]+(-[a-z0-9]+)*$` (such as `"show-hosts/../publish"`, `"show-x/%2e%2e/publish"`, `"../../gaia_api/v1.7/run-script"`, `"show-hosts?x=1"`, `" show-hosts "`, or `"SHOW-HOSTS"`)
+- **THEN** the client SHALL raise `ValidationError` immediately before `is_readonly_command()` classification, session login, connection acquisition, or sending any network bytes
 
 ### Requirement: Pre-Request TLS Certificate Fingerprint Verification
 
@@ -4941,10 +5328,10 @@ The transport SHALL verify the server certificate SHA-256 fingerprint at `host:p
 ### Requirement: Atomic Cross-Process Known-Hosts Persistence and IPv6 Key Normalization
 
 **ID**: REQ-TRANS-003\
-**Intent**: Prevent multi-worker TOFU known-hosts file corruption and support IPv6 literal endpoints reliably.\
+**Intent**: Prevent multi-worker TOFU known-hosts file corruption, enforce owner-only directory/file security, and support IPv6 literal endpoints reliably.\
 **Non-goals**: TLS trust mode policy enforcement (`REQ-TRANS-002`).
 
-TLS trust-store persistence SHALL write `tls_known_hosts.json` with `0600` permission checks using cross-process file locking and atomic read-merge-write, and SHALL normalize RFC-compliant IPv6 `[host]:port` address keys in both `tls_known_hosts.json` and `ARODONATA_TLS_FINGERPRINTS`.
+TLS trust-store persistence SHALL create parent directories with `0700`, reject symlinked trust stores (`S_ISLNK`) and non-sticky group/world-writable parent directories before network I/O, write `tls_known_hosts.json` (`0600`) under cross-process locking atomically, and normalize RFC-compliant IPv6 `[host]:port` keys.
 
 #### Scenario: SCN-TRANS-003-1 — First contact learned in TOFU mode
 
@@ -4966,10 +5353,10 @@ TLS trust-store persistence SHALL write `tls_known_hosts.json` with `0600` permi
 ### Requirement: Verified Connection Pooling for Read-Only and Session-Scoped Commands
 
 **ID**: REQ-TRANS-004\
-**Intent**: Reduce TLS handshake overhead across sequential read-only and dedicated-session commands without leaking SIDs or violating session-boundary hygiene.\
+**Intent**: Reduce TLS handshake overhead across sequential read-only and dedicated-session commands without leaking SIDs or missing host-key eviction.\
 **Non-goals**: Socket timeout classification (`REQ-TRANS-007`) or task polling (`REQ-TRANS-005`).
 
-The HTTPS transport SHALL pool fingerprint-verified keep-alive connections for up to 10 seconds idle and fewer than 95 requests per socket across read-only `show-*` commands and non-boundary dedicated-session commands (`session_scope`), closing idle sockets before non-pooled commands and never exposing raw `sid`s in pool keys or `repr()`.
+The HTTPS transport SHALL pool fingerprint-verified keep-alive connections keyed by canonicalized `(host, port)` (lowercase DNS, uncompressed-agnostic RFC-5952 IPv6) for up to 10s idle and `< 95` requests, closing matching canonical idle sockets on `close_host`/`close_scope` and non-pooled commands without exposing raw `sid`s.
 
 #### Scenario: SCN-TRANS-004-1 — Consecutive show commands reuse verified keep-alive connection
 
@@ -4978,8 +5365,8 @@ The HTTPS transport SHALL pool fingerprint-verified keep-alive connections for u
 
 #### Scenario: SCN-TRANS-004-2 — Mutating commands and idle connections bypass reuse
 
-- **WHEN** a session-boundary command (`login`, `logout`, `keepalive`, `publish`, `discard`, `continue-session`, `switch-session`, `take-over-session`, `disconnect`), an un-scoped non-`show-*` command, or a call after `> 10s` idle runs
-- **THEN** the transport SHALL close matching idle pooled sockets before connecting, send `Connection: close`, and open a fresh TLS-verified connection
+- **WHEN** a session-boundary command (`login`, `logout`, `keepalive`, `publish`, `discard`, `continue-session`, `switch-session`, `take-over-session`, `disconnect`), an un-scoped non-`show-*` command, `close_host`/`close_scope` with mixed-case hostname or equivalent IPv6 spelling (`"2001:0db8::1"` / `"[2001:db8::1]"`), or a call after `> 10s` idle runs
+- **THEN** the transport SHALL canonicalize the host key, close all matching idle pooled sockets before connecting, send `Connection: close`, and open a fresh TLS-verified connection
 
 #### Scenario: SCN-TRANS-004-3 — Sequential commands within a dedicated session reuse session-scoped keep-alive connection
 
@@ -5043,12 +5430,12 @@ The HTTPS transport SHALL pool fingerprint-verified keep-alive connections for u
 **Intent**: Enforce unambiguous failure semantics and never double-execute non-idempotent Check Point commands after bytes leave the socket.\
 **Non-goals**: Timeout budget settings resolution (`REQ-CONFIG-004`).
 
-`AMgmtClient` HTTPS transport SHALL enforce explicit TCP/TLS `connect_timeout` and socket read timeouts on every `/web_api/<command>` call, disable HTTP redirects (`allow_redirects=False`), classify every `TransportError` with `phase` (`"connect"` / `request_sent=False` vs `"read"` / `"post-send"` with `request_sent=True`), and NEVER automatically resend a general API request after `request_sent=True` (except `LoginCoordinator`'s gated single `login` retry under `REQ-SESS-006`).
+`AMgmtClient` HTTPS transport SHALL enforce connect/read timeouts and `max_response_bytes` response-body limits, disable redirects (`allow_redirects=False`), classify `TransportError` (`phase="connect"` / `request_sent=False` before wire send, including `RateLimitTimeoutError`, vs `"read"` / `"post-send"` with `request_sent=True`), and never resend after `request_sent=True`.
 
 #### Scenario: SCN-TRANS-007-1 — Socket connect or handshake timeout
 
-- **WHEN** TCP connect or TLS handshake exceeds `connect_timeout`
-- **THEN** the transport SHALL raise `ApiTimeoutError` (`TimeoutError` subclass) with `phase="connect"`, `request_sent=False`, and the target `host` and `port`
+- **WHEN** TCP connect or TLS handshake exceeds `connect_timeout`, OR local MDS concurrency slot acquisition raises `RateLimitTimeoutError` before any network I/O
+- **THEN** TCP/TLS timeouts SHALL raise `ApiTimeoutError` (`TimeoutError` subclass) with `phase="connect"`, `request_sent=False`, and target `host`/`port`, and `RateLimitTimeoutError` SHALL set `request_sent=False` so callers know no bytes were transmitted
 
 #### Scenario: SCN-TRANS-007-2 — Socket read timeout
 

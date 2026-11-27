@@ -851,6 +851,10 @@ async def test_otel_span_attrs_recursive_sanitization_chained_errors_and_noop(
     assert "shh-val" not in seq_str
     exc_events = [ev for ev in sp.events if ev.name == "exception"]
     assert exc_events
+    exc_text = " ".join(str((ev.attributes or {}).get("exception.message", "")) for ev in exc_events)
+    assert "raw-root-secret" not in exc_text
+    assert "ctx-secret" not in exc_text
+    assert REDACTED_PLACEHOLDER in exc_text
 
 
 @pytest.mark.spec("SCN-CLIENT-016-1")

@@ -520,6 +520,8 @@ def _compact_field_default(value_node: ast.expr | None) -> str:
                     return f" = {ast.unparse(kw.value)}"
             if kw.arg == "default_factory":
                 with suppress(Exception):
+                    if isinstance(kw.value, ast.Lambda):
+                        return f" = {ast.unparse(kw.value.body)}"
                     factory = ast.unparse(kw.value)
                     if factory == "list":
                         return " = []"
@@ -625,6 +627,10 @@ def build_sdk_quickref() -> str:
 
     asset_fields = _extract_class_fields("core/models/assets.py", "Asset")
     asset_methods = _extract_class_method_sigs("core/models/assets.py", "Asset", include_dunder=())
+    asset_helpers = _extract_module_func_sigs(
+        "core/models/assets.py",
+        ("classify_asset_role", "classify_asset_platform", "classify_asset"),
+    )
     cpobject_fields = _extract_class_fields("core/models/objects.py", "CPObject")
     cpobject_methods = _extract_class_method_sigs("core/models/objects.py", "CPObject", include_dunder=())
     cpservice_fields = _extract_class_fields("core/models/services.py", "CPService")
@@ -705,7 +711,7 @@ def build_sdk_quickref() -> str:
         "",
         "### `Asset`",
         "",
-        _code_block("\n".join([*asset_fields, "", *asset_methods]), "python"),
+        _code_block("\n".join([*asset_fields, "", *asset_methods, "", *asset_helpers]), "python"),
         "",
         "### `CPObject`",
         "",
@@ -763,13 +769,13 @@ def build_sdk_quickref() -> str:
             "\n".join(
                 [
                     "# FileReplayApiMock",
-                    *replay_api_sigs[:8],
+                    *replay_api_sigs,
                     "",
                     "# FileReplayCliMock",
                     *replay_cli_sigs,
                     "",
                     "# CheckPointReplayHttpServer",
-                    *mock_http_sigs[:8],
+                    *mock_http_sigs,
                     "",
                     "# ReplayStateSnapshot",
                     *snapshot_fields,

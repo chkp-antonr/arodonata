@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
 from arodonata.core.config import ArodonataSettings
@@ -13,12 +12,14 @@ from arodonata.core.context import (
     get_write_session,
     normalize_domain_key,
     open_api_write_session,
+    shielded_best_effort,
 )
 from arodonata.core.errors import (
     AuthenticationError,
     RepositoryScriptError,
     RepositoryScriptNotFoundError,
     RepositoryScriptPermissionError,
+    RepositoryScriptUnsupportedError,
     ServerIdentityError,
     SessionError,
     SessionStateError,
@@ -104,9 +105,12 @@ def _classify_api_error(
             known_sids=known_sids,
         )
     if is_unsupported_script_command_error(code, msg):
-        return RepositoryScriptError(
-            f"Check Point Script Repository API command {operation!r} is not supported on "
-            f"{mgmt_name!r} ({domain_label!r}): {msg}",
+        return RepositoryScriptUnsupportedError(
+            mgmt_name,
+            domain_label,
+            script_ref,
+            operation=operation,
+            message=msg,
             known_sids=known_sids,
         )
     if _is_not_found_text(code, msg):
@@ -229,27 +233,20 @@ async def _invoke_run_script_with_session(
             )
         except ServerIdentityError:
             raise
-        except (SessionError, SessionStateError, AuthenticationError) as exc:
-            has_bare_sid = bool(used_sids and redact_sid(str(exc), known_sids=used_sids) != str(exc))
-            if is_script_permission_error(None, str(exc)):
-                perm_err = RepositoryScriptPermissionError(
-                    mgmt_name,
-                    dom_key,
-                    ref,
-                    operation="run-script",
-                    message=str(exc),
-                    known_sids=used_sids or None,
-                )
-                if has_bare_sid:
-                    raise perm_err from None
-                raise perm_err from exc
-            if has_bare_sid:
-                raise RepositoryScriptError(str(exc), known_sids=used_sids) from None
-            raise
         except Exception as exc:
-            if used_sids and redact_sid(str(exc), known_sids=used_sids) != str(exc):
-                raise RepositoryScriptError(str(exc), known_sids=used_sids) from None
-            raise
+            mapped, suppress_cause = _scrub_and_map_session_exception(
+                exc,
+                mgmt_name=mgmt_name,
+                dom_key=dom_key,
+                ref=ref,
+                operation="run-script",
+                known_sids=used_sids or None,
+            )
+            if suppress_cause:
+                raise mapped from None
+            if mapped is exc:
+                raise
+            raise mapped from exc
 
     async def _acquire_session() -> tuple[str, str]:
         try:
@@ -283,10 +280,111 @@ async def _invoke_run_script_with_session(
         try:
             res = await _call_run_script(ded_sid, ded_ip)
         finally:
-            with suppress(BaseException):
-                await asyncio.shield(api.logout_sid(mgmt_name, ded_sid, server_ip=ded_ip))
+            await shielded_best_effort(api.logout_sid(mgmt_name, ded_sid, server_ip=ded_ip))
 
     return res, (used_sids or None)
+
+
+def _decode_task_detail(
+    detail: dict[str, Any],
+    *,
+    tid: str,
+    task_status: str,
+    task_ok: bool,
+    task_idx: int,
+    target_list: list[str],
+    api_success: bool,
+    known_sids: list[str] | None,
+) -> ScriptTargetExecutionResult:
+    """Decode one `task-details[]` dictionary and scrub any leaked session identifiers."""
+    t_uid = str(detail.get("gatewayId") or detail.get("target-uid") or "")
+    t_name = str(detail.get("gatewayName") or detail.get("target-name") or detail.get("target") or "")
+    t_label = target_list[task_idx] if not t_name and not t_uid and task_idx < len(target_list) else t_name or t_uid
+    raw_msg = detail.get("responseMessage") or detail.get("response-message") or detail.get("output") or ""
+    raw_err = (
+        detail.get("responseError")
+        or detail.get("response-error")
+        or detail.get("fault-message")
+        or detail.get("error-message")
+        or ""
+    )
+    stdout_str = decode_base64_task_message(str(raw_msg)) if raw_msg else ""
+    if stdout_str and known_sids:
+        stdout_str = redact_sid(stdout_str, known_sids=known_sids)
+    stderr_str = decode_base64_task_message(str(raw_err)) if raw_err else ""
+    if stderr_str and known_sids:
+        stderr_str = redact_sid(stderr_str, known_sids=known_sids)
+    status_desc = str(detail.get("statusDescription") or "").strip()
+    if status_desc and known_sids:
+        status_desc = redact_sid(status_desc, known_sids=known_sids)
+    detail_status = str(detail.get("statusCode") or task_status or "").strip()
+    detail_ok = detail_status.lower() in ("succeeded", "ok") if detail_status else (task_ok and bool(api_success))
+    rev_raw = detail.get("revision")
+    return ScriptTargetExecutionResult(
+        target=t_label,
+        target_name=t_name,
+        target_uid=t_uid,
+        task_id=tid,
+        status=detail_status or task_status,
+        success=detail_ok,
+        stdout=stdout_str,
+        stderr=stderr_str,
+        status_description=status_desc,
+        revision=str(rev_raw) if rev_raw is not None else None,
+    )
+
+
+def _decode_single_task_entry(
+    task_dict: dict[str, Any],
+    *,
+    task_idx: int,
+    target_list: list[str],
+    res: ApiCallResult,
+    known_sids: list[str] | None,
+    task_ids: list[str],
+) -> list[ScriptTargetExecutionResult]:
+    """Decode one `tasks[]` entry into `ScriptTargetExecutionResult` items."""
+    tid = str(task_dict.get("task-id") or task_dict.get("uid") or "")
+    if tid and tid not in task_ids:
+        task_ids.append(tid)
+    task_status = str(task_dict.get("status") or "").strip()
+    task_ok = task_status.lower() in ("succeeded", "ok", "")
+    details = task_dict.get("task-details")
+    results: list[ScriptTargetExecutionResult] = []
+    if isinstance(details, list) and details:
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            results.append(
+                _decode_task_detail(
+                    detail,
+                    tid=tid,
+                    task_status=task_status,
+                    task_ok=task_ok,
+                    task_idx=task_idx,
+                    target_list=target_list,
+                    api_success=res.success,
+                    known_sids=known_sids,
+                )
+            )
+        return results
+
+    t_label = str(task_dict.get("target") or (target_list[task_idx] if task_idx < len(target_list) else ""))
+    fallback_stderr = str(res.error_message or "") if not res.success else ""
+    if fallback_stderr and known_sids:
+        fallback_stderr = redact_sid(fallback_stderr, known_sids=known_sids)
+    results.append(
+        ScriptTargetExecutionResult(
+            target=t_label,
+            target_name=t_label,
+            task_id=tid,
+            status=task_status,
+            success=task_ok and bool(res.success),
+            stdout="",
+            stderr=fallback_stderr,
+        )
+    )
+    return results
 
 
 def _decode_run_script_tasks(
@@ -332,75 +430,16 @@ def _decode_run_script_tasks(
     tasks_list = [t for t in tasks_raw if isinstance(t, dict)] if isinstance(tasks_raw, list) else []
 
     for task_idx, task_dict in enumerate(tasks_list):
-        tid = str(task_dict.get("task-id") or task_dict.get("uid") or "")
-        if tid and tid not in task_ids:
-            task_ids.append(tid)
-        task_status = str(task_dict.get("status") or "").strip()
-        task_ok = task_status.lower() in ("succeeded", "ok", "")
-        details = task_dict.get("task-details")
-
-        if isinstance(details, list) and details:
-            for detail in details:
-                if not isinstance(detail, dict):
-                    continue
-                t_uid = str(detail.get("gatewayId") or detail.get("target-uid") or "")
-                t_name = str(detail.get("gatewayName") or detail.get("target-name") or detail.get("target") or "")
-                if not t_name and not t_uid and task_idx < len(target_list):
-                    t_label = target_list[task_idx]
-                else:
-                    t_label = t_name or t_uid
-                raw_msg = detail.get("responseMessage") or detail.get("response-message") or detail.get("output") or ""
-                raw_err = (
-                    detail.get("responseError")
-                    or detail.get("response-error")
-                    or detail.get("fault-message")
-                    or detail.get("error-message")
-                    or ""
-                )
-                stdout_str = decode_base64_task_message(str(raw_msg)) if raw_msg else ""
-                if stdout_str and known_sids:
-                    stdout_str = redact_sid(stdout_str, known_sids=known_sids)
-                stderr_str = decode_base64_task_message(str(raw_err)) if raw_err else ""
-                if stderr_str and known_sids:
-                    stderr_str = redact_sid(stderr_str, known_sids=known_sids)
-                status_desc = str(detail.get("statusDescription") or "").strip()
-                if status_desc and known_sids:
-                    status_desc = redact_sid(status_desc, known_sids=known_sids)
-                detail_status = str(detail.get("statusCode") or task_status or "").strip()
-                detail_ok = (
-                    detail_status.lower() in ("succeeded", "ok") if detail_status else (task_ok and bool(res.success))
-                )
-                rev_raw = detail.get("revision")
-                target_results.append(
-                    ScriptTargetExecutionResult(
-                        target=t_label,
-                        target_name=t_name,
-                        target_uid=t_uid,
-                        task_id=tid,
-                        status=detail_status or task_status,
-                        success=detail_ok,
-                        stdout=stdout_str,
-                        stderr=stderr_str,
-                        status_description=status_desc,
-                        revision=str(rev_raw) if rev_raw is not None else None,
-                    )
-                )
-        else:
-            t_label = str(task_dict.get("target") or (target_list[task_idx] if task_idx < len(target_list) else ""))
-            fallback_stderr = str(res.error_message or "") if not res.success else ""
-            if fallback_stderr and known_sids:
-                fallback_stderr = redact_sid(fallback_stderr, known_sids=known_sids)
-            target_results.append(
-                ScriptTargetExecutionResult(
-                    target=t_label,
-                    target_name=t_label,
-                    task_id=tid,
-                    status=task_status,
-                    success=task_ok and bool(res.success),
-                    stdout="",
-                    stderr=fallback_stderr,
-                )
+        target_results.extend(
+            _decode_single_task_entry(
+                task_dict,
+                task_idx=task_idx,
+                target_list=target_list,
+                res=res,
+                known_sids=known_sids,
+                task_ids=task_ids,
             )
+        )
 
     if not target_results and isinstance(res.data, dict):
         top_msg = res.data.get("responseMessage") or res.data.get("response-message") or res.data.get("output")
@@ -521,13 +560,32 @@ class ScriptRepositoryService:
         else:
             payload["name"] = ref
 
-        res = await self._api.api_call(
-            mgmt_name,
-            "show-repository-script",
-            payload,
-            domain=dom_key,
-            wait_for_task=True,
-        )
+        active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key)
+        known_sids = [active_ws.sid] if active_ws and active_ws.sid else None
+        try:
+            res = await self._api.api_call(
+                mgmt_name,
+                "show-repository-script",
+                payload,
+                domain=dom_key,
+                wait_for_task=True,
+            )
+        except ServerIdentityError:
+            raise
+        except Exception as exc:
+            mapped, suppress_cause = _scrub_and_map_session_exception(
+                exc,
+                mgmt_name=mgmt_name,
+                dom_key=dom_key,
+                ref=ref,
+                operation="show-repository-script",
+                known_sids=known_sids,
+            )
+            if suppress_cause:
+                raise mapped from None
+            if mapped is exc:
+                raise
+            raise mapped from exc
         if not res.success:
             raise _classify_api_error(
                 mgmt_name,
@@ -535,6 +593,7 @@ class ScriptRepositoryService:
                 ref,
                 operation="show-repository-script",
                 res=res,
+                known_sids=known_sids,
             )
         return RepositoryScript.from_cp_dict(mgmt_name, dom_key, res.data)
 
@@ -551,13 +610,32 @@ class ScriptRepositoryService:
         dom_key = normalize_domain_key(domain)
         span_attrs(mgmt_name=mgmt_name, domain=dom_key, details_level=details_level)
 
-        query_res = await self._api.api_query(
-            mgmt_name,
-            "show-repository-scripts",
-            domain=dom_key,
-            details_level=details_level,
-            limit=limit,
-        )
+        active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key)
+        known_sids = [active_ws.sid] if active_ws and active_ws.sid else None
+        try:
+            query_res = await self._api.api_query(
+                mgmt_name,
+                "show-repository-scripts",
+                domain=dom_key,
+                details_level=details_level,
+                limit=limit,
+            )
+        except ServerIdentityError:
+            raise
+        except Exception as exc:
+            mapped, suppress_cause = _scrub_and_map_session_exception(
+                exc,
+                mgmt_name=mgmt_name,
+                dom_key=dom_key,
+                ref="*",
+                operation="show-repository-scripts",
+                known_sids=known_sids,
+            )
+            if suppress_cause:
+                raise mapped from None
+            if mapped is exc:
+                raise
+            raise mapped from exc
         if not query_res.success:
             err_res = ApiCallResult(
                 success=False,
@@ -571,6 +649,7 @@ class ScriptRepositoryService:
                 "*",
                 operation="show-repository-scripts",
                 res=err_res,
+                known_sids=known_sids,
             )
         return [RepositoryScript.from_cp_dict(mgmt_name, dom_key, item) for item in query_res.objects]
 
@@ -622,6 +701,17 @@ class ScriptRepositoryService:
                 script=None,
                 matches_expected=False if expected_body is not None else None,
                 error_code="repository_script_permission_denied",
+                error=exc.message,
+            )
+        except RepositoryScriptUnsupportedError as exc:
+            return RepositoryScriptStatus(
+                mgmt_name=mgmt_name,
+                domain_name=dom_key,
+                script_ref=ref,
+                exists=False,
+                script=None,
+                matches_expected=False if expected_body is not None else None,
+                error_code="repository_script_unsupported",
                 error=exc.message,
             )
         except RepositoryScriptError as exc:
@@ -687,7 +777,13 @@ class ScriptRepositoryService:
                 message=status.error,
             )
         if status.error_code == "repository_script_unsupported":
-            raise RepositoryScriptError(status.error or f"Repository scripts are not supported on {mgmt_name!r}.")
+            raise RepositoryScriptUnsupportedError(
+                mgmt_name,
+                dom_key,
+                clean_name,
+                operation="ensure-repository-script",
+                message=status.error,
+            )
         if (
             status.exists
             and status.matches_expected

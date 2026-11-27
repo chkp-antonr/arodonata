@@ -6,13 +6,20 @@ import asyncio
 import hashlib
 import hmac
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
-from arodonata.core.errors import REDACTED_PLACEHOLDER, MissingConfigurationError, SessionError, is_sensitive_key
+from arodonata.core.errors import (
+    REDACTED_PLACEHOLDER,
+    MissingConfigurationError,
+    ServerIdentityError,
+    SessionError,
+    TransportError,
+    is_sensitive_key,
+)
 from arodonata.core.models.common import ApiCallResult
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.services import CPService
@@ -540,6 +547,16 @@ def write_session_context(session: WriteSession) -> Iterator[WriteSession]:
         _current_write_session.reset(token)
 
 
+async def shielded_best_effort(awaitable: Awaitable[Any]) -> None:
+    """Await a cleanup coroutine under `asyncio.shield`, propagating cancellation and TLS identity failures."""
+    try:
+        await asyncio.shield(awaitable)
+    except ServerIdentityError:
+        raise
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def run_write_session_lifecycle(
     ws: WriteSession,
@@ -559,34 +576,37 @@ async def run_write_session_lifecycle(
                 yield ws
             except BaseException:
                 if not ws.discarded and not ws.published:
-                    with suppress(BaseException):
-                        await asyncio.shield(
-                            api_call_fn(
-                                mgmt_name,
-                                "discard",
-                                {},
-                                domain=domain,
-                                sid=ws.sid,
-                                server_ip=ws.server_ip,
-                            )
+                    await shielded_best_effort(
+                        api_call_fn(
+                            mgmt_name,
+                            "discard",
+                            {},
+                            domain=domain,
+                            sid=ws.sid,
+                            server_ip=ws.server_ip,
                         )
+                    )
                     ws.discarded = True
                     ws.overlay.clear()
                 raise
 
             if publish_on_exit and not ws.published and not ws.discarded:
-                pub_res = await api_call_fn(
-                    mgmt_name,
-                    "publish",
-                    {},
-                    domain=domain,
-                    sid=ws.sid,
-                    server_ip=ws.server_ip,
-                    wait_for_task=True,
-                )
-                if not pub_res.success:
-                    with suppress(BaseException):
-                        await asyncio.shield(
+                try:
+                    pub_res = await api_call_fn(
+                        mgmt_name,
+                        "publish",
+                        {},
+                        domain=domain,
+                        sid=ws.sid,
+                        server_ip=ws.server_ip,
+                        wait_for_task=True,
+                    )
+                except BaseException as pub_exc:
+                    should_discard = isinstance(pub_exc, asyncio.CancelledError) or (
+                        isinstance(pub_exc, TransportError) and not pub_exc.request_sent
+                    )
+                    if should_discard and not ws.discarded and not ws.published:
+                        await shielded_best_effort(
                             api_call_fn(
                                 mgmt_name,
                                 "discard",
@@ -596,6 +616,20 @@ async def run_write_session_lifecycle(
                                 server_ip=ws.server_ip,
                             )
                         )
+                        ws.discarded = True
+                        ws.overlay.clear()
+                    raise
+                if not pub_res.success:
+                    await shielded_best_effort(
+                        api_call_fn(
+                            mgmt_name,
+                            "discard",
+                            {},
+                            domain=domain,
+                            sid=ws.sid,
+                            server_ip=ws.server_ip,
+                        )
+                    )
                     ws.discarded = True
                     ws.overlay.clear()
                     raise SessionError(
@@ -609,8 +643,7 @@ async def run_write_session_lifecycle(
                     on_domain_invalidated(mgmt_name, domain)
     finally:
         ws.overlay.clear()
-        with suppress(BaseException):
-            await asyncio.shield(logout_fn(mgmt_name, ws.sid, server_ip=ws.server_ip))
+        await shielded_best_effort(logout_fn(mgmt_name, ws.sid, server_ip=ws.server_ip))
 
 
 @asynccontextmanager

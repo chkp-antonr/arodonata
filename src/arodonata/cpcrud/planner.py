@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from contextlib import suppress
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -26,7 +25,13 @@ from arodonata.core.models.common import parse_cp_publish_timestamp, utc_now
 from arodonata.core.ports import ApiPort, ObjectCachePort, ServiceCachePort, SidCachePort, SyncStatePort
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.cpcrud._planner_diff import _plan_existing_object_diff, _plan_existing_service_diff
-from arodonata.cpcrud._planner_entity_steps import plan_group_step, plan_object_step, plan_service_step
+from arodonata.cpcrud._planner_entity_steps import (
+    _DomainPlanState,
+    _record_action_outcome,
+    plan_group_step,
+    plan_object_step,
+    plan_service_step,
+)
 from arodonata.cpcrud._planner_helpers import (
     CANONICAL_CPCRUD_TYPES,
     LOOKUP_ERROR_PREFIX,
@@ -61,61 +66,6 @@ from arodonata.cpcrud.state_reader import OBJECT_ITEM_TYPES, SERVICE_ITEM_TYPES,
 
 class _PlannerCachePort(ObjectCachePort, ServiceCachePort, SidCachePort, SyncStatePort, Protocol):
     """Cache capabilities required by `Planner` and its internal `HybridStateReader`."""
-
-
-@dataclass(slots=True)
-class _DomainPlanState:
-    """Mutable per-domain dependency, failure, and name-resolution tracking during planning."""
-
-    failed_refs: set[str] = field(default_factory=set)
-    failed_ids: set[str] = field(default_factory=set)
-    res_map: dict[str, str] = field(default_factory=dict)
-    global_res: dict[str, str] = field(default_factory=dict)
-    ref_action_ids: dict[str, str] = field(default_factory=dict)
-    entity_action_ids: dict[tuple[str, str], str] = field(default_factory=dict)
-
-
-def _record_action_outcome(act: PlannedAction, state: _DomainPlanState) -> None:
-    """Update per-domain failure sets, auto-name resolutions, and dependency indices for `act`."""
-    if act.outcome in (Outcome.ERROR, Outcome.SKIPPED_DEPENDENCY):
-        if act.requested_name:
-            state.failed_refs.add(act.requested_name)
-        if act.name:
-            state.failed_refs.add(act.name)
-        state.failed_ids.add(act.action_id)
-        return
-
-    if act.outcome == Outcome.DELETE:
-        deleted_names = {n for n in (act.name, act.resolved_name) if n}
-        for target_map in (state.res_map, state.global_res):
-            for rk in [k for k, v in target_map.items() if k in deleted_names or v in deleted_names]:
-                target_map.pop(rk, None)
-        for n in deleted_names:
-            state.ref_action_ids.pop(n, None)
-            state.entity_action_ids[(act.object_type, n)] = act.action_id
-        if act.target_uid:
-            state.entity_action_ids.pop(("uid", act.target_uid), None)
-        return
-
-    if act.resolved_name:
-        state.res_map.pop(act.resolved_name, None)
-        state.global_res.pop(act.resolved_name, None)
-    if act.requested_name and act.resolved_name and act.requested_name != act.resolved_name:
-        state.res_map[act.requested_name] = act.resolved_name
-        state.global_res[act.requested_name] = act.resolved_name
-    if act.outcome == Outcome.UPDATE and act.name and act.resolved_name and act.name != act.resolved_name:
-        state.res_map[act.name] = act.resolved_name
-        state.global_res[act.name] = act.resolved_name
-
-    if act.outcome in (Outcome.CREATE, Outcome.UPDATE):
-        for ref_key in (act.requested_name, act.resolved_name, act.name):
-            if ref_key:
-                state.ref_action_ids[ref_key] = act.action_id
-                state.entity_action_ids[(act.object_type, ref_key)] = act.action_id
-        if act.target_uid:
-            state.entity_action_ids[("uid", act.target_uid)] = act.action_id
-        if act.outcome == Outcome.CREATE and act.name:
-            state.entity_action_ids[("uid", f"planned:{act.object_type}:{act.name}")] = act.action_id
 
 
 def _resolve_domain_name(mapping: Mapping[str, Any], default: str = "") -> str:
@@ -337,9 +287,11 @@ class Planner:
                 seen_pairs.add((t_mgmt, t_dom))
                 domain_pairs.append((t_mgmt, t_dom))
             for _kind, step_spec in steps:
-                explicit_id = step_spec.get("id")
-                if explicit_id is not None and str(explicit_id).strip():
-                    id_str = str(explicit_id).strip()
+                if "id" in step_spec and step_spec["id"] is not None:
+                    explicit_id = step_spec["id"]
+                    if not isinstance(explicit_id, str) or not explicit_id.strip():
+                        raise ValidationError("CPCRUD operation 'id' must be a non-empty string.")
+                    id_str = explicit_id.strip()
                     if id_str in seen_explicit_ids:
                         raise ValidationError(f"Duplicate CPCRUD operation id: {id_str!r}")
                     seen_explicit_ids.add(id_str)
@@ -386,8 +338,17 @@ class Planner:
 
             steps = steps_by_target[target_idx]
             for kind, step_spec in steps:
-                action_seq += 1
-                action_id = str(step_spec.get("id") or f"act-{action_seq}")
+                raw_explicit_id = step_spec.get("id")
+                if raw_explicit_id is not None:
+                    action_id = str(raw_explicit_id).strip()
+                else:
+                    while True:
+                        action_seq += 1
+                        cand_id = f"act-{action_seq}"
+                        if cand_id not in seen_explicit_ids:
+                            action_id = cand_id
+                            seen_explicit_ids.add(cand_id)
+                            break
                 s_mgmt = str(step_spec.get("mgmt_name") or t_mgmt).strip()
                 s_dom = _resolve_domain_name(step_spec, t_dom)
                 dom_key = (s_mgmt, s_dom)
@@ -518,20 +479,31 @@ class Planner:
                         res_map=res_map,
                     )
 
-                if kind in ("object", "service", "group"):
+                if kind in ("object", "service", "group", "rule"):
+                    scope_prefix = (
+                        f"{act.layer or act.package}:" if kind == "rule" and (act.layer or act.package) else ""
+                    )
                     if act.outcome in (Outcome.UPDATE, Outcome.DELETE):
                         dep_cands = [
                             entity_action_ids.get(("uid", act.target_uid)) if act.target_uid else None,
-                            entity_action_ids.get((act.object_type, act.name)) if act.name else None,
-                            entity_action_ids.get((act.object_type, act.requested_name))
+                            entity_action_ids.get((act.object_type, f"{scope_prefix}{act.name}")) if act.name else None,
+                            entity_action_ids.get((act.object_type, act.name))
+                            if act.name and not scope_prefix
+                            else None,
+                            entity_action_ids.get((act.object_type, f"{scope_prefix}{act.requested_name}"))
                             if act.requested_name
+                            else None,
+                            entity_action_ids.get((act.object_type, act.requested_name))
+                            if act.requested_name and not scope_prefix
                             else None,
                         ]
                         for aid in dep_cands:
                             if aid and aid != act.action_id and aid not in inferred_deps:
                                 inferred_deps.append(aid)
                     elif act.outcome == Outcome.CREATE and act.name:
-                        prev_aid = entity_action_ids.get((act.object_type, act.name))
+                        prev_aid = entity_action_ids.get((act.object_type, f"{scope_prefix}{act.name}")) or (
+                            entity_action_ids.get((act.object_type, act.name)) if not scope_prefix else None
+                        )
                         if prev_aid and prev_aid != act.action_id and prev_aid not in inferred_deps:
                             inferred_deps.append(prev_aid)
 
@@ -541,6 +513,10 @@ class Planner:
 
                 actions.append(act)
                 _record_action_outcome(act, dom_state)
+
+        final_action_ids = [a.action_id for a in actions]
+        if len(set(final_action_ids)) != len(final_action_ids):
+            raise ValidationError("Duplicate action_id detected while building CPCRUD Plan.")
 
         global_name_resolutions = {
             k: v for dom_state in domain_states.values() for k, v in dom_state.global_res.items()

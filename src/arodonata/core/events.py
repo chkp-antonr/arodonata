@@ -180,3 +180,4 @@ class CPCRUDCompletedEvent(CPCRUDEvent):
     succeeded_count: int = 0
     failed_count: int = 0
     skipped_count: int = 0
+    report: Any = Field(default=None, exclude=True, repr=False)

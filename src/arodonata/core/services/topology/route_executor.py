@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 from collections.abc import Awaitable, Callable, Sequence
 
-from arodonata.core.context import get_write_session
+from arodonata.core.context import get_write_session, shielded_best_effort
 from arodonata.core.errors import (
     AuthenticationError,
     RepositoryScriptError,
     RepositoryScriptNotFoundError,
     RepositoryScriptPermissionError,
+    RepositoryScriptUnsupportedError,
     ServerIdentityError,
     SessionError,
     SessionStateError,
@@ -244,8 +243,7 @@ async def _run_inline_cprid(
                         timeout=timeout,
                     )
                 finally:
-                    with contextlib.suppress(BaseException):
-                        await asyncio.shield(api.logout_sid(target.mgmt_name, ded_sid, server_ip=ded_ip))
+                    await shielded_best_effort(api.logout_sid(target.mgmt_name, ded_sid, server_ip=ded_ip))
     except ServerIdentityError:
         raise
     except (SessionError, AuthenticationError) as exc:
@@ -387,6 +385,19 @@ async def _run_repository_cprid(
             exit_code=1,
             executor="cprid",
             error_code="repository_script_permission_denied",
+            error_message=err_msg,
+        )
+    except RepositoryScriptUnsupportedError as exc:
+        known = used_sids or None
+        exc_msg = _scrub_known_sids(str(exc), known)
+        err_msg = _format_cli_error(ssh_error, exc_msg, known_sids=known)
+        return GatewayCliResult(
+            success=False,
+            stdout="",
+            stderr=exc_msg,
+            exit_code=1,
+            executor="cprid",
+            error_code="repository_script_unsupported",
             error_message=err_msg,
         )
     except RepositoryScriptError as exc:

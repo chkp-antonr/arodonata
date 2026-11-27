@@ -2779,3 +2779,103 @@ def test_render_safe_inline_markdown_md_blocks_nested_links_and_images_in_bold_a
     assert italic_img == r"*!\[beacon\](https://example.invalid/x.png)*"
     assert "[click]" not in bold_js
     assert "![beacon]" not in italic_img
+
+
+@pytest.mark.spec("SCN-REPORT-009-1")
+async def test_range_scope_to_session_omits_date_filter_and_owned_session_context_disables_cleanly() -> None:
+    """DA-029, DA-030, DA-042: RangeScope(to_session=...) omits server date bounds and failed OwnedSession stays disabled."""
+    from datetime import UTC, datetime
+
+    show_sessions_payloads: list[dict[str, Any]] = []
+    calls_by_cmd: list[tuple[str, str | None]] = []
+
+    class _ReportFakeApi:
+        async def api_query(
+            self, _m: str, cmd: str, payload: dict[str, Any] | None = None, **_k: Any
+        ) -> ApiQueryResult:
+            if cmd == "show-sessions":
+                show_sessions_payloads.append(dict(payload or {}))
+                return ApiQueryResult(
+                    success=True,
+                    objects=[
+                        {"uid": "s-1", "publish-time": {"posix": 1700000000000}, "changes": 1},
+                        {"uid": "s-2", "publish-time": {"posix": 1700100000000}, "changes": 1},
+                    ],
+                    total=2,
+                )
+            return ApiQueryResult(success=True, objects=[], total=0)
+
+        async def api_call(self, _m: str, cmd: str, _p: dict[str, Any] | None = None, **kw: Any) -> ApiCallResult:
+            calls_by_cmd.append((cmd, kw.get("sid")))
+            if cmd == "show-session" and kw.get("sid") is not None:
+                return ApiCallResult(
+                    success=False, status_code=400, error_code="err_session_expired", error_message="bad sid"
+                )
+            if cmd == "show-session":
+                return ApiCallResult(
+                    success=True, data={"uid": "s-owned", "user-name": "admin", "locks": 0, "changes": 1}
+                )
+            if cmd == "show-changes":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "changes": [
+                            {
+                                "changes": [
+                                    {
+                                        "uid": "chg-1",
+                                        "type": "host",
+                                        "action": "Modify",
+                                        "changed-fields": [
+                                            {"name": "groups", "new-value": ["bare-uid-1", "bare-uid-2"]}
+                                        ],
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                )
+            if cmd == "show-object":
+                uid = str((_p or {}).get("uid") or "")
+                return ApiCallResult(success=True, data={"object": {"uid": uid, "name": f"Obj-{uid}"}})
+            return ApiCallResult(success=True, data={})
+
+    class _MinRepCache:
+        async def get_object_by_uid(self, *_a: Any) -> None:
+            return None
+
+        async def get_service_by_uid(self, *_a: Any) -> None:
+            return None
+
+        async def get_rulebase_snapshot(self, *_a: Any, **_k: Any) -> None:
+            return None
+
+    owned = OwnedSession(
+        sid="owned-bad-sid", server_ip="10.0.0.1", session_uid="s-owned", mgmt_name="mds1", domain="Corp"
+    )
+    report = await collect_change_report(
+        _ReportFakeApi(),  # type: ignore[arg-type]
+        _MinRepCache(),  # type: ignore[arg-type]
+        [
+            RangeScope(
+                mgmt_name="mds1",
+                domain="Corp",
+                to_session="s-1",
+                from_date=datetime(2023, 11, 14, tzinfo=UTC),
+                to_date=datetime(2023, 11, 15, tzinfo=UTC),
+            ),
+            SessionScope(
+                mgmt_name="mds1",
+                domain="Corp",
+                session_uids=["s-owned"],
+                owned_sessions=[owned],
+            ),
+        ],
+    )
+    assert show_sessions_payloads
+    assert "from" not in show_sessions_payloads[0]
+    assert "to" not in show_sessions_payloads[0]
+    # Once show-session rejected owned-bad-sid, neither show-changes nor show-object nor placement uses it again
+    assert ("show-changes", "owned-bad-sid") not in calls_by_cmd
+    assert ("show-object", "owned-bad-sid") not in calls_by_cmd
+    assert len([w for w in report.warnings if w.code == "owned_session_error"]) == 1

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Literal
 
 from mcp.server.mcpserver import MCPServer
@@ -20,8 +20,9 @@ from arodonata.core.models.common import (
     normalize_object_type,
     normalize_service_type,
 )
+from arodonata.core.services.asset_service import _normalize_classification_filter
 from arodonata.core.services.object_service import resolve_object_query_command
-from arodonata.core.services.search.query import resolve_query_scopes
+from arodonata.core.services.search.query import _parse_and_validate_group_by, resolve_query_scopes
 from arodonata.core.services.service_cache import resolve_service_query_command
 from arodonata.mcp.config import ArodonataMCPSettings
 from arodonata.mcp.errors import (
@@ -108,6 +109,90 @@ def register_object_tools(
 ) -> None:
     """Register `list_objects`, `list_services`, `list_assets`, `search_objects`, and `query_objects`."""
 
+    async def _run_typed_collection_tool(
+        *,
+        scope: Literal["objects", "services"],
+        mgmt_name: str | None,
+        domain: str | None,
+        types: list[str] | None,
+        normalizer: Callable[[str], str],
+        default_types: Sequence[str],
+        command_resolver: Callable[[str], tuple[str, dict[str, Any]]],
+        fetcher: Callable[..., Awaitable[Sequence[Any]]],
+        filter_fn: Callable[[Sequence[Any], str | None], list[Any]],
+        serializer: Callable[..., dict[str, Any]],
+        filter_text: str | None,
+        names: list[str] | None,
+        uids: list[str] | None,
+        include_global: bool,
+        details_level: str,
+        limit: int,
+        offset: int,
+        cache_mode: str,
+    ) -> CallToolResult:
+        client = client_getter()
+        eff_mgmt = resolve_mgmt_name(client, mgmt_name)
+        mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
+        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
+        normalized_types = [normalizer(t) for t in types if t and t.strip()] if types else None
+
+        if is_live:
+            live_envelope = await _fetch_live_collection(
+                client,
+                eff_mgmt=eff_mgmt,
+                eff_domain=eff_domain,
+                live_types=normalized_types or list(default_types),
+                command_resolver=command_resolver,
+                filter_text=filter_text,
+                details_level=details_level,
+                limit=limit,
+                offset=offset,
+            )
+            known_sids = await collect_known_sids(client, eff_mgmt)
+            return json_tool_result(live_envelope, known_sids=known_sids)
+
+        mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, scope, mode)
+        await _enforce_live_quota_if_sync_required(
+            client,
+            eff_mgmt,
+            eff_domain,
+            scope,
+            mode,
+            item_types=normalized_types or list(default_types),
+        )
+        rows = await fetcher(
+            mgmt_name=eff_mgmt,
+            domain=eff_domain,
+            types=normalized_types,
+            names=names,
+            uids=uids,
+            include_global=include_global,
+            cache_mode=mode,
+        )
+        item_type = normalized_types[0] if normalized_types and len(normalized_types) == 1 else "*"
+        if mode != "cache":
+            await _raise_if_sync_failed(client, eff_mgmt, eff_domain, scope, item_type, has_cached_data=bool(rows))
+        filtered = filter_fn(rows, filter_text)
+        age = await _compute_cache_age(
+            client,
+            eff_mgmt,
+            eff_domain,
+            scope,
+            item_type,
+            item_types=normalized_types,
+        )
+        serialized = [serializer(row, details_level=details_level) for row in filtered]
+        envelope = _build_page_envelope(
+            serialized,
+            limit=limit,
+            offset=offset,
+            source="cache",
+            cache_age_seconds=age,
+            extra={"mgmt_name": eff_mgmt, "domain": eff_domain},
+        )
+        known_sids = await collect_known_sids(client, eff_mgmt)
+        return json_tool_result(envelope, known_sids=known_sids)
+
     @server.tool(
         name="list_objects",
         description=(
@@ -131,69 +216,26 @@ def register_object_tools(
         cache_mode: str = "smart",
     ) -> CallToolResult:
         client = client_getter()
-        eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-        mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
-        normalized_types = [normalize_object_type(t) for t in types if t and t.strip()] if types else None
-
-        if is_live:
-            live_envelope = await _fetch_live_collection(
-                client,
-                eff_mgmt=eff_mgmt,
-                eff_domain=eff_domain,
-                live_types=normalized_types or list(DEFAULT_OBJECT_TYPES),
-                command_resolver=resolve_object_query_command,
-                filter_text=filter,
-                details_level=details_level,
-                limit=limit,
-                offset=offset,
-            )
-            known_sids = await collect_known_sids(client, eff_mgmt)
-            return json_tool_result(live_envelope, known_sids=known_sids)
-
-        mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "objects", mode)
-        await _enforce_live_quota_if_sync_required(
-            client,
-            eff_mgmt,
-            eff_domain,
-            "objects",
-            mode,
-            item_types=normalized_types or list(DEFAULT_OBJECT_TYPES),
-        )
-        objs = await client.get_objects(
-            mgmt_name=eff_mgmt,
-            domain=eff_domain,
-            types=normalized_types,
+        return await _run_typed_collection_tool(
+            scope="objects",
+            mgmt_name=mgmt_name,
+            domain=domain,
+            types=types,
+            normalizer=normalize_object_type,
+            default_types=DEFAULT_OBJECT_TYPES,
+            command_resolver=resolve_object_query_command,
+            fetcher=client.get_objects,
+            filter_fn=_filter_cp_objects,
+            serializer=_serialize_object,
+            filter_text=filter,
             names=names,
             uids=uids,
             include_global=include_global,
-            cache_mode=mode,
-        )
-        obj_item_type = normalized_types[0] if normalized_types and len(normalized_types) == 1 else "*"
-        if mode != "cache":
-            await _raise_if_sync_failed(
-                client, eff_mgmt, eff_domain, "objects", obj_item_type, has_cached_data=bool(objs)
-            )
-        filtered = _filter_cp_objects(objs, filter)
-        age = await _compute_cache_age(
-            client,
-            eff_mgmt,
-            eff_domain,
-            "objects",
-            obj_item_type,
-            item_types=normalized_types,
-        )
-        serialized = [_serialize_object(o, details_level=details_level) for o in filtered]
-        envelope = _build_page_envelope(
-            serialized,
+            details_level=details_level,
             limit=limit,
             offset=offset,
-            source="cache",
-            cache_age_seconds=age,
-            extra={"mgmt_name": eff_mgmt, "domain": eff_domain},
+            cache_mode=cache_mode,
         )
-        known_sids = await collect_known_sids(client, eff_mgmt)
-        return json_tool_result(envelope, known_sids=known_sids)
 
     @server.tool(
         name="list_services",
@@ -217,69 +259,26 @@ def register_object_tools(
         cache_mode: str = "smart",
     ) -> CallToolResult:
         client = client_getter()
-        eff_mgmt = resolve_mgmt_name(client, mgmt_name)
-        mode, is_live = _normalize_cache_mode(cache_mode, default="smart")
-        eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
-        normalized_types = [normalize_service_type(t) for t in types if t and t.strip()] if types else None
-
-        if is_live:
-            live_envelope = await _fetch_live_collection(
-                client,
-                eff_mgmt=eff_mgmt,
-                eff_domain=eff_domain,
-                live_types=normalized_types or list(DEFAULT_SERVICE_TYPES),
-                command_resolver=resolve_service_query_command,
-                filter_text=filter,
-                details_level=details_level,
-                limit=limit,
-                offset=offset,
-            )
-            known_sids = await collect_known_sids(client, eff_mgmt)
-            return json_tool_result(live_envelope, known_sids=known_sids)
-
-        mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "services", mode)
-        await _enforce_live_quota_if_sync_required(
-            client,
-            eff_mgmt,
-            eff_domain,
-            "services",
-            mode,
-            item_types=normalized_types or list(DEFAULT_SERVICE_TYPES),
-        )
-        svcs = await client.get_services(
-            mgmt_name=eff_mgmt,
-            domain=eff_domain,
-            types=normalized_types,
+        return await _run_typed_collection_tool(
+            scope="services",
+            mgmt_name=mgmt_name,
+            domain=domain,
+            types=types,
+            normalizer=normalize_service_type,
+            default_types=DEFAULT_SERVICE_TYPES,
+            command_resolver=resolve_service_query_command,
+            fetcher=client.get_services,
+            filter_fn=_filter_cp_services,
+            serializer=_serialize_service,
+            filter_text=filter,
             names=names,
             uids=uids,
             include_global=include_global,
-            cache_mode=mode,
-        )
-        svc_item_type = normalized_types[0] if normalized_types and len(normalized_types) == 1 else "*"
-        if mode != "cache":
-            await _raise_if_sync_failed(
-                client, eff_mgmt, eff_domain, "services", svc_item_type, has_cached_data=bool(svcs)
-            )
-        filtered = _filter_cp_services(svcs, filter)
-        age = await _compute_cache_age(
-            client,
-            eff_mgmt,
-            eff_domain,
-            "services",
-            svc_item_type,
-            item_types=normalized_types,
-        )
-        serialized = [_serialize_service(s, details_level=details_level) for s in filtered]
-        envelope = _build_page_envelope(
-            serialized,
+            details_level=details_level,
             limit=limit,
             offset=offset,
-            source="cache",
-            cache_age_seconds=age,
-            extra={"mgmt_name": eff_mgmt, "domain": eff_domain},
+            cache_mode=cache_mode,
         )
-        known_sids = await collect_known_sids(client, eff_mgmt)
-        return json_tool_result(envelope, known_sids=known_sids)
 
     @server.tool(
         name="list_assets",
@@ -287,7 +286,7 @@ def register_object_tools(
             "List Check Point gateways, clusters, cluster members, VSX systems, virtual systems, and management "
             "servers (checkpoint-host) from arodonata_assets with optional types filter ('gateway', 'cluster', "
             "'member', 'vsx', 'vs', 'server' — automatically matching both REST and Check Point Cpmi* classes such as "
-            "CpmiGatewayCluster, CpmiVsxNetobj, CpmiVsNetobj) and parent cluster/VSX filter."
+            "CpmiGatewayCluster, CpmiVsxNetobj, CpmiVsNetobj), classification filters (roles, platforms), and parent cluster/VSX filter."
         ),
     )
     @mcp_tool_guard("list_assets", client_getter, quota_manager=quota_manager, is_live_tool=_is_live_cache_mode)
@@ -295,6 +294,8 @@ def register_object_tools(
         mgmt_name: str | None = None,
         domain: str | None = None,
         types: list[str] | None = None,
+        roles: list[str] | None = None,
+        platforms: list[str] | None = None,
         parent: str | None = None,
         filter: str | None = None,
         include_global: bool = False,
@@ -342,21 +343,30 @@ def register_object_tools(
         # When filtering by `parent`, load all domain assets first so parent -> member_uids can be resolved
         mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "assets", mode)
         await _enforce_live_quota_if_sync_required(client, eff_mgmt, eff_domain, "assets", mode)
+        has_parent = bool(parent and parent.strip())
         all_assets = await client.get_gateways(
             mgmt_name=eff_mgmt,
             domain=eff_domain,
-            types=expanded_types if not parent else None,
+            types=expanded_types if not has_parent else None,
+            roles=roles if not has_parent else None,
+            platforms=platforms if not has_parent else None,
             include_global=include_global,
             cache_mode=mode,
         )
         if mode != "cache":
             await _raise_if_sync_failed(client, eff_mgmt, eff_domain, "assets", "*", has_cached_data=bool(all_assets))
 
-        assets = (
-            _filter_assets_by_parent(all_assets, parent, expanded_types)
-            if parent and parent.strip()
-            else list(all_assets)
-        )
+        if has_parent:
+            assert parent is not None
+            assets = _filter_assets_by_parent(all_assets, parent, expanded_types)
+            role_set = _normalize_classification_filter(roles)
+            platform_set = _normalize_classification_filter(platforms)
+            if role_set is not None:
+                assets = [a for a in assets if a.asset_role.lower() in role_set] if role_set else []
+            if platform_set is not None:
+                assets = [a for a in assets if a.platform_family.lower() in platform_set] if platform_set else []
+        else:
+            assets = list(all_assets)
         filtered = _filter_assets(assets, filter)
         age = await _compute_cache_age(client, eff_mgmt, eff_domain, "assets", "*")
         serialized = [_serialize_asset(a, details_level=details_level) for a in filtered]
@@ -416,7 +426,9 @@ def register_object_tools(
         )
         eff_mode = mode
         if want_search_objects:
-            upgraded_obj = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "objects", mode)
+            upgraded_obj = await _upgrade_uninitialized_cache_mode(
+                client, eff_mgmt, eff_domain, "objects", mode, domains=target_domains
+            )
             if upgraded_obj != "cache" and eff_mode == "cache":
                 eff_mode = upgraded_obj
             await _enforce_live_quota_if_sync_required(
@@ -428,7 +440,9 @@ def register_object_tools(
                 domains=target_domains,
             )
         if want_search_assets:
-            upgraded_asset = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "assets", mode)
+            upgraded_asset = await _upgrade_uninitialized_cache_mode(
+                client, eff_mgmt, eff_domain, "assets", mode, domains=target_domains
+            )
             if upgraded_asset != "cache" and eff_mode == "cache":
                 eff_mode = upgraded_asset
             await _enforce_live_quota_if_sync_required(
@@ -484,10 +498,12 @@ def register_object_tools(
         description=(
             "Execute structured cross-domain filtering, grouping (group_by), counting (aggregate='count'|'list'), "
             "or progressive-disclosure schema introspection (aggregate='describe') over arodonata_objects, "
-            "arodonata_services, and arodonata_assets, distinguishing local vs Global objects via original_domain. "
+            "arodonata_services, and arodonata_assets, distinguishing local vs Global objects via original_domain, "
+            "plus asset classification predicates (roles, platforms, is_policy_target, is_execution_target). "
             "Groupable fields: mgmt_name (aliases: mgmt, server), domain_name (alias: domain), original_domain, "
-            "type (aliases: object_type, asset_type), color, protocol. Asset type aliases ('gateway', 'cluster', "
-            "'member', 'vsx', 'vs', 'server') match both REST and Check Point Cpmi* classes. "
+            "type (aliases: object_type, asset_type), asset_role, platform_family, is_policy_target, "
+            "is_execution_target, color, protocol. Asset type aliases ('gateway', 'cluster', 'member', 'vsx', "
+            "'vs', 'server') match both REST and Check Point Cpmi* classes. "
             "Defaults to cache_mode='smart' (auto-syncing uncached or stale domains)."
         ),
     )
@@ -497,6 +513,10 @@ def register_object_tools(
         domain: str | None = None,
         domains: list[str] | None = None,
         types: list[str] | None = None,
+        roles: list[str] | None = None,
+        platforms: list[str] | None = None,
+        is_policy_target: bool | None = None,
+        is_execution_target: bool | None = None,
         scope_origin: Literal["all", "local", "global"] = "all",
         name_pattern: str | None = None,
         ip_subnet: str | None = None,
@@ -527,12 +547,18 @@ def register_object_tools(
             requested_types: list[str] | None = None
             want_objects, want_services, want_assets = True, False, False
         else:
+            group_specs = _parse_and_validate_group_by(group_by)
             requested_types, want_objects, want_services, want_assets = resolve_query_scopes(
                 types,
                 port=port,
                 protocol=protocol,
                 parent_id=parent_id,
                 parent_asset_id=parent_asset_id,
+                roles=roles,
+                platforms=platforms,
+                is_policy_target=is_policy_target,
+                is_execution_target=is_execution_target,
+                group_by_attrs=[ca for ca, _ in group_specs],
             )
 
         target_scopes: list[tuple[SyncScope, list[str] | None]] = []
@@ -558,7 +584,9 @@ def register_object_tools(
         eff_mode = mode
         for q_scope, q_types in target_scopes:
             if q_scope in ("objects", "services", "assets"):
-                upgraded = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, q_scope, mode)
+                upgraded = await _upgrade_uninitialized_cache_mode(
+                    client, eff_mgmt, eff_domain, q_scope, mode, domains=clean_domains
+                )
                 if upgraded != "cache" and eff_mode == "cache":
                     eff_mode = upgraded
                 await _enforce_live_quota_if_sync_required(
@@ -578,6 +606,10 @@ def register_object_tools(
             domain_name=eff_domain,
             domains=domains,
             types=types,
+            roles=roles,
+            platforms=platforms,
+            is_policy_target=is_policy_target,
+            is_execution_target=is_execution_target,
             scope_origin=scope_origin,
             name_pattern=name_pattern,
             ip_subnet=ip_subnet,

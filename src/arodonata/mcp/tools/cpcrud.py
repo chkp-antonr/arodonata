@@ -5,8 +5,8 @@ from __future__ import annotations
 import hmac
 import secrets
 import uuid
-from collections import OrderedDict
-from collections.abc import Callable
+from collections import OrderedDict, defaultdict
+from collections.abc import Callable, Hashable
 from typing import Any, Literal
 
 import arlogi
@@ -14,7 +14,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult
 
 from arodonata.client import ArodonataClient
-from arodonata.core.context import normalize_domain_key
+from arodonata.core.context import normalize_domain_key, shielded_best_effort
 from arodonata.core.errors import redact_sid, sanitize_mapping
 from arodonata.cpcrud import ApplyReport, IpConflictPolicy, NameConflictPolicy, Plan, StagedSessionInfo
 from arodonata.mcp.config import ArodonataMCPSettings
@@ -36,6 +36,32 @@ from arodonata.mcp.tools._common import (
 )
 
 logger = arlogi.get_logger(__name__)
+
+
+def _select_store_eviction_key[KeyT: Hashable](
+    store: OrderedDict[KeyT, Any],
+    owner_id: str,
+    owner_of: Callable[[KeyT], str],
+    *,
+    exclude_key: KeyT | None = None,
+    allow_single_peer_fallback: bool = True,
+) -> KeyT | None:
+    """Pick the oldest entry to evict while protecting single-session peer callers (`DA-032`)."""
+    same_owner_key = next((k for k in store if owner_of(k) == owner_id and k != exclude_key), None)
+    if same_owner_key is not None:
+        return same_owner_key
+    owner_counts: dict[str, int] = defaultdict(int)
+    for k in store:
+        owner_counts[owner_of(k)] += 1
+    greedy_peer_key = next(
+        (k for k in store if k != exclude_key and owner_counts.get(owner_of(k), 0) > 1),
+        None,
+    )
+    if greedy_peer_key is not None:
+        return greedy_peer_key
+    if allow_single_peer_fallback:
+        return next((k for k in store if k != exclude_key), None)
+    return None
 
 
 def register_cpcrud_tools(
@@ -72,11 +98,60 @@ def register_cpcrud_tools(
         plan_store[plan_id] = (owner_id, plan_obj, report_obj)
         plan_store.move_to_end(plan_id)
         while len(plan_store) > MAX_STORED_PLANS:
-            same_owner_key = next((k for k, v in plan_store.items() if v[0] == owner_id and k != plan_id), None)
-            evict_key = same_owner_key if same_owner_key is not None else next(iter(plan_store))
+            evict_key = _select_store_eviction_key(
+                plan_store,
+                owner_id,
+                lambda k: plan_store[k][0],
+                exclude_key=plan_id,
+                allow_single_peer_fallback=True,
+            )
+            if evict_key is None:
+                break
             plan_store.pop(evict_key, None)
         if report_obj is not None:
             _record_last_report(owner_id, report_obj)
+
+    async def _discard_staged_entry(
+        client: ArodonataClient, ev_owner: str, ev_mgmt: str, ev_uid: str, ev_info: StagedSessionInfo
+    ) -> None:
+        register_active_mcp_sid(ev_info.sid)
+        try:
+            ev_res = await client.cpcrud.discard_staged_session(
+                ev_mgmt,
+                ev_info.domain_name,
+                session_uid=ev_uid,
+                sid=ev_info.sid,
+                server_ip=ev_info.server_ip,
+                force_disconnect=False,
+            )
+            known_ev_sids = await collect_known_sids(client, ev_mgmt)
+            if ev_info.sid and ev_info.sid not in known_ev_sids:
+                known_ev_sids.append(ev_info.sid)
+            logger.warning(
+                "Evicted oldest CPCRUD staged session due to registry capacity",
+                owner_id=ev_owner,
+                mgmt_name=ev_mgmt,
+                domain=ev_info.domain_name,
+                session_uid=ev_uid,
+                discarded=bool(ev_res.success),
+                error=(
+                    redact_sid(ev_res.error_message, known_sids=known_ev_sids)
+                    if not ev_res.success and ev_res.error_message
+                    else None
+                ),
+            )
+        except Exception as exc:
+            known_ev_sids = await collect_known_sids(client, ev_mgmt)
+            if ev_info.sid and ev_info.sid not in known_ev_sids:
+                known_ev_sids.append(ev_info.sid)
+            logger.warning(
+                "Evicted oldest CPCRUD staged session discard failed",
+                owner_id=ev_owner,
+                mgmt_name=ev_mgmt,
+                domain=ev_info.domain_name,
+                session_uid=ev_uid,
+                error=redact_sid(str(exc), known_sids=known_ev_sids),
+            )
 
     async def _store_staged_session(
         client: ArodonataClient,
@@ -85,52 +160,30 @@ def register_cpcrud_tools(
     ) -> None:
         if not info.session_uid or not info.session_uid.strip():
             return
-        key = (owner_id, info.mgmt_name, normalize_domain_key(info.domain_name), info.session_uid.strip())
+        clean_uid = info.session_uid.strip()
+        key = (owner_id, info.mgmt_name, normalize_domain_key(info.domain_name), clean_uid)
+        if key not in staged_session_store:
+            while len(staged_session_store) >= MAX_STORED_PLANS:
+                evict_key = _select_store_eviction_key(
+                    staged_session_store,
+                    owner_id,
+                    lambda k: k[0],
+                    exclude_key=key,
+                    allow_single_peer_fallback=False,
+                )
+                if evict_key is None:
+                    await shielded_best_effort(_discard_staged_entry(client, owner_id, info.mgmt_name, clean_uid, info))
+                    raise ToolFailure(
+                        f"Staged session registry is full ({MAX_STORED_PLANS} active single-caller sessions); "
+                        "publish or discard an existing staged session before creating another.",
+                        mgmt_name=info.mgmt_name,
+                        domain=info.domain_name,
+                    )
+                ev_info = staged_session_store.pop(evict_key)
+                ev_owner, ev_mgmt, _ev_dom_key, ev_uid = evict_key
+                await _discard_staged_entry(client, ev_owner, ev_mgmt, ev_uid, ev_info)
         staged_session_store[key] = info
         staged_session_store.move_to_end(key)
-        while len(staged_session_store) > MAX_STORED_PLANS:
-            same_owner_key = next((k for k in staged_session_store if k[0] == owner_id and k != key), None)
-            evict_key = same_owner_key if same_owner_key is not None else next(iter(staged_session_store))
-            ev_info = staged_session_store.pop(evict_key)
-            ev_owner, ev_mgmt, _ev_dom_key, ev_uid = evict_key
-            register_active_mcp_sid(ev_info.sid)
-            try:
-                ev_res = await client.cpcrud.discard_staged_session(
-                    ev_mgmt,
-                    ev_info.domain_name,
-                    session_uid=ev_uid,
-                    sid=ev_info.sid,
-                    server_ip=ev_info.server_ip,
-                    force_disconnect=False,
-                )
-                known_ev_sids = await collect_known_sids(client, ev_mgmt)
-                if ev_info.sid and ev_info.sid not in known_ev_sids:
-                    known_ev_sids.append(ev_info.sid)
-                logger.warning(
-                    "Evicted oldest CPCRUD staged session due to registry capacity",
-                    owner_id=ev_owner,
-                    mgmt_name=ev_mgmt,
-                    domain=ev_info.domain_name,
-                    session_uid=ev_uid,
-                    discarded=bool(ev_res.success),
-                    error=(
-                        redact_sid(ev_res.error_message, known_sids=known_ev_sids)
-                        if not ev_res.success and ev_res.error_message
-                        else None
-                    ),
-                )
-            except Exception as exc:
-                known_ev_sids = await collect_known_sids(client, ev_mgmt)
-                if ev_info.sid and ev_info.sid not in known_ev_sids:
-                    known_ev_sids.append(ev_info.sid)
-                logger.warning(
-                    "Evicted oldest CPCRUD staged session discard failed",
-                    owner_id=ev_owner,
-                    mgmt_name=ev_mgmt,
-                    domain=ev_info.domain_name,
-                    session_uid=ev_uid,
-                    error=redact_sid(str(exc), known_sids=known_ev_sids),
-                )
 
     def _resolve_verified_plan(
         plan: dict[str, Any] | None,

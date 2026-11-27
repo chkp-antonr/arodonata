@@ -39,6 +39,10 @@ ALLOWED_QUERY_GROUP_BY_FIELDS: frozenset[str] = frozenset(
         "object_id",
         "service_id",
         "asset_id",
+        "asset_role",
+        "platform_family",
+        "is_policy_target",
+        "is_execution_target",
         "port",
         "ipv4_address",
         "ipv6_address",
@@ -66,6 +70,11 @@ def resolve_query_scopes(
     protocol: str | None = None,
     parent_id: str | None = None,
     parent_asset_id: str | None = None,
+    roles: Sequence[str] | None = None,
+    platforms: Sequence[str] | None = None,
+    is_policy_target: bool | None = None,
+    is_execution_target: bool | None = None,
+    group_by_attrs: Sequence[str] | None = None,
 ) -> tuple[list[str] | None, bool, bool, bool]:
     """Normalize `types` filters and compute `(requested_types, want_objects, want_services, want_assets)`."""
     requested_types: list[str] | None = None
@@ -89,9 +98,19 @@ def resolve_query_scopes(
 
     if requested_types is None:
         has_service_filter = port is not None or protocol is not None
-        has_asset_parent_filter = parent_id is not None or parent_asset_id is not None
-        if has_service_filter or has_asset_parent_filter:
-            return None, False, has_service_filter, has_asset_parent_filter
+        has_asset_filter = (
+            parent_id is not None
+            or parent_asset_id is not None
+            or roles is not None
+            or platforms is not None
+            or is_policy_target is not None
+            or is_execution_target is not None
+            or bool(
+                set(group_by_attrs or ()) & {"asset_role", "platform_family", "is_policy_target", "is_execution_target"}
+            )
+        )
+        if has_service_filter or has_asset_filter:
+            return None, False, has_service_filter, has_asset_filter
         return None, True, False, False
 
     want_objects = any(not t.startswith("service-") and t not in _CANONICAL_ASSET_TYPES_LOWER for t in requested_types)
@@ -131,6 +150,10 @@ def _apply_query_filters(
     target_domains: Sequence[str] | None,
     want_global_dom: bool,
     requested_types: Sequence[str] | None,
+    roles: Sequence[str] | None,
+    platforms: Sequence[str] | None,
+    is_policy_target: bool | None,
+    is_execution_target: bool | None,
     scope_origin: Literal["all", "local", "global"],
     name_pattern: str | None,
     ip_subnet: str | None,
@@ -151,6 +174,34 @@ def _apply_query_filters(
     if requested_types is not None:
         t_set = set(requested_types)
         combined_items = [item for item in combined_items if item.type.lower() in t_set]
+
+    if roles is not None:
+        role_items = [roles] if isinstance(roles, str) else list(roles)
+        role_set = {str(r).strip().lower().replace("-", "_") for r in role_items if str(r or "").strip()}
+        combined_items = [
+            item for item in combined_items if isinstance(item, Asset) and item.asset_role.lower() in role_set
+        ]
+
+    if platforms is not None:
+        plat_items = [platforms] if isinstance(platforms, str) else list(platforms)
+        plat_set = {str(p).strip().lower().replace("-", "_") for p in plat_items if str(p or "").strip()}
+        combined_items = [
+            item for item in combined_items if isinstance(item, Asset) and item.platform_family.lower() in plat_set
+        ]
+
+    if is_policy_target is not None:
+        combined_items = [
+            item
+            for item in combined_items
+            if isinstance(item, Asset) and bool(item.is_policy_target) is bool(is_policy_target)
+        ]
+
+    if is_execution_target is not None:
+        combined_items = [
+            item
+            for item in combined_items
+            if isinstance(item, Asset) and bool(item.is_execution_target) is bool(is_execution_target)
+        ]
 
     if scope_origin == "local":
         combined_items = [
@@ -293,6 +344,8 @@ async def describe_objects_impl(
     obj_type_counts: dict[str, int] = defaultdict(int)
     svc_type_counts: dict[str, int] = defaultdict(int)
     asset_type_counts: dict[str, int] = defaultdict(int)
+    asset_role_counts: dict[str, int] = defaultdict(int)
+    asset_platform_counts: dict[str, int] = defaultdict(int)
     domains_seen: set[str] = set()
     mgmts_seen: set[str] = set()
 
@@ -306,6 +359,8 @@ async def describe_objects_impl(
         mgmts_seen.add(s.mgmt_name)
     for a in assets:
         asset_type_counts[a.type] += 1
+        asset_role_counts[a.asset_role] += 1
+        asset_platform_counts[a.platform_family] += 1
         domains_seen.add(a.domain_name)
         mgmts_seen.add(a.mgmt_name)
 
@@ -318,6 +373,8 @@ async def describe_objects_impl(
         "object_types": dict(sorted(obj_type_counts.items())),
         "service_types": dict(sorted(svc_type_counts.items())),
         "asset_types": dict(sorted(asset_type_counts.items())),
+        "asset_roles": dict(sorted(asset_role_counts.items())),
+        "asset_platforms": dict(sorted(asset_platform_counts.items())),
         "filterable_fields": [
             "id",
             "object_id",
@@ -329,6 +386,10 @@ async def describe_objects_impl(
             "domain_name",
             "original_domain",
             "type",
+            "asset_role",
+            "platform_family",
+            "is_policy_target",
+            "is_execution_target",
             "name",
             "uid",
             "ipv4_address",
@@ -343,6 +404,10 @@ async def describe_objects_impl(
             "domain_name",
             "original_domain",
             "type",
+            "asset_role",
+            "platform_family",
+            "is_policy_target",
+            "is_execution_target",
             "color",
             "protocol",
         ],
@@ -356,6 +421,10 @@ async def query_objects_impl(
     domain_name: str | None = None,
     domains: Sequence[str] | None = None,
     types: Sequence[str] | None = None,
+    roles: Sequence[str] | None = None,
+    platforms: Sequence[str] | None = None,
+    is_policy_target: bool | None = None,
+    is_execution_target: bool | None = None,
     scope_origin: Literal["all", "local", "global"] = "all",
     name_pattern: str | None = None,
     ip_subnet: str | None = None,
@@ -410,6 +479,11 @@ async def query_objects_impl(
         protocol=protocol,
         parent_id=parent_id,
         parent_asset_id=parent_asset_id,
+        roles=roles,
+        platforms=platforms,
+        is_policy_target=is_policy_target,
+        is_execution_target=is_execution_target,
+        group_by_attrs=[ca for ca, _ in group_specs],
     )
 
     if cache_mode != "cache":
@@ -479,6 +553,10 @@ async def query_objects_impl(
         target_domains=target_domains,
         want_global_dom=want_global_dom,
         requested_types=requested_types,
+        roles=roles,
+        platforms=platforms,
+        is_policy_target=is_policy_target,
+        is_execution_target=is_execution_target,
         scope_origin=scope_origin,
         name_pattern=name_pattern,
         ip_subnet=ip_subnet,

@@ -410,7 +410,10 @@ def compute_service_diff(
             diffs["port"] = FieldChange(field="port", old_value=existing.port, new_value=req_port)
             update_payload["port"] = req_port
 
-    req_proto = desired.get("protocol") or desired.get("ip_protocol") or desired.get("ip-protocol")
+    req_proto = next(
+        (desired[k] for k in ("protocol", "ip_protocol", "ip-protocol") if k in desired and desired[k] is not None),
+        None,
+    )
     if req_proto is not None:
         req_proto_str = str(req_proto).strip()
         exist_proto_str = str(existing.protocol or "").strip()
@@ -924,13 +927,22 @@ def _diff_policy_rule(
                     update_payload[kebab_k] = bool(raw_neg)
 
         if "inline_layer" in desired or "inline-layer" in desired:
-            req_inline = desired.get("inline_layer") or desired.get("inline-layer")
-            exist_inline = existing.inline_layer_name or existing.inline_layer_uid or raw_exist.get("inline-layer")
-            if isinstance(req_inline, str) and req_inline.strip() != str(exist_inline or "").strip():
+            req_inline = desired["inline_layer"] if "inline_layer" in desired else desired.get("inline-layer")
+            raw_exist_inline: str | None = existing.inline_layer_name or existing.inline_layer_uid
+            if not raw_exist_inline:
+                raw_il_val = raw_exist.get("inline-layer")
+                if isinstance(raw_il_val, Mapping):
+                    raw_exist_inline = str(raw_il_val.get("name") or raw_il_val.get("uid") or "") or None
+                elif raw_il_val is not None:
+                    raw_exist_inline = str(raw_il_val)
+            if raw_exist_inline and raw_exist_inline in eff_obj_dict:
+                raw_exist_inline = str(eff_obj_dict[raw_exist_inline].get("name") or raw_exist_inline)
+            if req_inline is not None and str(req_inline).strip() != str(raw_exist_inline or "").strip():
+                req_inline_clean = str(req_inline).strip()
                 diffs["inline-layer"] = FieldChange(
-                    field="inline-layer", old_value=exist_inline, new_value=req_inline.strip()
+                    field="inline-layer", old_value=raw_exist_inline, new_value=req_inline_clean
                 )
-                update_payload["inline-layer"] = req_inline.strip()
+                update_payload["inline-layer"] = req_inline_clean
 
     if isinstance(existing, HttpsRuleEntry):
         if "site_category" in desired or "site-category" in desired:

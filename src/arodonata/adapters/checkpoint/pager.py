@@ -18,6 +18,8 @@ from arodonata.core.telemetry import span_attrs, traced
 DEFAULT_PAGE_LIMIT: int = 300
 MAX_PAGE_LIMIT: int = 500
 BOUNDARY_WINDOW_RADIUS: int = 10
+DEFAULT_MAX_QUERY_PAGES: int = 5000
+DEFAULT_MAX_QUERY_OBJECTS: int = 1_000_000
 
 # Commands whose paginated responses are returned inside polled `show-task` payloads (`tasks[].task-details[]`)
 TASK_QUERY_COMMANDS: frozenset[str] = frozenset(
@@ -110,6 +112,14 @@ class _DiscontinuityError(Exception):
     """Internal signal that a pagination pass violated `from`/`to`/`total` continuity."""
 
 
+class _PaginationLimitExceededError(Exception):
+    """Internal signal that a pagination pass exceeded safety page or object ceilings."""
+
+    def __init__(self, message: str, *, total: int = 0) -> None:
+        super().__init__(message)
+        self.total = total
+
+
 @traced
 async def paginate_objects(
     command: str,
@@ -119,6 +129,8 @@ async def paginate_objects(
     payload: dict[str, Any] | None = None,
     limit: int = DEFAULT_PAGE_LIMIT,
     collection_key: str | None = None,
+    max_pages: int = DEFAULT_MAX_QUERY_PAGES,
+    max_objects: int = DEFAULT_MAX_QUERY_OBJECTS,
 ) -> ApiQueryResult:
     """Execute a continuity-verified paginated Check Point query (`api_query`).
 
@@ -149,6 +161,16 @@ async def paginate_objects(
                 limit=effective_limit,
                 is_task_query=is_task_query,
                 collection_key=collection_key,
+                max_pages=max_pages,
+                max_objects=max_objects,
+            )
+        except _PaginationLimitExceededError as exc:
+            return ApiQueryResult(
+                success=False,
+                objects=[],
+                total=exc.total,
+                error_message=str(exc),
+                code="paging_limit_exceeded",
             )
         except _DiscontinuityError as exc:
             last_inconsistency_reason = str(exc)
@@ -173,13 +195,22 @@ async def _run_single_pagination_pass(
     limit: int,
     is_task_query: bool,
     collection_key: str | None,
+    max_pages: int = DEFAULT_MAX_QUERY_PAGES,
+    max_objects: int = DEFAULT_MAX_QUERY_OBJECTS,
 ) -> ApiQueryResult:
     offset = initial_offset
     expected_total: int | None = None
     collected: list[dict[str, Any]] = []
     seen_uids: set[str] = set()
+    pages_fetched = 0
 
     while True:
+        if pages_fetched >= max_pages:
+            raise _PaginationLimitExceededError(
+                f"Pagination exceeded max_query_pages={max_pages} for {command!r}.",
+                total=expected_total or 0,
+            )
+        pages_fetched += 1
         req_payload = dict(base_payload)
         req_payload["limit"] = limit
         req_payload["offset"] = offset
@@ -250,6 +281,11 @@ async def _run_single_pagination_pass(
                 continue
             seen_uids.add(uid)
             collected.append(item)
+            if len(collected) > max_objects:
+                raise _PaginationLimitExceededError(
+                    f"Pagination exceeded max_query_objects={max_objects} for {command!r}.",
+                    total=expected_total or 0,
+                )
 
         # If a duplicate UID occurred on this page (boundary swap of equal-named objects),
         # re-read a small window (up to 10 objects on each side of the boundary) in a single request.
@@ -311,6 +347,8 @@ async def _run_single_pagination_pass(
 
 __all__ = [
     "BOUNDARY_WINDOW_RADIUS",
+    "DEFAULT_MAX_QUERY_OBJECTS",
+    "DEFAULT_MAX_QUERY_PAGES",
     "DEFAULT_PAGE_LIMIT",
     "MAX_PAGE_LIMIT",
     "TASK_QUERY_COMMANDS",

@@ -70,6 +70,14 @@ def _open_reconcile_lock(provider: Any, key: str) -> Any:
         return provider.lock(key)
 
 
+def _normalize_classification_filter(values: Sequence[str] | str | None) -> set[str] | None:
+    """Normalize optional `roles` / `platforms` filter inputs into a lowercase underscore set."""
+    if values is None:
+        return None
+    items = [values] if isinstance(values, str) else list(values)
+    return {str(v).strip().lower().replace("-", "_") for v in items if str(v or "").strip()}
+
+
 class AssetRefreshService:
     """Synchronizes and queries cached gateway, cluster, VSX, and management server assets (`assets`)."""
 
@@ -289,6 +297,8 @@ class AssetRefreshService:
         domain: str | None = None,
         *,
         types: Sequence[str] | None = None,
+        roles: Sequence[str] | None = None,
+        platforms: Sequence[str] | None = None,
         include_global: bool = False,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
@@ -296,6 +306,10 @@ class AssetRefreshService:
         """Ensure assets are fresh (unless `cache_mode="cache"`), then return cached `Asset` models."""
         expanded_types = expand_asset_types(types) if types is not None else None
         if expanded_types is not None and not expanded_types:
+            return []
+        role_set = _normalize_classification_filter(roles)
+        platform_set = _normalize_classification_filter(platforms)
+        if (role_set is not None and not role_set) or (platform_set is not None and not platform_set):
             return []
 
         if cache_mode != "cache":
@@ -317,6 +331,10 @@ class AssetRefreshService:
             assets = [a for a in assets if a.type.lower() in lowered_set]
         if not include_global and domain is None:
             assets = [a for a in assets if a.domain_name != "Global"]
+        if role_set is not None:
+            assets = [a for a in assets if a.asset_role.lower() in role_set]
+        if platform_set is not None:
+            assets = [a for a in assets if a.platform_family.lower() in platform_set]
         return assets
 
 

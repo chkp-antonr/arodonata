@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import sys
 import tomllib
@@ -190,3 +191,28 @@ def test_sdk_quickref_matches_exports_and_is_deterministic() -> None:
     assert "arlogi.setup_logging(" in out1
     assert "json_file_only=False" in out1
     assert "3-Tier Check Point API Lookup Ladder" in out1
+
+
+@pytest.mark.spec("SCN-AIBUILD-003-2")
+def test_sdk_quickref_valid_lambda_defaults_and_full_testing_methods() -> None:
+    """Verify lambda default_factory unparsing produces valid Python and testing classes are not truncated."""
+    mod = _load_build_docs_module()
+    quickref = mod.build_sdk_quickref()
+    disk_quickref = (REPO_ROOT / "docs-notebooklm" / "05-sdk-quickref.md").read_text(encoding="utf-8")
+    assert disk_quickref == quickref
+
+    # No invalid `lambda: ...()` syntax anywhere in generated quickref
+    assert "lambda:" not in quickref
+    tls_line = next(line for line in quickref.splitlines() if line.startswith("tls_known_hosts_path:"))
+    assert "lambda" not in tls_line
+    default_expr = tls_line.split(" = ", 1)[1]
+    ast.parse(default_expr, mode="eval")
+
+    replay_api_sigs = mod._extract_class_method_sigs("testing/replay_mock.py", "FileReplayApiMock")
+    mock_http_sigs = mod._extract_class_method_sigs("testing/mock_server.py", "CheckPointReplayHttpServer")
+    assert len(replay_api_sigs) > 8
+    assert len(mock_http_sigs) > 8
+    for sig in replay_api_sigs:
+        assert sig in quickref, f"Missing FileReplayApiMock method in quickref: {sig}"
+    for sig in mock_http_sigs:
+        assert sig in quickref, f"Missing CheckPointReplayHttpServer method in quickref: {sig}"

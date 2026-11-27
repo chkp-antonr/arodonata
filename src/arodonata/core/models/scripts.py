@@ -179,6 +179,10 @@ class RepositoryScriptStatus(BaseModel):
     error_code: str | None = None
     error: str | None = None
 
+    def model_post_init(self, __context: Any) -> None:
+        if self.error:
+            self.error = redact_sid(self.error)
+
 
 class EnsureRepositoryScriptResult(BaseModel):
     """Result of idempotently ensuring a repository script matches the desired body."""

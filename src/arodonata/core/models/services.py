@@ -56,7 +56,7 @@ class CPService(BaseModel):
         name = str(data.get("name") or "")
         svc_type = str(data.get("type") or "service-other")
         port_raw = data.get("port")
-        protocol_raw = data.get("protocol") or data.get("ip-protocol")
+        protocol_raw = next((data[k] for k in ("protocol", "ip-protocol") if k in data and data[k] is not None), None)
 
         return cls(
             id=format_composite_id(mgmt_name, domain_name, uid),

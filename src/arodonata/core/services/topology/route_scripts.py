@@ -397,9 +397,10 @@ def resolve_gateway_cli_targets(
     - `simple-cluster` / `CpmiGatewayCluster` -> each `cluster-member` linked to the cluster (or the cluster itself if no members exist in cache)
     - `virtual-system` / `CpmiVsNetobj` / `CpmiVsClusterNetobj` -> the physical VSX parent (`VS0`) or its cluster members, carrying `vsid` and `vs_name`
     """
-    by_uid: dict[str, Asset] = {a.uid: a for a in all_assets}
-    by_id: dict[str, Asset] = {a.id: a for a in all_assets}
-    by_asset_id: dict[str, Asset] = {a.asset_id: a for a in all_assets}
+    scoped_assets = [a for a in all_assets if a.mgmt_name == gateway_asset.mgmt_name]
+    by_uid: dict[str, Asset] = {a.uid: a for a in scoped_assets}
+    by_id: dict[str, Asset] = {a.id: a for a in scoped_assets}
+    by_asset_id: dict[str, Asset] = {a.asset_id: a for a in scoped_assets}
 
     is_vs = "virtual-system" in gateway_asset.type.lower() or gateway_asset.type in (
         "vs-netobj",
@@ -446,7 +447,7 @@ def resolve_gateway_cli_targets(
             seen_member_uids.add(m_asset.uid)
             member_assets.append(m_asset)
 
-    for other in all_assets:
+    for other in scoped_assets:
         if other.uid in seen_member_uids or other.uid == execution_root.uid:
             continue
         if (

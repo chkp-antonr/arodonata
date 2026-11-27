@@ -56,3 +56,10 @@ The documentation bundle build MUST generate a deterministic, compact Markdown S
 - **WHEN** the documentation bundle build generates the compact SDK quick-reference
 - **THEN** the output Markdown SHALL match `arodonata.__version__` and include verified signatures and model fields for `ArodonataClient`, `Asset`, `CPObject`, `CPService`, `ScriptRepositoryService`, `CPCRUDService`, and `ApiReferenceEngine`
 - **AND** re-running the generator without source edits SHALL produce byte-identical output
+
+#### Scenario: SCN-AIBUILD-003-2 — Valid default-factory rendering and complete arodonata.testing method coverage
+
+- **GIVEN** Pydantic fields using `lambda` `default_factory` expressions (including `ArodonataSettings.tls_known_hosts_path`) and public methods on `FileReplayApiMock` and `CheckPointReplayHttpServer`
+- **WHEN** the documentation bundle build generates `docs-notebooklm/05-sdk-quickref.md`
+- **THEN** lambda-backed defaults SHALL render valid Python expressions without invalid `lambda: ...()` syntax
+- **AND** `FileReplayApiMock` and `CheckPointReplayHttpServer` sections SHALL include all public methods and properties without `[:8]` truncation

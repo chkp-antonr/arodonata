@@ -62,27 +62,23 @@ def _get_v2_cache(client: ArodonataClient) -> CachePort:
     return client.cache
 
 
-async def _upgrade_uninitialized_cache_mode(
-    client: ArodonataClient,
+async def _is_domain_uninitialized(
+    v2_cache: CachePort,
     mgmt_name: str | None,
     domain: str | None,
     scope: Literal["domains", "objects", "services", "assets"],
-    mode: CacheMode,
-) -> CacheMode:
-    """Upgrade `cache_mode='cache'` to `'smart'` when `scope` has never been synced and holds zero rows."""
-    if mode != "cache":
-        return mode
-    v2_cache = _get_v2_cache(client)
+) -> bool:
+    """Return `True` when `scope` has never been synced and holds zero rows for `(mgmt_name, domain)`."""
     states = await v2_cache.list_sync_states(
         mgmt_name=mgmt_name,
         domain_name=domain if domain else None,
         scope=scope,
     )
     if states:
-        return mode
+        return False
     if scope == "domains":
         existing_domains = await v2_cache.get_domains(mgmt_name=mgmt_name, include_global=True)
-        return mode if existing_domains else "smart"
+        return not bool(existing_domains)
     if scope == "objects":
         topo_states = await v2_cache.list_sync_states(
             mgmt_name=mgmt_name,
@@ -90,7 +86,7 @@ async def _upgrade_uninitialized_cache_mode(
             scope="topology",
         )
         if topo_states:
-            return "smart"
+            return True
         existing: Sequence[Any] = await v2_cache.get_objects(
             mgmt_name=mgmt_name, domain_name=domain if domain else None
         )
@@ -98,9 +94,29 @@ async def _upgrade_uninitialized_cache_mode(
         existing = await v2_cache.get_services(mgmt_name=mgmt_name, domain_name=domain if domain else None)
     else:
         existing = await v2_cache.get_assets(mgmt_name=mgmt_name, domain_name=domain if domain else None)
-    if existing:
+    return not bool(existing)
+
+
+async def _upgrade_uninitialized_cache_mode(
+    client: ArodonataClient,
+    mgmt_name: str | None,
+    domain: str | None,
+    scope: Literal["domains", "objects", "services", "assets"],
+    mode: CacheMode,
+    *,
+    domains: Sequence[str] | None = None,
+) -> CacheMode:
+    """Upgrade `cache_mode='cache'` to `'smart'` when `scope` has never been synced and holds zero rows."""
+    if mode != "cache":
         return mode
-    return "smart"
+    v2_cache = _get_v2_cache(client)
+    target_domains = [d.strip() for d in domains if d and d.strip()] if (domain is None and domains) else None
+    if target_domains:
+        for dom_name in target_domains:
+            if await _is_domain_uninitialized(v2_cache, mgmt_name, dom_name, scope):
+                return "smart"
+        return mode
+    return "smart" if await _is_domain_uninitialized(v2_cache, mgmt_name, domain, scope) else mode
 
 
 def _is_sync_state_fresh(

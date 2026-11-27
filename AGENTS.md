@@ -21,9 +21,12 @@ arodonata-v2/
 │   └── specs/                # Deployed library capabilities
 ├── scripts/                  # [TRACKED] Repository tooling (`check_spec_traceability.py`)
 ├── docs/
-│   ├── guides/               # [TRACKED] Architecture, usage, and integration guides
-│   ├── troubleshooting/      # [TRACKED] Post-mortems, Check Point API quirks, knowledge base
+│   ├── architecture/         # [TRACKED] Architecture, database schema, caching, sessions, CPCRUD
+│   ├── guides/               # [TRACKED] Usage, mock/replay, and integration guides
+│   ├── scripts/              # [TRACKED] Documentation bundle build scripts (`build_notebooklm_docs.py`)
+│   ├── troubleshooting/      # [TRACKED] Post-mortems, Check Point API & ops quirks, knowledge base
 │   └── _notes/               # [IGNORED] Scratchpads, raw LLM transcripts, and temporary notes
+├── docs-notebooklm/          # [TRACKED] Consolidated LLM/NotebookLM knowledge bundles (`01..05.md`)
 └── README.md                 # [TRACKED] Project entry point
 ```
 

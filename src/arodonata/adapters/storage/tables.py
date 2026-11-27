@@ -271,6 +271,14 @@ class AssetRecord(SQLModel, table=True):
         default_factory=dict,
         sa_column=Column(JSON, nullable=False),
     )
+    management_blades: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
+    asset_role: str | None = Field(default=None, index=True)
+    platform_family: str | None = Field(default=None, index=True)
+    is_policy_target: bool | None = Field(default=None, index=True)
+    is_execution_target: bool | None = Field(default=None, index=True)
     comments: str = Field(default="")
     color: str | None = Field(default=None)
     raw_data: dict[str, Any] = Field(

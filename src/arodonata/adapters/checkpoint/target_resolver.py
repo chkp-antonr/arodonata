@@ -189,7 +189,8 @@ async def fetch_domain_topology_from_mds(
         if not retried_expired and cmd == "show-domains" and is_session_expired_result(res):
             retried_expired = True
             expired_identity = await resolve_identity_fn()
-            await cache.evict_sid(mgmt_name, SYSTEM_DOMAIN_KEY, auth_identity=expired_identity)
+            if expired_identity is not None:
+                await cache.evict_sid(mgmt_name, SYSTEM_DOMAIN_KEY, auth_identity=expired_identity)
             sys_sid, sys_ip = await get_readonly_session_fn(
                 mgmt_name,
                 None,

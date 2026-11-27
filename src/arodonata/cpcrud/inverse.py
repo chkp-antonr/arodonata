@@ -104,11 +104,21 @@ def _real_uid(*candidates: Any) -> str | None:
     return None
 
 
-def _restore_empty_groups_tags(op: dict[str, Any], action: PlannedAction) -> None:
-    """Explicitly emit `groups: []` / `tags: []` when mutated from empty prior state."""
+def _restore_empty_groups_tags(op: dict[str, Any], action: PlannedAction, *, is_update: bool = True) -> None:
+    """Explicitly emit empty defaults (`[]`/`""`) when mutated from empty prior state on rollback."""
     for field_key in ("groups", "tags"):
         if (field_key in action.diffs or field_key in action.payload) and field_key not in op:
             op[field_key] = []
+    if is_update:
+        if (
+            "additional-categories" in action.diffs
+            or "additional_categories" in action.diffs
+            or "additional-categories" in action.payload
+            or "additional_categories" in action.payload
+        ) and "additional-categories" not in op:
+            op["additional-categories"] = []
+        if ("description" in action.diffs or "description" in action.payload) and "description" not in op:
+            op["description"] = ""
 
 
 def _invert_single_action(
@@ -138,37 +148,62 @@ def _invert_single_action(
         return ("rules", rule_op) if rule_op is not None else None
 
     if obj_type in ("group", "service-group"):
-        grp_op = _invert_group_action(action, effective_outcome, prior, created_uid)
+        grp_op = _invert_entity_action(
+            action,
+            effective_outcome,
+            prior,
+            created_uid,
+            fields=_GROUP_INVERSE_FIELDS,
+            include_members=True,
+            restore_empty_on_delete=True,
+        )
         return ("groups", grp_op) if grp_op is not None else None
 
     if obj_type in SERVICE_ITEM_TYPES:
-        svc_op = _invert_service_action(action, effective_outcome, prior, created_uid)
+        svc_op = _invert_entity_action(
+            action,
+            effective_outcome,
+            prior,
+            created_uid,
+            fields=_SERVICE_INVERSE_FIELDS,
+            restore_empty_on_delete=True,
+        )
         return ("services", svc_op) if svc_op is not None else None
 
     if obj_type in OBJECT_ITEM_TYPES:
-        obj_op = _invert_object_action(action, effective_outcome, prior, created_uid)
+        obj_op = _invert_entity_action(
+            action,
+            effective_outcome,
+            prior,
+            created_uid,
+            fields=_OBJECT_INVERSE_FIELDS,
+        )
         return ("objects", obj_op) if obj_op is not None else None
 
     return None
 
 
-def _invert_object_action(
+def _invert_entity_action(
     action: PlannedAction,
     outcome: Outcome,
     prior: dict[str, Any],
     target_uid: str | None,
+    *,
+    fields: tuple[str, ...],
+    include_members: bool = False,
+    restore_empty_on_delete: bool = False,
 ) -> dict[str, Any] | None:
-    obj_type = action.object_type
+    """Invert a `CREATE`, `UPDATE`, or `DELETE` action for an object, service, or group entity."""
+    entity_type = action.object_type
     if outcome == Outcome.CREATE:
         op: dict[str, Any] = {
             "operation": "delete",
-            "type": obj_type,
+            "type": entity_type,
             "name": action.resolved_name or action.name,
         }
-        if target_uid:
-            real_uid = _real_uid(target_uid)
-            if real_uid:
-                op["uid"] = real_uid
+        uid_val = _real_uid(target_uid)
+        if uid_val:
+            op["uid"] = uid_val
         return op
 
     if outcome == Outcome.UPDATE:
@@ -178,7 +213,7 @@ def _invert_object_action(
         prior_name = str(prior.get("name") or action.name)
         op = {
             "operation": "set",
-            "type": obj_type,
+            "type": entity_type,
             "name": current_name,
         }
         uid_val = _real_uid(target_uid, prior.get("uid"))
@@ -186,114 +221,10 @@ def _invert_object_action(
             op["uid"] = uid_val
         if prior_name != current_name:
             op["new-name"] = prior_name
-
-        # Restore prior field values
-        _copy_prior_fields(op, prior, _OBJECT_INVERSE_FIELDS)
-        _restore_empty_groups_tags(op, action)
-        return op
-
-    if outcome == Outcome.DELETE:
-        if not prior:
-            return None
-        op = {
-            "operation": "add",
-            "type": obj_type,
-            "name": str(prior.get("name") or action.name),
-        }
-        _copy_prior_fields(op, prior, _OBJECT_INVERSE_FIELDS)
-        return op
-
-    return None
-
-
-def _invert_service_action(
-    action: PlannedAction,
-    outcome: Outcome,
-    prior: dict[str, Any],
-    target_uid: str | None,
-) -> dict[str, Any] | None:
-    svc_type = action.object_type
-    if outcome == Outcome.CREATE:
-        op: dict[str, Any] = {
-            "operation": "delete",
-            "type": svc_type,
-            "name": action.resolved_name or action.name,
-        }
-        if target_uid and not target_uid.startswith("planned:"):
-            op["uid"] = target_uid
-        return op
-
-    if outcome == Outcome.UPDATE:
-        if not prior:
-            return None
-        current_name = action.resolved_name or action.name
-        prior_name = str(prior.get("name") or action.name)
-        op = {
-            "operation": "set",
-            "type": svc_type,
-            "name": current_name,
-        }
-        uid_val = _real_uid(target_uid, prior.get("uid"))
-        if uid_val:
-            op["uid"] = uid_val
-        if prior_name != current_name:
-            op["new-name"] = prior_name
-
-        _copy_prior_fields(op, prior, _SERVICE_INVERSE_FIELDS)
-        _restore_empty_groups_tags(op, action)
-        return op
-
-    if outcome == Outcome.DELETE:
-        if not prior:
-            return None
-        op = {
-            "operation": "add",
-            "type": svc_type,
-            "name": str(prior.get("name") or action.name),
-        }
-        _copy_prior_fields(op, prior, _SERVICE_INVERSE_FIELDS)
-        _restore_empty_groups_tags(op, action)
-        return op
-
-    return None
-
-
-def _invert_group_action(
-    action: PlannedAction,
-    outcome: Outcome,
-    prior: dict[str, Any],
-    target_uid: str | None,
-) -> dict[str, Any] | None:
-    grp_type = action.object_type
-    if outcome == Outcome.CREATE:
-        op: dict[str, Any] = {
-            "operation": "delete",
-            "type": grp_type,
-            "name": action.resolved_name or action.name,
-        }
-        if target_uid and not target_uid.startswith("planned:"):
-            op["uid"] = target_uid
-        return op
-
-    if outcome == Outcome.UPDATE:
-        if not prior:
-            return None
-        current_name = action.resolved_name or action.name
-        prior_name = str(prior.get("name") or action.name)
-        op = {
-            "operation": "set",
-            "type": grp_type,
-            "name": current_name,
-        }
-        uid_val = _real_uid(target_uid, prior.get("uid"))
-        if uid_val:
-            op["uid"] = uid_val
-        if prior_name != current_name:
-            op["new-name"] = prior_name
-        if "members" in prior and isinstance(prior["members"], list):
+        if include_members and "members" in prior and isinstance(prior["members"], list):
             op["members"] = [str(m) for m in prior["members"]]
-        _copy_prior_fields(op, prior, _GROUP_INVERSE_FIELDS)
-        _restore_empty_groups_tags(op, action)
+        _copy_prior_fields(op, prior, fields)
+        _restore_empty_groups_tags(op, action, is_update=True)
         return op
 
     if outcome == Outcome.DELETE:
@@ -301,13 +232,14 @@ def _invert_group_action(
             return None
         op = {
             "operation": "add",
-            "type": grp_type,
+            "type": entity_type,
             "name": str(prior.get("name") or action.name),
         }
-        if "members" in prior and isinstance(prior["members"], list):
+        if include_members and "members" in prior and isinstance(prior["members"], list):
             op["members"] = [str(m) for m in prior["members"]]
-        _copy_prior_fields(op, prior, _GROUP_INVERSE_FIELDS)
-        _restore_empty_groups_tags(op, action)
+        _copy_prior_fields(op, prior, fields)
+        if restore_empty_on_delete:
+            _restore_empty_groups_tags(op, action, is_update=False)
         return op
 
     return None

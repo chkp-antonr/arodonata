@@ -40,14 +40,15 @@ uv add "arodonata @ git+https://github.com/chkp-antonr/arodonata.git@master_v1"
   - [`01-guide-and-concepts.md`](docs-notebooklm/01-guide-and-concepts.md) — complete narrative architecture, database schema, MCP server, and user guides.
   - [`02-api-reference.md`](docs-notebooklm/02-api-reference.md) — full public API reference extracted directly from `src/arodonata` via AST.
   - [`03-examples-and-recipes.md`](docs-notebooklm/03-examples-and-recipes.md) — all 13 runnable examples (`01`..`13`) with inline source code.
-  - [`04-capabilities-db-mcp-and-openspec.md`](docs-notebooklm/04-capabilities-db-mcp-and-openspec.md) — downstream integration guide, SQLModel table definitions (`tables.py`), MCP tool specs, and all 12 OpenSpec system specifications.
+  - [`04-capabilities-db-mcp-and-openspec.md`](docs-notebooklm/04-capabilities-db-mcp-and-openspec.md) — downstream integration guide, SQLModel table definitions (`tables.py`), MCP tool specs, and all 13 OpenSpec system specifications.
+  - [`05-sdk-quickref.md`](docs-notebooklm/05-sdk-quickref.md) — compact AST-derived SDK & CLI quick-reference for AI coding agents.
 - **Runnable Examples (`examples/`)**: Progressive scripts (`01_basic_queries.py` through `13_gateway_topology_matching.py`) — see [examples/README.md](examples/README.md) and [examples/README_CRUD.md](examples/README_CRUD.md).
 - **Engineering Standards**: See [AGENTS.md](AGENTS.md) for Spec-Driven Development (`openspec/`), quality gates, and git workflow rules.
 
 ### Rebuilding Documentation Artifacts
 
 ```bash
-# 1. Regenerate NotebookLM bundles (docs-notebooklm/01..04.md) and build-docs staging bundle
+# 1. Regenerate NotebookLM bundles (docs-notebooklm/01..05.md) and build-docs staging bundle
 uv run python docs/scripts/build_notebooklm_docs.py
 
 # 2. Build standalone portable HTML via global build-docs

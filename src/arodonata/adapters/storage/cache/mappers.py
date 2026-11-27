@@ -249,6 +249,18 @@ def _cp_service_to_row(svc: CPService) -> dict[str, Any]:
 
 
 def _record_to_asset(rec: AssetRecord) -> Asset:
+    extra_kwargs: dict[str, Any] = {}
+    if rec.management_blades is not None:
+        extra_kwargs["management_blades"] = dict(rec.management_blades)
+    if rec.asset_role is not None:
+        extra_kwargs["asset_role"] = rec.asset_role
+    if rec.platform_family is not None:
+        extra_kwargs["platform_family"] = rec.platform_family
+    if rec.is_policy_target is not None:
+        extra_kwargs["is_policy_target"] = bool(rec.is_policy_target)
+    if rec.is_execution_target is not None:
+        extra_kwargs["is_execution_target"] = bool(rec.is_execution_target)
+
     return Asset(
         id=rec.id,
         asset_id=rec.asset_id or f"{rec.mgmt_name}:{rec.domain_name}:{rec.name}",
@@ -277,6 +289,7 @@ def _record_to_asset(rec: AssetRecord) -> Asset:
         color=rec.color,
         raw_data=dict(rec.raw_data or {}),
         updated_at=_ensure_utc(rec.updated_at) or utc_now(),
+        **extra_kwargs,
     )
 
 
@@ -305,6 +318,11 @@ def _asset_to_row(asset: Asset) -> dict[str, Any]:
         "virtual_system_asset_ids": list(asset.virtual_system_asset_ids),
         "interfaces": list(asset.interfaces),
         "network_security_blades": dict(asset.network_security_blades),
+        "management_blades": dict(asset.management_blades),
+        "asset_role": asset.asset_role,
+        "platform_family": asset.platform_family,
+        "is_policy_target": bool(asset.is_policy_target),
+        "is_execution_target": bool(asset.is_execution_target),
         "comments": asset.comments,
         "color": asset.color,
         "raw_data": dict(asset.raw_data),

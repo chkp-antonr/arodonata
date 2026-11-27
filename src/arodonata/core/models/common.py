@@ -71,12 +71,15 @@ ASSET_TYPE_ALIASES: dict[str, str] = {
     "vsx": "vsx-gateway",
     "vsx_gateway": "vsx-gateway",
     "vsx_cluster": "vsx-cluster",
+    "vsx_cluster_member": "vsx-cluster-member",
     "vs": "virtual-system",
     "virtual_system": "virtual-system",
+    "vs_netobj": "vs-netobj",
     "server": "checkpoint-host",
     "mgmt": "checkpoint-host",
     "host-ckp": "checkpoint-host",
     "checkpoint_host": "checkpoint-host",
+    "cpmimds": "mds",
     "interoperable": "interoperable-device",
     "interoperable_device": "interoperable-device",
 }
@@ -92,6 +95,7 @@ CANONICAL_ASSET_TYPES: frozenset[str] = frozenset(
         "virtual-system",
         "vs-netobj",
         "checkpoint-host",
+        "mds",
         "interoperable-device",
         "CpmiGatewayPlain",
         "CpmiGatewayCluster",
@@ -102,6 +106,7 @@ CANONICAL_ASSET_TYPES: frozenset[str] = frozenset(
         "CpmiVsNetobj",
         "CpmiVsClusterNetobj",
         "CpmiHostCkp",
+        "CpmiMds",
     }
 )
 
@@ -149,6 +154,10 @@ _ASSET_EQUIVALENT_GROUPS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = 
         ("checkpoint-host", "CpmiHostCkp"),
     ),
     (
+        ("mds", "cpmimds"),
+        ("mds", "CpmiMds"),
+    ),
+    (
         ("interoperable", "interoperable-device", "interoperable_device"),
         ("interoperable-device",),
     ),
@@ -167,6 +176,8 @@ QUERY_GROUP_BY_ALIASES: dict[str, str] = {
     "asset_type": "type",
     "service_type": "type",
     "orig_domain": "original_domain",
+    "role": "asset_role",
+    "platform": "platform_family",
 }
 
 

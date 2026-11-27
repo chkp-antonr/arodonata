@@ -1397,8 +1397,120 @@ async def test_login_coordinator_omits_obsolete_startup_seed_residue(tmp_path: P
     server = FakeCheckpointServer()
     rig = FakeTimeRig()
     client = _build_client(tmp_path, server, rig)
+    await client._db.initialize()
     coord = client.login_coordinator
     assert not hasattr(coord, "adopt_dedicated_sid")
     assert not hasattr(coord, "has_inflight_or_cached_login")
     assert not hasattr(coord, "_inflight_logins")
+    await client.close()
+
+
+@pytest.mark.spec("SCN-SESS-015-1")
+async def test_session_cleaner_propagates_server_identity_error_and_keepalive_isolation(tmp_path: Path) -> None:
+    """DA-009 & DA-016: SessionCleaner propagates ServerIdentityError; keepalive_sid avoids cross-principal fallback and uses dedicated IP."""
+    from arodonata.core.errors import CertificateMismatchError
+
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    client = _build_client(tmp_path, server, rig)
+    await client._db.initialize()
+    coord = client.login_coordinator
+
+    async def _fail_cert(*_args: Any, **_kwargs: Any) -> tuple[str, str, str | None]:
+        raise CertificateMismatchError("cert mismatch")
+
+    orig_create = coord.create_dedicated_session
+    coord.create_dedicated_session = _fail_cert  # type: ignore[method-assign]
+    with pytest.raises(CertificateMismatchError):
+        await client._session_cleaner.cleanup_server_sessions(
+            "mds1",
+            auth=AuthContext(api_key="cleaner-key"),
+        )
+    coord.create_dedicated_session = orig_create  # type: ignore[method-assign]
+
+    # Seed another principal's SID in sid_cache; keepalive_sid without AuthContext must not touch it
+    other_auth = AuthContext(api_key="other-principal-key")
+    await client.cache.upsert_sid(
+        SIDCacheEntry(
+            id=f"mds1:System Data:{other_auth.identity_key}",
+            mgmt_name="mds1",
+            domain_name="System Data",
+            sid="sid_other_principal",
+            server_ip="10.0.0.1",
+            auth_identity=other_auth.identity_key,
+            created_at=rig.now(),
+            last_used_at=rig.now(),
+            expires_at=rig.now() + timedelta(seconds=600),
+        )
+    )
+    assert await coord.keepalive_sid("mds1") is False
+
+    # Dedicated SID without server_ip routes keepalive to active dedicated IP
+    server.handlers.append((200, {"sid": "sid_ded_keepalive", "uid": "u-ded"}))
+    await client.cache.upsert_domains(
+        [
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="dom-ded",
+                name="Corp",
+                domain_type="domain",
+                active_ip="10.0.2.50",
+                active_mds_ip="10.0.2.1",
+            )
+        ]
+    )
+    _, fp_ded = _make_der()
+    client.trust_policy._store.record("10.0.2.50", 443, fp_ded, source="known-identity", persist=False)
+    server.handlers.append((200, {"message": "OK"}))
+    ded_sid, ded_ip, _ = await coord.create_dedicated_session("mds1", "Corp", auth=other_auth)
+    assert ded_ip == "10.0.2.50"
+    assert await coord.keepalive_sid("mds1", "Corp", sid=ded_sid) is True
+    last_call = server.calls[-1]
+    assert last_call["host"] == "10.0.2.50"
+    assert last_call["command"] == "keepalive"
+    await client.close()
+
+
+@pytest.mark.spec("SCN-SESS-015-1")
+async def test_get_readonly_session_resolves_explicit_hostname_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DA-024: get_readonly_session() resolves an explicit hostname server_ip once and preserves tls_identity_host."""
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    client = _build_client(tmp_path, server, rig)
+    await client._db.initialize()
+    coord = client.login_coordinator
+    resolve_calls = 0
+    orig_resolve = coord.resolve_target_ips
+
+    async def _counting_resolve(*args: Any, **kwargs: Any) -> tuple[str, str, int]:
+        nonlocal resolve_calls
+        resolve_calls += 1
+        return await orig_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(coord, "resolve_target_ips", _counting_resolve)
+    await client.cache.upsert_domains(
+        [
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="dom-hn",
+                name="Corp",
+                domain_type="domain",
+                active_ip="10.0.4.50",
+                active_mds_ip="10.0.4.1",
+            )
+        ]
+    )
+    _, fp_hn = _make_der()
+    client.trust_policy._store.record("10.0.4.50", 443, fp_hn, source="known-identity", persist=False)
+    client.trust_policy._store.record("cma1.example.local", 443, fp_hn, source="known-identity", persist=False)
+    monkeypatch.setattr("socket.getaddrinfo", lambda *_a, **_k: [(2, 1, 6, "", ("10.0.4.50", 443))])
+
+    server.handlers.append((200, {"sid": "sid_single_dns", "uid": "u-dns"}))
+    sid, ip = await coord.get_readonly_session("mds1", "Corp", server_ip="cma1.example.local")
+    assert sid == "sid_single_dns"
+    assert ip == "10.0.4.50"
+    assert resolve_calls == 1
+    assert coord.get_tls_identity_host("mds1", sid) == "cma1.example.local"
     await client.close()

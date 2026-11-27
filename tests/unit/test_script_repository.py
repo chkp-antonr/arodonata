@@ -1324,3 +1324,60 @@ async def test_script_repository_write_paths_map_permission_errors_and_scrub_bar
             await svc_active_del.delete_repository_script("mds1", "app-diag", domain="Corp")
         assert active_sid not in str(exc_del_act.value)
         assert REDACTED_PLACEHOLDER in str(exc_del_act.value)
+
+
+@pytest.mark.spec("SCN-CLIENT-020-2")
+async def test_repository_script_unsupported_error_and_active_ws_sid_scrubbing() -> None:
+    """DA-013 & DA-026: RepositoryScriptUnsupportedError classification and active WriteSession SID scrubbing on read paths."""
+    from arodonata import RepositoryScriptUnsupportedError
+    from arodonata.core.context import WriteSession, write_session_context
+    from arodonata.core.errors import RepositoryScriptError, SessionError
+    from arodonata.core.models.common import ApiCallResult, ApiQueryResult
+    from arodonata.core.services.script_service import ScriptRepositoryService
+
+    leaked_sid = "sid_secret_read_leak_999"
+
+    class _MockApi:
+        async def api_call(self, _m: str, cmd: str, _p: Any = None, **_k: Any) -> ApiCallResult:
+            if cmd == "show-repository-script":
+                raise SessionError(f"session {leaked_sid} expired")
+            return ApiCallResult(
+                success=False,
+                status_code=400,
+                error_code="generic_err_command_not_recognized",
+                error_message=f"Requested API command: [{cmd}] not recognized",
+            )
+
+        async def api_query(self, *_a: Any, **_k: Any) -> ApiQueryResult:
+            return ApiQueryResult(
+                success=False,
+                objects=[],
+                total=0,
+                code="generic_err_command_not_found",
+                error_message="Requested API command not recognized",
+            )
+
+    svc = ScriptRepositoryService(api=_MockApi())  # type: ignore[arg-type]
+
+    # DA-026: active WriteSession bare SID is scrubbed in get_repository_script exception & RepositoryScriptStatus
+    ws = WriteSession(mgmt_name="mds1", domain_name="Corp", sid=leaked_sid, server_ip="10.0.0.1")
+    with write_session_context(ws):
+        with pytest.raises(RepositoryScriptError) as exc_info:
+            await svc.get_repository_script("mds1", "demo", domain="Corp")
+        assert leaked_sid not in str(exc_info.value)
+        assert REDACTED_PLACEHOLDER in str(exc_info.value)
+
+        # DA-013: unsupported error code cleanly maps to RepositoryScriptUnsupportedError in list_repository_scripts
+        with pytest.raises(RepositoryScriptUnsupportedError):
+            await svc.list_repository_scripts("mds1", domain="Corp")
+
+    # DA-026: RepositoryScriptStatus.error scrubs SID patterns
+    st = RepositoryScriptStatus(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        exists=False,
+        error=f"failed with password=super-secret-pw sid={leaked_sid}",
+    )
+    assert "super-secret-pw" not in (st.error or "")
+    assert leaked_sid not in (st.error or "")
+    assert REDACTED_PLACEHOLDER in (st.error or "")

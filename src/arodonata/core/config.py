@@ -535,6 +535,18 @@ class ArodonataSettings(BaseSettings):
         le=500000,
         validation_alias=AliasChoices("ARODONATA_MAX_ROUTES_PER_GATEWAY"),
     )
+    max_query_pages: int = Field(
+        default=5000,
+        ge=1,
+        le=100_000,
+        validation_alias=AliasChoices("ARODONATA_MAX_QUERY_PAGES"),
+    )
+    max_query_objects: int = Field(
+        default=1_000_000,
+        ge=1,
+        le=10_000_000,
+        validation_alias=AliasChoices("ARODONATA_MAX_QUERY_OBJECTS"),
+    )
     login_throttle_window: float = Field(
         default=70.0,
         gt=0,

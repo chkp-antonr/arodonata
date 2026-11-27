@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections import OrderedDict
-from contextlib import suppress
 from typing import Any
 
-from arodonata.core.context import AuthContext, get_auth_context, normalize_domain_key
+from arodonata.core.context import AuthContext, get_auth_context, normalize_domain_key, shielded_best_effort
 from arodonata.core.errors import ServerIdentityError, ValidationError, redact_sid
 from arodonata.core.models.common import ApiCallResult
 from arodonata.core.ports import ApiPort
@@ -386,5 +384,4 @@ async def adopt_staged_session(
         return adopt_sid, adopt_ip, adopt_res
     finally:
         if not adopted:
-            with suppress(BaseException):
-                await asyncio.shield(api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip))
+            await shielded_best_effort(api.logout_sid(mgmt_name, fresh_sid, server_ip=fresh_ip))

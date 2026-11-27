@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from arodonata.core.errors import ServerIdentityError
-from arodonata.core.models.assets import Asset
+from arodonata.core.models.assets import Asset, classify_asset
 from arodonata.core.ports import ApiPort
 
 CLUSTER_PARENT_TYPES: frozenset[str] = frozenset(
@@ -129,6 +129,10 @@ def _link_parent_and_child_assets(
     list_kind: str,
 ) -> tuple[Asset, Asset, bool]:
     """Bidirectionally link `child` -> `parent` and register `child` on `parent`'s member/VS list."""
+    if parent.uid == child.uid or parent.id == child.id:
+        return parent, child, False
+    if list_kind == "vsx" and _is_excluded_vsx_child(child):
+        return parent, child, False
     changed = False
     updated_child = child
     if (
@@ -163,6 +167,11 @@ def _link_parent_and_child_assets(
         updated_parent = parent.model_copy(update={uids_attr: new_uids, aids_attr: new_aids})
         changed = True
     return updated_parent, updated_child, changed
+
+
+def _is_excluded_vsx_child(asset: Asset) -> bool:
+    """Return `True` if `asset` must never be linked into a VSX parent's `virtual_system_uids`."""
+    return asset.type in CLUSTER_MEMBER_TYPES or "member" in asset.type.lower() or asset.type in VSX_PARENT_TYPES
 
 
 def _extract_interfaces_from_generic(raw_obj: dict[str, Any]) -> list[dict[str, Any]]:
@@ -252,6 +261,18 @@ def _resolve_local_asset_ref(
     return None
 
 
+def _enrich_cluster_member_from_parent(parent: Asset, member: Asset) -> Asset:
+    """Inherit missing `hardware`, `os_name`, and `version` from `parent` and re-classify `member`."""
+    updates: dict[str, Any] = {}
+    for field_name in ("hardware", "os_name", "version"):
+        member_val = getattr(member, field_name)
+        parent_val = getattr(parent, field_name)
+        if not str(member_val or "").strip() and str(parent_val or "").strip():
+            updates[field_name] = parent_val
+    updated_member = member.model_copy(update=updates) if updates else member
+    return classify_asset(updated_member, parent_type=parent.type)
+
+
 class ClusterRelationshipManager:
     """Enriches parent-child relationships between Check Point clusters and cluster members."""
 
@@ -304,8 +325,17 @@ class ClusterRelationshipManager:
 
             for m_uid in discovered_member_uids:
                 m_obj = by_uid.get(m_uid)
-                if m_obj is not None and m_obj.asset_id not in discovered_member_asset_ids:
-                    discovered_member_asset_ids.append(m_obj.asset_id)
+                if m_obj is not None:
+                    if m_obj.type not in VSX_CHILD_TYPES and not m_obj.parent_uid:
+                        upd_parent, upd_member, changed = _link_parent_and_child_assets(
+                            by_uid[asset.uid], m_obj, list_kind="cluster"
+                        )
+                        if changed:
+                            _store_cluster(upd_member)
+                            _store_cluster(upd_parent)
+                            m_obj = upd_member
+                    if m_obj.asset_id not in discovered_member_asset_ids:
+                        discovered_member_asset_ids.append(m_obj.asset_id)
 
             curr_asset = by_uid[asset.uid]
             if (
@@ -329,13 +359,34 @@ class ClusterRelationshipManager:
                 cluster_ref = raw.get("cluster") or raw.get("cluster-uid") or raw.get("parent-cluster")
                 parent_asset = _resolve_local_asset_ref(cluster_ref, by_uid, by_name)
 
-            if parent_asset is not None:
+            if (
+                parent_asset is not None
+                and curr_asset.type not in VSX_CHILD_TYPES
+                and parent_asset.uid != curr_asset.uid
+                and parent_asset.id != curr_asset.id
+            ):
                 upd_parent, upd_member, changed = _link_parent_and_child_assets(
                     by_uid[parent_asset.uid], curr_asset, list_kind="cluster"
                 )
                 if changed:
                     _store_cluster(upd_member)
                     _store_cluster(upd_parent)
+
+        for asset in list(by_uid.values()):
+            curr_asset = by_uid[asset.uid]
+            if not curr_asset.parent_uid or curr_asset.type in VSX_CHILD_TYPES:
+                continue
+            parent_asset = by_uid.get(curr_asset.parent_uid)
+            if parent_asset is None:
+                continue
+            if (
+                curr_asset.uid in parent_asset.member_uids
+                or curr_asset.type in CLUSTER_MEMBER_TYPES
+                or "member" in curr_asset.type.lower()
+            ):
+                enriched_member = _enrich_cluster_member_from_parent(parent_asset, curr_asset)
+                if enriched_member is not curr_asset:
+                    _store_cluster(enriched_member)
 
         return list(by_uid.values())
 
@@ -461,7 +512,13 @@ class VSXRelationshipManager:
                 vs_candidate = by_name.get(slot_name) if slot_name else None
                 if vs_candidate is None and parent_vsx is not None and slot_name.startswith(f"{parent_vsx.name}_"):
                     vs_candidate = by_name.get(slot_name[len(parent_vsx.name) + 1 :])
-                if vs_candidate is not None and vs_candidate.uid != (parent_vsx.uid if parent_vsx else ""):
+                if (
+                    vs_candidate is not None
+                    and not _is_excluded_vsx_child(vs_candidate)
+                    and (
+                        parent_vsx is None or (vs_candidate.uid != parent_vsx.uid and vs_candidate.id != parent_vsx.id)
+                    )
+                ):
                     merged_vs, _ = _merge_vs_slot_data(by_uid[vs_candidate.uid], slot_obj)
                     if parent_vsx is not None:
                         updated_parent, merged_vs, _ = _link_parent_and_child_assets(
@@ -497,7 +554,7 @@ class VSXRelationshipManager:
                         str(item_domain.get("name") or "") if isinstance(item_domain, dict) else str(item_domain or "")
                     )
                     is_same_domain = not item_domain_name or item_domain_name == domain_name
-                    if v_uid and v_name and is_same_domain:
+                    if v_uid and v_name and is_same_domain and v_uid != curr_asset.uid:
                         synthesized = Asset.from_cp_dict(
                             mgmt_name,
                             domain_name,
@@ -508,11 +565,21 @@ class VSXRelationshipManager:
                                 "parent_name": curr_asset.name,
                             },
                         )
-                        by_uid[synthesized.uid] = synthesized
-                        by_name[synthesized.name] = synthesized
-                        vs_asset = synthesized
+                        if (
+                            not _is_excluded_vsx_child(synthesized)
+                            and synthesized.uid != curr_asset.uid
+                            and synthesized.id != curr_asset.id
+                        ):
+                            by_uid[synthesized.uid] = synthesized
+                            by_name[synthesized.name] = synthesized
+                            vs_asset = synthesized
 
-                if vs_asset is not None:
+                if (
+                    vs_asset is not None
+                    and vs_asset.uid != curr_asset.uid
+                    and vs_asset.id != curr_asset.id
+                    and not _is_excluded_vsx_child(vs_asset)
+                ):
                     updated_parent, updated_vs, _ = _link_parent_and_child_assets(
                         by_uid[curr_asset.uid], vs_asset, list_kind="vsx"
                     )
@@ -541,6 +608,8 @@ class VSXRelationshipManager:
         """Link virtual system assets back to their local VSX parent when present."""
         for asset in list(by_uid.values()):
             curr_asset = by_uid[asset.uid]
+            if _is_excluded_vsx_child(curr_asset):
+                continue
             is_vs = curr_asset.type in VSX_CHILD_TYPES or "virtual-system" in curr_asset.type.lower()
             vsx_ref = _extract_vsx_parent_ref(curr_asset.raw_data, is_vs=is_vs)
             parent_asset: Asset | None = None
@@ -549,7 +618,7 @@ class VSXRelationshipManager:
             if parent_asset is None:
                 parent_asset = _resolve_local_asset_ref(vsx_ref, by_uid, by_name)
 
-            if parent_asset is not None:
+            if parent_asset is not None and parent_asset.uid != curr_asset.uid and parent_asset.id != curr_asset.id:
                 updated_parent, updated_vs, _ = _link_parent_and_child_assets(
                     by_uid[parent_asset.uid], curr_asset, list_kind="vsx"
                 )
@@ -593,21 +662,14 @@ class VSXRelationshipManager:
 
         return list(by_uid.values())
 
-    def reconcile_cross_domain(self, assets: Sequence[Asset]) -> list[Asset]:
-        """Reconcile VSX parent-child relationships across domains within the same `mgmt_name`.
-
-        Returns only the `Asset` instances whose `parent_uid`, `parent_name`, `parent_id`,
-        `parent_asset_id`, `virtual_system_uids`, `virtual_system_asset_ids`, `interfaces`,
-        or `raw_data` changed.
-        """
-        by_id: dict[str, Asset] = {a.id: a for a in assets}
-        by_mgmt_uid: dict[tuple[str, str], Asset] = {(a.mgmt_name, a.uid): a for a in assets}
-        by_asset_id: dict[str, Asset] = {a.asset_id: a for a in assets}
-        by_name: dict[str, list[Asset]] = {}
-        for a in assets:
-            by_name.setdefault(a.name, []).append(a)
-
-        modified_ids: set[str] = set()
+    def _build_cross_domain_find_by_ref(
+        self,
+        by_id: dict[str, Asset],
+        by_asset_id: dict[str, Asset],
+        by_mgmt_uid: dict[tuple[str, str], Asset],
+        by_name: dict[str, list[Asset]],
+    ) -> Any:
+        """Return a lookup closure resolving asset string/dict references within a management server."""
 
         def _find_by_ref(ref: Any, mgmt_name: str, prefer_vsx_parent: bool = False) -> Asset | None:
             if isinstance(ref, str) and ref:
@@ -638,21 +700,41 @@ class VSXRelationshipManager:
                     return _find_by_ref(r_name, mgmt_name, prefer_vsx_parent=prefer_vsx_parent)
             return None
 
-        def _link(parent_id_key: str, child_id_key: str) -> None:
-            upd_parent, upd_child, _ = _link_parent_and_child_assets(
-                by_id[parent_id_key], by_id[child_id_key], list_kind="vsx"
-            )
-            if upd_child is not by_id[child_id_key]:
-                by_id[upd_child.id] = upd_child
-                by_mgmt_uid[(upd_child.mgmt_name, upd_child.uid)] = upd_child
-                by_asset_id[upd_child.asset_id] = upd_child
-                modified_ids.add(upd_child.id)
-            if upd_parent is not by_id[parent_id_key]:
-                by_id[upd_parent.id] = upd_parent
-                by_mgmt_uid[(upd_parent.mgmt_name, upd_parent.uid)] = upd_parent
-                by_asset_id[upd_parent.asset_id] = upd_parent
-                modified_ids.add(upd_parent.id)
+        return _find_by_ref
 
+    @staticmethod
+    def _link_cross_domain_pair(
+        by_id: dict[str, Asset],
+        by_mgmt_uid: dict[tuple[str, str], Asset],
+        by_asset_id: dict[str, Asset],
+        modified_ids: set[str],
+        parent_id_key: str,
+        child_id_key: str,
+    ) -> None:
+        """Link two indexed assets across domains and record any modified IDs."""
+        parent_obj = by_id[parent_id_key]
+        child_obj = by_id[child_id_key]
+        upd_parent, upd_child, _ = _link_parent_and_child_assets(parent_obj, child_obj, list_kind="vsx")
+        if upd_child is not by_id[child_id_key]:
+            by_id[upd_child.id] = upd_child
+            by_mgmt_uid[(upd_child.mgmt_name, upd_child.uid)] = upd_child
+            by_asset_id[upd_child.asset_id] = upd_child
+            modified_ids.add(upd_child.id)
+        if upd_parent is not by_id[parent_id_key]:
+            by_id[upd_parent.id] = upd_parent
+            by_mgmt_uid[(upd_parent.mgmt_name, upd_parent.uid)] = upd_parent
+            by_asset_id[upd_parent.asset_id] = upd_parent
+            modified_ids.add(upd_parent.id)
+
+    def _reconcile_vsx_parents(
+        self,
+        *,
+        by_id: dict[str, Asset],
+        by_mgmt_uid: dict[tuple[str, str], Asset],
+        by_asset_id: dict[str, Asset],
+        modified_ids: set[str],
+        find_by_ref: Any,
+    ) -> None:
         for asset in list(by_id.values()):
             curr = by_id[asset.id]
             raw = curr.raw_data
@@ -660,29 +742,48 @@ class VSXRelationshipManager:
                 raw.get("virtual-systems") or raw.get("virtual_systems") or raw.get("virtualSystems")
             )
             for item in raw_vs_list:
-                vs_asset = _find_by_ref(item, curr.mgmt_name, prefer_vsx_parent=False)
+                vs_asset = find_by_ref(item, curr.mgmt_name, prefer_vsx_parent=False)
                 if vs_asset is not None and vs_asset.mgmt_name == curr.mgmt_name:
-                    _link(curr.id, vs_asset.id)
+                    self._link_cross_domain_pair(by_id, by_mgmt_uid, by_asset_id, modified_ids, curr.id, vs_asset.id)
             for v_uid in list(by_id[curr.id].virtual_system_uids):
                 vs_asset = by_mgmt_uid.get((curr.mgmt_name, v_uid))
                 if vs_asset is not None and vs_asset.mgmt_name == curr.mgmt_name:
-                    _link(curr.id, vs_asset.id)
+                    self._link_cross_domain_pair(by_id, by_mgmt_uid, by_asset_id, modified_ids, curr.id, vs_asset.id)
 
+    def _reconcile_vsx_children(
+        self,
+        *,
+        by_id: dict[str, Asset],
+        by_mgmt_uid: dict[tuple[str, str], Asset],
+        by_asset_id: dict[str, Asset],
+        modified_ids: set[str],
+        find_by_ref: Any,
+    ) -> None:
         for asset in list(by_id.values()):
             curr = by_id[asset.id]
+            if _is_excluded_vsx_child(curr):
+                continue
             is_vs = curr.type in VSX_CHILD_TYPES or "virtual-system" in curr.type.lower()
             vsx_ref = _extract_vsx_parent_ref(curr.raw_data, is_vs=is_vs)
             parent_asset: Asset | None = None
             if curr.parent_uid and is_vs:
                 parent_asset = by_mgmt_uid.get((curr.mgmt_name, curr.parent_uid))
             if parent_asset is None and vsx_ref is not None:
-                parent_asset = _find_by_ref(vsx_ref, curr.mgmt_name, prefer_vsx_parent=True)
+                parent_asset = find_by_ref(vsx_ref, curr.mgmt_name, prefer_vsx_parent=True)
             if parent_asset is None and curr.parent_name and is_vs:
-                parent_asset = _find_by_ref(curr.parent_name, curr.mgmt_name, prefer_vsx_parent=True)
-
+                parent_asset = find_by_ref(curr.parent_name, curr.mgmt_name, prefer_vsx_parent=True)
             if parent_asset is not None and parent_asset.mgmt_name == curr.mgmt_name:
-                _link(parent_asset.id, curr.id)
+                self._link_cross_domain_pair(by_id, by_mgmt_uid, by_asset_id, modified_ids, parent_asset.id, curr.id)
 
+    def _reconcile_vs_slots(
+        self,
+        *,
+        by_id: dict[str, Asset],
+        by_mgmt_uid: dict[tuple[str, str], Asset],
+        by_asset_id: dict[str, Asset],
+        by_name: dict[str, list[Asset]],
+        modified_ids: set[str],
+    ) -> None:
         for asset in list(by_id.values()):
             curr_gw = by_id[asset.id]
             vs_slots = curr_gw.raw_data.get("vs_slots")
@@ -733,8 +834,16 @@ class VSXRelationshipManager:
                             slot_vs_asset = vs_matches[0] if vs_matches else matches[0]
                             break
 
-                if slot_vs_asset is not None and slot_vs_asset.mgmt_name == curr_gw.mgmt_name:
-                    _link(curr_gw.id, slot_vs_asset.id)
+                if (
+                    slot_vs_asset is not None
+                    and slot_vs_asset.mgmt_name == curr_gw.mgmt_name
+                    and not _is_excluded_vsx_child(slot_vs_asset)
+                    and slot_vs_asset.id != curr_gw.id
+                    and slot_vs_asset.uid != curr_gw.uid
+                ):
+                    self._link_cross_domain_pair(
+                        by_id, by_mgmt_uid, by_asset_id, modified_ids, curr_gw.id, slot_vs_asset.id
+                    )
                     curr_vs = by_id[slot_vs_asset.id]
                     merged_vs, changed = _merge_vs_slot_data(curr_vs, slot)
                     if changed:
@@ -743,6 +852,40 @@ class VSXRelationshipManager:
                         by_asset_id[merged_vs.asset_id] = merged_vs
                         modified_ids.add(merged_vs.id)
 
+    def reconcile_cross_domain(self, assets: Sequence[Asset]) -> list[Asset]:
+        """Reconcile VSX parent-child relationships across domains within the same `mgmt_name`.
+
+        Returns only the `Asset` instances whose `parent_uid`, `parent_name`, `parent_id`,
+        `parent_asset_id`, `virtual_system_uids`, `virtual_system_asset_ids`, `interfaces`,
+        or `raw_data` changed.
+        """
+        by_id: dict[str, Asset] = {a.id: a for a in assets}
+        by_mgmt_uid: dict[tuple[str, str], Asset] = {(a.mgmt_name, a.uid): a for a in assets}
+        by_asset_id: dict[str, Asset] = {a.asset_id: a for a in assets}
+        by_name: dict[str, list[Asset]] = {}
+        for a in assets:
+            by_name.setdefault(a.name, []).append(a)
+
+        modified_ids: set[str] = set()
+        find_by_ref = self._build_cross_domain_find_by_ref(by_id, by_asset_id, by_mgmt_uid, by_name)
+
+        self._reconcile_vsx_parents(
+            by_id=by_id,
+            by_mgmt_uid=by_mgmt_uid,
+            by_asset_id=by_asset_id,
+            modified_ids=modified_ids,
+            find_by_ref=find_by_ref,
+        )
+        self._reconcile_vsx_children(
+            by_id=by_id,
+            by_mgmt_uid=by_mgmt_uid,
+            by_asset_id=by_asset_id,
+            modified_ids=modified_ids,
+            find_by_ref=find_by_ref,
+        )
+        self._reconcile_vs_slots(
+            by_id=by_id, by_mgmt_uid=by_mgmt_uid, by_asset_id=by_asset_id, by_name=by_name, modified_ids=modified_ids
+        )
         return [by_id[mid] for mid in modified_ids]
 
     async def _fetch_vsx_generic_objects(

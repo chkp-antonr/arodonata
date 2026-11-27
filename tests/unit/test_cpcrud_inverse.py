@@ -632,3 +632,34 @@ def test_inverse_emits_empty_groups_and_tags_when_added_from_empty_prior_state()
     for t in ("host", "service-tcp", "group", "service-group"):
         assert by_type[t]["groups"] == []
         assert by_type[t]["tags"] == []
+
+
+@pytest.mark.spec("SCN-CPCRUD-018-1")
+def test_inverse_restores_empty_description_and_additional_categories_on_update() -> None:
+    """DA-021 & DA-057: UPDATE rollback explicitly emits description='' and additional-categories=[] when mutated from empty prior state."""
+    from arodonata.cpcrud.inverse import build_inverse_template
+    from arodonata.cpcrud.models import FieldChange, Outcome, Plan, PlannedAction
+
+    act = PlannedAction(
+        action_id="act-1",
+        mgmt_name="mds1",
+        domain_name="Corp",
+        operation="set",
+        object_type="application-site",
+        name="App1",
+        target_uid="app-uid-1",
+        outcome=Outcome.UPDATE,
+        payload={"uid": "app-uid-1", "description": "added desc", "additional-categories": ["News"]},
+        diffs={
+            "description": FieldChange(field="description", old_value="", new_value="added desc"),
+            "additional-categories": FieldChange(field="additional-categories", old_value=[], new_value=["News"]),
+        },
+        prior_state={"uid": "app-uid-1", "name": "App1", "primary-category": "Custom_Application_Site"},
+    )
+    plan = Plan(actions=[act])
+    inv = build_inverse_template(plan)
+    assert len(inv["objects"]) == 1
+    rev = inv["objects"][0]
+    assert rev["operation"] == "set"
+    assert rev["description"] == ""
+    assert rev["additional-categories"] == []

@@ -43,6 +43,29 @@ def rule_spec_has_delta_mapping(spec: Mapping[str, Any]) -> bool:
     return any(isinstance(spec.get(k), Mapping) for k in RULE_DELTA_CELL_KEYS)
 
 
+_RULE_ACTION_VERBS: frozenset[str] = frozenset({"present", "absent", "add", "set", "update", "delete"})
+
+
+def extract_raw_verb(spec: Mapping[str, Any], *, is_rule: bool = False) -> str:
+    """Extract raw CPCRUD verb from `operation`/`state` (or `action` when not a rule verdict)."""
+    raw_op = spec.get("operation") or spec.get("state")
+    if raw_op is None:
+        cand = spec.get("action")
+        if not is_rule or isinstance(cand, str) and cand.strip().lower() in _RULE_ACTION_VERBS:
+            raw_op = cand
+    return str(raw_op or "present").strip().lower()
+
+
+def normalize_operation_verb(spec: Mapping[str, Any], *, is_rule: bool = False) -> str:
+    """Resolve canonical planner verb (`present`, `set`, or `delete`) from an operation spec."""
+    verb = extract_raw_verb(spec, is_rule=is_rule)
+    if verb in ("absent", "delete"):
+        return "delete"
+    if verb in ("set", "update"):
+        return "set"
+    return "present"
+
+
 def build_effective_obj_dict(
     raw_data: Mapping[str, Any] | None,
     obj_dict: Mapping[str, Mapping[str, Any]] | None = None,
@@ -343,6 +366,8 @@ def match_rule(
     if rulebase_type == "nat":
         des_nat = desired_nat_traffic_tuple(spec, name_resolutions=name_resolutions)
         for r in rules:
+            if req_name and r.name and str(r.uid).startswith("planned:") and r.name != req_name:
+                continue
             if isinstance(r, NatRuleEntry) and existing_nat_traffic_tuple(r, obj_dict=obj_dict) == des_nat:
                 return r
         return None
@@ -369,6 +394,8 @@ def match_rule(
                 # Skip matching the trailing Cleanup rule unless explicitly named "Cleanup rule"
                 if r.name.strip().lower() == "cleanup rule" and req_name.lower() != "cleanup rule":
                     continue
+                if req_name and r.name and str(r.uid).startswith("planned:") and r.name != req_name:
+                    continue
                 if existing_access_traffic_tuple(r, obj_dict=obj_dict) == des_acc:
                     return r
     return None
@@ -385,10 +412,12 @@ __all__ = [
     "desired_nat_traffic_tuple",
     "existing_access_traffic_tuple",
     "existing_nat_traffic_tuple",
+    "extract_raw_verb",
     "match_rule",
     "normalize_any_sentinel",
     "normalize_nat_original_sentinel",
     "normalize_nat_traffic_ref",
+    "normalize_operation_verb",
     "normalize_traffic_list",
     "rule_spec_has_delta_mapping",
 ]

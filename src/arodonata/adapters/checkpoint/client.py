@@ -656,6 +656,8 @@ class AMgmtClient:
             details_level=details_level,
             payload=payload,
             limit=limit,
+            max_pages=self._settings.max_query_pages,
+            max_objects=self._settings.max_query_objects,
         )
 
     @traced

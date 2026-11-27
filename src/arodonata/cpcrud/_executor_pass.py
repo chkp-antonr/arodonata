@@ -16,6 +16,7 @@ from arodonata.core.context import (
     get_auth_context,
     get_user_context,
     normalize_domain_key,
+    shielded_best_effort,
     update_overlay_from_command,
     write_session_context,
 )
@@ -30,10 +31,12 @@ from arodonata.core.events import (
 from arodonata.core.models.common import ApiCallResult
 from arodonata.core.ports import ApiPort
 from arodonata.cpcrud._executor_helpers import (
+    _discard_and_logout_staged_info,
     _extract_published_session_uid,
     _is_domain_head_stale,
     _make_action_result_and_event,
     _record_runtime_failure,
+    _select_staged_eviction_key,
     check_current_domain_head,
     resolve_allowlisted_command,
 )
@@ -83,6 +86,7 @@ async def _register_staged_session(
     staged_sessions: list[StagedSessionInfo],
     staged_registry: OrderedDict[tuple[str, str, str], StagedSessionInfo],
     stamp: DomainStamp | None = None,
+    owner_key: str = "",
 ) -> tuple[str | None, str]:
     """Query `show-session` if needed and register `StagedSessionInfo` upon opening a staged session."""
     session_uid: str | None = ws.session_uid
@@ -117,6 +121,7 @@ async def _register_staged_session(
         baseline_readable=bool(stamp is not None and stamp.readable),
         baseline_session_uid=stamp.last_session_uid if stamp is not None else None,
         baseline_published_at=stamp.last_published_at if stamp is not None else None,
+        owner_key=owner_key,
     )
     staged_sessions.append(staged_info)
     if session_uid:
@@ -124,7 +129,10 @@ async def _register_staged_session(
         staged_registry.pop(st_key, None)
         staged_registry[st_key] = staged_info
         while len(staged_registry) > 256:
-            staged_registry.popitem(last=False)
+            evict_key = _select_staged_eviction_key(staged_registry, owner_key, exclude_key=st_key)
+            if evict_key is None:
+                break
+            await _discard_and_logout_staged_info(api, staged_registry.pop(evict_key))
     return session_uid, resolved_name
 
 
@@ -403,6 +411,7 @@ async def _execute_domain_batch(
                 staged_sessions,
                 staged_registry,
                 stamp=stamp,
+                owner_key=resolved_auth.identity_key if resolved_auth is not None else "",
             )
             registration_ok = True
         with write_session_context(ws):
@@ -559,8 +568,7 @@ async def _execute_domain_batch(
             ws.overlay.clear()
             if not ws.published and not ws.discarded:
                 await _shielded_discard(api, mgmt_name, dom_name, ws)
-            with suppress(BaseException):
-                await asyncio.shield(api.logout_sid(mgmt_name, ws.sid, server_ip=ws.server_ip))
+            await shielded_best_effort(api.logout_sid(mgmt_name, ws.sid, server_ip=ws.server_ip))
 
 
 async def execute_single_pass(

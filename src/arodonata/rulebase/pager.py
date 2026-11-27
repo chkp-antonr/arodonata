@@ -26,6 +26,7 @@ from arodonata.core.telemetry import span_attrs, traced
 
 MAX_RULEBASE_PAGE_LIMIT = 100
 MAX_RULEBASE_PAGES = 10_000
+MAX_RULEBASE_OBJECTS = 1_000_000
 MAX_CONSECUTIVE_EMPTY_RULE_PAGES = 5
 
 
@@ -461,6 +462,8 @@ async def fetch_paged_rulebase(
     extra_payload: dict[str, Any] | None = None,
     sid: str | None = None,
     server_ip: str | None = None,
+    max_pages: int = MAX_RULEBASE_PAGES,
+    max_objects: int = MAX_RULEBASE_OBJECTS,
 ) -> PagedRulebaseResult:
     """Page `show-*-rulebase` in chunks of up to 100 rules, stitching split sections and preserving empty trailing sections."""
     page_limit = max(1, min(int(limit), MAX_RULEBASE_PAGE_LIMIT))
@@ -502,9 +505,9 @@ async def fetch_paged_rulebase(
     consecutive_zero_new_pages = 0
 
     while True:
-        if pages_fetched >= MAX_RULEBASE_PAGES:
+        if pages_fetched >= max_pages:
             raise RuntimeError(
-                f"Rulebase pagination exceeded max_pages ({MAX_RULEBASE_PAGES}) for {command} on {mgmt_name}:{eff_domain}."
+                f"Rulebase pagination exceeded max_pages ({max_pages}) for {command} on {mgmt_name}:{eff_domain}."
             )
         pages_fetched += 1
 
@@ -672,6 +675,11 @@ async def fetch_paged_rulebase(
                     ordered_raw_rules.append((node, None, None))
                     seen_rule_uids[dedup_key] = len(ordered_raw_rules)
                     new_rules_in_page += 1
+
+        if len(ordered_raw_rules) > max_objects:
+            raise RuntimeError(
+                f"Rulebase pagination exceeded max_objects ({max_objects}) for {command} on {mgmt_name}:{eff_domain}."
+            )
 
         if new_rules_in_page == 0:
             if rules_seen_in_page > 0:

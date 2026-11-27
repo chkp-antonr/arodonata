@@ -150,11 +150,12 @@ class SessionCleaner:
                 session_name="arodonata-session-cleaner",
                 allow_max_sessions_cleanup=False,
             )
+        except ServerIdentityError:
+            raise
         except (
             AuthenticationError,
             TransportError,
             ApiTimeoutError,
-            ServerIdentityError,
         ) as exc:
             logger.warning(
                 f"Session cleanup skipped for '{mgmt_name}:{dom_key}': {exc}",

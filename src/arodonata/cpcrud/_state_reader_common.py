@@ -5,92 +5,36 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol
 
-from arodonata.core.errors import ArodonataError, ServerIdentityError, ValidationError
+from arodonata.core.errors import ServerIdentityError, ValidationError
 from arodonata.core.models.common import SyncScope, to_naive_utc
 from arodonata.core.models.domains import DomainSyncState
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.services import CPService
 from arodonata.core.ports import ApiPort, ObjectCachePort, ServiceCachePort, SyncStatePort
 from arodonata.core.primitives import mask_to_prefix_len
+from arodonata.cpcrud._state_reader_constants import (
+    OBJECT_ITEM_TYPES as OBJECT_ITEM_TYPES,
+)
+from arodonata.cpcrud._state_reader_constants import (
+    SERVICE_ITEM_TYPES as SERVICE_ITEM_TYPES,
+)
+from arodonata.cpcrud._state_reader_constants import (
+    TYPE_TO_SHOW_PLURAL_CMD as TYPE_TO_SHOW_PLURAL_CMD,
+)
+from arodonata.cpcrud._state_reader_constants import (
+    TYPE_TO_SHOW_SINGLE_CMD as TYPE_TO_SHOW_SINGLE_CMD,
+)
+from arodonata.cpcrud._state_reader_constants import (
+    StateLookupError as StateLookupError,
+)
+from arodonata.cpcrud._state_reader_constants import (
+    is_not_found_error as is_not_found_error,
+)
+from arodonata.cpcrud._state_reader_constants import (
+    normalize_app_site_url_key as normalize_app_site_url_key,
+)
 from arodonata.cpcrud.models import DomainStamp
 from arodonata.rulebase.pager import PagedRulebaseResult
-
-OBJECT_ITEM_TYPES: frozenset[str] = frozenset(
-    {
-        "host",
-        "network",
-        "address-range",
-        "dns-domain",
-        "group",
-        "application-site",
-    }
-)
-
-SERVICE_ITEM_TYPES: frozenset[str] = frozenset(
-    {
-        "service-tcp",
-        "service-udp",
-        "service-icmp",
-        "service-icmp6",
-        "service-other",
-        "service-group",
-    }
-)
-
-TYPE_TO_SHOW_SINGLE_CMD: dict[str, str] = {
-    "host": "show-host",
-    "network": "show-network",
-    "address-range": "show-address-range",
-    "dns-domain": "show-dns-domain",
-    "group": "show-group",
-    "application-site": "show-application-site",
-    "service-tcp": "show-service-tcp",
-    "service-udp": "show-service-udp",
-    "service-icmp": "show-service-icmp",
-    "service-icmp6": "show-service-icmp6",
-    "service-other": "show-service-other",
-    "service-group": "show-service-group",
-}
-
-TYPE_TO_SHOW_PLURAL_CMD: dict[str, str] = {
-    "host": "show-hosts",
-    "network": "show-networks",
-    "address-range": "show-address-ranges",
-    "dns-domain": "show-dns-domains",
-    "group": "show-groups",
-    "application-site": "show-application-sites",
-    "service-tcp": "show-services-tcp",
-    "service-udp": "show-services-udp",
-    "service-icmp": "show-services-icmp",
-    "service-icmp6": "show-services-icmp6",
-    "service-other": "show-services-other",
-    "service-group": "show-service-groups",
-}
-
-
-class StateLookupError(ArodonataError):
-    """Raised when a cache or live API state lookup fails during planning."""
-
-
-def normalize_app_site_url_key(url: str, *, is_regex: bool) -> str:
-    """Return canonical comparison key for an `application-site` URL entry (case-folded when `is_regex=False`)."""
-    clean = str(url).strip()
-    return clean if is_regex else clean.lower()
-
-
-def is_not_found_error(
-    status_code: int,
-    error_code: str | None,
-    error_message: str | None,
-) -> bool:
-    """Return `True` if a Check Point API response specifically indicates 'object not found'."""
-    if status_code == 404:
-        return True
-    code_low = (error_code or "").strip().lower()
-    msg_low = (error_message or "").strip().lower()
-    if "not_found" in code_low or "not found" in msg_low:
-        return True
-    return "requested object" in msg_low and "not found" in msg_low
 
 
 def normalize_mask_length(
@@ -215,6 +159,9 @@ class _HybridStateReaderBase:
         self._deleted_objects: dict[tuple[str, str], set[str]] = {}
         self._virtual_services: dict[tuple[str, str], dict[str, CPService]] = {}
         self._deleted_services: dict[tuple[str, str], set[str]] = {}
+        # Intra-plan virtual rulebase overlay keyed by (mgmt_name, domain_name, rulebase_type, layer_or_pkg)
+        self._virtual_rules: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        self._deleted_rules: dict[tuple[str, str, str, str], set[str]] = {}
 
     def set_domain_stamp(self, stamp: DomainStamp) -> None:
         """Record or update a `DomainStamp` for `(stamp.mgmt_name, stamp.domain_name)`."""
@@ -320,6 +267,51 @@ class _HybridStateReaderBase:
         if name:
             deleted.add(f"name:{svc_type}:{name}")
             bucket.pop(f"name:{svc_type}:{name}", None)
+        if uid:
+            deleted.add(f"uid:{uid}")
+            bucket.pop(f"uid:{uid}", None)
+
+    def record_virtual_rule(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        rulebase_type: str,
+        target_key: str,
+        rule: Any,
+        *,
+        previous_name: str | None = None,
+    ) -> None:
+        """Record a rule planned for creation or update within the current `plan()` run."""
+        rb_key = (mgmt_name, domain_name, rulebase_type, target_key)
+        bucket = self._virtual_rules.setdefault(rb_key, {})
+        deleted = self._deleted_rules.setdefault(rb_key, set())
+        if previous_name and previous_name != rule.name:
+            deleted.add(f"name:{previous_name}")
+            bucket.pop(f"name:{previous_name}", None)
+        if rule.name:
+            bucket[f"name:{rule.name}"] = rule
+            deleted.discard(f"name:{rule.name}")
+        if rule.uid:
+            bucket[f"uid:{rule.uid}"] = rule
+            deleted.discard(f"uid:{rule.uid}")
+
+    def record_virtual_rule_delete(
+        self,
+        mgmt_name: str,
+        domain_name: str,
+        rulebase_type: str,
+        target_key: str,
+        *,
+        uid: str | None = None,
+        name: str | None = None,
+    ) -> None:
+        """Record a rule planned for deletion within the current `plan()` run."""
+        rb_key = (mgmt_name, domain_name, rulebase_type, target_key)
+        bucket = self._virtual_rules.setdefault(rb_key, {})
+        deleted = self._deleted_rules.setdefault(rb_key, set())
+        if name:
+            deleted.add(f"name:{name}")
+            bucket.pop(f"name:{name}", None)
         if uid:
             deleted.add(f"uid:{uid}")
             bucket.pop(f"uid:{uid}", None)

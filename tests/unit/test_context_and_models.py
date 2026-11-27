@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from arodonata.core.context import (
@@ -223,3 +225,69 @@ def test_auth_context_and_server_endpoint_config_mask_secrets_on_model_dump() ->
     json_out = env.model_dump_json()
     assert "secret-password-123" not in json_out
     assert "endpoint-secret-789" not in json_out
+
+
+@pytest.mark.spec("SCN-CLIENT-020-1")
+def test_redact_sid_masks_equals_secrets_and_database_url_passwords() -> None:
+    """DA-017: redact_sid() masks key=value secrets (quoted and unquoted) and scheme://user:pass@ URL passwords."""
+    from arodonata.core.errors import REDACTED_PLACEHOLDER, redact_sid
+
+    sample = (
+        "connect failed url=postgresql+asyncpg://admin:Sup3rS3cret!@db.internal:5432/arodonata "
+        "password=raw-pw api-key='raw-key' sid=\"raw-sid-123456\" token=tok-999"
+    )
+    scrubbed = redact_sid(sample)
+    for secret in ("Sup3rS3cret!", "raw-pw", "raw-key", "raw-sid-123456", "tok-999"):
+        assert secret not in scrubbed
+    assert REDACTED_PLACEHOLDER in scrubbed
+
+
+@pytest.mark.spec("SCN-CLIENT-020-1")
+async def test_write_session_lifecycle_propagates_cancellation_and_discards_on_presend_publish_error() -> None:
+    """DA-018: run_write_session_lifecycle() discards uncommitted state on pre-send publish failure and never swallows CancellationError or ServerIdentityError."""
+    import asyncio
+
+    from arodonata.core.context import WriteSession, run_write_session_lifecycle
+    from arodonata.core.errors import CertificateMismatchError, TransportError
+    from arodonata.core.models.common import ApiCallResult
+
+    calls: list[str] = []
+
+    async def _api_call_presend_fail(_mgmt: str, cmd: str, _payload: dict[str, Any], **_kw: Any) -> ApiCallResult:
+        calls.append(cmd)
+        if cmd == "publish":
+            raise TransportError("dial refused", request_sent=False)
+        return ApiCallResult(success=True, data={})
+
+    async def _logout_ok(*_a: Any, **_kw: Any) -> bool:
+        calls.append("logout")
+        return True
+
+    ws1 = WriteSession(mgmt_name="mds1", domain_name="Corp", sid="sid-ws-1", server_ip="10.0.0.1")
+    with pytest.raises(TransportError):
+        async with run_write_session_lifecycle(
+            ws1, api_call_fn=_api_call_presend_fail, logout_fn=_logout_ok, domain="Corp"
+        ):
+            pass
+    assert ws1.discarded is True
+    assert calls == ["publish", "discard", "logout"]
+
+    async def _logout_cert_fail(*_a: Any, **_kw: Any) -> bool:
+        raise CertificateMismatchError("cert mismatch")
+
+    ws2 = WriteSession(mgmt_name="mds1", domain_name="Corp", sid="sid-ws-2", server_ip="10.0.0.1")
+    with pytest.raises(CertificateMismatchError):
+        async with run_write_session_lifecycle(
+            ws2, api_call_fn=_api_call_presend_fail, logout_fn=_logout_cert_fail, domain="Corp", publish_on_exit=False
+        ):
+            pass
+
+    async def _logout_cancel(*_a: Any, **_kw: Any) -> bool:
+        raise asyncio.CancelledError
+
+    ws3 = WriteSession(mgmt_name="mds1", domain_name="Corp", sid="sid-ws-3", server_ip="10.0.0.1")
+    with pytest.raises(asyncio.CancelledError):
+        async with run_write_session_lifecycle(
+            ws3, api_call_fn=_api_call_presend_fail, logout_fn=_logout_cancel, domain="Corp", publish_on_exit=False
+        ):
+            pass

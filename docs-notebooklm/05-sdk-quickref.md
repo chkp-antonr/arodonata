@@ -36,7 +36,7 @@ async def refresh_objects(self, *, mgmt_name: str | None = None, domains: Sequen
 async def refresh_services(self, *, mgmt_name: str | None = None, domains: Sequence[str] | str | None = None, types: Sequence[str] | None = None, include_global: bool = False, mode: CacheMode = 'smart', cache_ttl: float | None = None) -> RefreshOutcome
 async def refresh_assets(self, *, mgmt_name: str | None = None, domains: Sequence[str] | str | None = None, include_global: bool = False, mode: CacheMode = 'smart', cache_ttl: float | None = None) -> RefreshOutcome
 async def get_domains(self, mgmt_name: str | None = None, *, include_global: bool = False, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> list[DomainInfo]
-async def get_gateways(self, mgmt_name: str | None = None, domain: str | None = None, *, types: Sequence[str] | None = None, include_global: bool = False, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> list[Asset]
+async def get_gateways(self, mgmt_name: str | None = None, domain: str | None = None, *, types: Sequence[str] | None = None, roles: Sequence[str] | None = None, platforms: Sequence[str] | None = None, include_global: bool = False, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> list[Asset]
 async def get_hosts(self, mgmt_name: str | None = None, domain: str | None = None, *, names: Sequence[str] | None = None, uids: Sequence[str] | None = None, include_global: bool = False, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> list[CPObject]
 async def get_networks(self, mgmt_name: str | None = None, domain: str | None = None, *, names: Sequence[str] | None = None, uids: Sequence[str] | None = None, include_global: bool = False, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> list[CPObject]
 async def get_address_ranges(self, mgmt_name: str | None = None, domain: str | None = None, *, names: Sequence[str] | None = None, uids: Sequence[str] | None = None, include_global: bool = False, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> list[CPObject]
@@ -47,7 +47,7 @@ async def get_services(self, mgmt_name: str | None = None, domain: str | None = 
 async def get_object_by_uid(self, mgmt_name: str, domain: str, uid: str, *, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> CPObject | None
 async def search_objects(self, query: str, *, mgmt_name: str | None = None, domains: Sequence[str] | str | None = None, types: Sequence[str] | None = None, include_global: bool = False, max_depth: int = 2, exact_match: bool = False, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> SearchResult
 async def describe_objects(self, *, mgmt_name: str | None = None, domain_name: str | None = None, include_global: bool = True) -> dict[str, Any]
-async def query_objects(self, *, mgmt_name: str | None = None, domain_name: str | None = None, domains: Sequence[str] | None = None, types: Sequence[str] | None = None, scope_origin: Literal['all', 'local', 'global'] = 'all', name_pattern: str | None = None, ip_subnet: str | None = None, port: str | None = None, protocol: str | None = None, tags: Sequence[str] | None = None, parent_id: str | None = None, parent_asset_id: str | None = None, include_global: bool = False, group_by: Sequence[str] | None = None, aggregate: Literal['count', 'list', 'describe'] = 'list', limit: int = 100, offset: int = 0, cache_mode: CacheMode = 'cache', cache_ttl: float | None = None) -> dict[str, Any]
+async def query_objects(self, *, mgmt_name: str | None = None, domain_name: str | None = None, domains: Sequence[str] | None = None, types: Sequence[str] | None = None, roles: Sequence[str] | None = None, platforms: Sequence[str] | None = None, is_policy_target: bool | None = None, is_execution_target: bool | None = None, scope_origin: Literal['all', 'local', 'global'] = 'all', name_pattern: str | None = None, ip_subnet: str | None = None, port: str | None = None, protocol: str | None = None, tags: Sequence[str] | None = None, parent_id: str | None = None, parent_asset_id: str | None = None, include_global: bool = False, group_by: Sequence[str] | None = None, aggregate: Literal['count', 'list', 'describe'] = 'list', limit: int = 100, offset: int = 0, cache_mode: CacheMode = 'cache', cache_ttl: float | None = None) -> dict[str, Any]
 async def get_cache_status(self, *, mgmt_name: str | None = None, domain_name: str | None = None, scope: SyncScope | None = None) -> dict[str, Any]
 async def add_object(self, mgmt_name: str, obj_type: str, payload: dict[str, Any], *, domain: str | None = None, sid: str | None = None, server_ip: str | None = None) -> ApiCallResult
 async def set_object(self, mgmt_name: str, obj_type: str, payload: dict[str, Any], *, domain: str | None = None, sid: str | None = None, server_ip: str | None = None) -> ApiCallResult
@@ -134,13 +134,15 @@ concurrent_limit: int = 4
 domain_sync_concurrency: int = 0
 route_collect_concurrency: int = 0
 max_routes_per_gateway: int = 50000
+max_query_pages: int = 5000
+max_query_objects: int = 1000000
 login_throttle_window: float = 70.0
 login_max_wait: float = 900.0
 cache_ttl: int = 300
 domain_list_ttl: int = 3600
 max_incremental_changes: int = 500
 tls_trust: TlsTrustMode = 'tofu'
-tls_known_hosts_path: str = lambda: str(Path.home() / '.config' / 'arodonata' / 'tls_known_hosts.json')()
+tls_known_hosts_path: str = str(Path.home() / '.config' / 'arodonata' / 'tls_known_hosts.json')
 tls_fingerprints: str = ''
 database_url: str = 'sqlite+aiosqlite:///:memory:'
 sqlite_busy_timeout_ms: int = 30000
@@ -180,6 +182,11 @@ virtual_system_uids: list[str] = []
 virtual_system_asset_ids: list[str] = []
 interfaces: list[dict[str, Any]] = []
 network_security_blades: dict[str, Any] = {}
+management_blades: dict[str, Any] = {}
+asset_role: AssetRole = 'unknown'
+platform_family: AssetPlatform = 'unknown'
+is_policy_target: bool = False
+is_execution_target: bool = False
 comments: str = ''
 color: str | None = None
 raw_data: dict[str, Any] = {}
@@ -187,6 +194,10 @@ updated_at: datetime = utc_now()
 
 def model_post_init(self, __context: Any) -> None
 @classmethod def from_cp_dict(cls, mgmt_name: str, domain_name: str, data: dict[str, Any]) -> Asset
+
+def classify_asset_role(asset: Asset | Mapping[str, Any], *, parent_type: str | None = None) -> AssetRole
+def classify_asset_platform(asset: Asset | Mapping[str, Any]) -> AssetPlatform
+def classify_asset(asset: Asset, *, parent_type: str | None = None) -> Asset
 ```
 
 ### `CPObject`
@@ -297,8 +308,8 @@ async def plan(self, template: dict[str, Any] | str, *, on_name_conflict: NameCo
 async def apply(self, plan: Plan, *, force: bool = False, no_publish: bool = False, keep_session: bool = False, retry_remaining: int = 0, auth: AuthContext | None = None, user: UserContext | None = None, session_name: str | None = None, session_description: str | None = None) -> ApplyReport
 async def stream_apply(self, plan: Plan, *, force: bool = False, no_publish: bool = False, keep_session: bool = False, retry_remaining: int = 0, auth: AuthContext | None = None, user: UserContext | None = None, session_name: str | None = None, session_description: str | None = None) -> AsyncIterator[CPCRUDEvent]
 def inverse(self, plan: Plan, report: ApplyReport | None = None) -> dict[str, Any]
-async def publish_staged_session(self, mgmt_name: str, domain: str | None = None, *, session_uid: str, sid: str | None = None, server_ip: str | None = None, timeout: float | None = None, auth: AuthContext | None = None, force_disconnect: bool = False, expected_session_name: str | None = None, allow_foreign: bool = False, allow_stale: bool = False) -> ApiCallResult
-async def stream_publish_staged_session(self, mgmt_name: str, domain: str | None = None, *, session_uid: str, sid: str | None = None, server_ip: str | None = None, timeout: float | None = None, auth: AuthContext | None = None, force_disconnect: bool = False, expected_session_name: str | None = None, allow_foreign: bool = False, allow_stale: bool = False) -> AsyncIterator[CPCRUDEvent]
+async def publish_staged_session(self, mgmt_name: str, domain: str | None = None, *, session_uid: str, sid: str | None = None, server_ip: str | None = None, timeout: float | None = None, auth: AuthContext | None = None, force_disconnect: bool = False, expected_session_name: str | None = None, allow_foreign: bool = False, allow_stale: bool = False, baseline_readable: bool | None = None, baseline_session_uid: str | None = None, baseline_published_at: datetime | None = None) -> ApiCallResult
+async def stream_publish_staged_session(self, mgmt_name: str, domain: str | None = None, *, session_uid: str, sid: str | None = None, server_ip: str | None = None, timeout: float | None = None, auth: AuthContext | None = None, force_disconnect: bool = False, expected_session_name: str | None = None, allow_foreign: bool = False, allow_stale: bool = False, baseline_readable: bool | None = None, baseline_session_uid: str | None = None, baseline_published_at: datetime | None = None) -> AsyncIterator[CPCRUDEvent]
 def notify_sid_logged_out(self, mgmt_name: str, sid: str) -> None
 async def discard_staged_session(self, mgmt_name: str, domain: str | None = None, *, session_uid: str, sid: str | None = None, server_ip: str | None = None, auth: AuthContext | None = None, force_disconnect: bool = False, expected_session_name: str | None = None, allow_foreign: bool = False) -> ApiCallResult
 ```
@@ -395,6 +406,20 @@ def reset_counters(self) -> None
 def get_active_sid_binding(self, sid: str | None) -> SidBinding | None
 def snapshot_state(self) -> ReplayStateSnapshot
 def restore_state(self, snapshot: ReplayStateSnapshot) -> None
+def reset(self) -> None
+def get_calls(self, *, domain: str | None = None, command: str | None = None, mutating_only: bool = False) -> list[dict[str, Any]]
+def assert_no_global_mutations(self) -> None
+def assert_no_full_object_scans(self, commands: Iterable[str] = ('show-hosts', 'show-networks', 'show-address-ranges', 'show-groups')) -> None
+def assert_command_called(self, command: str, *, domain: str | None = None, times: int | None = None) -> None
+def assert_command_not_called(self, command: str, *, domain: str | None = None) -> None
+def update_gateway_interfaces(self, domain: str, gateway_name_or_uid: str, interfaces: list[dict[str, Any]]) -> None
+def update_gateway_cli_stdout(self, node_name: str, stdout: str, *, vsid: int = 0) -> None
+def bump_published_session(self, domain: str, *, new_session_uid: str, new_iso_time: str = '2026-11-09T12:00:00Z', new_posix_time: int = 1794225600000) -> None
+async def api_call(self, mgmt_name: str, command: str, payload: dict[str, Any] | None = None, *, domain: str | None = None, sid: str | None = None, server_ip: str | None = None, wait_for_task: bool = True, timeout: float | None = None) -> ApiCallResult
+async def api_query(self, mgmt_name: str, command: str, *, domain: str | None = None, details_level: str = 'standard', payload: dict[str, Any] | None = None, sid: str | None = None, server_ip: str | None = None, limit: int = DEFAULT_PAGE_LIMIT) -> ApiQueryResult
+async def create_dedicated_session(self, mgmt_name: str, domain: str | None = None, *, auth: AuthContext | None = None, session_name: str | None = None, session_description: str | None = None) -> tuple[str, str]
+def logout_sid(self, mgmt_name: str, sid: str, *, server_ip: str | None = None) -> Awaitable[bool]
+async def close(self, *, logout: bool | None = None) -> None
 
 # FileReplayCliMock
 def __init__(self, dataset_dir: Path | str = DEFAULT_DATASET_DIR, *, fail_ssh_nodes: set[str] | None = None) -> None
@@ -414,6 +439,10 @@ def reset(self) -> None
 @property def host(self) -> str
 @property def port(self) -> int
 @property def fingerprint(self) -> str
+@property def base_url(self) -> str
+@property def test_control_token(self) -> str
+async def start(self) -> None
+async def stop(self) -> None
 
 # ReplayStateSnapshot
 domain_copies: dict[str, dict[str, Any]]

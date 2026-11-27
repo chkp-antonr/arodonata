@@ -472,7 +472,23 @@ async def get_topology_annotations(
     )
     if gateway and gateway.strip():
         gw_clean = gateway.strip().lower()
-        annotations = [a for a in annotations if gw_clean in (a.gateway_uid.lower(), a.gateway_name.lower())]
+        annotations = [
+            a
+            for a in annotations
+            if gw_clean
+            in {
+                a.gateway_uid.lower(),
+                f"{a.mgmt_name}:{a.domain_name}:{a.gateway_uid}".lower(),
+                *(
+                    {
+                        a.gateway_name.lower(),
+                        f"{a.mgmt_name}:{a.domain_name}:{a.gateway_name}".lower(),
+                    }
+                    if a.gateway_name
+                    else set()
+                ),
+            }
+        ]
     return annotations
 
 

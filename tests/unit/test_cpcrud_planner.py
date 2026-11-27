@@ -1588,3 +1588,110 @@ async def test_check_where_used_blocks_referenced_entities_and_ignores_deleted_s
         assert [a.outcome for a in unblocked_plan.actions] == [Outcome.DELETE, Outcome.DELETE]
     finally:
         await db.close()
+
+
+@pytest.mark.spec("SCN-CPCRUD-018-1")
+async def test_planner_explicit_id_collision_virtual_rule_overlay_protocol_zero_and_https_inline() -> None:
+    """DA-005, DA-027, DA-045, DA-047: Explicit act-N skipping, intra-plan virtual rule overlay, protocol=0, and HTTPS inline-layer omission."""
+    from arodonata.core.errors import ValidationError
+    from arodonata.core.models.common import ApiCallResult
+    from arodonata.core.models.rulebase import (
+        DomainRulebaseSnapshot,
+    )
+    from arodonata.cpcrud.planner import Planner
+
+    class _MinApi:
+        async def api_call(
+            self, mgmt: str, cmd: str, payload: dict[str, Any] | None = None, **_k: Any
+        ) -> ApiCallResult:
+            if cmd == "show-last-published-session":
+                return ApiCallResult(success=True, data={"uid": "s-1", "publish-time": {"posix": 1700000000000}})
+            if cmd in ("show-access-rulebase", "show-https-rulebase"):
+                return ApiCallResult(success=True, data={"uid": "l-1", "name": "Network", "rulebase": [], "total": 0})
+            return ApiCallResult(success=False, status_code=404, error_code="generic_err_object_not_found")
+
+        async def api_query(self, *_a: Any, **_k: Any) -> ApiQueryResult:
+            return ApiQueryResult(success=True, objects=[], total=0)
+
+    class _MinCache:
+        async def get_sync_state(self, *_a: Any, **_k: Any) -> DomainSyncState | None:
+            return None
+
+        async def get_objects(self, **_k: Any) -> list[CPObject]:
+            return []
+
+        async def get_object_by_uid(self, *_a: Any) -> CPObject | None:
+            return None
+
+        async def get_services(self, **_k: Any) -> list[CPService]:
+            return []
+
+        async def get_service_by_uid(self, *_a: Any) -> CPService | None:
+            return None
+
+        async def get_rulebase_snapshot(self, *_a: Any, **_k: Any) -> DomainRulebaseSnapshot | None:
+            return None
+
+    planner = Planner(api=_MinApi(), cache=_MinCache(), default_mgmt_name="mds1")  # type: ignore[arg-type]
+
+    # DA-005: Reject blank/duplicate IDs
+    with pytest.raises(ValidationError):
+        await planner.decide(
+            {"domain_name": "Corp", "objects": [{"id": "  ", "type": "host", "name": "h0", "ipv4-address": "1.1.1.1"}]}
+        )
+    with pytest.raises(ValidationError):
+        await planner.decide(
+            {
+                "domain_name": "Corp",
+                "objects": [
+                    {"id": "dup", "type": "host", "name": "h1", "ipv4-address": "1.1.1.1"},
+                    {"id": "dup", "type": "host", "name": "h2", "ipv4-address": "1.1.1.2"},
+                ],
+            }
+        )
+
+    # DA-005 + DA-027 + DA-045 + DA-047 combined plan
+    plan = await planner.decide(
+        {
+            "domain_name": "Corp",
+            "services": [
+                {"id": "act-1", "type": "service-other", "name": "hopopt-0", "ip_protocol": 0},
+            ],
+            "rules": [
+                {
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "r-chain",
+                    "action": "Accept",
+                    "source": ["Any"],
+                    "destination": ["Any"],
+                    "service": ["Any"],
+                },
+                {
+                    "operation": "set",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "r-chain",
+                    "comments": "updated in-plan",
+                },
+                {
+                    "type": "https-rule",
+                    "layer": "HTTPS Inspection",
+                    "name": "https-r1",
+                    "inline_layer": "should-not-send",
+                },
+            ],
+        }
+    )
+    ids = [a.action_id for a in plan.actions]
+    assert len(set(ids)) == len(ids)
+    assert ids[0] == "act-1"
+    assert ids[1] == "act-2"
+    svc_act, r_add, r_set, https_add = plan.actions
+    assert svc_act.payload["ip-protocol"] == 0
+    assert r_add.outcome == Outcome.CREATE
+    assert r_set.outcome == Outcome.UPDATE
+    assert "uid" not in r_set.payload
+    assert r_set.payload["name"] == "r-chain"
+    assert r_add.action_id in r_set.depends_on
+    assert "inline-layer" not in https_add.payload

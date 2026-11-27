@@ -248,6 +248,7 @@ async def _stream_targeted_gateway_refresh(
 
             refreshed_gw_map: dict[str, Asset] = {}
             if mode != "cache":
+                await coordinator.verify_session_clean(dom.mgmt_name, dom.name)
                 # Force on-demand detail fetch for each targeted gateway so modified interface definitions are pulled
                 for gw_asset in matched_gateways:
                     enriched = await _fetch_asset_detail_on_demand(api, dom.mgmt_name, dom.name, gw_asset)
